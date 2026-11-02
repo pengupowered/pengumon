@@ -55,8 +55,6 @@ class NetworkProber:
         self.last_round_ts: Optional[float] = None  # wall clock time the last probe round finished (health check)
         self._backend: Optional[IcmpBackend] = backend  # None: the app's shared one (icmp_select)
         self.ipv6 = ipv6 or Ipv6Availability()  # whether IPv6 targets can be probed from this host now
-        # The owner's "ignores ping" answer per target id (TargetConfig.ignores_ping), for those that have one
-        self._ignores_ping_set: Dict[str, bool] = {}
         self._families: Dict[str, int] = {}  # each ICMP target's family, to tell an edited hop from the same one
 
     def backend(self) -> IcmpBackend:
@@ -86,10 +84,6 @@ class NetworkProber:
                 recent_latencies=[],
             )
         self._families[target.id] = target.family
-        if target.ignores_ping is None:
-            self._ignores_ping_set.pop(target.id, None)
-        else:
-            self._ignores_ping_set[target.id] = target.ignores_ping
 
     def set_targets(self, targets: List[TargetConfig], dns_ids: Iterable[str] = ()):
         """Makes `targets` (in path order) the ICMP targets, without a restart (an applied path edit): a new one
@@ -114,8 +108,6 @@ class NetworkProber:
         live = set(self.stats)
         for tid in [k for k in self.last_samples if k not in live]:
             del self.last_samples[tid]
-        for tid in [k for k in self._ignores_ping_set if k not in live]:
-            del self._ignores_ping_set[tid]
         self.update_path_flags()
 
     def register_dns_target(self, dns_cfg: DnsProbeConfig):
@@ -304,13 +296,11 @@ class NetworkProber:
         return samples
 
     def update_path_flags(self):
-        """Marks the targets that ignore ping (engine.path_rules), from every target's status after this round. The
-        owner's answer (TargetConfig.ignores_ping) wins: True flags the hop whenever it gives no reply, False never."""
+        """Marks the targets that ignore ping (engine.path_rules), from every target's status after this round. It is
+        observed only: no setting overrides it."""
         quiet = ignoring_ping(self.stats.values())
         for tid, st in self.stats.items():
-            owner = self._ignores_ping_set.get(tid)
-            st.ignores_ping = (st.status == "down" and st.enabled) if owner is True else (False if owner is False
-                                                                                           else tid in quiet)
+            st.ignores_ping = tid in quiet
 
     def _update_target_stats(self, sample: ProbeSample):
         """Updates WinMTR-style rolling stats for a target."""

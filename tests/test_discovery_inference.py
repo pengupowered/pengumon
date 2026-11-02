@@ -318,3 +318,84 @@ async def test_this_hosts_own_public_address_is_never_sent_to_the_asn_lookup():
     asked = [q for q, _t in result.dns.asked if q.endswith(".origin.asn.cymru.com")]
     assert "200.113.0.203.origin.asn.cymru.com" not in asked
     assert "1.113.0.203.origin.asn.cymru.com" in asked  # other public hops are still looked up
+
+
+# --- gateways off the traced path (a modem in bridge mode, an ISP gateway) --------------------------------------------
+
+OFF_PATH_EVIDENCE = "answers on your network but isn't on the traced path (a modem in bridge mode, or an ISP gateway)"
+
+
+def test_the_gateway_addresses_are_private_only():
+    from pengumon.engine.discovery.addresses import PRIVATE, address_class
+    from pengumon.engine.discovery.engine import GATEWAY_ADDRESSES
+    assert GATEWAY_ADDRESSES == ("10.0.0.1", "192.168.0.1", "192.168.1.1", "192.168.100.1")
+    assert {address_class(a) for a in GATEWAY_ADDRESSES} == {PRIVATE}
+
+
+async def test_a_gateway_address_off_the_path_that_answers_is_proposed_after_the_router():
+    traces = three_paths(shared=[("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
+    result = await discover(traces, options=NO_ASN, answers_ping={"10.0.0.1"},
+                            pages={"10.0.0.1": XFINITY_LOGIN})
+    assert [(h["address"], h["category"], h["name"]) for h in result.hops[:3]] == [
+        ("192.168.1.1", "local", "Router"), ("10.0.0.1", "gateway", "Gateway"), ("203.0.113.1", "isp", "Provider hop 1")]
+    gateway = result.hops[1]
+    assert gateway["confidence"] == "likely" and gateway["status"] == "new"
+    assert gateway["suggested_driver"] == "xfinity_xb"
+    assert any(OFF_PATH_EVIDENCE in e["text"] for e in gateway["evidence"])
+    # each address off the path got one ping and one GET of its front page, no HTTPS retry, nothing else
+    assert result.pinged == ["10.0.0.1", "192.168.0.1", "192.168.100.1"]
+    for address in ("10.0.0.1", "192.168.0.1", "192.168.100.1"):
+        assert [(r.method, r.url.scheme, r.url.path) for r in result.lan.requests if r.url.host == address] == [
+            ("GET", "http", "/")]
+
+
+async def test_a_gateway_address_that_answers_ping_only_is_proposed_too():
+    traces = three_paths(shared=[("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
+    result = await discover(traces, options=NO_ASN, answers_ping={"192.168.100.1"})
+    modem = by_address(result)["192.168.100.1"]
+    assert (modem["category"], modem["name"], modem["confidence"]) == ("gateway", "Cable modem", "likely")
+    assert [e["kind"] for e in modem["evidence"]] == ["off_path", "off_path"]
+    assert "10.0.0.1" not in by_address(result)  # nothing answered there
+
+
+async def test_gateway_addresses_on_the_path_or_on_this_hosts_own_network_are_not_asked():
+    """192.168.1.1 is on the path (the router); 192.168.0.1 is this host's own network (beside the router, not in
+    front of it): neither is pinged or fetched as an off-path gateway."""
+    traces = three_paths(shared=[("192.168.0.7", 0.4), ("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
+    result = await discover(traces, options=NO_ASN, answers_ping={"192.168.0.1"}, pages={"192.168.0.1": "<p>x</p>"})
+    assert result.pinged == ["10.0.0.1", "192.168.100.1"]
+    assert "192.168.0.1" not in result.lan.hosts() and "192.168.0.1" not in by_address(result)
+    # the router's page is fetched as a hop of the path (HTTP, then HTTPS), like the other private hop, not again
+    assert result.lan.hosts().count("192.168.1.1") == result.lan.hosts().count("192.168.0.7") == 2
+
+
+async def test_a_limited_host_among_the_gateway_addresses_gets_one_get_and_no_ping():
+    traces = three_paths(shared=[("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
+    result = await discover(traces, options=NO_ASN, limited={"10.0.0.1"}, answers_ping={"10.0.0.1"},
+                            pages={"10.0.0.1": XFINITY_LOGIN})
+    assert "10.0.0.1" not in result.pinged
+    assert [(r.method, r.url.path) for r in result.lan.requests if r.url.host == "10.0.0.1"] == [("GET", "/")]
+    assert by_address(result)["10.0.0.1"]["category"] == "gateway"  # its page answered
+
+
+async def test_with_device_checks_off_only_the_background_runs_ask_the_gateway_addresses():
+    traces = three_paths(shared=[("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
+    pages = {"192.168.1.1": ASUS_LOGIN, "192.168.100.1": "<title>Status</title>"}
+    off = await discover(traces, options=DiscoveryOptions(asn_lookup=False, device_checks=False), pages=pages)
+    assert off.lan.requests == [] and off.pinged == []
+    background = await discover(traces, pages=pages, options=DiscoveryOptions(
+        asn_lookup=False, device_checks=False, off_path_gateways=True))
+    assert sorted(background.lan.hosts()) == ["10.0.0.1", "192.168.0.1", "192.168.100.1"]  # not the router's page
+    assert background.pinged == ["10.0.0.1", "192.168.0.1", "192.168.100.1"]
+    assert by_address(background)["192.168.100.1"]["category"] == "gateway"
+    assert any("only the common gateway addresses" in n for n in background.notes)
+
+
+async def test_the_gateway_addresses_share_the_device_check_budget():
+    from pengumon.engine.discovery.engine import MAX_DEVICE_HOSTS
+    home = [(f"172.16.{n}.1", 0.5 + n / 10) for n in range(1, 9)]  # eight private hops before the provider
+    traces = three_paths(shared=home + [("203.0.113.1", 9.0)])
+    result = await discover(traces, options=NO_ASN)
+    asked = set(result.lan.hosts())
+    assert len(asked) == MAX_DEVICE_HOSTS
+    assert {"10.0.0.1", "192.168.0.1", "192.168.1.1", "192.168.100.1"} <= asked

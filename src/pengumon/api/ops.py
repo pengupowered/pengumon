@@ -14,7 +14,7 @@ from pengumon.engine.netinfo import get_lan_ips
 from pengumon.metrics import render_metrics
 from pengumon.incidents.model import SystemDiagnosis
 from pengumon.models.probes import TracerouteRequest
-from pengumon.security import rate_limit, session_status
+from pengumon.security import can_edit, rate_limit, session_status
 
 HEALTH_MAX_ROUND_AGE = 10.0
 
@@ -25,8 +25,9 @@ metrics_router = APIRouter()  # /metrics is outside /api
 @router.get("/info")
 async def get_network_info(request: Request, state: StateDep):
     """Returns the host machine's LAN IP addresses and access URLs, whether this browser may sign out (`session`:
-    signed in with the access token's cookie; and "everywhere", which ends every browser's sign-in), and how probes
-    are sent (`probe`: the ICMP backend and its RTT resolution in ms)."""
+    signed in with the access token's cookie; and "everywhere", which ends every browser's sign-in), whether this
+    browser may change anything (`can_edit`: false for a viewer without the token, PENGUMON_VIEW_WITHOUT_TOKEN), and how
+    probes are sent (`probe`: the ICMP backend and its RTT resolution in ms)."""
     port = state.config.server.port if state.config else 8000
     lan_ips = await asyncio.to_thread(get_lan_ips)  # a host name lookup: never on the event loop
     lan_urls = [f"http://{ip}:{port}" for ip in lan_ips]
@@ -38,6 +39,7 @@ async def get_network_info(request: Request, state: StateDep):
         "primary_lan_url": lan_urls[0] if lan_urls else f"http://127.0.0.1:{port}",
         "isp_name": state.config.line.isp_name if state.config else None,
         "session": session_status(request),
+        "can_edit": can_edit(request),
         # How probes are sent: {"backend", "resolution_ms", "error", "fix"} (NetworkProber.probe_method)
         "probe": state.prober.probe_method() if state.prober else None,
     }

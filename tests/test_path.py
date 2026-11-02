@@ -179,26 +179,6 @@ def test_set_targets_keeps_stats_of_unchanged_hops_resets_moved_ones_and_keeps_d
     assert list(prober.stats) == ["pub", "dns_a"]
 
 
-def test_the_owners_ignores_ping_answer_wins_over_the_rule():
-    prober = NetworkProber()
-    quiet = ISP.model_copy(update={"ignores_ping": True})
-    loud = TargetConfig(id="isp_2", name="Provider hop 2", address="198.51.100.10", category="isp", ignores_ping=False)
-    prober.set_targets([GW, quiet, loud, PUB])
-    for tid, status in (("gw", "up"), ("isp_1", "down"), ("isp_2", "down"), ("pub", "down")):
-        prober.stats[tid].status = status
-    prober.update_path_flags()
-    # the rule alone would flag neither ISP hop (nothing after them answers); the owner says isp_1 ignores ping
-    assert prober.stats["isp_1"].ignores_ping and not prober.stats["isp_2"].ignores_ping
-    prober.stats["pub"].status = "up"
-    prober.update_path_flags()
-    assert prober.stats["isp_1"].ignores_ping and not prober.stats["isp_2"].ignores_ping  # "no" stays no
-    prober.set_targets([GW, ISP, loud, PUB])  # back to automatic
-    assert prober.stats["isp_1"].ignores_ping  # a later stage answers
-    prober.stats["isp_1"].status = "up"
-    prober.update_path_flags()
-    assert not prober.stats["isp_1"].ignores_ping
-
-
 # --- the API ---------------------------------------------------------------------------------------------------------
 
 @pytest.fixture
@@ -221,7 +201,8 @@ async def test_get_path_lists_the_hops_in_order_with_their_positions(path_app):
     body = (await ac.get("/api/path")).json()
     assert body["revision"] == 1 and body["managed_by"] == "dashboard"
     assert [(h["id"], h["position"]) for h in body["hops"]] == [("gw", 0), ("pub", 1)]
-    assert {"group", "ignores_ping", "device_id", "color", "record_type", "nameserver"} <= set(body["hops"][0])
+    assert {"group", "device_id", "color", "record_type", "nameserver"} <= set(body["hops"][0])
+    assert "ignores_ping" not in body["hops"][0]  # observed (the live targets), never a setting of the hop
 
 
 async def test_put_applies_the_path_live_and_ignores_the_draft_only_fields(path_app):
@@ -303,7 +284,7 @@ async def test_test_probe_sends_one_echo_request_through_the_backend(path_app):
 async def test_export_and_import_round_trip_as_a_draft_that_applies_nothing(path_app):
     ac, state = path_app
     await ac.put("/api/path", json={"base_revision": 1, "hops": [
-        _hop(GW, 0, device_id="router"), _hop(ISP, 1, ignores_ping=True), _hop(PUB, 2, group="internet",
+        _hop(GW, 0, device_id="router"), _hop(ISP, 1), _hop(PUB, 2, group="internet",
                                                                                color="#112233")]})
     exported = await ac.get("/api/path/export")
     assert exported.status_code == 200 and "attachment" in exported.headers["content-disposition"]
@@ -313,7 +294,7 @@ async def test_export_and_import_round_trip_as_a_draft_that_applies_nothing(path
     assert res.status_code == 200, res.text
     hops = res.json()["hops"]
     assert [(h["id"], h["position"]) for h in hops] == [("gw", 0), ("isp_1", 1), ("pub", 2)]
-    assert hops[0]["device_id"] is None and hops[1]["ignores_ping"] is True
+    assert hops[0]["device_id"] is None
     assert hops[2]["group"] == "internet" and hops[2]["color"] == "#112233"
     assert (await ac.get("/api/path")).json()["revision"] == 2  # nothing applied
 
@@ -332,7 +313,7 @@ async def test_import_refuses_a_bad_file(path_app, text, says):
 
 
 def test_export_leaves_defaults_out_and_reads_back_the_same():
-    targets = [GW, ISP.model_copy(update={"enabled": False, "ignores_ping": True})]
+    targets = [GW, ISP.model_copy(update={"enabled": False})]
     text = export_yaml(targets)
     assert "record_type" not in text and "enabled: false" in text
     assert read_import(text) == targets
@@ -469,7 +450,7 @@ def test_a_hop_whose_family_changed_starts_over():
 def _proposed(address: str, category: str = "isp") -> dict:
     from pengumon.engine.discovery.draft import hop_id
     return {"id": hop_id(address), "name": f"Provider hop ({address})", "address": address, "category": category,
-            "enabled": True, "group": None, "ignores_ping": None, "color": None, "device_id": None,
+            "enabled": True, "group": None, "color": None, "device_id": None,
             "evidence": [{"kind": "rdns", "text": "a reason"}], "confidence": "likely", "suggested_driver": None,
             "status": "new"}
 

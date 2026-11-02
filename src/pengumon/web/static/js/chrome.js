@@ -6,6 +6,8 @@
 // is redrawn when the theme changes; modules give their charts no colours of their own except series colours.
 //
 // Sign out: the header button shows only for a browser signed in with the access token (/api/info `session`).
+// View only: a viewer without the token (/api/info `can_edit` false) sees "View only · Sign in to edit" in the header,
+// and every edit control is disabled with that tooltip (util.js setCanEdit).
 //
 // Menus: a button with data-action="toggleMenu" data-arg="<menu id>" opens that .menu under itself; a click
 // elsewhere, Escape or a choice closes it. The phone header's "more" menu is a copy of the header's tool buttons.
@@ -13,6 +15,7 @@
 import { registerActions } from './dispatch.js';
 import { state } from './state.js';
 import { applyChartTheme, token } from './chart-theme.js';
+import { VIEW_ONLY_TIP, setCanEdit } from './util.js';
 
 const THEME_KEY = 'pengumon.theme';
 const dark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -74,11 +77,19 @@ function fetchNetworkInfo() {
         pill.hidden = false;
       }
       showSignOut(info.session);
+      showAccess(info.can_edit !== false); // an older server without the field: editable, as before
       // for any module that needs it (one request per page load): state.networkInfo, then a `networkinfo` event
       state.networkInfo = info;
       document.dispatchEvent(new CustomEvent('networkinfo', { detail: info }));
     })
-    .catch(console.error);
+    .catch((e) => { setCanEdit(true); console.error(e); }); // unknown: the server still decides each request
+}
+
+// ---------- view only (util.js canEdit) ----------
+function showAccess(editable) {
+  setCanEdit(editable);
+  const chip = document.getElementById('viewOnly');
+  if (chip) chip.hidden = editable;
 }
 
 // ---------- sign out (dialogs/sign-out) ----------
@@ -229,6 +240,7 @@ function initRovingCells() {
 }
 
 export function initChrome() {
+  document.addEventListener('viewonly', () => toast(VIEW_ONLY_TIP));
   initCellTips();
   initRovingCells();
   fetchNetworkInfo();

@@ -69,16 +69,14 @@ meaning (`version` rises if that ever has to happen).
 }
 ```
 
-| Field | Meaning |
-|---|---|
-| `event` | `incident_started`, `incident_resolved`, `service_down`, `service_up`, `test` |
-| `severity` | `info`, `warning` or `critical` (the incident's; resolved, back and test are `info`, an app that is down `warning`) |
-| `title`, `message` | The text ntfy shows |
-| `incident_id`, `cause` | The incident (network incidents only; `null` otherwise). The same id is in the dashboard |
-| `service_id` | The `service_checks` id, for `service_down` and `service_up` |
-| `started_at`, `ended_at` | UTC, ISO 8601; `ended_at` is `null` until it has ended. For services, the start is when the checks began failing |
-| `duration_seconds`, `load_pct` | When known, else `null` |
-| `link` | `notifications.public_url`, or `null` |
+- `event`: `incident_started`, `incident_resolved`, `service_down`, `service_up`, `path_changed`, `test`
+- `severity`: `info`, `warning` or `critical` (the incident's; resolved, back and test are `info`, an app that is down `warning`)
+- `title`, `message`: The text ntfy shows
+- `incident_id`, `cause`: The incident (network incidents only; `null` otherwise). The same id is in the dashboard
+- `service_id`: The `service_checks` id, for `service_down` and `service_up`
+- `started_at`, `ended_at`: UTC, ISO 8601; `ended_at` is `null` until it has ended. For services, the start is when the checks began failing
+- `duration_seconds`, `load_pct`: When known, else `null`
+- `link`: `notifications.public_url`, or `null`; may end in a page (`#live`)
 
 ### `slack`
 
@@ -88,6 +86,14 @@ meaning (`version` rises if that ever has to happen).
 
 `{"content": "**Title**\nmessage\nlink", "allowed_mentions": {"parse": []}}`. The content is cut to Discord's limit of
 2000 characters (the link is kept), and `allowed_mentions` stops anything in a message from pinging @everyone.
+
+### `path_changed`
+
+Sent once per set of changes when the background route check (discovery rerun daily and after an incident ends) finds
+that your provider's route differs from the applied path. `severity` is `info`, `incident_id`, `cause` and `service_id`
+are `null`, and `message` lists the changes in plain words, one per line (at most six, then "...and N more"). `link`
+is `notifications.public_url` followed by `#live`, which opens Path health with its "Your path changed · Review"
+notice; ntfy gets the same link as its click action.
 
 ## Examples
 

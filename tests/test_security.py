@@ -35,6 +35,7 @@ def _reset(monkeypatch, app_state):
     monkeypatch.setattr(security_config, "access_token", "")
     monkeypatch.setattr(security_config, "allowed_hosts", [])
     monkeypatch.setattr(security_config, "allowed_origins", [])
+    monkeypatch.setattr(security_config, "view_without_token", False)
     security.reset_rate_limits()
     yield
     security.reset_rate_limits()
@@ -318,3 +319,144 @@ async def test_non_ascii_credentials_are_unauthorized_not_an_error(monkeypatch):
         res = await ac.get("/api/status", headers={"Authorization": "Bearer caf\u00e9".encode("latin-1")})
         assert res.status_code == 401
         assert (await ac.post("/login", data={"token": "caf\u00e9"})).status_code == 401
+
+
+# -- viewing without the token (PENGUMON_VIEW_WITHOUT_TOKEN) -------------------------------------------------------
+
+@pytest.fixture
+def viewers(monkeypatch):
+    """The real app with a token and viewing without it on."""
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    monkeypatch.setattr(security_config, "view_without_token", True)
+
+
+BEARER = {"Authorization": f"Bearer {TOKEN}"}
+
+
+def _routes(methods):
+    """Every route of the real app (its OpenAPI schema) with one of `methods`, its path parameters filled in."""
+    fill = {"device_id": "modem", "target_id": "t1", "job_id": "j1", "incident_id": "1", "preview_id": "p1"}
+    found = []
+    for path, operations in app.openapi()["paths"].items():
+        for method in operations:
+            if method.upper() in methods:
+                for name, value in fill.items():
+                    path = path.replace("{%s}" % name, value)
+                assert "{" not in path, f"fill in the parameter of {path}"
+                found.append((method.upper(), path))
+    return found
+
+
+def test_viewing_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("PENGUMON_VIEW_WITHOUT_TOKEN", raising=False)
+    assert SecurityConfig.from_env().view_without_token is False
+    monkeypatch.setenv("PENGUMON_VIEW_WITHOUT_TOKEN", "1")
+    monkeypatch.setenv("PENGUMON_ACCESS_TOKEN", "abc")
+    cfg = SecurityConfig.from_env()
+    assert cfg.view_without_token is True and cfg.describe()["view_without_token"] is True
+
+
+@pytest.mark.asyncio
+async def test_with_viewing_off_a_token_still_protects_every_read(monkeypatch):
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    async with _client() as ac:
+        for path in ("/api/status", "/api/info", "/api/path", "/api/targets", "/metrics"):
+            assert (await ac.get(path)).status_code == 401, path
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_sees_the_dashboard(viewers):
+    async with _client() as ac:
+        page = await ac.get("/", headers={"Accept": "text/html"})
+        assert page.status_code == 200 and "<html" in page.text.lower()
+        for path in ("/api/status", "/api/info", "/api/path", "/api/targets", "/api/incidents", "/api/devices",
+                     "/api/features", "/api/notifications", "/metrics"):
+            assert (await ac.get(path)).status_code != 401, path
+        info = (await ac.get("/api/info")).json()
+        assert info["can_edit"] is False and info["session"] == {"sign_out": False, "sign_out_everywhere": False}
+        assert (await ac.get("/api/info", headers=BEARER)).json()["can_edit"] is True
+
+
+@pytest.mark.asyncio
+async def test_info_says_everyone_can_edit_without_a_token():
+    async with _client() as ac:
+        assert (await ac.get("/api/info")).json()["can_edit"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_cannot_change_anything(viewers, tmp_path, monkeypatch, app_state):
+    """Every POST/PUT/DELETE/PATCH route of the app (found from the app itself, so a new one is covered too) refuses a
+    viewer, from the page (same origin) or not; nothing is written."""
+    monkeypatch.setattr(secrets_module, "SECRETS_PATH", tmp_path / "secrets.json", raising=False)
+    changing = _routes({"POST", "PUT", "DELETE", "PATCH"})
+    assert ("POST", "/api/devices/modem/credentials") in changing and ("PUT", "/api/path") in changing
+    assert ("POST", "/api/targets") in changing and ("POST", "/api/notifications/test") in changing
+    async with _client() as ac:
+        for method, path in changing:
+            for headers in ({"Origin": "http://test"}, {}):
+                res = await ac.request(method, path, json={}, headers=headers)
+                assert res.status_code == 401, (method, path, res.status_code)
+                assert res.headers["www-authenticate"] == 'Bearer realm="pengumon"'
+        # the same requests with the token get past the guard (whatever the route makes of an empty body)
+        for method, path in changing:
+            res = await ac.request(method, path, json={}, headers={"Origin": "http://test", **BEARER})
+            assert res.status_code != 401, (method, path)
+    assert not (tmp_path / "secrets.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/path/export", "/api/path/export/", "//api/path/export", "/API/PATH/EXPORT",
+                                  "/api/devices/modem/credentials", "/api/devices/router/credentials/",
+                                  "/docs", "/openapi.json", "/redoc"])
+async def test_a_viewer_cannot_read_the_export_or_credentials(viewers, path):
+    async with _client() as ac:
+        res = await ac.get(path)
+        assert res.status_code == 401, (path, res.status_code)
+        assert "targets:" not in res.text
+        page = await ac.get(path, headers={"Accept": "text/html"})
+        assert page.status_code == 303 and page.headers["location"] == "/login"
+
+
+@pytest.mark.asyncio
+async def test_the_token_still_reads_the_export(viewers, app_state):
+    async with _client() as ac:
+        assert (await ac.get("/api/path/export", headers=BEARER)).status_code != 401
+
+
+def test_a_viewer_gets_the_live_stream_but_cannot_send(viewers, monkeypatch):
+    """The live socket accepts a viewer; what a viewer sends never reaches the app (homeguard drops it). The app's
+    socket reads and ignores client text in any case (live/component.py): no client message changes anything."""
+    from pengumon.api.ws import ws_manager
+
+    client = TestClient(app)
+    origin = {"Origin": "http://testserver"}
+    received = []
+    from pengumon.live import component as live
+
+    original = live.WebSocket.receive_text
+
+    async def spy(self):
+        text = await original(self)
+        received.append(text)
+        return text
+
+    monkeypatch.setattr(live.WebSocket, "receive_text", spy)
+    with client.websocket_connect("/ws", headers=origin) as ws:
+        assert len(ws_manager.active_connections) >= 1
+        ws.send_text("anything")
+        ws.close()
+    with client.websocket_connect("/ws", headers={**origin, **BEARER}) as ws:
+        ws.send_text("from the owner")
+        ws.close()
+    assert received == ["from the owner"]
+    assert _ws_rejected(client, headers={"Origin": "http://evil.example"}) == 1008
+
+
+def test_the_viewer_policy_keeps_the_writes_and_secrets_out():
+    policy = security.VIEWER_POLICY
+    assert security.PROFILE.viewer_policy is policy
+    assert set(policy.methods) <= {"GET", "HEAD"} and policy.websockets == ("/ws",)
+    for path in ("/api/path/export", "/api/devices/x/credentials", "/api/devices/x/credentials/test"):
+        assert not policy.permits("GET", path), path
+    for method in ("POST", "PUT", "DELETE", "PATCH"):
+        assert not policy.permits(method, "/api/path")

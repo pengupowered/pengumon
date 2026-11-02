@@ -371,6 +371,7 @@ class AsusWrtOptions(BaseModel):
 
 class AsusWrtDriver:
     name = "asuswrt"
+    label = "ASUS router"  # what the device is, in the dashboard's words (api.devices.device_label)
     offers = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM, Capability.CLIENT_INVENTORY,
                         Capability.MESH})
     options_model = AsusWrtOptions

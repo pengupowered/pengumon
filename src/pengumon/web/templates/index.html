@@ -37,11 +37,13 @@
         <button type="button" class="btn icon sm" id="btnCopyLan" data-action="copyLanUrl" title="Copy the LAN address" aria-label="Copy the LAN address"><svg class="i" id="copyIcon" aria-hidden="true"><use href="#i-copy"/></svg></button>
       </span>
       <span class="grow"></span>
+      <!-- shown by chrome.js when /api/info says this browser may not change anything (can_edit false: a viewer without the token) -->
+      <a class="btn view-only" id="viewOnly" href="/login" hidden title="View only: sign in with the access token to change anything"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg><span class="vo-word">View only<span class="vo-more"> · Sign in to edit</span></span></a>
       <nav class="tb-actions" id="headerTools" aria-label="Tools">
-        <button type="button" class="btn" data-action="openModal" data-arg="tracerouteModal" title="Trace route"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span class="lbl">Trace</span></button>
+        <button type="button" class="btn" data-action="openModal" data-arg="tracerouteModal" data-needs-edit title="Trace route"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span class="lbl">Trace</span></button>
         <button type="button" class="btn" data-action="openDossierModal" title="ISP outage dossier"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span class="lbl">Dossier</span></button>
         <button type="button" class="btn" id="btnNotify" data-action="toggleNotifications" title="Alerts: off"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span class="lbl">Alerts</span></button>
-        <button type="button" class="btn" data-action="openModal" data-arg="addTargetModal" title="Add target"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Target</span></button>
+        <button type="button" class="btn" data-action="openModal" data-arg="addTargetModal" data-needs-edit title="Add target"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Target</span></button>
         <span class="tb-sep" aria-hidden="true"></span>
         <button type="button" class="btn" data-action="openLayoutDialog" title="Arrange panels"><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="lbl">Layout</span></button>
         <button type="button" class="btn icon" id="btnTheme" data-action="toggleTheme" title="Switch theme" aria-label="Switch theme"><svg class="i" aria-hidden="true"><use href="#i-sun"/></svg></button>

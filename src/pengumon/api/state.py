@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from pengumon.config import AppConfig
     from pengumon.db.repository import DatabaseRepository
     from pengumon.devices.registry import DeviceRegistry
+    from pengumon.engine.discovery.drift import DriftChecker
     from pengumon.engine.discovery.jobs import DiscoveryJobs
     from pengumon.engine.classifier import OutageClassifier
     from pengumon.engine.path import PathManager
@@ -46,6 +47,7 @@ class AppState:
     secret_store: Optional["SecretStore"] = None  # data/secrets.json, shared by the credential sources and endpoints
     credentials: Optional["CredentialSources"] = None  # where the devices' credentials came from at startup
     discovery: Optional["DiscoveryJobs"] = None  # the network discovery runs (engine/discovery)
+    drift: Optional["DriftChecker"] = None  # the background route-change checks (engine/discovery/drift.py)
 
     def line_history(self) -> Optional[docsis.DocsisHistory]:
         """The stored readings of the device that reports the access line (DeviceRegistry.primary, so a device

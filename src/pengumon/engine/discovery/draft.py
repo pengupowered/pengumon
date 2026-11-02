@@ -27,7 +27,7 @@ MAX_HOPS = 64
 PATH_CATEGORIES = ("local", "gateway", "isp", "public")
 HOME_CATEGORIES = ("local", "gateway")
 DRAFT_ONLY = ("evidence", "confidence", "suggested_driver", "status")
-OWNER_FIELDS = ("name", "enabled", "group", "ignores_ping", "color", "device_id")
+OWNER_FIELDS = ("name", "enabled", "group", "color", "device_id")
 
 
 def address_key(address: Optional[str]) -> str:
@@ -73,7 +73,7 @@ def name_hops(guesses: Sequence[HopGuess]) -> None:
 def _guess_hop(g: HopGuess) -> dict:
     return {
         "id": hop_id(g.address), "name": g.name[:100], "address": g.address, "category": g.category, "enabled": True,
-        "family": 6 if ":" in g.address else 4, "group": None, "ignores_ping": None, "color": None, "device_id": None,
+        "family": 6 if ":" in g.address else 4, "group": None, "color": None, "device_id": None,
         "evidence": [e.public() for e in g.evidence], "confidence": g.confidence,
         "suggested_driver": g.suggested_driver, "status": "new",
     }
@@ -86,7 +86,7 @@ def _server_hop(server: PublicServer, reached: Optional[bool]) -> dict:
         text += " It did not answer its trace this time."
     return {
         "id": server.id, "name": server.name, "address": server.address, "category": "public", "enabled": True,
-        "family": 4, "group": INTERNET_GROUP, "ignores_ping": None, "color": None, "device_id": None,
+        "family": 4, "group": INTERNET_GROUP, "color": None, "device_id": None,
         "evidence": [Evidence("address_class", text).public()], "confidence": HIGH,
         "suggested_driver": None, "status": "new",
     }
@@ -102,7 +102,7 @@ def _server_hop_v6(server: PublicServer, trace_hops: Optional[int], reached: boo
             text += " The IPv6 trace did not reach it this time."
     return {
         "id": server.id, "name": server.name, "address": server.address, "category": "public", "enabled": True,
-        "family": 6, "group": INTERNET_V6_GROUP, "ignores_ping": None, "color": None, "device_id": None,
+        "family": 6, "group": INTERNET_V6_GROUP, "color": None, "device_id": None,
         "evidence": [Evidence("address_class", text).public()], "confidence": HIGH,
         "suggested_driver": None, "status": "new",
     }

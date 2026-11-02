@@ -72,7 +72,8 @@ tooling and never enter the production image (see `docs/supply-chain.md`).
   one function per capability's fake data) and drives it in headless Chromium, once per variant (`full`, `bare`,
   `tworouters`, `unknownline`, `longpath`, and `token`: the app behind an access token, signed in through the sign-in page,
   where only `steps/sign-out.mjs` runs: sign out, the old cookie refused, sign out everywhere with a second browser
-  context); any failed step, page error, console error, CSP violation or failed request fails it.
+  context; and `viewonly`: the token with `PENGUMON_VIEW_WITHOUT_TOKEN=1`, not signed in, where `steps/sign-out.mjs`
+  checks the view-only page, the server's refusals, and "Sign in to edit" from the header); any failed step, page error, console error, CSP violation or failed request fails it.
 - `tests/test_ui_steps.py` runs the guards on the step files (below); it needs node only.
 - `tests/test_ui_lint.py` runs ESLint (`tests/ui/eslint.config.mjs`: `no-undef`, module source type, `Chart` global)
   over the modules and over the browser test itself (`tests/ui/*.mjs`). Module scripts are strict, so an undeclared variable is a runtime error.

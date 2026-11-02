@@ -263,6 +263,7 @@ def build_clients(leases: Optional[dict], stations: Dict[str, Tuple[Optional[str
 
 class OpenWrtDriver:
     name = "openwrt"
+    label = "OpenWrt router"  # what the device is, in the dashboard's words (api.devices.device_label)
     offers = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM, Capability.CLIENT_INVENTORY})
     options_model = OpenWrtOptions
     default_poll_seconds = 10.0  # one HTTP request per poll; rpcd answers it from memory

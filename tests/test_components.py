@@ -268,7 +268,8 @@ async def test_shutdown_order(tmp_path, monkeypatch):
                   'devices:\n  - {id: wifi, driver: asuswrt, url: "http://192.0.2.1", enabled: false}\n'))
     _quiet_workers(monkeypatch)
     async with main.lifespan(main.app):
-        assert len(tasks) == 6  # the wifi device, probe loop, retention, line load, service checks, broadcaster
+        # the wifi device, probe loop, retention, line load, service checks, broadcaster, route-change checks
+        assert len(tasks) == 7
 
     labels = [label for label, _ in events]
     assert all(done for _, done in events), events  # every task had ended

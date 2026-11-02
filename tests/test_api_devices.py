@@ -104,11 +104,12 @@ async def test_the_device_list_describes_each_device_and_its_last_poll(app_state
     assert set(listed[0]["ranges"]) == {"ds_power", "ds_snr", "us_power", "uncorrectables"}
     assert listed[1] == {
         "id": "wifi", "driver": "asuswrt", "host": "192.168.1.1", "url": "http://192.168.1.1", "model": "RT-AX88U",
-        "enabled": True,
+        "label": "ASUS router · RT-AX88U", "enabled": True,
         "offers": ["client_inventory", "mesh", "router_system", "wan_counters"], "line_technology": None, "poll_interval_seconds": 10.0,
         "has_credentials": True, "status": "healthy", "last_poll": 123.0,
     }
     assert listed[0]["id"] == "cable" and listed[0]["line_technology"] == "docsis"
+    assert listed[0]["label"] == "Xfinity gateway · cable"  # no model: its id, never only an address
     assert listed[0]["has_credentials"] is False and listed[0]["status"] == "unconfigured"
     assert listed[0]["error_message"].startswith("Password for cable not configured")
     assert "error_kind" not in listed[0]

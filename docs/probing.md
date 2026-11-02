@@ -6,11 +6,18 @@ what the OS ships or on the language of its output. One backend per OS implement
 IPv6), answered by an echo reply from the target, a Time Exceeded from a router on the way, a Destination Unreachable,
 or nothing within the timeout. None of them needs administrator rights.
 
-| OS | Backend | How | RTT resolution |
-|---|---|---|---|
-| Linux | `linux-raw` or `linux-dgram` | A raw ICMP socket when the process has `CAP_NET_RAW` (the container image grants it to the interpreter), else an unprivileged ICMP datagram socket ("ping socket"). One of each family: `AF_INET6`/`IPPROTO_ICMPV6` for IPv6, of the same kind. | about 1 µs: the kernel stamps each answer (`SO_TIMESTAMPNS`), so event-loop delays don't count |
-| macOS | `macos-dgram` | An ICMP datagram socket, which macOS allows for any user; for IPv6 an ICMPv6 one (what `ping6` opens when not root). | about 1 µs (`SO_TIMESTAMP`) |
-| Windows | `windows-icmpapi` | `IcmpSendEcho2` from `iphlpapi.dll` (what `ping.exe` uses), and `Icmp6SendEcho2` for IPv6, in a small thread pool. | 1 ms: Windows reports whole milliseconds; the dashboard's latency panel says "1 ms resolution" |
+- Linux
+  - Backend: `linux-raw` or `linux-dgram`
+  - How: A raw ICMP socket when the process has `CAP_NET_RAW` (the container image grants it to the interpreter), else an unprivileged ICMP datagram socket ("ping socket"). One of each family: `AF_INET6`/`IPPROTO_ICMPV6` for IPv6, of the same kind.
+  - RTT resolution: about 1 µs: the kernel stamps each answer (`SO_TIMESTAMPNS`), so event-loop delays don't count
+- macOS
+  - Backend: `macos-dgram`
+  - How: An ICMP datagram socket, which macOS allows for any user; for IPv6 an ICMPv6 one (what `ping6` opens when not root).
+  - RTT resolution: about 1 µs (`SO_TIMESTAMP`)
+- Windows
+  - Backend: `windows-icmpapi`
+  - How: `IcmpSendEcho2` from `iphlpapi.dll` (what `ping.exe` uses), and `Icmp6SendEcho2` for IPv6, in a small thread pool.
+  - RTT resolution: 1 ms: Windows reports whole milliseconds; the dashboard's latency panel says "1 ms resolution"
 
 `engine/icmp_select.py` picks the backend from `sys.platform`; the app opens one at startup and shares it between the
 prober, traceroute and the incident path trace. The log line `ICMP probes use the linux-dgram backend (1 µs

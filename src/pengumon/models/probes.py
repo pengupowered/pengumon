@@ -25,11 +25,12 @@ class TargetConfig(BaseModel):
     # A host name is probed at its address of this family (4: IPv4, 6: IPv6); an IP literal is probed as it is
     family: Literal[4, 6] = 4
     # The path editor's fields (pengumon.engine.path): hops of one role sharing a group are one node on Path health;
-    # ignores_ping None = decided by engine.path_rules, True/False = the owner's answer; device_id = the configured
-    # device (config.yaml devices:) this hop is.
+    # device_id = the configured device (config.yaml devices:) this hop is (engine.device_links). Whether a hop ignores
+    # ping is observed, never set (engine.path_rules): an "ignores_ping" in an older export or row is ignored.
     group: Optional[str] = Field(None, max_length=64)
-    ignores_ping: Optional[bool] = None
     device_id: Optional[str] = Field(None, max_length=64)
+    # The owner set "No device" on this hop: it is never linked by its address again (engine.device_links)
+    device_unlinked: bool = False
 
     @field_validator("group", "device_id")
     @classmethod

@@ -270,3 +270,35 @@ CREATE TABLE IF NOT EXISTS mesh_samples (
     PRIMARY KEY (device_id, ts, node_id)
 ) WITHOUT ROWID;
 """
+
+# --- schema v14: the applied versions of the probe path, and the path's events -----------------------------------------
+#
+# One row per applied revision (the import is revision 1): the hops as applied (a JSON list of hop objects with their
+# positions) and a one-line summary of what changed from the revision before. db/path.py keeps the last 50.
+CREATE_PATH_VERSIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS path_versions (
+    revision INTEGER PRIMARY KEY,
+    applied_at REAL NOT NULL,
+    hop_count INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    hops TEXT NOT NULL
+);
+"""
+
+# Things that happened to a hop that its history should show: so far "address_changed" (the owner replaced a hop's
+# address, keeping its id and so its history), with the old and the new address.
+CREATE_PATH_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS path_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,
+    kind TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    old TEXT,
+    new TEXT,
+    revision INTEGER NOT NULL
+);
+"""
+
+CREATE_PATH_EVENTS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_path_events_target ON path_events(target_id, at);
+"""

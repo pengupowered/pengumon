@@ -46,13 +46,22 @@ provider a report instead of a hunch.
 Pengumon runs natively on Windows, macOS and Linux, or in a container. One command per system; each link goes to that
 system's section in [docs/install.md](docs/install.md), with what it needs, what it sets up and how to remove it.
 
-| System | Command | Details |
-|---|---|---|
-| **Windows** 10/11 (no administrator rights) | `irm https://github.com/pengupowered/pengumon/releases/latest/download/install.ps1 \| iex` in PowerShell | [Windows](docs/install.md#windows) |
-| **macOS** (Apple silicon or Intel) | `curl -fsSL https://github.com/pengupowered/pengumon/releases/latest/download/install.sh \| sh` | [macOS](docs/install.md#macos) |
-| **Linux** (systemd, x86-64 or arm64) | the same `install.sh` line | [Linux](docs/install.md#linux) |
-| **Raspberry Pi** (64-bit OS only) | the same `install.sh` line | [Raspberry Pi](docs/install.md#raspberry-pi) |
-| **Container** (Docker or Podman on Linux) | `docker compose up -d` with the published image | [Container](docs/install.md#container) |
+**Windows** 10/11 (no administrator rights), in PowerShell ([details](docs/install.md#windows)):
+
+```powershell
+irm https://github.com/pengupowered/pengumon/releases/latest/download/install.ps1 | iex
+```
+
+**macOS** (Apple silicon or Intel) ([details](docs/install.md#macos)), **Linux** (systemd, x86-64 or arm64)
+([details](docs/install.md#linux)) and **Raspberry Pi** (64-bit OS only) ([details](docs/install.md#raspberry-pi)) use the
+same line:
+
+```bash
+curl -fsSL https://github.com/pengupowered/pengumon/releases/latest/download/install.sh | sh
+```
+
+**Container** (Docker or Podman on Linux): `docker compose up -d` with the published image, as below
+([details](docs/install.md#container)).
 
 The scripts download the release, check every file against its hash, set up Pengumon's own Python, start it in the
 background so it survives reboots, and open `http://127.0.0.1:8000` (this computer only until you allow more, with an
@@ -103,13 +112,11 @@ into the database once, with their ids, so all history stays attached. From then
 
 Each hop has a role (**category**) that places it on the path. Any number of each works, and none is required:
 
-| Category  | Shown as      | Typically                                       |
-|-----------|---------------|-------------------------------------------------|
-| `local`   | Router        | your router or mesh nodes                       |
-| `gateway` | Line          | the cable/fiber modem or the provider's box     |
-| `isp`     | ISP hop 1, 2… | your provider's routers, in path order          |
-| `public`  | Internet      | public resolvers; the figure is their median    |
-| `custom`  | its own name  | anything else worth watching: a NAS, a VPN, a server |
+- `local`: shown as **Router**; your router or mesh nodes.
+- `gateway`: shown as **Line**; the cable/fiber modem or the provider's box.
+- `isp`: shown as **ISP hop 1, 2…**; your provider's routers, in path order.
+- `public`: shown as **Internet**; public resolvers, the figure is their median.
+- `custom`: shown under its own name; anything else worth watching: a NAS, a VPN, a server.
 
 The dashboard adapts to the shape of your network. A long path folds its provider hops into one node when space runs
 out. A provider router that ignores ping while traffic passes through it is shown as such, not as down. Custom targets
@@ -119,12 +126,13 @@ host" instead of counting as down. Everything is in [docs/configuration.md](docs
 
 ### Supported devices
 
-| Driver       | Devices                                  | What it reads                                              |
-|--------------|------------------------------------------|------------------------------------------------------------|
-| `xfinity_xb` | Xfinity / Comcast XB6, XB7, XB8 gateways | DOCSIS downstream and upstream levels, SNR, codeword errors |
-| `asuswrt`    | AsusWRT routers (RT-AX, ZenWiFi, …)      | WAN traffic, CPU, memory, clients by band, mesh nodes      |
-| `openwrt`    | OpenWrt routers (with LuCI, or rpcd and uhttpd-mod-ubus) | WAN traffic, CPU, memory, model, clients (DHCP leases, Wi-Fi stations by band) |
-| `snmp`       | Anything with an SNMPv2c agent: routers, switches, NAS boxes | WAN (or uplink) traffic, CPU, memory, model |
+- `xfinity_xb`: Xfinity / Comcast XB6, XB7, XB8 gateways. Reads DOCSIS downstream and upstream levels, SNR and
+  codeword errors.
+- `asuswrt`: AsusWRT routers (RT-AX, ZenWiFi, …). Reads WAN traffic, CPU, memory, clients by band and mesh nodes.
+- `openwrt`: OpenWrt routers (with LuCI, or rpcd and uhttpd-mod-ubus). Reads WAN traffic, CPU, memory, model and
+  clients (DHCP leases, Wi-Fi stations by band).
+- `snmp`: anything with an SNMPv2c agent: routers, switches, NAS boxes. Reads WAN (or uplink) traffic, CPU, memory
+  and model.
 
 Probing works with any equipment; devices are an optional extra. Setting up each one, and adding a driver, is
 described in [docs/devices.md](docs/devices.md).
@@ -151,63 +159,58 @@ the Home Assistant recipe are in [docs/webhooks.md](docs/webhooks.md).
 
 ## A closer look
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/inspector.png" alt="The incident inspector: when it started, where loss first appeared, per-hop lanes before, during and after, and the modem's reading"></td>
-    <td width="50%"><img src="docs/images/drilldown.png" alt="Loss by hour of the week; one evening hour selected, and the incident list filtered to that hour"></td>
-  </tr>
-  <tr>
-    <td><b>Incident inspector.</b> Where loss first appeared, every hop before, during and after, the modem's signal and the line load.</td>
-    <td><b>When it breaks.</b> Loss by hour of the week; click an hour to see its incidents.</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/router.png" alt="The router card: WAN traffic against the line capacity, CPU and memory, clients by band and the mesh nodes"></td>
-    <td><img src="docs/images/modem.png" alt="The cable modem card: downstream power, SNR and upstream power against their good ranges, codeword errors and channel lock"></td>
-  </tr>
-  <tr>
-    <td><b>Router.</b> WAN traffic against the line's capacity, CPU and memory, clients by band and per mesh node.</td>
-    <td><b>Cable modem.</b> Signal levels against their good ranges, codeword errors and channel lock, with history.</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/first-run.png" alt="Path health on a first run: the banner 'Pengumon found your network path' with a Review button"></td>
-    <td><img src="docs/images/path-editor.png" alt="The path editor with a draft from discovery: each hop with a role, a Sure or Likely badge and the reasons"></td>
-  </tr>
-  <tr>
-    <td><b>First run.</b> Discovery runs by itself and offers the path it found; the defaults are probed until you apply it.</td>
-    <td><b>Path editor.</b> Discovery's draft: every hop with a role, how sure it is and why. Edit, then Apply.</td>
-  </tr>
-</table>
+<img src="docs/images/inspector.png" alt="The incident inspector: when it started, where loss first appeared, per-hop lanes before, during and after, and the modem's reading" width="640">
+
+**Incident inspector.** Where loss first appeared, every hop before, during and after, the modem's signal and the line load.
+
+<img src="docs/images/drilldown.png" alt="Loss by hour of the week; one evening hour selected, and the incident list filtered to that hour" width="640">
+
+**When it breaks.** Loss by hour of the week; click an hour to see its incidents.
+
+<img src="docs/images/router.png" alt="The router card: WAN traffic against the line capacity, CPU and memory, clients by band and the mesh nodes" width="640">
+
+**Router.** WAN traffic against the line's capacity, CPU and memory, clients by band and per mesh node.
+
+<img src="docs/images/modem.png" alt="The cable modem card: downstream power, SNR and upstream power against their good ranges, codeword errors and channel lock" width="640">
+
+**Cable modem.** Signal levels against their good ranges, codeword errors and channel lock, with history.
+
+<img src="docs/images/first-run.png" alt="Path health on a first run: the banner 'Pengumon found your network path' with a Review button" width="640">
+
+**First run.** Discovery runs by itself and offers the path it found; the defaults are probed until you apply it.
+
+<img src="docs/images/path-editor.png" alt="The path editor with a draft from discovery: each hop with a role, a Sure or Likely badge and the reasons" width="640">
+
+**Path editor.** Discovery's draft: every hop with a role, how sure it is and why. Edit, then Apply.
 
 <p align="center">
-  <img src="docs/images/phone-live.png" width="260" alt="The dashboard on a phone: path health as a vertical chain">
+  <img src="docs/images/phone-live.png" width="180" alt="The dashboard on a phone: path health as a vertical chain">
   &nbsp;&nbsp;
-  <img src="docs/images/phone-incidents.png" width="260" alt="The incidents tab on a phone">
+  <img src="docs/images/phone-incidents.png" width="180" alt="The incidents tab on a phone">
   &nbsp;&nbsp;
-  <img src="docs/images/overview-light.png" width="420" alt="The dashboard in the light theme">
+  <img src="docs/images/overview-light.png" width="300" alt="The dashboard in the light theme">
 </p>
 
 ## Documentation
 
-| Page | What is in it |
-|---|---|
-| [Install](docs/install.md) | Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download |
-| [Configuration](docs/configuration.md) | The probe path (targets), DNS lookups, thresholds, retention, line capacity, the classifier |
-| [Probing](docs/probing.md) | Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step |
-| [Path editor](docs/path-editor.md) | Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17 |
-| [Discovery](docs/discovery.md) | Finding the path and who operates each hop: what is sent where, how roles are judged |
-| [Devices](docs/devices.md) | The `devices:` list: drivers, capabilities, TLS, credentials, writing a driver |
-| [Diagnosis](docs/diagnosis.md) | How outages are classified: load-aware rules, incident kinds and causes |
-| [Dashboard](docs/dashboard.md) | The panels, the path chain, layout, themes, the phone view |
-| [Clients](docs/clients.md) | Connected clients and mesh nodes, privacy settings, what is stored |
-| [Services](docs/services.md) | Health checks for your own apps and their notifications |
-| [Webhooks](docs/webhooks.md) | Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets |
-| [Telemetry](docs/telemetry.md) | What is stored and sent, logging, OpenTelemetry, ntfy |
-| [Security](docs/security.md) | Access token, request guard, environment variables |
-| [Storage](docs/storage.md) | Database layout, migrations, upgrade notes |
-| [API](docs/api.md) | Data and operations endpoints |
-| [Architecture](docs/architecture.md) | Components, start-up order, the live message |
-| [Testing](docs/testing.md) | Unit tests, browser tests and lint |
-| [Supply chain](docs/supply-chain.md) | Dependency policy, hash-locked requirements, vendored code |
+- [Install](docs/install.md): Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download
+- [Configuration](docs/configuration.md): The probe path (targets), DNS lookups, thresholds, retention, line capacity, the classifier
+- [Probing](docs/probing.md): Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step
+- [Path editor](docs/path-editor.md): Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17
+- [Discovery](docs/discovery.md): Finding the path and who operates each hop: what is sent where, how roles are judged
+- [Devices](docs/devices.md): The `devices:` list: drivers, capabilities, TLS, credentials, writing a driver
+- [Diagnosis](docs/diagnosis.md): How outages are classified: load-aware rules, incident kinds and causes
+- [Dashboard](docs/dashboard.md): The panels, the path chain, layout, themes, the phone view
+- [Clients](docs/clients.md): Connected clients and mesh nodes, privacy settings, what is stored
+- [Services](docs/services.md): Health checks for your own apps and their notifications
+- [Webhooks](docs/webhooks.md): Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets
+- [Telemetry](docs/telemetry.md): What is stored and sent, logging, OpenTelemetry, ntfy
+- [Security](docs/security.md): Access token, request guard, environment variables
+- [Storage](docs/storage.md): Database layout, migrations, upgrade notes
+- [API](docs/api.md): Data and operations endpoints
+- [Architecture](docs/architecture.md): Components, start-up order, the live message
+- [Testing](docs/testing.md): Unit tests, browser tests and lint
+- [Supply chain](docs/supply-chain.md): Dependency policy, hash-locked requirements, vendored code
 
 ## Development
 

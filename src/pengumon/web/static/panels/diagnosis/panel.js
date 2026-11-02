@@ -9,11 +9,16 @@
 // that segment adds. A node opens that target's history; the Internet node and a folded run of ISP hops open the history
 // of all their targets together (a switcher there shows one of them).
 
-import { escapeHtml, icon, latestMs, setBadge, setText, STATUS } from '../../js/util.js';
+import * as util from '../../js/util.js';
+import { registerActions } from '../../js/dispatch.js';
 import { sparkSvg } from '../../js/sparkline.js';
 import { pathNodes } from '../../js/path.js';
-import { fetchPath, startDiscovery, waitDiscovery } from '../../js/path-api.js';
+import { deviceLabel, deviceStatus, dismissDrift, fetchDrift, fetchPath, startDiscovery, waitDiscovery } from '../../js/path-api.js';
+import { state } from '../../js/state.js';
+import { bus as pageBus } from '../../js/bus.js';
 import './help.js';
+
+const { escapeHtml, icon, latestMs, setBadge, setText, STATUS } = util;
 
 // The classifier's status -> the design's status level and its word.
 const LEVEL = { healthy: 'good', degraded: 'warn', down: 'crit', busy: 'busy' };
@@ -32,6 +37,7 @@ function updateHeader(diagnosis, level) {
   const pill = document.getElementById('statusPill');
   if (pill) pill.className = `status-pill st-${level}`;
   setText(document.getElementById('statusPillText'), diagnosis.title);
+  if (pill) pill.title = diagnosis.title; // the pill cuts a long title with an ellipsis
   setText(document.getElementById('statusPillWord'), WORD[diagnosis.status] || diagnosis.title); // the phone's pill: one word
   document.getElementById('topbar').className = `topbar st-${level}`;
   document.body.dataset.status = level;
@@ -104,7 +110,7 @@ function paintNode(el, link, n, prev) {
   // the configured name is long ("Hop 3: <provider> ..."): one line under the short label, whole in the tooltip
   const name = el.querySelector('.node-name');
   setText(name, n.name);
-  name.title = n.title || n.name;
+  name.title = deviceTip(n, n.title || n.name);
   const st = el.querySelector('.node-st');
   if (st.dataset.level !== n.level || st.title !== word) {
     st.dataset.level = n.level;
@@ -221,12 +227,37 @@ function banner(html) {
 }
 
 const review = (arg, title, text) => `<div class="result st-unknown">${icon('path')}<span><b>${escapeHtml(title)}</b> ${escapeHtml(text)}</span>`
-  + `<button type="button" class="btn sm primary" data-action="openPathEditor" data-arg="${escapeHtml(arg)}">Review</button></div>`;
+  + `<button type="button" class="btn sm primary" data-action="openPathEditor" data-needs-edit data-arg="${escapeHtml(arg)}">Review</button></div>`;
 
+// The device linked to each hop (the path editor's device line), for a node's tooltip: "Readings from: <label> ·
+// Healthy · CPU 12%", from the device's latest reading (js/device-feed.js, the device cards' feed).
+const hopDevices = new Map();
+const NODE_ROLE = { Router: 'local', Line: 'gateway' };
+function deviceTip(n, base) {
+  // the Router and Line nodes stand for every hop of their role; the others for their own target
+  const members = NODE_ROLE[n.kind] && lastTargets ? lastTargets.filter((t) => t.category === NODE_ROLE[n.kind]).map((t) => t.target_id) : [n.target];
+  const ids = [...new Set(members.map((m) => hopDevices.get(m)).filter(Boolean))];
+  const lines = ids.map((id) => state.devices.find((d) => d.id === id)).filter(Boolean).map((device) => {
+    const st = deviceStatus(device, pageBus.last(`device:${device.id}`));
+    return `Readings from: ${[deviceLabel(device), st.word || 'waiting', ...st.figures].join(' · ')}`;
+  });
+  return [base, ...lines].join('\n');
+}
+
+// The first run, when the path was never applied; true when it is one (the banner is then its own).
 export async function firstRun() {
   let path;
-  try { path = await fetchPath(); } catch (_) { return; }
-  if (path.revision !== 0) { banner(''); return; }
+  try { path = await fetchPath(); } catch (_) { return false; }
+  hopDevices.clear();
+  (path.hops || []).forEach((h) => { if (h.device_id && ['local', 'gateway'].includes(h.category)) hopDevices.set(h.id, h.device_id); });
+  if (path.revision !== 0) { banner(''); return false; }
+  firstRunBanner();
+  return true;
+}
+
+async function firstRunBanner() {
+  await util.accessKnown; // the sign-in state first
+  if (!util.canEdit()) { banner(''); return; } // a viewer without the token: discovery and applying a path are the owner's
   banner(`<div class="result st-unknown">${icon('route')}<span><b>Finding your network path…</b> <span data-f="progress">Tracing the hops to the internet.</span></span></div>`);
   try {
     const id = await startDiscovery({ asnLookup: false, snmp: false, firstRun: true });
@@ -239,6 +270,45 @@ export async function firstRun() {
   banner(review('', 'Review your network path', '· The default targets are probed until you apply a path of your own.'));
 }
 
+// The route changed (GET /api/path/drift: discovery reruns quietly, daily and after an incident): "Your path changed ·
+// Review" opens the editor with that discovery's draft; Dismiss marks these changes seen. Checked at the start and
+// every few minutes; a build without the check shows nothing.
+const DRIFT_EVERY_MS = 5 * 60 * 1000;
+let driftKey = '';
+
+export async function driftNotice() {
+  let drift;
+  try { drift = await fetchDrift(); } catch (_) { return; }
+  const box = document.getElementById('pathBanner');
+  const changes = drift && drift.state === 'changed' && drift.discovery_id ? (drift.changes || []) : [];
+  if (!changes.length) {
+    if (box.dataset.kind === 'drift') { banner(''); delete box.dataset.kind; }
+    return;
+  }
+  const key = `${drift.discovery_id}|${drift.checked_at}`;
+  if (key === driftKey && box.dataset.kind === 'drift') return;
+  driftKey = key;
+  const more = changes.length > 1 ? ` (and ${changes.length - 1} more)` : '';
+  const edit = util.canEdit();
+  banner(`<div class="result st-warn">${icon('route')}<span><b>Your path changed</b> · ${escapeHtml(changes[0].text || '')}${escapeHtml(more)}</span>`
+    + `<button type="button" class="btn sm primary" data-action="openPathEditor" data-needs-edit data-arg="${escapeHtml(`discovery:${drift.discovery_id}`)}">Review</button>`
+    + `${edit ? '<button type="button" class="btn sm" data-action="dismissPathDrift" data-needs-edit>Dismiss</button>' : ''}</div>`);
+  box.dataset.kind = 'drift';
+}
+
+async function dismiss(el) {
+  el.disabled = true;
+  try {
+    await dismissDrift();
+    banner('');
+    delete document.getElementById('pathBanner').dataset.kind;
+  } catch (_) {
+    el.disabled = false;
+  }
+}
+
+registerActions('click', { dismissPathDrift: (el) => dismiss(el) });
+
 export function mountDiagnosis(bus, ctx) {
   document.getElementById('pathChain').innerHTML = skeleton();
   const foot = document.getElementById('pathFoot');
@@ -248,7 +318,11 @@ export function mountDiagnosis(bus, ctx) {
     foot.children[2].after(busy);
   }
   bus.subscribe('targets', updateChain);
-  firstRun();
+  firstRun().then((first) => {
+    if (first) return;
+    driftNotice();
+    setInterval(driftNotice, DRIFT_EVERY_MS);
+  });
   // a wider or narrower hero may fit a node per ISP hop, or no longer
   new ResizeObserver(() => { if (lastTargets) updateChain(lastTargets); }).observe(document.getElementById('pathChain'));
   return bus.subscribe('diagnosis', (d) => { updateDiagnosisBanner(d); inspectButton(d); });

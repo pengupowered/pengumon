@@ -29,7 +29,8 @@ RETRY_DELAY_SECONDS = 2.0
 @dataclass
 class Alert:
     """One announcement, with everything any channel shows. `event`: incident_started, incident_resolved,
-    service_down, service_up or test. `priority` and `tags` are ntfy's."""
+    service_down, service_up, path_changed or test. `priority` and `tags` are ntfy's. `page` is the part of the
+    dashboard the link should open ("#live": Path health), added to the configured public URL."""
     event: str
     severity: str  # info, warning or critical
     title: str
@@ -43,6 +44,14 @@ class Alert:
     duration_seconds: Optional[float] = None
     load_pct: Optional[float] = None
     service_id: Optional[str] = None
+    page: Optional[str] = None
+
+
+def alert_link(alert: Alert, public_url: Optional[str]) -> Optional[str]:
+    """The dashboard link of an alert: the public URL, with the alert's page when it names one."""
+    if not public_url:
+        return None
+    return public_url.rstrip("/") + "/" + alert.page if alert.page else public_url
 
 
 def _iso(epoch: Optional[float]) -> Optional[str]:
@@ -110,7 +119,7 @@ class WebhookSender:
         self._retry_delay = retry_delay
 
     def payload(self, alert: Alert) -> dict:
-        return _BUILDERS[self.format](alert, self._public_url)
+        return _BUILDERS[self.format](alert, alert_link(alert, self._public_url))
 
     async def send(self, client: httpx.AsyncClient, alert: Alert) -> Optional[str]:
         """Posts the alert; one retry after a transport error, a timeout, a 429 or a 5xx. Returns None when it was

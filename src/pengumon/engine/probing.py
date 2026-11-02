@@ -40,6 +40,7 @@ async def register(ctx: Context) -> Component:
         ctx.spawn(probe_background_worker(config, prober, ctx.state.classifier, repository, live_parts=parts))
 
     async def stop() -> None:
+        await path.previews.close()  # draft previews probe through the shared backend: stopped before it closes
         close_shared_backend()
 
     return Component("probing", start=start, stop=stop)

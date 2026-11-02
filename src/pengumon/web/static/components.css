@@ -75,6 +75,10 @@ button.chip[aria-pressed="true"] { color: var(--ink-1); background: var(--accent
 .btn.icon { width: 32px; padding: 0; }
 .btn.icon.sm { width: 28px; }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
+/* view only (util.js setCanEdit): an edit control stays focusable and keeps its tooltip, but is shown off */
+[data-view-only] [data-needs-edit][aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+[data-view-only] .btn[data-needs-edit][aria-disabled="true"]:hover { background: transparent; color: var(--ink-2); }
+[data-view-only] .btn.primary[data-needs-edit][aria-disabled="true"]:hover { background: var(--accent); color: var(--on-accent); }
 .btn svg.i { width: 16px; height: 16px; }
 
 /* Segmented control (time ranges, view toggles): one component everywhere */

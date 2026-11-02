@@ -1,8 +1,12 @@
-"""The discovery component: the job store behind POST /api/discovery (engine/discovery/api.py).
+"""The discovery component: the job store behind POST /api/discovery (engine/discovery/api.py), and the background
+route-change checks (drift.py).
 
 `router` is always mounted. `register` makes the job store, whose runs diff their draft against the applied probe
-path (engine/path.py) and the hops removed from it; the configured devices' hosts get one front-page request each. Nothing starts by itself: a run begins when the path editor asks for one. At shutdown
-a run still going is stopped. Optional: a failure here costs discovery, never the start.
+path (engine/path.py) and the hops removed from it; the configured devices' hosts get one front-page request each. A
+run the owner starts begins when the path editor asks for one. With `discovery.background` on (the default) it also
+makes the DriftChecker: started with the app, it checks the route once a day, and the classifier's "incident ended"
+callback asks it for a check soon after an incident (the notifier's callback is kept and runs first). At shutdown a
+run still going is stopped. Optional: a failure here costs discovery, never the start.
 """
 
 import asyncio
@@ -13,9 +17,10 @@ from urllib.parse import urlsplit
 from pengumon.components import Component, Context
 from pengumon.engine.discovery.addresses import parse
 from pengumon.engine.discovery.api import router
+from pengumon.engine.discovery.drift import DriftChecker
 from pengumon.engine.discovery.engine import Deps, live_path_from_targets, run_discovery
-from pengumon.engine.path import path_manager
 from pengumon.engine.discovery.jobs import DiscoveryJobs
+from pengumon.engine.path import path_manager
 
 __all__ = ["OPTIONAL", "register", "router"]
 
@@ -31,6 +36,29 @@ async def applied_paths(state) -> Tuple[List[dict], List[dict]]:
         return live_path_from_targets(state.config.targets if state.config else []), []
     _, hops = await manager.current()
     return live_path_from_targets(hops), live_path_from_targets(await manager.repository.removed_path_hops())
+
+
+async def drift_paths(state) -> Tuple[int, List[dict], List[dict]]:
+    """What a route-change check compares with: the revision, the applied path and the hops removed from it."""
+    manager = path_manager(state)
+    if manager is None:
+        return 0, [], []
+    revision, hops = await manager.current()
+    return revision, live_path_from_targets(hops), live_path_from_targets(await manager.repository.removed_path_hops())
+
+
+def chain_incident_ended(classifier, after) -> None:
+    """Calls `after(incident)` when the classifier resolves an incident, after the callback it already has."""
+    before = classifier.on_incident_resolved
+
+    def resolved(incident) -> None:
+        try:
+            if before is not None:
+                before(incident)
+        finally:
+            after(incident)
+
+    classifier.on_incident_resolved = resolved
 
 
 def device_hosts(config) -> FrozenSet[str]:
@@ -77,7 +105,25 @@ async def register(ctx: Context) -> Component:
     jobs = DiscoveryJobs(run)
     state.discovery = jobs
 
+    settings = getattr(ctx.config, "discovery", None)
+    drift = None
+    if settings is not None and settings.background and state.repository is not None:
+        drift = DriftChecker(run=lambda options: run(options, lambda text: None), paths=lambda: drift_paths(state),
+                             repository=state.repository, jobs=jobs,
+                             notify=ctx.notifier.notify_path_changed if ctx.notifier is not None else None,
+                             asn_lookup=settings.asn_lookup)
+        state.drift = drift
+        if state.classifier is not None:
+            chain_incident_ended(state.classifier, drift.incident_ended)
+
+    async def start() -> None:
+        if drift is not None:
+            await drift.load()
+            ctx.spawn(drift.run_daily())
+
     async def stop() -> None:
+        if drift is not None:
+            await drift.close()
         await jobs.close()
 
-    return Component("discovery", stop=stop)
+    return Component("discovery", start=start, stop=stop)

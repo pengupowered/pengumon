@@ -5,7 +5,10 @@ One source of truth while the app runs: `config.targets`, the list the probe loo
 traceroute, the reports and the inspector read. An applied edit replaces its contents in place (so every holder of
 the list sees it), hands the prober the new targets (NetworkProber.set_targets) and updates the repository's hidden
 ids (hops removed from the path keep their history, hidden). The database (db/path.py) holds the path and its
-revision; an edit commits there first, so a refused or failed write changes nothing that is live.
+revision; an edit commits there first, so a refused or failed write changes nothing that is live. Every apply is
+also kept there as a version (with a one-line summary of the change), and a hop whose address changed keeps its id,
+its history and gets an "address_changed" event; the prober starts its live statistics over. `previews`
+(engine/path_preview.py) probes a draft's new hops before it is applied.
 
 At the first start of this version, when the path was never imported or applied, config.yaml's targets and the
 custom targets added from the dashboard before (custom_targets) are imported once with their ids, which key all the
@@ -20,6 +23,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field, model_validator
 
 from pengumon.db.path import PathConflict
+from pengumon.engine.device_links import link_devices
+from pengumon.engine.path_preview import PreviewStore
 from pengumon.models.probes import TargetConfig
 from pengumon.observability import get_logger
 
@@ -28,7 +33,8 @@ _log = get_logger("pengumon.path")
 IGNORED_TARGETS_LINE = ("targets are managed in the dashboard; the targets: section of config.yaml is ignored "
                         "(Path health > Edit > Export / Import moves a path between installs)")
 
-__all__ = ["MAX_PATH_HOPS", "PathConflict", "PathError", "PathHop", "PathManager", "PathUpdate", "hop_dict"]
+__all__ = ["MAX_PATH_HOPS", "PathConflict", "PathDraft", "PathError", "PathHop", "PathManager", "PathUpdate",
+           "hop_dict"]
 
 # --- the path as the editor and its API see it: hops in path order ---------------------------------------------------
 #
@@ -43,9 +49,8 @@ class PathHop(TargetConfig):
     position: int = Field(..., ge=0, le=100_000)
 
 
-class PathUpdate(BaseModel):
-    """PUT /api/path: the whole path, and the revision it was edited from (409 when another edit came first)."""
-    base_revision: int = Field(..., ge=0)
+class PathDraft(BaseModel):
+    """A whole path in path order, validated as a PUT validates it (POST /api/path/preview sends one)."""
     hops: List[PathHop] = Field(..., max_length=MAX_PATH_HOPS)
 
     @model_validator(mode="after")
@@ -65,6 +70,11 @@ class PathUpdate(BaseModel):
                 for h in sorted(self.hops, key=lambda h: h.position)]
 
 
+class PathUpdate(PathDraft):
+    """PUT /api/path: the whole path, and the revision it was edited from (409 when another edit came first)."""
+    base_revision: int = Field(..., ge=0)
+
+
 def hop_dict(target: TargetConfig, position: int) -> Dict[str, Any]:
     """One hop of GET /api/path (and of an import draft): the target's fields and its position."""
     return {**target.model_dump(), "position": position}
@@ -78,11 +88,20 @@ class PathError(ValueError):
 
 
 class PathManager:
-    def __init__(self, config, repository, prober=None):
+    def __init__(self, config, repository, prober=None, resolve=None):
         self.config = config
         self.repository = repository
         self.prober = prober
         self.lock = asyncio.Lock()
+        self.previews = PreviewStore()  # draft hops probed before an apply (POST /api/path/preview)
+        self._resolve = resolve  # host name -> addresses for the device links (engine.device_links); None: the system's
+
+    async def link(self, targets: List[TargetConfig], only=None) -> List[TargetConfig]:
+        """The targets with their home hops linked to the configured device at their address (engine.device_links)."""
+        if not self.config.devices:
+            return list(targets)
+        extra = {"resolve": self._resolve} if self._resolve else {}
+        return await link_devices(targets, self.config.devices, only=only, **extra)
 
     async def load(self) -> None:
         """At start, before the prober is built: the one-time import, then the stored path into config.targets."""
@@ -92,7 +111,7 @@ class PathManager:
             if config.targets_from_file or custom:
                 # what was probed until now: config.yaml's targets (or the defaults), then the custom ones
                 taken = {t.id for t in config.targets}
-                imported = list(config.targets) + [t for t in custom if t.id not in taken]
+                imported = await self.link(list(config.targets) + [t for t in custom if t.id not in taken])
                 if await repository.import_path(imported[:MAX_PATH_HOPS], imported[MAX_PATH_HOPS:]):
                     _log.info("Imported the probe path into the database", hops=min(len(imported), MAX_PATH_HOPS),
                               from_config=len(config.targets), custom=len(imported) - len(config.targets))
@@ -104,7 +123,18 @@ class PathManager:
                 return  # nothing to import: the defaults are probed, unstored, until a path is applied
         elif config.targets_from_file:
             _log.info(IGNORED_TARGETS_LINE)
-        _, hops = await repository.load_path()
+        if await repository.drop_stored_ignores_ping():
+            _log.info("Dropped the stored \"ignores ping\" settings of the path: whether a hop ignores ping is observed")
+        revision, hops = await repository.load_path()
+        if not await repository.path_devices_linked():  # a path stored by an older version: link its home hops once
+            linked = await self.link(hops)
+            if linked != hops:
+                await repository.save_path(revision, linked)
+                _log.info("Linked the path's home hops to their devices by address",
+                          hops=sum(a != b for a, b in zip(linked, hops)))
+            else:
+                await repository.mark_path_devices_linked()
+            hops = linked
         config.targets[:] = hops
 
     async def current(self) -> Tuple[int, List[TargetConfig]]:
@@ -128,9 +158,11 @@ class PathManager:
             raise PathError(f"No device {', '.join(unknown)} is configured (config.yaml devices:)")
 
     async def apply(self, base_revision: int, targets: List[TargetConfig]) -> int:
-        """Stores the path if it is still at base_revision (else PathConflict), then makes it live. The new
-        revision."""
+        """Stores the path if it is still at base_revision (else PathConflict), then makes it live. A home hop new
+        in this path is linked to the device at its address when it has none. The new revision."""
         self.check(targets)
+        live = {t.id for t in self.config.targets}
+        targets[:] = await self.link(targets, only={t.id for t in targets if t.id not in live})
         async with self.lock:
             revision = await self.repository.save_path(base_revision, targets)
             await self._live_after_save(targets)

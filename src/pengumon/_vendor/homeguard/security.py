@@ -16,6 +16,10 @@ Threats this addresses:
   Without one, POST /logout only clears the cookie of the browser that sends it.
 * **Oversized bodies** and **abuse of expensive endpoints** (`rate_limit`).
 
+Optionally (`<PREFIX>_VIEW_WITHOUT_TOKEN`, off by default, and only for an app whose profile declares a
+`ViewerPolicy`), someone without the token may read what the policy allows (GET/HEAD of its paths, receive-only
+websockets) while every state-changing request, and every path the policy keeps private, still needs the token.
+
 Everything that differs between apps lives in an `AppProfile`; an app declares one and subclasses
 `SecurityConfig` to attach it. No third-party dependencies beyond FastAPI/Starlette.
 """
@@ -82,6 +86,74 @@ class CacheRule:
     error: Optional[str] = None
 
 
+_SEGMENT = "[^/]+"
+
+
+def _pattern(text: str, flags: int = 0) -> "re.Pattern[str]":
+    """A path pattern: `*` is one path segment (at least one character, no `/`), `**` anything (slashes included);
+    every other character is literal. The whole path must match."""
+    if not isinstance(text, str) or not text.startswith("/"):
+        raise ValueError(f"a viewer path pattern must start with '/': {text!r}")
+    parts = re.split(r"(\*\*|\*)", text)
+    regex = "".join(".*" if part == "**" else _SEGMENT if part == "*" else re.escape(part) for part in parts)
+    return re.compile(regex, flags)
+
+
+def _normal_path(path: str) -> Optional[str]:
+    """The path a viewer rule is matched against: runs of `/` made one and a trailing `/` dropped, so `//x` and `x/`
+    are judged as `/x`. None for a path with a `.` or `..` segment or a backslash (never a viewer's)."""
+    if not path.startswith("/") or "\\" in path:
+        return None
+    segments = [s for s in path.split("/") if s]
+    if any(s in (".", "..") for s in segments):
+        return None
+    return "/" + "/".join(segments)
+
+
+@dataclass(frozen=True)
+class ViewerPolicy:
+    """What someone without the token may do when the deployment turns viewing on (`<PREFIX>_VIEW_WITHOUT_TOKEN`).
+    A request without the token passes only when its method is one of `methods` (safe methods only: GET, HEAD,
+    OPTIONS; GET and HEAD by default), its path matches an `allow` pattern and no `deny` pattern. `deny` wins over
+    `allow` and is matched without regard to case; patterns are those of `_pattern` (`*` one segment, `**` anything).
+    A websocket without the token is accepted only on a path in `websockets` (exact paths), and is receive-only: what
+    the client sends never reaches the app (it gets only connect and disconnect). Everything else still needs the
+    token: a state-changing method can never be allowed."""
+
+    allow: Tuple[str, ...]
+    deny: Tuple[str, ...] = ()
+    websockets: Tuple[str, ...] = ()
+    methods: Tuple[str, ...] = ("GET", "HEAD")
+
+    def __post_init__(self):
+        for name in ("allow", "deny", "websockets", "methods"):
+            if isinstance(getattr(self, name), str):  # ("/x") instead of ("/x",): one pattern per character
+                raise ValueError(f"ViewerPolicy.{name} must be a tuple of strings, not a string")
+        unsafe = [m for m in self.methods if m not in SAFE_METHODS]
+        if unsafe:
+            raise ValueError(f"a viewer may only use safe methods ({', '.join(sorted(SAFE_METHODS))}), not {unsafe}")
+        for path in self.websockets:
+            if not isinstance(path, str) or not path.startswith("/") or "*" in path:
+                raise ValueError(f"a viewer websocket is an exact path starting with '/': {path!r}")
+        object.__setattr__(self, "_allow", tuple(_pattern(p) for p in self.allow))
+        object.__setattr__(self, "_deny", tuple(_pattern(p, re.IGNORECASE) for p in self.deny))
+
+    def denies(self, path: str) -> bool:
+        """True when the path is kept private (a `deny` pattern matches it, or it is not a plain path)."""
+        normal = _normal_path(path)
+        return normal is None or any(p.fullmatch(normal) for p in self._deny)
+
+    def permits(self, method: str, path: str) -> bool:
+        """True when someone without the token may make this request."""
+        if method not in self.methods or self.denies(path):
+            return False
+        normal = _normal_path(path)
+        return any(p.fullmatch(normal) for p in self._allow)
+
+    def permits_websocket(self, path: str) -> bool:
+        return path in self.websockets and not self.denies(path)
+
+
 @dataclass(frozen=True)
 class AppProfile:
     slug: str  # logger "<slug>.security" and the Bearer realm
@@ -99,6 +171,9 @@ class AppProfile:
     # instead of a header, for clients that cannot send one (calendar apps).
     capabilities: Mapping[str, str] = field(default_factory=dict)
     cache_rules: Tuple[CacheRule, ...] = ()
+    # What someone without the token may read when <PREFIX>_VIEW_WITHOUT_TOKEN is on; None: the app offers no viewing
+    # (setting the variable then stops the start).
+    viewer_policy: Optional[ViewerPolicy] = None
 
 
 def _csv(name: str) -> List[str]:
@@ -131,6 +206,10 @@ def _session_days(name: str) -> float:
     except ValueError:
         raise ValueError(f"{name} must be a number of days, not {raw[:40]!r}") from None
     return _check_session_days(days, name)
+
+
+def _flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _body_bytes(name: str) -> int:
@@ -345,9 +424,20 @@ class SecurityConfig:
     cookie_secure: bool = False
     session_max_age_days: float = DEFAULT_SESSION_MAX_AGE_DAYS
     session_store: Optional[SessionStore] = None  # enables POST /logout?everywhere=1
+    view_without_token: bool = False  # with a token: viewers may read what the profile's viewer_policy allows
 
     def __post_init__(self):
         _check_session_days(self.session_max_age_days)
+        profile = getattr(type(self), "PROFILE", None)
+        if self.view_without_token and (profile is None or profile.viewer_policy is None):
+            raise ValueError("view_without_token is on, but this app declares no viewer policy "
+                             "(AppProfile.viewer_policy): it cannot offer viewing without the token")
+
+    @property
+    def viewers_allowed(self) -> bool:
+        """True when someone without the token may read what the viewer policy allows (a token is set, and so is
+        view_without_token). Without a token everyone may do everything anyway."""
+        return bool(self.access_token) and self.view_without_token
 
     @classmethod
     def from_env(cls, session_store: Optional[SessionStore] = None):
@@ -360,6 +450,7 @@ class SecurityConfig:
             cookie_secure=os.getenv(f"{prefix}_COOKIE_SECURE", "").lower() in ("1", "true", "yes"),
             session_max_age_days=_session_days(f"{prefix}_SESSION_MAX_AGE_DAYS"),
             session_store=session_store,
+            view_without_token=_flag(f"{prefix}_VIEW_WITHOUT_TOKEN"),
         )
 
     # -- derived secrets: rotating the token invalidates cookies and capability links ------------
@@ -441,6 +532,7 @@ class SecurityConfig:
             "max_body_bytes": self.max_body_bytes,
             "session_max_age_days": self.session_max_age_days,
             "sign_out_everywhere": self.session_store is not None,
+            "view_without_token": self.viewers_allowed,
         }
 
 
@@ -527,7 +619,8 @@ class _Request:
         self.method: str = scope["method"]
         self.path: str = scope["path"]
         self.host: str = headers.get("host", "")
-        self.auth: Optional[str] = None  # set by _guard_auth: "bearer", "cookie", "link", or "open" (no token)
+        # set by _guard_auth: "bearer", "cookie", "link", "open" (no token) or "viewer" (no token sent, viewing allowed)
+        self.auth: Optional[str] = None
 
 
 class _SessionEnded(OSError):
@@ -544,6 +637,18 @@ def session_status(request_or_scope: Any) -> Dict[str, bool]:
     return {"sign_out": bool(info.get("sign_out")), "sign_out_everywhere": bool(info.get("sign_out_everywhere"))}
 
 
+FULL_ACCESS = ("open", "bearer", "cookie")  # the ways of reaching an app that may change it
+
+
+def can_edit(request_or_scope: Any) -> bool:
+    """True when this request may change state: it carries the token (Bearer or the session cookie), or the app has no
+    token. False for a viewer (`<PREFIX>_VIEW_WITHOUT_TOKEN`), a signed link, a public path, or a request the
+    middleware did not see. For an app's info endpoint, so the page can offer or disable its edit controls; the
+    middleware enforces it whatever the page shows."""
+    scope = getattr(request_or_scope, "scope", request_or_scope)
+    return (scope.get("homeguard") or {}).get("auth") in FULL_ACCESS
+
+
 class SecurityMiddleware:
     def __init__(self, app, cfg: SecurityConfig):
         self.app = app
@@ -555,8 +660,15 @@ class SecurityMiddleware:
             # a link key is a published HMAC of its purpose: it must never equal a session purpose or key label
             if purpose == self.profile.session_purpose or purpose.startswith(RESERVED_PURPOSE_PREFIX):
                 raise ValueError(f"capability purpose {purpose!r} is reserved")
+        if self.cfg.view_without_token and self.profile.viewer_policy is None:
+            raise ValueError("view_without_token is on, but the profile declares no viewer_policy")
+        # a signed link's path is private by intent: never a viewer's, whatever the policy allows
+        self._link_paths = {(_normal_path(p) or p).lower() for p in self.profile.capabilities}
         if not self.cfg.access_token:
             self.logger.warning(self.profile.no_token_warning)
+        elif self.cfg.viewers_allowed:
+            self.logger.warning("Viewing without the token is on: anyone who can reach this port can read what the "
+                                "viewer policy allows; changing anything still needs the token")
 
     # -- helpers -----------------------------------------------------------
     @staticmethod
@@ -602,6 +714,12 @@ class SecurityMiddleware:
     def _authorized(self, scope, headers: Dict[str, str], path: str) -> bool:
         return self._auth_method(scope, headers, path) is not None
 
+    def _viewer_may(self, method: str, path: str) -> bool:
+        """True when a request without the token may still be made: viewing is on and the policy allows it."""
+        if not self.cfg.viewers_allowed or (_normal_path(path) or path).lower() in self._link_paths:
+            return False
+        return self.profile.viewer_policy.permits(method, path)
+
     def _clear_cookie(self) -> Tuple[bytes, bytes]:
         cookie = (f"{self.profile.cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
                   + ("; Secure" if self.cfg.cookie_secure else ""))
@@ -643,6 +761,9 @@ class SecurityMiddleware:
             return None
         ctx.auth = self._auth_method(ctx.scope, ctx.headers, ctx.path)
         if ctx.auth:
+            return None
+        if self._viewer_may(ctx.method, ctx.path):
+            ctx.auth = "viewer"
             return None
         wants_page = ctx.path == "/" or (ctx.method == "GET" and "text/html" in ctx.headers.get("accept", ""))
         if wants_page:
@@ -699,7 +820,10 @@ class SecurityMiddleware:
         if origin is None or not origin_allowed(origin, host, self.cfg):
             return f"Origin not allowed: {(origin or '')[:80]!r}", None
         # Header or cookie (or a signed link, on a capability path that is a websocket).
-        auth = self._auth_method(scope, headers, scope.get("path", ""))
+        path = scope.get("path", "")
+        auth = self._auth_method(scope, headers, path)
+        if auth is None and self.cfg.viewers_allowed and self.profile.viewer_policy.permits_websocket(path):
+            auth = "viewer"
         if auth is None:
             return "Authentication required", None
         return None, auth
@@ -713,6 +837,16 @@ class SecurityMiddleware:
             await send({"type": "websocket.close", "code": 1008})
             return
         self._annotate(scope, auth)
+        if auth == "viewer":
+            # Receive-only: what a viewer sends is read and dropped here, so the app never acts on it. It still hears
+            # connect and disconnect (and its own close), so its receive loop ends as usual.
+            async def viewer_receive():
+                while True:
+                    message = await receive()
+                    if message["type"] != "websocket.receive":
+                        return message
+
+            return await self.app(scope, viewer_receive, send)
         if auth != "cookie":
             return await self.app(scope, receive, send)
 

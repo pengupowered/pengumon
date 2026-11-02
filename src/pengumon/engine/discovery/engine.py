@@ -10,15 +10,15 @@ Nothing here changes anything: the result is a draft and some notes.
 
 import asyncio
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Sequence, Tuple
 
 import httpx
 
 from pengumon.engine.discovery import devices, upnp
-from pengumon.engine.discovery.addresses import LINK_LOCAL, PRIVATE, PUBLIC, address_class
+from pengumon.engine.discovery.addresses import LINK_LOCAL, PRIVATE, PUBLIC, address_class, same_subnet
 from pengumon.engine.discovery.draft import address_key, diff_against, missing_home_hops, proposed_hops, trim
-from pengumon.engine.discovery.infer import Facts, Inference, infer
+from pengumon.engine.discovery.infer import Facts, Inference, OffPathDevice, infer
 from pengumon.engine.discovery.lookups import Lookups, Query
 from pengumon.engine.discovery.traces import (
     PUBLIC_SERVERS, PUBLIC_SERVERS_V6, TRACE_MAX_HOPS, TRACE_TIMEOUT_S, MergedPath, PathHop, Trace, merge_paths,
@@ -28,14 +28,22 @@ from pengumon.engine.discovery.traces import (
 CHECKS_DEADLINE_S = 15.0
 PING_TIMEOUT_S = 1.0
 MAX_PINGED = 8  # live home hops off the traced path, pinged before they are called gone
-MAX_DEVICE_HOSTS = 8  # web pages fetched at most (the private hops before the first public one, and the modem address)
+MAX_DEVICE_HOSTS = 8  # web pages fetched at most (the private hops before the first public one, and the gateway
+# addresses below that are not on the traced path)
+# Where a modem or an ISP gateway commonly answers. One that is not a hop of the traced path gets one echo request and
+# one GET of its front page; one that answers is proposed as a gateway off the path (a modem in bridge mode is
+# invisible to a trace). 192.168.100.1 is where DOCSIS cable modems serve their status page.
+GATEWAY_ADDRESSES = ("10.0.0.1", "192.168.0.1", "192.168.1.1", devices.CABLE_MODEM_ADDRESS)
 
 
 @dataclass(frozen=True)
 class DiscoveryOptions:
     asn_lookup: bool = True  # Team Cymru, for public hops (docs/discovery.md says what is sent)
-    device_checks: bool = True  # web page of private hops and 192.168.100.1, UPnP IGD
+    device_checks: bool = True  # web page of private hops and the gateway addresses, UPnP IGD
     snmp: bool = False  # SNMP "public" sysDescr of private hops
+    # The gateway addresses off the traced path (one ping and one GET each) even with device_checks off: the
+    # background route-change checks (drift.py), which do no other device check.
+    off_path_gateways: bool = False
 
 
 @dataclass
@@ -60,6 +68,8 @@ class DiscoveryResult:
     path: MergedPath
     facts: Facts
     inference: Inference
+    proposed: List[dict] = field(default_factory=list)  # the hops before the diff against the live path
+    answering: List[str] = field(default_factory=list)  # live home hops off the traced path that answered a ping
 
 
 def _default_trace(host: str):
@@ -96,15 +106,25 @@ def live_path_from_targets(targets: Sequence) -> List[dict]:
         hop = t.model_dump() if hasattr(t, "model_dump") else dict(t)
         if hop.get("group") is None:  # the public servers are one node on Path health whether grouped or not
             hop["group"] = "internet" if hop.get("category") == "public" and hop.get("address") in servers else None
-        hop.setdefault("ignores_ping", None)
+        hop.pop("ignores_ping", None)  # an older row's setting: observed now, never set
         hop.setdefault("device_id", None)
         hop["position"] = position
         out.append(hop)
     return out
 
 
+def off_path_candidates(path: MergedPath) -> List[str]:
+    """The gateway addresses worth asking: not a hop of the traced path, and not on the network of the path's first
+    private hop (this host's own network: a device there is beside the router, not in front of it)."""
+    on_path = {address_key(h.address) for h in path.hops if h.address}
+    first = next((h.address for h in path.hops if h.address and address_class(h.address) in (PRIVATE, LINK_LOCAL)),
+                 None)
+    return [a for a in GATEWAY_ADDRESSES if address_key(a) not in on_path and not (first and same_subnet(a, first))]
+
+
 async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
-    """rDNS, ASN, web pages, UPnP and SNMP, all at once. Returns (names, asns, pages, modem page, igds, snmp)."""
+    """rDNS, ASN, web pages, the gateway addresses off the path, UPnP and SNMP, all at once. Returns (names, asns,
+    pages, off-path devices, igds, snmp)."""
     lookups = Lookups(deps.query)
     addresses = [h.address for h in path.hops if h.address]
     public = [a for a in addresses if address_class(a) == PUBLIC]
@@ -114,20 +134,29 @@ async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
     for h in path.hops[:first_public]:
         if h.address and address_class(h.address) in (PRIVATE, LINK_LOCAL) and h.address not in private:
             private.append(h.address)
-    private = private[:MAX_DEVICE_HOSTS - 1]
+    off_path = off_path_candidates(path) if options.device_checks or options.off_path_gateways else []
+    private = private[:MAX_DEVICE_HOSTS - len(off_path)]
     limited = {address_key(a) for a in deps.limited_hosts}
 
     async def pages(client):
-        hosts = list(private)
-        if devices.CABLE_MODEM_ADDRESS not in hosts:
-            hosts.append(devices.CABLE_MODEM_ADDRESS)
-
         async def one(address):
             if address_key(address) in limited:
                 return address, await devices.fetch_page(address, client, budget=1, fallback_https=False)
             return address, await devices.fetch_page(address, client)
 
-        return dict(await asyncio.gather(*(one(a) for a in hosts)))
+        return {a: p for a, p in await asyncio.gather(*(one(a) for a in private)) if p is not None}
+
+    async def gateways(client):
+        """Each gateway address off the path: one echo request (none to a limited host) and one GET of `/`."""
+        async def one(address):
+            ping = deps.ping or _default_ping
+            answered, page = await asyncio.gather(
+                asyncio.sleep(0, result=False) if address_key(address) in limited else ping(address),
+                devices.fetch_page(address, client, budget=1, fallback_https=False))
+            return OffPathDevice(address=address, page=page, answered_ping=bool(answered))
+
+        found = await asyncio.gather(*(one(a) for a in off_path))
+        return [d for d in found if d.page is not None or d.answered_ping]
 
     async def igds(client):
         # only a gateway that is a hop of the traced path is followed (anything else on the LAN can claim to be one)
@@ -153,10 +182,11 @@ async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
     try:
         igds_task = asyncio.ensure_future(igds(client) if options.device_checks else asyncio.sleep(0, result=[]))
         try:
-            names, found_asns, found_pages, found_igds, found_snmp = await asyncio.gather(
+            names, found_asns, found_pages, found_off_path, found_igds, found_snmp = await asyncio.gather(
                 lookups.reverse_names(addresses),
                 asns(igds_task) if options.asn_lookup else nothing(),
                 pages(client) if options.device_checks else nothing(),
+                gateways(client),
                 igds_task,
                 snmp() if options.snmp else nothing(),
             )
@@ -164,10 +194,7 @@ async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
             igds_task.cancel()
     finally:
         await client.aclose()
-    modem = found_pages.pop(devices.CABLE_MODEM_ADDRESS, None) if devices.CABLE_MODEM_ADDRESS not in private else \
-        found_pages.get(devices.CABLE_MODEM_ADDRESS)
-    found_pages = {a: p for a, p in found_pages.items() if p is not None}
-    return names, found_asns, found_pages, modem, found_igds, found_snmp
+    return names, found_asns, found_pages, found_off_path, found_igds, found_snmp
 
 
 async def _ipv6(deps: Deps, say: Callable[[str], None], notes: List[str]) -> Optional[Tuple[Optional[int], bool]]:
@@ -216,22 +243,23 @@ async def run_discovery(options: DiscoveryOptions, live_path: Callable[[], Any],
     say("Looking up names" + (", who operates each hop" if options.asn_lookup else "") +
         (" and checking devices" if options.device_checks or options.snmp else ""))
     try:
-        names, asns, pages, modem, igds, snmp = await asyncio.wait_for(
+        names, asns, pages, off_path, igds, snmp = await asyncio.wait_for(
             _checks(path, options, deps), CHECKS_DEADLINE_S)
     except asyncio.TimeoutError:
         notes.append("The lookups and device checks took too long and were left out.")
-        names, asns, pages, modem, igds, snmp = {}, {}, {}, None, [], {}
+        names, asns, pages, off_path, igds, snmp = {}, {}, {}, [], [], {}
     if not options.asn_lookup:
         notes.append("The ASN lookup was off: who operates each public hop is judged from names and the paths only.")
     if not options.device_checks:
-        notes.append("Device checks were off.")
+        notes.append("Device checks were off" + (" (only the common gateway addresses off the path were asked)."
+                                                 if options.off_path_gateways else "."))
     igds_on_path = [i for i in igds if i.address in {h.address for h in path.hops}]
     if len(igds) > len(igds_on_path):
         notes.append(f"{len(igds) - len(igds_on_path)} UPnP gateway(s) answered that are not on the path.")
 
     say("Working out who operates each hop")
     facts = Facts(path=path, names=names, asns=asns, pages=pages, snmp=snmp, igds=igds_on_path, gateway=gateway)
-    inference = infer(facts, modem_page=modem)
+    inference = infer(facts, off_path=off_path)
     notes.extend(inference.notes)
     proposed = proposed_hops(inference.hops, path.reached, ipv6)
     got = live_path()
@@ -250,4 +278,5 @@ async def run_discovery(options: DiscoveryOptions, live_path: Callable[[], Any],
         notes.append(f"The path is longer than {len(trimmed)} hops; the internet hops nearest the servers were left "
                      "out.")
     say("Done")
-    return DiscoveryResult(hops=trimmed, notes=notes, path=path, facts=facts, inference=inference)
+    return DiscoveryResult(hops=trimmed, notes=notes, path=path, facts=facts, inference=inference, proposed=proposed,
+                           answering=answering)

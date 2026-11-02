@@ -39,6 +39,7 @@ class XfinityXbOptions(BaseModel):
 
 class XfinityXbDriver:
     name = "xfinity_xb"
+    label = "Xfinity gateway"  # what the device is, in the dashboard's words (api.devices.device_label)
     offers = frozenset({Capability.ACCESS_LINE})
     line_technology = "docsis"
     options_model = XfinityXbOptions

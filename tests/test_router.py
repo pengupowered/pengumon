@@ -45,7 +45,7 @@ def test_asus_collector_read_only_guarantee():
     # Must only have safe telemetry collection methods
     for name in member_names:
         assert name in ("poll", "aclose", "set_credentials", "missing_configuration", "host", "name", "offers",
-                        "http", "from_config", "options_model", "default_poll_seconds"), f"Unexpected member: {name}"
+                        "http", "from_config", "options_model", "default_poll_seconds", "label"), f"Unexpected member: {name}"
 
     # Verify no references to apply.cgi or nvram set in code
     import inspect

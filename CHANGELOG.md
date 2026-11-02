@@ -5,6 +5,47 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-02
+
+### Added
+- **Route-change checks.** Discovery reruns quietly once a day and about ten minutes after an incident ends; a change
+  of your network's or provider's hops, confirmed by a second run, shows as "Your path changed · Review" and is sent
+  as one alert (no addresses in the text). `discovery: {background: true, asn_lookup: false}` in the config.
+- **Path versions**: every Apply is kept (the last 50) with a summary of what changed; an address change is marked in
+  the hop's history chart.
+- **Preview** before Apply: new or changed hops are probed for 30 s and show real figures.
+- Discovery finds **a modem or ISP gateway that isn't on the traced path** (a modem in bridge mode): it checks a few
+  common gateway addresses once and offers one that answers as "Line / gateway (not on the traced path)".
+- **View only without the token** (`PENGUMON_VIEW_WITHOUT_TOKEN=1`, off by default): with a token set, people without
+  it can look at the dashboard, and every change asks them to sign in.
+
+### Fixed
+- A long verdict title could push the header wider than the window; it now ends in "…" with the full text on hover.
+- README and docs read well on GitHub and on phones (no tables wider than the page).
+
+### Changed
+- **Path editor, clearer.** Every hop shows what Pengumon measures there now ("11.2 ms · 0% loss (last minute)",
+  "Not answering", "No reply · ignores ping (not counted as an outage)", "IPv6 unavailable on this host"), updated
+  while the editor is open; a new hop says "Not probed yet" with Test, and **Preview** probes the new hops for 30 s
+  before you apply. The path is drawn at the top like Path health: click a node to edit it, **Merge** / **Split** on
+  the links replace the "one node with hop N" box. Each role says what it changes. A calmer card: name and measurement,
+  then address and role, then the controls.
+- **Devices only where they mean something.** The device line is on hops of your network and the line only, as a
+  sentence with the device's own status ("Readings from: ASUS router · RT-AX88U · Healthy · CPU 12% · 23 clients ·
+  Change", or "No device connected · Connect") and a link to its Router or Line panel; Path health's Router and Line
+  nodes name it in their tooltip. Human labels (`/api/devices` gains `label`). A hop is linked by itself when exactly
+  one configured device is at its address: on the first import, once at the start for a path stored by 0.19, for a
+  new hop on Apply, and when the editor opens. "No device" is remembered (`device_unlinked`) and never undone.
+- **Edit a hop's address in place** ("Change address"): the hop keeps its id and history, for a renumbered router.
+- **Drop "Hop N:" prefixes** from names in one click (Path health numbers the hops itself).
+- **Earlier paths**: the editor lists the applied versions; **Restore the previous path** loads one as a draft.
+- Path health shows **"Your path changed · Review"** when the route check finds a change.
+
+### Removed
+- The "Ignores ping" setting. Whether a hop ignores ping is observed (a later hop answers), not set: the prober decides
+  alone, an `ignores_ping` key in an older export or a stored hop is ignored, and stored values are dropped at the
+  first start.
+
 ## [0.19.0] - 2026-11-02
 
 ### Added
@@ -165,7 +206,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/pengupowered/pengumon/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pengupowered/pengumon/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/pengupowered/pengumon/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/pengupowered/pengumon/compare/v0.17.0...v0.18.0

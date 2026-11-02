@@ -8,14 +8,12 @@ listens on this computer only (`http://127.0.0.1:8000`), and its page opens in y
 
 ## What has been tested where
 
-| | Tested how |
-|---|---|
-| Linux, x86-64 | A real computer (Linux Mint): the service, the dashboard and the container. GitHub's Linux runner installs with `install.sh` (the system service) on every change |
-| Linux, per-user service (`--user`) | Not in CI; it is the same unit, run as you |
-| Raspberry Pi, 64-bit | Not on a Pi. It is the Linux arm64 install: GitHub's arm64 runner runs the unit tests natively, and the arm64 image is built on a native arm64 runner |
-| macOS | GitHub's macOS 14 runner installs the LaunchDaemon with `install.sh`, checks that it answers, upgrades and uninstalls. The `--user` LaunchAgent and the Local Network permission are not tested. Not on a real Mac yet |
-| Windows | GitHub's Windows Server runner installs with `install.ps1`, checks that the logon task answers, upgrades and uninstalls. Not on a real Windows 10 or 11 PC yet |
-| Container | The image is tested read-only, as uid 10001, on the Linux runner and on a real Linux host ([testing.md](testing.md)). Docker Desktop is not supported |
+- Linux, x86-64: A real computer (Linux Mint): the service, the dashboard and the container. GitHub's Linux runner installs with `install.sh` (the system service) on every change
+- Linux, per-user service (`--user`): Not in CI; it is the same unit, run as you
+- Raspberry Pi, 64-bit: Not on a Pi. It is the Linux arm64 install: GitHub's arm64 runner runs the unit tests natively, and the arm64 image is built on a native arm64 runner
+- macOS: GitHub's macOS 14 runner installs the LaunchDaemon with `install.sh`, checks that it answers, upgrades and uninstalls. The `--user` LaunchAgent and the Local Network permission are not tested. Not on a real Mac yet
+- Windows: GitHub's Windows Server runner installs with `install.ps1`, checks that the logon task answers, upgrades and uninstalls. Not on a real Windows 10 or 11 PC yet
+- Container: The image is tested read-only, as uid 10001, on the Linux runner and on a real Linux host ([testing.md](testing.md)). Docker Desktop is not supported
 
 If something differs on your macOS or Windows computer, that is a bug worth reporting.
 
@@ -217,11 +215,9 @@ the service.
 
 The scripts use it, and you can use it directly from the installed program:
 
-| Command | What it does |
-|---|---|
-| `pengumon service install [--system \| --user] [--host H] [--port N] [--dry-run]` | Writes the unit, plist or task for this system and starts it. As root the default is the system service, otherwise the per-user one; Windows has only the per-user task. `--dry-run` prints what it would do and the files, changing nothing. |
-| `pengumon service uninstall [--system \| --user]` | Stops and removes the service, keeping the data. |
-| `pengumon service status` | Whether the service is installed, running and answering `/api/health`. Exit 0 yes, 1 installed but not answering, 3 not installed. |
+- `pengumon service install [--system | --user] [--host H] [--port N] [--dry-run]`: Writes the unit, plist or task for this system and starts it. As root the default is the system service, otherwise the per-user one; Windows has only the per-user task. `--dry-run` prints what it would do and the files, changing nothing.
+- `pengumon service uninstall [--system | --user]`: Stops and removes the service, keeping the data.
+- `pengumon service status`: Whether the service is installed, running and answering `/api/health`. Exit 0 yes, 1 installed but not answering, 3 not installed.
 
 The other commands: `pengumon run` starts the server in this terminal (the default when you give none), `pengumon version`
 prints the version, `pengumon paths` shows where the config, data and database are and the listen address,

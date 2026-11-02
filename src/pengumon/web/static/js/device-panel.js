@@ -16,7 +16,7 @@ function ago(seconds) {
 }
 
 // What a snapshot's status means on the card: [level, word]; `okWord` is the word for a healthy device (null: no badge).
-function statusOf(snap, okWord) {
+export function statusOf(snap, okWord) {
   switch (snap && snap.status) {
     case 'healthy': return ['good', okWord];
     case 'warning': return ['warn', 'Warning'];
@@ -38,7 +38,7 @@ export function paintCommon(card, refs, device, snap, okWord) {
   if (snap && (snap.status === 'error' || snap.status === 'unconfigured')) {
     const unset = snap.status === 'unconfigured';
     refs.error.className = unset ? 'empty' : 'empty st st-crit';
-    refs.error.innerHTML = `${icon(unset ? 'lock' : 'warn')}<div><b>${unset ? 'Not set up yet' : `No reading from ${escapeHtml(device.host || device.id)}`}</b>${escapeHtml(snap.error_message || (unset ? 'Enter the admin password to start reading this device.' : 'The device did not answer.'))}<div class="row-btns"><button type="button" class="btn sm${unset ? ' primary' : ' outline'}" data-action="openDeviceSetup" data-arg="${escapeHtml(device.id)}">${icon('settings')}${unset ? 'Set up' : 'Check the sign-in'}</button></div></div>`;
+    refs.error.innerHTML = `${icon(unset ? 'lock' : 'warn')}<div><b>${unset ? 'Not set up yet' : `No reading from ${escapeHtml(device.host || device.id)}`}</b>${escapeHtml(snap.error_message || (unset ? 'Enter the admin password to start reading this device.' : 'The device did not answer.'))}<div class="row-btns"><button type="button" class="btn sm${unset ? ' primary' : ' outline'}" data-action="openDeviceSetup" data-needs-edit data-arg="${escapeHtml(device.id)}">${icon('settings')}${unset ? 'Set up' : 'Check the sign-in'}</button></div></div>`;
     refs.error.hidden = false;
   } else {
     refs.error.hidden = true;

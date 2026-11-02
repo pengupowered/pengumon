@@ -8,12 +8,16 @@ The sections below are the core ones. Devices, service checks and clients have t
 
 Everything one `pengumon paths` prints (it also says where each value came from):
 
-| What | Setting | Default |
-|---|---|---|
-| Data directory (database, `secrets.json`, `sessions.json`, `backups/`) | `PENGUMON_DATA` | Windows `%LOCALAPPDATA%\Pengumon`, macOS `~/Library/Application Support/Pengumon`, otherwise `$XDG_STATE_HOME/pengumon` or `~/.local/state/pengumon` (created with mode 0700) |
-| Config file | `PENGUMON_CONFIG` | `<data directory>/config.yaml`; a missing file means the defaults |
-| Database | `database.db_path` | `<data directory>/pengumon.db`. A relative `db_path` is relative to the working directory (the old meaning: the container's `data/pengumon.db` with working directory `/app`); new configs leave it out |
-| Listen address | `PENGUMON_HOST`, `PENGUMON_PORT`, then `server.host`, `server.port` | `127.0.0.1`, `8000` |
+- **Data directory** (the database, `secrets.json`, `sessions.json`, `backups/`): set with `PENGUMON_DATA`. The
+  default is `%LOCALAPPDATA%\Pengumon` on Windows, `~/Library/Application Support/Pengumon` on macOS, otherwise
+  `$XDG_STATE_HOME/pengumon` or `~/.local/state/pengumon` (created with mode 0700).
+- **Config file**: set with `PENGUMON_CONFIG`. The default is `<data directory>/config.yaml`; a missing file means
+  the defaults.
+- **Database**: set with `database.db_path`. The default is `<data directory>/pengumon.db`. A relative `db_path` is
+  relative to the working directory (the old meaning: the container's `data/pengumon.db` with working directory
+  `/app`); new configs leave it out.
+- **Listen address**: set with `PENGUMON_HOST` and `PENGUMON_PORT`, then `server.host` and `server.port`. The
+  default is `127.0.0.1`, port `8000`.
 
 The container image sets `PENGUMON_DATA=/app/data`, `PENGUMON_CONFIG=/app/config.yaml` and `PENGUMON_HOST=0.0.0.0`, so
 the compose files behave as before. Outside a container the default is this computer only; set `PENGUMON_HOST=0.0.0.0`
@@ -91,8 +95,10 @@ Categories place a target on the path: `local` (router or mesh), `gateway` (mode
 provider's hops, in path order), `public` (servers on the internet; the Internet figure is their median). Any number of
 each works, none included. `custom` targets (a NAS, a VPN endpoint, a server) are probed and charted but are no stage of
 the path: Path health lists them under the chain. The editor's fields are optional keys of a target: `group` (adjacent
-hops of one role with the same group are one node), `ignores_ping` (`true` / `false`; left out: decided by the rule in
-[diagnosis.md](diagnosis.md)) and `device_id` (an id from `devices:`).
+hops of one role with the same group are one node), `device_id` (an id from `devices:`; set by itself for a hop of
+your network or the line at a device's address) and `device_unlinked` (`true`: the owner chose "No device", so no
+automatic link is made). Whether a hop ignores ping is observed, never set: an `ignores_ping`
+key is ignored.
 
 **IPv4 and IPv6.** An `address` can be an IPv4 or an IPv6 address; it is probed over ICMPv4 or ICMPv6 accordingly. A
 link-local IPv6 address needs its interface, `fe80::1%eth0`. A host name is looked up before every probe and probed at
@@ -104,6 +110,9 @@ a send fails for lack of a route), so a network that gains or loses IPv6 is foll
 targets need no route to the internet. [probing.md](probing.md) has the details.
 
 ## The other settings
+
+Access (the token, sign-in, view only, allowed host names) is set with environment variables, not in `config.yaml`:
+see [Security](security.md).
 
 You can customize probe frequencies and alert thresholds in `config.yaml` (start from `config.example.yaml`).
 
@@ -139,3 +148,19 @@ line:                            # internet line capacity; unset = learned from 
 classifier:
   busy_load_pct: 60              # WAN load (% of capacity) from which latency / ISP-hop loss counts as "busy"
 ```
+
+### Route-change checks (`discovery:`)
+
+Pengumon reruns discovery quietly once a day, and about ten minutes after an incident ends, and tells you when your
+provider's route no longer matches the applied path ("Your path changed · Review" on Path health, and one
+notification through ntfy or your webhooks). Both settings are optional; these are the defaults:
+
+```yaml
+discovery:
+  background: true     # false: no background checks (Rediscover in the path editor still works)
+  asn_lookup: false    # true: background runs also ask Team Cymru who operates each public hop
+```
+
+A background run sends the traces, the reverse-DNS queries and one ping and one front-page request to each of the
+common gateway addresses that are not on the traced path; nothing else (no device pages, UPnP or SNMP). With
+`asn_lookup: false` nothing about your path leaves your computer. Details: [discovery.md](discovery.md).

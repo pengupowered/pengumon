@@ -13,6 +13,8 @@ from pengumon._vendor.homeguard.security import (
     FileSessionStore,
     LoginThrottle,
     SecurityMiddleware,
+    ViewerPolicy,
+    can_edit,
     host_allowed,
     origin_allowed,
     rate_limit,
@@ -21,9 +23,9 @@ from pengumon._vendor.homeguard.security import (
 )
 from pengumon._vendor.homeguard.security import SecurityConfig as _BaseConfig
 
-__all__ = ["CSP", "PROFILE", "PUBLIC_PATHS", "SESSION_COOKIE", "SESSIONS_PATH", "FileSessionStore", "LoginThrottle",
-           "SecurityConfig", "SecurityMiddleware", "host_allowed", "origin_allowed", "rate_limit", "reset_rate_limits",
-           "session_status"]
+__all__ = ["CSP", "PROFILE", "PUBLIC_PATHS", "SESSION_COOKIE", "SESSIONS_PATH", "VIEWER_POLICY", "FileSessionStore",
+           "LoginThrottle", "SecurityConfig", "SecurityMiddleware", "can_edit", "host_allowed", "origin_allowed",
+           "rate_limit", "reset_rate_limits", "session_status"]
 
 # Kept in one place. No inline scripts or handlers anywhere (the dashboard delegates events), so script-src
 # stays strict; 'self' in connect-src covers the same-origin websocket in current browsers. The dashboard has
@@ -40,6 +42,17 @@ CSP = (
 
 # Open even when a token is configured: container health check, the login page and its icon (and /static/).
 PUBLIC_PATHS = ("/api/health", "/login", "/favicon.ico")
+
+# PENGUMON_VIEW_WITHOUT_TOKEN=1 (off by default; only with an access token): someone without the token may see the
+# dashboard (the page, every GET of the API, /metrics and the live socket, which is receive-only for them) but change
+# nothing: every POST/PUT/DELETE/PATCH needs the token, and so do the reads below, which give away more than the
+# dashboard shows (the path as a file to import elsewhere; anything under a device's credentials). Client names, IP and
+# MAC addresses are masked for viewers in the clients API itself (clients/api.py privacy_mode).
+VIEWER_POLICY = ViewerPolicy(
+    allow=("/", "/api/**", "/metrics"),
+    deny=("/api/path/export", "/api/devices/*/credentials", "/api/devices/*/credentials/**"),
+    websockets=("/ws",),
+)
 
 PROFILE = AppProfile(
     slug="pengumon",
@@ -60,6 +73,7 @@ PROFILE = AppProfile(
         CacheRule("/static/v/", "public, max-age=31536000, immutable", "no-store"),
     ),
     # Old ?v= URLs on /static/ are cached by the app's VersionedStaticFiles, so no other cache rules here.
+    viewer_policy=VIEWER_POLICY,
 )
 
 SESSION_COOKIE = PROFILE.cookie_name

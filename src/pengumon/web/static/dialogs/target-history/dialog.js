@@ -7,12 +7,17 @@
 // the dialog on the group: a switcher shows All or one member. All draws a line per member in its own colour and the
 // node's figure as a bold neutral line, and the figures follow the node's rules (path.js, panels/diagnosis): the median
 // of the members, or the last hop that answers; down only when every member is down, or as soon as any hop is.
+//
+// Where a target's address was replaced in the path editor (GET /api/path/events: same id, so the history goes on), a
+// dashed marker on the latency and loss charts and on the 24 h strip says "Address changed: old → new", and a line
+// under the charts lists it.
 
 import { registerActions } from '../../js/dispatch.js';
 import { badge, closeModal, escapeHtml, getTargetInfo, icon, openModal } from '../../js/util.js';
 import { token } from '../../js/chart-theme.js';
 import { bus } from '../../js/bus.js';
 import { median as trueMedian, pathNodes, quietTargets } from '../../js/path.js';
+import { fetchPathEvents } from '../../js/path-api.js';
 
 const RANGES = [[300, 'Live', 2], [900, '15 m', 10], [3600, '1 h', 30], [86400, '24 h', 600], [604800, '7 d', 3600]]; // seconds, label, bucket seconds
 const LIVE = 300;
@@ -107,6 +112,10 @@ function ensureModal() {
   const status = latSect.appendChild(make('p', 'fine'));
   status.id = 'targetHistStatus';
   status.setAttribute('role', 'status');
+  const events = latSect.appendChild(make('ul', 'tgt-events'));
+  events.id = 'targetHistEvents';
+  events.setAttribute('aria-label', 'Changes to this target');
+  events.hidden = true;
   const upSect = body.appendChild(make('section', 'sect'));
   upSect.innerHTML = `<h3 class="section-t">${icon('grid')}Last 24 hours<span class="muted" id="targetHistUpNote">15-minute blocks</span></h3><div id="targetHistStrip"></div>`;
   const foot = make('footer', 'modal-f');
@@ -125,9 +134,40 @@ function clock(ms) {
   return rangeSeconds > 86400 ? `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${hm}` : hm;
 }
 
+// The address changes of the target shown (chart.pgMarks: [{x: ms, text}]): a dashed line each, labelled on the latency
+// chart (chart.pgMarkLabels).
+const MARKS = {
+  id: 'tgtMarks',
+  afterDatasetsDraw(chart) {
+    const marks = chart.pgMarks || [];
+    const { ctx, chartArea: area, scales: { x } } = chart;
+    if (!marks.length || !area || !x) return;
+    ctx.save();
+    ctx.strokeStyle = token('--warn');
+    ctx.fillStyle = token('--ink-2');
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.font = '10px system-ui, sans-serif';
+    marks.forEach((m) => {
+      if (m.x < x.min || m.x > x.max) return;
+      const px = x.getPixelForValue(m.x);
+      ctx.beginPath();
+      ctx.moveTo(px, area.top);
+      ctx.lineTo(px, area.bottom);
+      ctx.stroke();
+      if (chart.pgMarkLabels) {
+        const w = ctx.measureText('Address changed').width;
+        ctx.fillText('Address changed', Math.min(px + 4, area.right - w), area.top + 10);
+      }
+    });
+    ctx.restore();
+  }
+};
+
 function makeChart(id, type, yTitle, yExtra) {
   return new Chart(document.getElementById(id), {
     type,
+    plugins: [MARKS],
     data: { datasets: [] },
     options: {
       responsive: true,
@@ -195,7 +235,17 @@ const quietStrip = (name, q) => `<div class="strip-quiet" role="img" title="${es
 const liveQuiet = () => quietTargets(bus.last('targets') || []);
 
 // The 24 h strip of this target and the figures that come with it: its latest block's status and availability.
-function renderUptime(data, id, name, quiet) {
+// The markers of the address changes inside a strip's 24 hours, over the strip.
+function stripMarks(data, marks) {
+  if (!data || !marks.length) return '';
+  const span = data.end - data.start;
+  return marks.filter((m) => m.x / 1000 >= data.start && m.x / 1000 <= data.end).map((m) => {
+    const left = (((m.x / 1000) - data.start) / span) * 100;
+    return `<i class="tgt-mark" style="left:${left.toFixed(2)}%" title="${escapeHtml(m.text)}" aria-hidden="true"></i>`;
+  }).join('');
+}
+
+function renderUptime(data, id, name, quiet, marks = []) {
   const box = document.getElementById('targetHistStrip');
   const t = data && data.targets.find((x) => x.target_id === id);
   if (quiet) {
@@ -206,7 +256,8 @@ function renderUptime(data, id, name, quiet) {
     box.innerHTML = '<div class="empty compact"><div>No uptime record for this target yet.</div></div>';
     return null;
   }
-  box.innerHTML = `<div class="strip" style="--n:${t.cells.length}" role="img" aria-label="${escapeHtml(stripLabel(t, name))}">${stripCells(data, t, name)}</div>${stripAxis(data)}`;
+  const over = stripMarks(data, marks);
+  box.innerHTML = `<div class="strip" style="--n:${t.cells.length}" role="img" aria-label="${escapeHtml(stripLabel(t, name))}">${stripCells(data, t, name)}</div>${over ? `<div class="tgt-marks">${over}</div>` : ''}${stripAxis(data)}`;
   return t;
 }
 
@@ -263,15 +314,29 @@ async function load() {
     const col = (n) => fields.indexOf(n);
     const c = { id: col('target_id'), t: col('timestamp'), lat: col('latency_ms'), loss: col('packet_loss_pct'), p10: col('latency_p10_ms'),
       p90: col('latency_p90_ms'), ok: col('successful_count'), tot: col('total_count') };
-    if (ids.length > 1) await showGroup(mine, rows, c, { end, bucket, uptime });
-    else await showOne(mine, ids[0], rows, c, { end, bucket, uptime });
+    if (ids.length > 1) {
+      paintMarks([]);
+      await showGroup(mine, rows, c, { end, bucket, uptime });
+    } else {
+      await showOne(mine, ids[0], rows, c, { end, bucket, uptime, events: fetchPathEvents(ids[0]).catch(() => []) });
+    }
   } catch (e) {
     if (mine === seq) status.textContent = `Could not load the history: ${e.message}`;
   }
 }
 
 // One target: its latency with the p10-p90 band, its loss, its strip and figures (also a group's member on its own).
-async function showOne(mine, id, rows, c, { end, bucket, uptime }) {
+// The address changes of a target, as chart marks and a list under the charts; [] clears them.
+function paintMarks(marks) {
+  latChart.pgMarks = marks;
+  latChart.pgMarkLabels = true;
+  lossChart.pgMarks = marks;
+  const list = document.getElementById('targetHistEvents');
+  list.hidden = !marks.length;
+  list.innerHTML = marks.map((m) => `<li>${icon('warn', 'sm')}<span>${escapeHtml(m.text)}</span> <span class="muted">${escapeHtml(new Date(m.x).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</span></li>`).join('');
+}
+
+async function showOne(mine, id, rows, c, { end, bucket, uptime, events = Promise.resolve([]) }) {
   const targets = getJson('/api/targets').catch(() => []);
   const info = getTargetInfo(id);
   const at = (r, k) => (k < 0 ? null : r[k]);
@@ -289,6 +354,10 @@ async function showOne(mine, id, rows, c, { end, bucket, uptime }) {
     label: 'Loss (%)', data: rows.map((r) => ({ x: r[c.t] * 1000, y: lossBar(r[c.loss]) })), borderColor: token('--crit'),
     backgroundColor: token('--crit'), barThickness: 3
   }];
+  const changes = (await events).filter((e) => e && e.kind === 'address_changed' && e.target_id === id);
+  if (mine !== seq) return;
+  const marks = changes.map((e) => ({ x: e.at * 1000, text: `Address changed: ${e.old} → ${e.new}` }));
+  paintMarks(marks);
   [latChart, lossChart].forEach((chart) => setRange(chart, end));
   document.getElementById('targetHistNote').textContent = hasBand ? 'p10 to p90 band, loss underneath' : 'average per bucket, loss underneath';
   document.getElementById('targetHistUpNote').textContent = '15-minute blocks';
@@ -302,7 +371,7 @@ async function showOne(mine, id, rows, c, { end, bucket, uptime }) {
   const [up, list] = await Promise.all([uptime, targets]);
   if (mine !== seq) return;
   const quiet = liveQuiet().get(id) || null; // its neutral words, or null
-  const strip = renderUptime(up, id, info.name, quiet);
+  const strip = renderUptime(up, id, info.name, quiet, marks);
   const mine1 = Array.isArray(list) ? list.find((x) => (x.target_id || x.id) === id) : null;
   document.getElementById('targetHistMeta').textContent = mine1 ? `${CATEGORY[mine1.category] || mine1.category} · ${mine1.address}` : '';
   setStats([

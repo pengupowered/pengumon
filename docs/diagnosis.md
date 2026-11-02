@@ -2,13 +2,36 @@
 
 Pengumon concurrently probes multiple network stages every second and classifies conditions in real-time:
 
-| Condition | Local Mesh (`192.168.1.1`) | Gateway (`192.168.100.1`) | Public Anycast (`1.1.1.1` / `8.8.8.8`) | DNS Query (`google.com`) | Diagnosed Root Cause |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **All Nominal** | 🟢 < 2ms | 🟢 < 2ms | 🟢 < 20ms | 🟢 < 25ms | **Healthy** |
-| **Mesh / Wi-Fi Drop** | 🔴 **Packet loss / high ping** | 🔴 Loss | 🔴 Loss | 🔴 Fails | **Local Wi-Fi / Mesh Drop** |
-| **Double NAT / Link Fault** | 🟢 < 2ms | 🔴 **High loss / spike** | 🔴 Loss | 🔴 Fails | **Gateway Link Congestion** |
-| **Coax Line Drop** | 🟢 < 2ms | 🟢 < 2ms | 🔴 **Packet loss / Timeout** | 🔴 Fails | **ISP Last-Mile Drop (DOCSIS)** |
-| **DNS Resolver Outage** | 🟢 < 2ms | 🟢 < 2ms | 🟢 < 20ms | 🔴 **Timeout (>400ms)** | **DNS Resolver Outage** |
+- **All Nominal**
+  - Local Mesh (`192.168.1.1`): 🟢 < 2ms
+  - Gateway (`192.168.100.1`): 🟢 < 2ms
+  - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🟢 < 20ms
+  - DNS Query (`google.com`): 🟢 < 25ms
+  - Diagnosed Root Cause: **Healthy**
+- **Mesh / Wi-Fi Drop**
+  - Local Mesh (`192.168.1.1`): 🔴 **Packet loss / high ping**
+  - Gateway (`192.168.100.1`): 🔴 Loss
+  - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🔴 Loss
+  - DNS Query (`google.com`): 🔴 Fails
+  - Diagnosed Root Cause: **Local Wi-Fi / Mesh Drop**
+- **Double NAT / Link Fault**
+  - Local Mesh (`192.168.1.1`): 🟢 < 2ms
+  - Gateway (`192.168.100.1`): 🔴 **High loss / spike**
+  - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🔴 Loss
+  - DNS Query (`google.com`): 🔴 Fails
+  - Diagnosed Root Cause: **Gateway Link Congestion**
+- **Coax Line Drop**
+  - Local Mesh (`192.168.1.1`): 🟢 < 2ms
+  - Gateway (`192.168.100.1`): 🟢 < 2ms
+  - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🔴 **Packet loss / Timeout**
+  - DNS Query (`google.com`): 🔴 Fails
+  - Diagnosed Root Cause: **ISP Last-Mile Drop (DOCSIS)**
+- **DNS Resolver Outage**
+  - Local Mesh (`192.168.1.1`): 🟢 < 2ms
+  - Gateway (`192.168.100.1`): 🟢 < 2ms
+  - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🟢 < 20ms
+  - DNS Query (`google.com`): 🔴 **Timeout (>400ms)**
+  - Diagnosed Root Cause: **DNS Resolver Outage**
 
 ## Load-aware classification
 

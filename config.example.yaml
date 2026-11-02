@@ -156,6 +156,14 @@ notifications:
   #     headers:
   #       Authorization: "secret:my_api_token"
 
+# Route-change checks: discovery reruns quietly once a day (and about ten minutes after an incident ends) and says
+# "your provider's route changed" when the route no longer matches the applied path (Path health, and one
+# notification). Off with background: false. asn_lookup: true lets those runs ask Team Cymru who operates each public
+# hop (off by default: nothing about your path leaves this computer). docs/discovery.md has what is sent.
+# discovery:
+#   background: true
+#   asn_lookup: false
+
 # What the API tells about the devices on your network. client_details: "token" (default) shows connected clients'
 # names, IP and MAC addresses only when PENGUMON_ACCESS_TOKEN is set; "full" always shows them; "masked" never does
 # (vendor and the last four hex digits of the MAC instead). Counts are always shown. More in docs/clients.md.

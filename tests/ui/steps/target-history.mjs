@@ -22,6 +22,26 @@ export const steps = [
     eq("closed", await page.$eval("#targetHistModal", (m) => m.classList.contains("active")), false);
   }, { variants: ALL_VARIANTS }],
 
+  ["target history: where the hop's address was replaced, a marker on the charts and the strip says so (escaped)", async ({ click, eq, ok, page, text, until }) => {
+    // the path's events for the router, answered by the page (the real ones come from the path editor's steps)
+    await page.evaluate(() => {
+      window.__realFetch = window.__realFetch || window.fetch;
+      const at = Date.now() / 1000 - 1800;
+      window.fetch = (url, opts) => (String(url).includes("/api/path/events")
+        ? Promise.resolve(new Response(JSON.stringify([{ at, kind: "address_changed", target_id: "local_router", old: "<b>192.0.2.1</b>", new: "192.0.2.9", revision: 4 }]), { status: 200 }))
+        : window.__realFetch(url, opts));
+    });
+    await click("#hopMatrixBody tr:first-child");
+    await until(() => document.getElementById("targetHistModal")?.classList.contains("active") && !document.getElementById("targetHistEvents").hidden);
+    ok("listed under the charts, escaped", /^Address changed: <b>192\.0\.2\.1<\/b> → 192\.0\.2\.9/.test(await text("#targetHistEvents li")));
+    eq("no markup let through", await page.$$eval("#targetHistEvents b", (b) => b.length), 0);
+    eq("marked on both charts", await page.evaluate(() => ["targetHistLatency", "targetHistLoss"].map((i) => Chart.getChart(document.getElementById(i)).pgMarks.length).join()), "1,1");
+    await until(() => document.querySelector("#targetHistStrip .tgt-mark"));
+    ok("and on the 24 h strip, at its time", await page.$eval("#targetHistStrip .tgt-mark", (m) => /Address changed: <b>192/.test(m.title) && parseFloat(m.style.left) > 90));
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await click("[data-action=closeModal][data-arg=targetHistModal]");
+  }],
+
   ["target detail dialog: stats, latency chart with band, loss, 24 h strip; five ranges; Live refreshes; Escape closes", async ({ click, count, eq, ok, page, shots, until }) => {
     await click('#pathChain .node[data-node^="Line"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));

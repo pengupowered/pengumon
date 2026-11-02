@@ -18,6 +18,7 @@ from pengumon import paths
 from pengumon.clients.settings import PrivacyConfig
 from pengumon.devices.settings import DeviceConfig
 from pengumon.engine.classifier_settings import ClassifierConfig
+from pengumon.engine.discovery.settings import DiscoverySettings
 from pengumon.engine.load_settings import LineConfig
 from pengumon.engine.netinfo import default_dns_probes, default_targets, get_default_gateway_ip
 from pengumon.engine.prober_settings import DnsProbeConfig, ProberConfig
@@ -62,6 +63,7 @@ class AppConfig(BaseModel):
     service_checks: ServiceChecksConfig = Field(default_factory=ServiceChecksConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
     _targets_are_defaults: bool = PrivateAttr(default=False)  # load_config filled in default_targets()
 
     @property

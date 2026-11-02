@@ -24,7 +24,8 @@ overrides any of them. The link rate the router reports is the Wi-Fi rate negoti
 this firmware reports no per-client traffic, so there are no top talkers.
 
 * **Privacy** (`privacy.client_details`, enforced by the API, not the page): `token` (default) sends full names, IP and
-  MAC addresses only when `PENGUMON_ACCESS_TOKEN` is set, so only someone with the token can read them; `full` always
+  MAC addresses only to a request that carries `PENGUMON_ACCESS_TOKEN`, so only someone with the token can read them
+  (a viewer without it, [view only](security.md#view-only-without-the-token), gets the masked list); `full` always
   sends them; `masked` never does: a client is then its vendor (or "Device") and the last four hex digits of its MAC,
   with no IP or MAC. The answer's `privacy` says which applied and how to see more. Counts are never hidden.
 * **Where it lives.** The client list is kept in memory (the last reading) and is not in `/metrics`, the reports, the

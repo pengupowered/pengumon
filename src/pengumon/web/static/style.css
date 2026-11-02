@@ -29,7 +29,7 @@
 .lan-pill a { color: var(--ink-2); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 1180px) { .lan-pill { display: none !important; } }
 /* where both fit, the LAN address gives way before the status pill: the pill's numbers were cut ("11.2 ms to i") */
-@media (min-width: 1181px) { .status-pill { flex-shrink: 0; } .lan-pill { flex-shrink: 1; } }
+@media (min-width: 1181px) { .lan-pill { flex-shrink: 20; } }
 #btnNotify.is-on { color: var(--accent); }
 #btnNotify.is-on::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: -2px; }
 .tb-grafana { position: relative; }

@@ -44,11 +44,14 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .status-pill {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; height: 34px; padding: 0 13px 0 10px; border-radius: var(--r-pill);
   background: var(--st-bg); border: 1px solid color-mix(in srgb, var(--st) 42%, transparent); font-size: var(--fs-sm); white-space: nowrap;
+  overflow: hidden; /* a long verdict title is cut with an ellipsis (its full text is the pill's title=), never pushed past the header */
 }
 .status-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--st); flex: none; }
 .status-pill .sp-ic { display: none; color: var(--st); }
 .status-pill b { font-weight: var(--fw-semi); }
 .status-pill .sp-word { display: none; }
+.status-pill #statusPillText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.status-pill .sp-metrics { flex: none; }
 .status-pill .sep { color: var(--ink-4); }
 .status-pill .sp-metrics { display: inline-flex; gap: 7px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .status-pill .sp-note { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding-left: 9px; border-left: 1px solid var(--line-strong); color: var(--warn); }
@@ -61,6 +64,14 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .tb-sep { width: 1px; height: 20px; background: var(--line-strong); margin: 0 6px; }
 .tb-grafana { margin-left: 6px; }
 .tb-more { display: none; }
+/* "View only · Sign in to edit" (chrome.js, a viewer without the token): a link to the sign-in page */
+/* It gives way when the header is full (the status pill's text varies): the words end in an ellipsis, never overflow. */
+.view-only { border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-bg); color: var(--ink-1); margin-right: 6px;
+  flex: 0 1 auto; min-width: 32px; overflow: hidden; }
+.view-only svg.i { color: var(--warn); flex: none; }
+.view-only .vo-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1440px) { .view-only .vo-more { display: none; } }
+@media (max-width: 1000px) and (min-width: 721px) { .view-only { width: 32px; padding: 0; } .view-only .vo-word { display: none; } }
 @media (max-width: 1280px) { .tb-actions .btn .lbl { display: none; } .tb-actions .btn:not(.icon) { width: 32px; padding: 0; } .tb-grafana .btn { width: auto !important; padding: 0 8px !important; } }
 @media (max-width: 1000px) { .status-pill .sp-metrics > :nth-child(n+3) { display: none; } }
 
@@ -85,6 +96,7 @@ body[data-status="unknown"] { --gst: var(--unknown); }
   .tb-inner { padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); gap: var(--sp-2); padding-block: 8px; flex-wrap: nowrap; }
   .brand-name, .live, .tb-actions, .tb-inner > .grow { display: none; }
   .tb-more { display: inline-flex; margin-left: auto; }
+  .view-only { flex: none; margin-right: 0; padding: 0 8px; }
   .status-pill { flex: 1; height: 36px; overflow: hidden; }
   .status-pill .sp-metrics > :nth-child(n+3) { display: none; }
   .status-pill .sp-metrics { flex-shrink: 3; min-width: 0; }

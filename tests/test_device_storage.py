@@ -191,7 +191,7 @@ async def test_v9_migration_keeps_every_reading_as_the_api_showed_it(tmp_path, m
     monkeypatch.setattr(v009_device_tables, "tracer", spans)
 
     with caplog.at_level(logging.INFO, logger="pengumon.db"):
-        assert await migrations.migrate(path) == migrations.LATEST_VERSION == 13
+        assert await migrations.migrate(path) == migrations.LATEST_VERSION == 14
 
     repo = DatabaseRepository(db_path=path)
     await repo.initialize()

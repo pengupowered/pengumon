@@ -25,7 +25,7 @@ from pengumon.incidents.model import Incident
 from pengumon.notify_settings import SECRET_PREFIX, NotificationsConfig
 from pengumon.observability import get_logger
 from pengumon.secrets import SECRETS_DIR, SecretStore, resolve_webhook_secret
-from pengumon.webhook import Alert, WebhookSender
+from pengumon.webhook import Alert, WebhookSender, alert_link
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,8 +52,10 @@ class Notifier:
         clock: Callable[[], float] = time.monotonic,
         webhooks: Sequence[WebhookSender] = (),
         wall: Callable[[], float] = time.time,
+        public_url: Optional[str] = None,
     ):
         self.url = url  # the ntfy topic; None: ntfy is not used
+        self.public_url = public_url  # the dashboard's address for links (notifications.public_url)
         self.webhooks: List[WebhookSender] = list(webhooks)
         self.clock = clock
         self._wall = wall
@@ -80,7 +82,8 @@ class Notifier:
                 senders.append(WebhookSender(hook, headers, settings.public_url))
         if not url and not senders:
             return None
-        return cls(url, env.get("PENGUMON_NOTIFY_TOKEN", "").strip() or None, webhooks=senders)
+        return cls(url, env.get("PENGUMON_NOTIFY_TOKEN", "").strip() or None, webhooks=senders,
+                   public_url=settings.public_url)
 
     def channels(self) -> List[dict]:
         """What is configured, for the alerts dialog: names, formats and hosts, no secrets and no paths."""
@@ -160,6 +163,20 @@ class Notifier:
             started_at=now - seconds_down, ended_at=now, duration_seconds=seconds_down, service_id=service.id,
         ))
 
+    def notify_path_changed(self, changes: Sequence[str]) -> None:
+        """The background route-change check (engine/discovery/drift.py) found that the route differs from the applied
+        path; it deduplicates, so this is sent once per set of changes. Normal priority: nothing is down."""
+        lines = list(changes[:6]) + ([f"...and {len(changes) - 6} more"] if len(changes) > 6 else [])
+        self._dispatch(Alert(
+            event="path_changed", severity="info",
+            title="Pengumon: your provider's route changed",
+            message="\n".join(lines) + "\nReview it on Path health (Your path changed · Review).",
+            priority="default",
+            tags="world_map",
+            started_at=self._wall(),
+            page="#live",
+        ))
+
     def _dispatch(self, alert: Alert) -> None:
         """Hands the alert to every channel, each in its own background task, so one slow channel delays no other."""
         try:
@@ -174,6 +191,9 @@ class Notifier:
 
     async def _send_ntfy(self, alert: Alert) -> Optional[str]:
         headers = {"Title": alert.title, "Priority": alert.priority, "Tags": alert.tags}
+        link = alert_link(alert, self.public_url) if alert.page else None
+        if link:
+            headers["Click"] = link  # ntfy opens it when the notification is tapped
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         try:

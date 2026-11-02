@@ -2,8 +2,9 @@
 
 Both need a device offering CLIENT_INVENTORY (400 otherwise, 404 for an unknown id). The list is the one thing in
 pengumon that names people's devices, so what it shows is decided here, on the server (`privacy.client_details`):
-with the default "token" the names, IP and MAC addresses are sent only when an access token protects the API; without
-one, or when "masked" is set, a client is its vendor and the last four hex digits of its MAC. The answer says which
+with the default "token" the names, IP and MAC addresses are sent only to a request that carries the access token (so
+not without one, and not to a viewer without the token: PENGUMON_VIEW_WITHOUT_TOKEN); otherwise, or when "masked" is
+set, a client is its vendor and the last four hex digits of its MAC. The answer says which
 applied. Client rows are never logged, and they are kept in memory only (the monitor's latest reading): not in
 /metrics, reports, the dossier, the websocket or the database. The history and the live summary (devices.summary)
 are counts only.
@@ -23,7 +24,7 @@ from pengumon.api.state import AppState
 from pengumon.capabilities import BAND_2G, BAND_5G, BAND_OTHER, Capability, Client, ClientsReading, MeshReading
 from pengumon.devices.device import Device
 from pengumon.devices.summary import mesh_nodes, summarize_clients
-from pengumon.security import rate_limit
+from pengumon.security import can_edit, rate_limit
 
 router = APIRouter(prefix="/api")
 _RATE = rate_limit("clients", 30, 60)  # the open modal asks once a minute; one bucket for both routes
@@ -33,15 +34,30 @@ DEFAULT_HISTORY_SECONDS = 24 * 3600
 _KEY_SALT = secrets.token_bytes(16)  # row keys are opaque and change on restart: a MAC cannot be recovered from one
 HINT = ("Names, IP and MAC addresses are hidden. Set an access token (PENGUMON_ACCESS_TOKEN) or "
         "privacy.client_details: full in config.yaml to see them.")
+VIEWER_HINT = "Names, IP and MAC addresses are hidden. Sign in with the access token to see them."
+
+
+def _token_set(request: Request) -> bool:
+    guards = getattr(request.app.state, "security_config", None)
+    return guards is not None and bool(guards.access_token)
 
 
 def privacy_mode(request: Request, state: AppState) -> str:
-    """"full" or "masked": what this installation shows of its clients."""
+    """"full" or "masked": what this request is shown of the clients. With "token", "full" needs a token to be set and
+    this request to carry it (a viewer without the token, PENGUMON_VIEW_WITHOUT_TOKEN, gets "masked")."""
     configured = state.config.privacy.client_details if state.config is not None else "token"
     if configured == "token":
-        guards = getattr(request.app.state, "security_config", None)
-        return "full" if guards is not None and guards.access_token else "masked"
+        return "full" if _token_set(request) and can_edit(request) else "masked"
     return configured
+
+
+def privacy_hint(request: Request, state: AppState, mode: str) -> Optional[str]:
+    """Why the details are hidden, and how to see them; None when they are shown. A viewer without the token, under
+    the default "token", is told to sign in."""
+    if mode != "masked":
+        return None
+    configured = state.config.privacy.client_details if state.config is not None else "token"
+    return VIEWER_HINT if configured == "token" and _token_set(request) and not can_edit(request) else HINT
 
 
 # A Wi-Fi signal in dBm as a word, the number of bars (of 4) and a grade: the thresholds UniFi uses.
@@ -117,7 +133,7 @@ async def get_clients(device_id: str, request: Request, state: StateDep):
         "clients": [_row(c, mode == "full") for c in reading.clients],
         "summary": summarize_clients(reading),
         "privacy": {"configured": state.config.privacy.client_details if state.config else "token",
-                    "applied": mode, "hint": HINT if mode == "masked" else None},
+                    "applied": mode, "hint": privacy_hint(request, state, mode)},
     }
     return JSONResponse(body)  # /api answers are never cached (the security headers)
 

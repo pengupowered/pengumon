@@ -46,7 +46,8 @@ STEP_MIN_MS = 1.0  # a latency step smaller than this is noise
 STEP_RATIO = 1.5  # ... and so is one where the later hop is not at least this much slower
 
 # Which kind of evidence decides a provider-or-internet hop, strongest first.
-_PRIORITY = ("upnp", "asn", "rdns", "divergence", "address_class", "latency_step", "device_page", "neighbours")
+_PRIORITY = ("upnp", "asn", "rdns", "divergence", "address_class", "latency_step", "device_page", "off_path",
+             "neighbours")
 
 
 @dataclass
@@ -73,6 +74,19 @@ class HopGuess:
     operator: Optional[str] = None  # the provider's or the hop's operator (domain or AS name), for its name
 
 
+OFF_PATH_TEXT = ("It answers on your network but isn't on the traced path (a modem in bridge mode, or an ISP "
+                 "gateway).")
+
+
+@dataclass
+class OffPathDevice:
+    """A common gateway address (engine.GATEWAY_ADDRESSES) that is not a hop of the traced path and answered."""
+
+    address: str
+    page: Optional[PageInfo] = None  # its front page, when it served one
+    answered_ping: bool = False
+
+
 @dataclass
 class Facts:
     """Everything discovery learnt, for `infer`."""
@@ -95,7 +109,7 @@ class Step:
 
 @dataclass
 class Inference:
-    hops: List[HopGuess]  # answered hops, in path order (a cable modem found off the path is placed at the edge)
+    hops: List[HopGuess]  # answered hops, in path order (a gateway found off the path is placed at the edge)
     edge: int  # index in the path of the last home hop (-1: none)
     step: Optional[Step]
     silent: List[int]  # path indexes of hops that did not answer
@@ -136,7 +150,7 @@ def _decide(evidence: Sequence[Evidence]) -> Optional[str]:
     return None
 
 
-def infer(facts: Facts, modem_page: Optional[PageInfo] = None) -> Inference:
+def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
     path = facts.path
     hops = path.hops
     cls = [address_class(h.address) if h.address else None for h in hops]
@@ -356,20 +370,28 @@ def infer(facts: Facts, modem_page: Optional[PageInfo] = None) -> Inference:
 
     result = [guesses[i] for i in answered]
     notes = []
-    # a cable modem off the path (bridged, it never shows in a trace): at the edge, as the line's device
-    if modem_page is not None and CABLE_MODEM_ADDRESS not in {g.address for g in result}:
-        modem = HopGuess(address=CABLE_MODEM_ADDRESS, ttl=None, rtt_ms=None, owner=HOME, category="gateway",
-                         name="Cable modem", suggested_driver=modem_page.fingerprint.driver
-                         if modem_page.fingerprint else None)
-        modem.evidence.append(Evidence("device_page", f"Something {modem_page.describe()} at {CABLE_MODEM_ADDRESS}, "
-                                                      "where cable modems serve their status page: a modem between "
-                                                      "your network and the provider (not seen in the trace, as "
-                                                      "modems in bridge mode are not).", HOME))
-        modem.confidence = LIKELY
-        at = sum(1 for g in result if g.owner == HOME)
-        result.insert(at, modem)
-    elif modem_page is not None:
-        notes.append(f"{CABLE_MODEM_ADDRESS} (a cable modem's status address) is on the path itself.")
+    # gateways off the path (a modem in bridge mode never shows in a trace): at the edge, after your network's hops
+    at = sum(1 for g in result if g.owner == HOME)
+    on_path = {g.address for g in result}
+    for device in off_path:
+        if device.address in on_path:
+            continue
+        page = device.page
+        guess = HopGuess(address=device.address, ttl=None, rtt_ms=None, owner=HOME, category="gateway",
+                         name="Cable modem" if device.address == CABLE_MODEM_ADDRESS else "",
+                         suggested_driver=page.fingerprint.driver if page is not None and page.fingerprint else None)
+        if page is not None:
+            where = (", where cable modems serve their status page" if device.address == CABLE_MODEM_ADDRESS
+                     else "")
+            guess.evidence.append(Evidence("device_page", f"Something {page.describe()} at {device.address}{where}.",
+                                           HOME))
+        if device.answered_ping:
+            guess.evidence.append(Evidence("off_path", f"It answers ping at {device.address}."))
+        guess.evidence.append(Evidence("off_path", OFF_PATH_TEXT, HOME))
+        guess.confidence = LIKELY
+        result.insert(at, guess)
+        at += 1
+        on_path.add(device.address)
     if silent:
         notes.append(f"{len(silent)} hop{'s' if len(silent) != 1 else ''} on the path did not answer the trace; "
                      "a hop without an address cannot be probed, so it is not in the draft.")

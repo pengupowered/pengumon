@@ -443,6 +443,25 @@ async def test_privacy_modes(app_state, monkeypatch, setting, token, applied):
         assert body["summary"]["online"] == 5  # counts are never hidden
 
 
+@pytest.mark.parametrize("setting, applied", [("token", "masked"), ("masked", "masked"), ("full", "full")])
+async def test_a_viewer_without_the_token_gets_masked_clients(app_state, monkeypatch, setting, applied):
+    """PENGUMON_VIEW_WITHOUT_TOKEN: a token is set, but this request does not carry it. "token" means "only to whoever
+    has the token", so the viewer is shown the masked list (and told to sign in); "full" is the owner's own choice."""
+    await polled_state(app_state, privacy=setting)
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    monkeypatch.setattr(security_config, "view_without_token", True)
+    async with api() as ac:
+        res = await ac.get("/api/devices/router/clients")
+        signed_in = await ac.get("/api/devices/router/clients", headers={"Authorization": f"Bearer {TOKEN}"})
+    body, text = res.json(), res.text
+    assert res.status_code == 200 and body["privacy"]["applied"] == applied
+    if applied == "masked":
+        assert not any(needle in text for needle in FULL_ONLY)
+        assert all("ip" not in c and "mac" not in c for c in body["clients"])
+        assert "Sign in" in body["privacy"]["hint"] if setting == "token" else "privacy.client_details" in body["privacy"]["hint"]
+    assert signed_in.json()["privacy"]["applied"] == ("masked" if setting == "masked" else "full")
+
+
 async def test_masked_rows_carry_no_mac_in_their_keys(app_state):
     await polled_state(app_state, privacy="masked")
     async with api() as ac:

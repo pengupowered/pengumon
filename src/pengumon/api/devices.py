@@ -75,6 +75,14 @@ def device_ranges(device: Device) -> Dict[str, Dict[str, Any]]:
     return {name: r.as_dict() for name, r in ranges.items()} if ranges else {}
 
 
+def device_label(device: Device) -> str:
+    """The device as a person names it: what it is (the driver's `label`, e.g. "ASUS router") and its model from
+    config.yaml, or its id when no model is set ("Xfinity gateway · modem"); never only an address."""
+    kind = getattr(device.driver, "label", None) or device.driver.name
+    model = getattr(device.config, "model", None)
+    return f"{kind} · {str(model).replace('_', ' ') if model else device.id}"
+
+
 def device_summary(device: Device) -> Dict[str, Any]:
     """A device as /api/devices lists it: what it is and how its last poll went. Never a credential."""
     snapshot = device.latest_snapshot
@@ -85,6 +93,7 @@ def device_summary(device: Device) -> Dict[str, Any]:
         "host": device.driver.host,
         "url": getattr(device.config, "url", None),  # validated to carry no credentials
         "model": getattr(device.config, "model", None),
+        "label": device_label(device),
         "enabled": device.enabled,
         "offers": sorted(c.value for c in offers),
         "line_technology": getattr(device.driver, "line_technology", None) if Capability.ACCESS_LINE in offers else None,

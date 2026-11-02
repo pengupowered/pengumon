@@ -32,7 +32,7 @@ function row(h) {
     action = monitored.has(h.ip)
       ? '<span class="chip">monitored</span>'
       : `<select class="input sm-select" id="traceStage${h.hop_number}" aria-label="Add hop ${h.hop_number} as">${STAGES.map(([v, w]) => `<option value="${v}"${v === pick ? ' selected' : ''}>${w}</option>`).join('')}</select>`
-        + ` <button type="button" class="btn sm outline" data-action="monitorHop" data-arg="${h.hop_number}">${icon('plus')}Monitor</button>`;
+        + ` <button type="button" class="btn sm outline" data-action="monitorHop" data-needs-edit data-arg="${h.hop_number}">${icon('plus')}Monitor</button>`;
   }
   return `<tr>
     <td class="lead num" data-l="Hop">${h.hop_number}</td>

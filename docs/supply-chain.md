@@ -7,15 +7,13 @@ checkout of `depguard.sh`. All Python tooling runs in throwaway containers; noth
 
 ## Policy
 
-| Rule | Effect |
-|---|---|
-| Any known advisory (PyPI advisory DB or OSV) for a locked `name==version` | blocks, any severity |
-| Advisory id starting with `MAL-` (malicious package) | always blocks, can never be ignored |
-| Release younger than 7 days (cooldown) | blocks; lowered only with `--cooldown-days N --reason "..."`, recorded as `override-reason` in the lock header |
-| Release yanked on PyPI | blocks (never waived) |
-| Tool, network or parse error | exit 2, a failure, never treated as clean |
-| Fixable Debian package in the built image (`os-scan`) | blocks (exit 1) |
-| Debian package with no fix yet | reported only |
+- Any known advisory (PyPI advisory DB or OSV) for a locked `name==version`: blocks, any severity
+- Advisory id starting with `MAL-` (malicious package): always blocks, can never be ignored
+- Release younger than 7 days (cooldown): blocks; lowered only with `--cooldown-days N --reason "..."`, recorded as `override-reason` in the lock header
+- Release yanked on PyPI: blocks (never waived)
+- Tool, network or parse error: exit 2, a failure, never treated as clean
+- Fixable Debian package in the built image (`os-scan`): blocks (exit 1)
+- Debian package with no fix yet: reported only
 
 Python packages are installed from hash-locked files (`requirements.txt` for the runtime image,
 `requirements-build.txt` for the build backend, `requirements-dev.txt` for the test image) with

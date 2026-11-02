@@ -2,13 +2,11 @@
 
 ## Telemetry budget (what it stores, sends and writes)
 
-| What | Policy | Where |
-|---|---|---|
-| Raw probe samples, device readings (`device_samples`, `line_samples`) | Kept for `database.retention_days` (7). Pruned at startup and hourly; the log line says how many rows went, and an incremental vacuum then hands the space back to the OS | `cleanup_old_samples` |
-| Per-minute rollups (`rollup_1m`) | One row per target and minute (count, ok, latency sum/min/max, jitter), upserted on every flush. Kept for `database.rollup_retention_days` (400). They feed every history chart, the report, the dossier and the incident inspector (its hop table and charts, at minute resolution) beyond the raw window | `cleanup_old_samples` |
-| Incidents | Kept (hundreds of rows, a few hundred KB). They are the outage record, including the ones classified as expected (busy line) | |
-| Dashboard live stream | The incident history (up to 500 entries, ~0.5 MB) is sent once per dashboard and again only when an incident changes; every other second's message is ~12 KB. With no dashboard open nothing is built or queried | `api/ws.py` |
-| Disk writes | Probe samples (and their rollup upserts) are committed in one transaction every 10 s (`sample_flush_seconds`); reads and shutdown flush first. A crash can lose at most 10 s of samples. One idle connection stays open so SQLite does not checkpoint and delete the WAL after every write; every connection uses `synchronous=NORMAL` | `db/probes.py` |
+- Raw probe samples, device readings (`device_samples`, `line_samples`): Kept for `database.retention_days` (7). Pruned at startup and hourly; the log line says how many rows went, and an incremental vacuum then hands the space back to the OS Where: `cleanup_old_samples`
+- Per-minute rollups (`rollup_1m`): One row per target and minute (count, ok, latency sum/min/max, jitter), upserted on every flush. Kept for `database.rollup_retention_days` (400). They feed every history chart, the report, the dossier and the incident inspector (its hop table and charts, at minute resolution) beyond the raw window Where: `cleanup_old_samples`
+- Incidents: Kept (hundreds of rows, a few hundred KB). They are the outage record, including the ones classified as expected (busy line)
+- Dashboard live stream: The incident history (up to 500 entries, ~0.5 MB) is sent once per dashboard and again only when an incident changes; every other second's message is ~12 KB. With no dashboard open nothing is built or queried Where: `api/ws.py`
+- Disk writes: Probe samples (and their rollup upserts) are committed in one transaction every 10 s (`sample_flush_seconds`); reads and shutdown flush first. A crash can lose at most 10 s of samples. One idle connection stays open so SQLite does not checkpoint and delete the WAL after every write; every connection uses `synchronous=NORMAL` Where: `db/probes.py`
 
 Measured 2026-10-10 on the live container (before 0.2.0): disk writes 93 → 16 KB/s (~8 GB/day → ~1.4 GB/day), network out
 ~55 → ~5 KB/s with no dashboard open and ~537 → ~12 KB/s per open dashboard, CPU 1.9% → 0.6%.
@@ -22,11 +20,9 @@ Logs go to stdout (journald, through Podman). Each line keeps the `time [LEVEL] 
 device=router driver=asuswrt failures=1`. A device that keeps failing logs when it starts failing, when the error
 changes, every 15 minutes while it lasts, and when it recovers (with the outage length), not on every poll.
 
-| Variable | Purpose |
-|---|---|
-| `PENGUMON_LOG_LEVEL` | Root level (otherwise `server.log_level` in `config.yaml`, default `info`) |
-| `PENGUMON_LOG_LEVELS` | Per-logger levels, e.g. `pengumon.drivers=debug` (every request to the modem and router: method, path, status, duration, size; never bodies or query strings) |
-| `PENGUMON_LOG_FORMAT` | `json` for one JSON object per line |
+- `PENGUMON_LOG_LEVEL`: Root level (otherwise `server.log_level` in `config.yaml`, default `info`)
+- `PENGUMON_LOG_LEVELS`: Per-logger levels, e.g. `pengumon.drivers=debug` (every request to the modem and router: method, path, status, duration, size; never bodies or query strings)
+- `PENGUMON_LOG_FORMAT`: `json` for one JSON object per line
 
 ### OpenTelemetry export
 

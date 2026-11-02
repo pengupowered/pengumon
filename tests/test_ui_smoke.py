@@ -136,6 +136,10 @@ DEVICES = {
     # an access token: smoke.mjs signs in through the sign-in page; only the sign-out steps run (steps/sign-out.mjs)
     "token": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
              '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
+    # an access token with viewing without it on (PENGUMON_VIEW_WITHOUT_TOKEN): the page opens view only, then signs in
+    # from the header (steps/sign-out.mjs)
+    "viewonly": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
+                '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
     # a line device of a technology the page has no adapter for (serve.py relabels the modem driver)
     "unknownline": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
                    '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
@@ -146,7 +150,8 @@ DEVICES = {
 def test_dashboard_in_headless_chromium(tmp_path, variant):
     """`full`: modem, router and a two-node mesh (every panel and the Local network modal). `bare`: no devices at all
     (no device cards, the rest of the live page works). `tworouters`: a card per router. `unknownline`: the line card's
-    common part only. `token`: `full` behind an access token (sign in, sign out, sign out everywhere)."""
+    common part only. `token`: `full` behind an access token (sign in, sign out, sign out everywhere). `viewonly`: the
+    token with PENGUMON_VIEW_WITHOUT_TOKEN on (view only, then sign in to edit)."""
     db = tmp_path / "smoke.db"
     port = free_port()
     asyncio.run(seed(str(db), time.time()))
@@ -175,10 +180,12 @@ def test_dashboard_in_headless_chromium(tmp_path, variant):
         env["PENGUMON_SMOKE_LINE_TECHNOLOGY"] = "fiber"
     if variant == "longpath":  # as on Windows: round trips in whole milliseconds (serve.py's stand-in backend)
         env["PENGUMON_SMOKE_PROBE_RESOLUTION_MS"] = "1.0"
-    for name in ("PENGUMON_ACCESS_TOKEN", "PENGUMON_ALLOWED_HOSTS", "PENGUMON_ALLOWED_ORIGINS"):
+    for name in ("PENGUMON_ACCESS_TOKEN", "PENGUMON_ALLOWED_HOSTS", "PENGUMON_ALLOWED_ORIGINS", "PENGUMON_VIEW_WITHOUT_TOKEN"):
         env.pop(name, None)
     headers = {}
-    if variant == "token":  # made up for the test; the page signs in with it, the checks below send it as Bearer
+    if variant == "viewonly":
+        env["PENGUMON_VIEW_WITHOUT_TOKEN"] = "1"
+    if variant in ("token", "viewonly"):  # made up for the test; the page signs in with it, the checks below send it as Bearer
         env["PENGUMON_ACCESS_TOKEN"] = env["PENGUMON_SMOKE_TOKEN"] = "smoke-token-not-a-secret"
         headers = {"Authorization": "Bearer smoke-token-not-a-secret"}
     # cwd: the credential forms write data/secrets.json relative to it, so they must not write into the repository

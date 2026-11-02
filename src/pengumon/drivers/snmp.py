@@ -141,6 +141,7 @@ def memory_pct(values: Dict[Oid, Value], ram: int, available: Optional[int],
 
 class SnmpDriver:
     name = "snmp"
+    label = "SNMP device"  # what the device is, in the dashboard's words (api.devices.device_label)
     offers = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM})
     options_model = SnmpOptions
     url_schemes = ("snmp",)

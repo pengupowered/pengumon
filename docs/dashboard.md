@@ -23,18 +23,46 @@ Left to right:
 
 One card group per panel, each in its own folder. What a panel needs, and what it does without it:
 
-| Panel (`id`) | Tab | Needs | Without it |
-|---|---|---|---|
-| Path health (`diagnosis`) | Live | nothing | always shown |
-| Latency (`latency`) | Live | nothing | always shown |
-| Hop details (`matrix`) | Live | nothing | always shown |
-| Uptime (`strips`) | Live | nothing | always shown |
-| Line (`line`) | Line | a device offering `access_line` | no card, no Line tab, listed in the Layout dialog with the reason; the path chain goes router to ISP hops |
-| Router (`router`) | Network | a device offering `wan_counters` or `router_system` (one card per such device); the client and mesh blocks need the `clients` / `mesh` features | no card; a missing client list shows one muted line saying why |
-| Host services (`services`) | Network | the `host_services` feature (config `service_checks`) | no card, with the reason in the Layout dialog |
-| Incidents (`incidents`) | Incidents | nothing | always shown |
-| When it breaks (`heat`) | Incidents | nothing | always shown |
-| Reliability (`report`) | Incidents | nothing | always shown |
+- Path health (`diagnosis`)
+  - Tab: Live
+  - Needs: nothing
+  - Without it: always shown
+- Latency (`latency`)
+  - Tab: Live
+  - Needs: nothing
+  - Without it: always shown
+- Hop details (`matrix`)
+  - Tab: Live
+  - Needs: nothing
+  - Without it: always shown
+- Uptime (`strips`)
+  - Tab: Live
+  - Needs: nothing
+  - Without it: always shown
+- Line (`line`)
+  - Tab: Line
+  - Needs: a device offering `access_line`
+  - Without it: no card, no Line tab, listed in the Layout dialog with the reason; the path chain goes router to ISP hops
+- Router (`router`)
+  - Tab: Network
+  - Needs: a device offering `wan_counters` or `router_system` (one card per such device); the client and mesh blocks need the `clients` / `mesh` features
+  - Without it: no card; a missing client list shows one muted line saying why
+- Host services (`services`)
+  - Tab: Network
+  - Needs: the `host_services` feature (config `service_checks`)
+  - Without it: no card, with the reason in the Layout dialog
+- Incidents (`incidents`)
+  - Tab: Incidents
+  - Needs: nothing
+  - Without it: always shown
+- When it breaks (`heat`)
+  - Tab: Incidents
+  - Needs: nothing
+  - Without it: always shown
+- Reliability (`report`)
+  - Tab: Incidents
+  - Needs: nothing
+  - Without it: always shown
 
 Availability is decided by each panel's `available(ctx)` (or `instances(ctx)`), from `/api/devices` and `/api/features`.
 A panel that is not available is never mounted. The page with no devices at all still works (the smoke test's `bare`

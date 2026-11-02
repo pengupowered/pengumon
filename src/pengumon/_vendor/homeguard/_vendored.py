@@ -4,10 +4,10 @@ Records which homeguard commit this copy came from and the SHA-256 of each vendo
 FILES are the Python files in this package, SCRIPTS the PowerShell modules copied to <app>/scripts/.
 """
 
-COMMIT = "e4604b1"
+COMMIT = "8c4f179"
 FILES = {
     "__init__.py": "035b4c21661fbffe3d455b70580a68bed3fb54f460d837d090ba2da6f45dcdc7",
     "db.py": "7df9c8dc66acb331a330cedf568d4dc059c3e99dd34870d8eb4f9d8b8ec0e19a",
-    "security.py": "d859214340681b4743f83544fad594135db5e00dbb1b92f36c3c19ccdf45f1c6",
+    "security.py": "98aa2636c3f8bea8ca5bfd5a442abfbd10ccb6a0f0ec659ab550b63d93301584",
 }
 SCRIPTS = {}

@@ -44,17 +44,17 @@ async def test_first_run_against_the_default_targets_keeps_their_ids():
 async def test_rediscover_keeps_the_owners_choices_and_marks_what_changed_and_what_is_gone():
     live = [
         {"id": "my_router", "name": "Living room", "address": "192.168.1.1", "category": "local", "enabled": True,
-         "position": 0, "group": None, "ignores_ping": None, "color": "#112233", "device_id": "router"},
+         "position": 0, "group": None, "color": "#112233", "device_id": "router"},
         {"id": "isp_first", "name": "My ISP", "address": "203.0.113.1", "category": "gateway", "enabled": True,
-         "position": 1, "group": None, "ignores_ping": True, "color": None, "device_id": None},
+         "position": 1, "group": None, "color": None, "device_id": None},
         {"id": "old_hop", "name": "Old provider hop", "address": "203.0.113.77", "category": "isp", "enabled": True,
-         "position": 2, "group": None, "ignores_ping": None, "color": None, "device_id": None},
+         "position": 2, "group": None, "color": None, "device_id": None},
         {"id": "cloudflare_dns", "name": "Cloudflare", "address": "1.1.1.1", "category": "public", "enabled": False,
-         "position": 3, "group": "internet", "ignores_ping": None, "color": None, "device_id": None},
+         "position": 3, "group": "internet", "color": None, "device_id": None},
         {"id": "nas", "name": "NAS", "address": "nas.home.arpa", "category": "custom", "enabled": True,
-         "position": 4, "group": None, "ignores_ping": None, "color": None, "device_id": None},
+         "position": 4, "group": None, "color": None, "device_id": None},
         {"id": "resolver", "name": "Resolver", "address": "192.0.2.53", "category": "dns", "enabled": True,
-         "position": 5, "group": None, "ignores_ping": None, "color": None, "device_id": None,
+         "position": 5, "group": None, "color": None, "device_id": None,
          "record_type": "A", "nameserver": "192.0.2.53"},
     ]
     result = await discover(HOME_PATH, options=NO_ASN, live=live)
@@ -67,8 +67,8 @@ async def test_rediscover_keeps_the_owners_choices_and_marks_what_changed_and_wh
     hops = {h["id"]: h for h in result.hops}
     assert (hops["my_router"]["name"], hops["my_router"]["color"], hops["my_router"]["device_id"]) == \
         ("Living room", "#112233", "router")
-    assert (hops["isp_first"]["name"], hops["isp_first"]["category"], hops["isp_first"]["ignores_ping"]) == \
-        ("My ISP", "isp", True)  # the owner's name and choice stay; the role is discovery's proposal
+    assert (hops["isp_first"]["name"], hops["isp_first"]["category"]) == \
+        ("My ISP", "isp")  # the owner's name stays; the role is discovery's proposal
     assert hops["cloudflare_dns"]["enabled"] is False
     assert (hops["resolver"]["nameserver"], hops["resolver"]["record_type"]) == ("192.0.2.53", "A")
     assert [h["position"] for h in result.hops] == list(range(len(result.hops)))
@@ -84,10 +84,27 @@ async def test_a_home_hop_off_the_traced_path_is_kept_while_it_answers_ping():
     kept = await discover(HOME_PATH, options=NO_ASN, live=live, answers_ping={"192.168.100.1", "203.0.113.77"})
     assert [(h["id"], h["status"]) for h in kept.hops[:4]] == [
         ("router", "same"), ("modem", "same"), ("old_isp", "gone"), ("hop_203_0_113_1", "new")]
-    assert kept.pinged == ["192.168.100.1"]  # only home hops are pinged
-    assert any("answering ping" in n for n in kept.notes)
+    # the gateway addresses off the traced path get one ping each; the live modem is one of them, so it is found
+    # there (and not pinged again as a missing home hop)
+    assert kept.pinged == ["10.0.0.1", "192.168.0.1", "192.168.100.1"]
     gone = await discover(HOME_PATH, options=NO_ASN, live=live)
     assert [(h["id"], h["status"]) for h in gone.hops[:3]] == [("router", "same"), ("modem", "gone"), ("old_isp", "gone")]
+
+
+async def test_a_live_home_hop_off_the_traced_path_is_pinged_before_it_is_called_gone():
+    """A home hop at an address discovery does not ask by itself (not one of the gateway addresses)."""
+    live = [
+        {"id": "router", "name": "Router", "address": "192.168.1.1", "category": "local", "position": 0},
+        {"id": "bridge", "name": "Bridge", "address": "192.168.88.2", "category": "gateway", "position": 1},
+        {"id": "old_isp", "name": "Old", "address": "203.0.113.77", "category": "isp", "position": 2},
+    ]
+    kept = await discover(HOME_PATH, options=NO_ASN, live=live, answers_ping={"192.168.88.2", "203.0.113.77"})
+    assert [(h["id"], h["status"]) for h in kept.hops[:3]] == [("router", "same"), ("bridge", "same"),
+                                                               ("old_isp", "gone")]
+    assert kept.pinged[-1:] == ["192.168.88.2"] and "203.0.113.77" not in kept.pinged  # only home hops
+    assert any("answering ping" in n for n in kept.notes)
+    gone = await discover(HOME_PATH, options=NO_ASN, live=live)
+    assert [(h["id"], h["status"]) for h in gone.hops[:2]] == [("router", "same"), ("bridge", "gone")]
 
 
 async def test_ids_are_stable_for_an_address_across_runs():

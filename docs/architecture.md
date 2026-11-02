@@ -32,11 +32,9 @@ gives the feature nothing to do (no enabled service check, no device with a clie
 
 The returned `Component` has a `name` and three optional parts:
 
-| Part | When it runs | What it is for |
-|---|---|---|
-| `start()` | after every component has registered, in list order | starts background work with `ctx.spawn` |
-| `stop()` | at shutdown, after every spawned task has ended, in reverse list order | closes what the feature owns, resolves what nothing will watch any more |
-| `live_part` | each time the probe loop publishes a message | a `LivePart(name, value(diagnosis))`: one field of the live message |
+- `start()`: after every component has registered, in list order. What it is for: starts background work with `ctx.spawn`
+- `stop()`: at shutdown, after every spawned task has ended, in reverse list order. What it is for: closes what the feature owns, resolves what nothing will watch any more
+- `live_part`: each time the probe loop publishes a message. What it is for: a `LivePart(name, value(diagnosis))`: one field of the live message
 
 Gauges stay in the one table, `observability/gauges.py`. Each row reads the `AppState` (a service gauge reads
 `state.service_checker`), so a feature that is not configured simply has no samples. A feature module may append
@@ -44,19 +42,17 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 
 ## The order, and why
 
-| # | Component | Module | Why here |
-|---|---|---|---|
-| 1 | devices | `devices/component.py` | Building the devices checks that each can run (a missing CA file, say). A device that cannot run stops the start before the database is opened or migrated. |
-| 2 | storage | `db/storage.py` | Opens (migrates) the database and warns about stored history of devices that are not in the config. Every later component may use it, and their `stop` runs before its own, which closes it. |
-| 3 | probing | `engine/probing.py` | Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one. |
-| 4 | retention | `db/retention.py` | The start-up cleanup, before the load backfills read the stored history. |
-| 5 | line_load | `engine/line_load.py` | Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check. |
-| 6 | notify | `notify.py` | ntfy and webhooks (`webhook.py`), for the classifier and the service checks. |
-| 7 | classifier | `engine/classifier/component.py` | Needs the line load, the notifier and the devices' line technology. |
-| 8 | services | `services/component.py` | Optional: host service checks. |
-| 9 | clients | `clients/component.py` | Optional: the client list. |
-| 10 | live | `live/component.py` | The `/ws` route and the broadcaster task. |
-| 11 | discovery | `engine/discovery/component.py` | Optional: network discovery on request. Last, so its `stop` (a run still going is cancelled) comes first. |
+- **1. devices** (`devices/component.py`). Building the devices checks that each can run (a missing CA file, say). A device that cannot run stops the start before the database is opened or migrated.
+- **2. storage** (`db/storage.py`). Opens (migrates) the database and warns about stored history of devices that are not in the config. Every later component may use it, and their `stop` runs before its own, which closes it.
+- **3. probing** (`engine/probing.py`). Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one.
+- **4. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history.
+- **5. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
+- **6. notify** (`notify.py`). ntfy and webhooks (`webhook.py`), for the classifier and the service checks.
+- **7. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
+- **8. services** (`services/component.py`). Optional: host service checks.
+- **9. clients** (`clients/component.py`). Optional: the client list.
+- **10. live** (`live/component.py`). The `/ws` route and the broadcaster task.
+- **11. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Last, so its `stop` (a run still going is cancelled) comes first.
 
 The repository object exists before any component. The lifespan builds it from `config.database`
 (`storage.repository_for`); building it opens nothing. So the devices can be handed it before the storage

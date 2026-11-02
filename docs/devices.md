@@ -27,12 +27,30 @@ devices:
       #   "AA:BB:CC:00:11:22": "Hall"
 ```
 
-| Driver | Devices | Capabilities | URL | Username | Password |
-|---|---|---|---|---|---|
-| `xfinity_xb` | Xfinity/Comcast XB6, XB7, XB8 | `access_line` (DOCSIS) | `http(s)://` | `admin` | the gateway's admin password |
-| `asuswrt` | AsusWRT routers (RT-AX, ZenWiFi, ...) | `wan_counters`, `router_system`, `client_inventory`, `mesh` | `http(s)://` | `admin` | the router's admin password |
-| `openwrt` | OpenWrt routers | `wan_counters`, `router_system`, `client_inventory` | `http(s)://` | `root` (default) | an rpcd login's password, see [OpenWrt](#openwrt) |
-| `snmp` | any SNMPv2c agent | `wan_counters`, `router_system` | `snmp://host[:port]` | not used | the community string, see [SNMP](#snmp) |
+- `xfinity_xb`
+  - Devices: Xfinity/Comcast XB6, XB7, XB8
+  - Capabilities: `access_line` (DOCSIS)
+  - URL: `http(s)://`
+  - Username: `admin`
+  - Password: the gateway's admin password
+- `asuswrt`
+  - Devices: AsusWRT routers (RT-AX, ZenWiFi, ...)
+  - Capabilities: `wan_counters`, `router_system`, `client_inventory`, `mesh`
+  - URL: `http(s)://`
+  - Username: `admin`
+  - Password: the router's admin password
+- `openwrt`
+  - Devices: OpenWrt routers
+  - Capabilities: `wan_counters`, `router_system`, `client_inventory`
+  - URL: `http(s)://`
+  - Username: `root` (default)
+  - Password: an rpcd login's password, see [OpenWrt](#openwrt)
+- `snmp`
+  - Devices: any SNMPv2c agent
+  - Capabilities: `wan_counters`, `router_system`
+  - URL: `snmp://host[:port]`
+  - Username: not used
+  - Password: the community string, see [SNMP](#snmp)
 
 The device's `model` from the config names it on the dashboard. A driver that learns the model from the device
 (openwrt: the board name; snmp: the first line of `sysDescr`) stores it with each reading when the config sets none.
@@ -59,11 +77,9 @@ retention, and a startup warning names stored ids that are not in the config).
 **Credentials** never go in `config.yaml`. For each device, the first of these that has a value wins (username and
 password separately; `<ID>` is the id in upper case with `-` as `_`):
 
-| Order | Password | Username |
-|---|---|---|
-| 1 | environment `PENGUMON_DEVICE_<ID>_PASSWORD` | environment `PENGUMON_DEVICE_<ID>_USERNAME` |
-| 2 | file `/run/secrets/pengumon_<id>_password` (a Podman/Docker secret: a regular file of at most 4 KiB; exactly one trailing `\n` or `\r\n` is removed) | `data/secrets.json` `devices.<id>.username` |
-| 3 | `data/secrets.json` `devices.<id>.password` | the device's `username` (default `admin`) |
+- Order 1: Password from environment `PENGUMON_DEVICE_<ID>_PASSWORD`. Username from environment `PENGUMON_DEVICE_<ID>_USERNAME`
+- Order 2: Password from file `/run/secrets/pengumon_<id>_password` (a Podman/Docker secret: a regular file of at most 4 KiB; exactly one trailing `\n` or `\r\n` is removed). Username from `data/secrets.json` `devices.<id>.username`
+- Order 3: Password from `data/secrets.json` `devices.<id>.password`. Username from the device's `username` (default `admin`)
 
 Everything is read once at startup, and the log names the source each device's password came from (never the
 password). Credentials entered in the dashboard are written to `data/secrets.json` under `devices.<id>` (mode 0600).
@@ -79,16 +95,14 @@ with `rpcd-mod-luci`, `rpcd-mod-file` and `rpcd-mod-iwinfo`; an image with LuCI 
 `session login`, and every poll is then one HTTP request with a batch of calls, plus one for the Wi-Fi stations when
 the client list is due (every `clientlist_interval_seconds`, default 60). It only calls methods that report state:
 
-| Call | Read for | In LuCI's ACLs for root |
-|---|---|---|
-| `network.interface dump` | which device the WAN interface (`options.wan_interface`, default `wan`) is on | yes |
-| `luci-rpc getNetworkDevices` | that device's byte counters (64-bit) | yes |
-| `system info` | memory in use (total less available) | yes |
-| `system board` | the model (once an hour) | yes |
-| `file read /proc/stat` | CPU % between two polls | no |
-| `luci-rpc getDHCPLeases`, `getWirelessDevices` | the clients, and the Wi-Fi interfaces and their bands | yes |
-| `iwinfo assoclist` | each Wi-Fi station's signal, link rates and connected time | yes |
-| `file read /proc/self/net/arp` | whether a client with a lease and no Wi-Fi link is online | no |
+- `network.interface dump`: which device the WAN interface (`options.wan_interface`, default `wan`) is on. In LuCI's ACLs for root: yes
+- `luci-rpc getNetworkDevices`: that device's byte counters (64-bit). In LuCI's ACLs for root: yes
+- `system info`: memory in use (total less available). In LuCI's ACLs for root: yes
+- `system board`: the model (once an hour). In LuCI's ACLs for root: yes
+- `file read /proc/stat`: CPU % between two polls. In LuCI's ACLs for root: no
+- `luci-rpc getDHCPLeases`, `getWirelessDevices`: the clients, and the Wi-Fi interfaces and their bands. In LuCI's ACLs for root: yes
+- `iwinfo assoclist`: each Wi-Fi station's signal, link rates and connected time. In LuCI's ACLs for root: yes
+- `file read /proc/self/net/arp`: whether a client with a lease and no Wi-Fi link is online. In LuCI's ACLs for root: no
 
 A call the ACL refuses only leaves out what needs it (one warning in the log names it): without `/proc/stat` there is
 no CPU %, and without the ARP table every client with a DHCP lease that is on no radio counts as wired and online
@@ -150,13 +164,11 @@ file or the dashboard, as for any device); the username is not used. Only GET an
 and SNMPv3 are not supported. A v2c community string crosses the network in clear text, so give the agent a read-only
 community that is used for nothing else, and limit it to pengumon's address if the device can.
 
-| Read | From | |
-|---|---|---|
-| WAN byte counters | IF-MIB `ifHCInOctets` / `ifHCOutOctets` (64-bit), else `ifInOctets` / `ifOutOctets` (32-bit, wraps handled) | `wan_counters` |
-| CPU % | HOST-RESOURCES-MIB `hrProcessorLoad` (each processor's one-minute average), else net-snmp's UCD-SNMP-MIB tick counters | `router_system` |
-| memory in use | HOST-RESOURCES-MIB `hrStorage`: the RAM row (net-snmp's "Available memory", buffers and cache rows are used as `free` does) | `router_system` |
-| model | the first line of `sysDescr` | |
-| restarts | `sysUpTime` going back: the interfaces are looked up again and the counters start a new baseline | |
+- WAN byte counters: IF-MIB `ifHCInOctets` / `ifHCOutOctets` (64-bit), else `ifInOctets` / `ifOutOctets` (32-bit, wraps handled) (capability `wan_counters`)
+- CPU %: HOST-RESOURCES-MIB `hrProcessorLoad` (each processor's one-minute average), else net-snmp's UCD-SNMP-MIB tick counters (capability `router_system`)
+- memory in use: HOST-RESOURCES-MIB `hrStorage`: the RAM row (net-snmp's "Available memory", buffers and cache rows are used as `free` does) (capability `router_system`)
+- model: the first line of `sysDescr`
+- restarts: `sysUpTime` going back: the interfaces are looked up again and the counters start a new baseline
 
 Which interface is the WAN: `options.wan_interface` names it by its `ifName` or `ifDescr` (exactly, else ignoring
 case). Unset, it is the interface of the IPv4 default route (`ipRouteTable`, `inetCidrRouteTable` or
