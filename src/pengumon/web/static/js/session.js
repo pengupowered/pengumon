@@ -1,0 +1,23 @@
+// A sign-in that ends while the page is open (signed out in another browser, signed out everywhere, expired): the
+// server refuses the page's requests with homeguard's 401 (it carries `WWW-Authenticate: Bearer realm=...`) and closes
+// the live socket with 1008. The page then goes to the sign-in page, once. Without a token nothing is ever refused, so
+// nothing here happens; other 401s (none today) would not carry that header.
+//
+// Every fetch of the page passes through here (this module is imported first by main.js and wraps window.fetch).
+
+let leaving = false;
+
+export function sessionEnded() {
+  if (leaving) return;
+  leaving = true;
+  window.location.assign('/login');
+}
+
+export const refusedSignIn = (res) => res.status === 401 && /^Bearer realm=/i.test(res.headers.get('www-authenticate') || '');
+
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const res = await nativeFetch(...args);
+  if (refusedSignIn(res)) sessionEnded();
+  return res;
+};

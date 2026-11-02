@@ -1,0 +1,119 @@
+/* Panel diagnosis: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* ---------- Hero: path health ---------- */
+.hero .panel-b { padding: var(--sp-5) var(--sp-5) var(--sp-4); }
+.verdict { display: flex; align-items: flex-start; gap: var(--sp-3); margin-bottom: var(--sp-5); }
+.verdict .badge { margin-top: 3px; font-size: var(--fs-xs); padding: 4px 10px 4px 8px; }
+.verdict-txt { min-width: 0; flex: 1; }
+.verdict h3 { font-size: var(--fs-xl); font-weight: var(--fw-bold); letter-spacing: -.02em; line-height: 1.2; text-wrap: balance; }
+.verdict p { color: var(--ink-2); margin-top: 5px; max-width: 92ch; }
+.verdict-act { flex: none; margin-top: 2px; }
+.chain { list-style: none; display: flex; align-items: stretch; }
+.node-wrap { flex: 1 1 0; min-width: 0; display: flex; }
+.node {
+  position: relative; flex: 1; min-width: 0; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-3);
+  display: flex; flex-direction: column; gap: 7px;
+  transition: transform var(--t-med) var(--ease), border-color var(--t-med), box-shadow var(--t-med);
+}
+div.node { cursor: default; }
+button.node:hover { transform: translateY(-2px); border-color: var(--line-strong); }
+.node::before { content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 3px; border-radius: var(--r-md) var(--r-md) 0 0; background: var(--st); }
+.node.alert { background: linear-gradient(180deg, var(--st-bg), var(--surface-2) 62%); border-color: color-mix(in srgb, var(--st) 45%, var(--line)); }
+.node.st-warn { box-shadow: var(--glow-warn); } .node.st-crit { box-shadow: var(--glow-crit); }
+.origin { flex: 0 0 74px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-align: center; list-style: none; }
+.origin-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--surface-3); color: var(--ink-2); margin-bottom: 4px; }
+.origin-t { font-size: var(--fs-sm); font-weight: var(--fw-semi); line-height: 1.25; white-space: nowrap; }
+.origin-m { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.3; white-space: nowrap; }
+.node-top { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.node-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--surface-3); color: var(--ink-2); flex: none; }
+.node.alert .node-ic { color: var(--st); background: var(--st-bg); }
+.node-id { display: flex; flex-direction: column; min-width: 0; }
+.node-kind { font-size: var(--fs-sm); font-weight: var(--fw-semi); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-name { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.node-st { margin-left: auto; flex: none; color: var(--st); display: inline-flex; }
+.node-val { display: flex; align-items: baseline; gap: 4px; min-height: 30px; }
+.node-val b { font-size: var(--fs-2xl); font-weight: var(--fw-bold); letter-spacing: -.03em; line-height: 1; }
+.node-val b.node-word { font-size: var(--fs-lg); letter-spacing: -.01em; }
+.node-val span { color: var(--ink-3); font-size: var(--fs-sm); }
+.node-meta { display: flex; gap: var(--sp-3); font-size: var(--fs-xs); color: var(--ink-3); flex-wrap: wrap; }
+.node-meta b { color: var(--ink-2); font-weight: var(--fw-semi); }
+.node-meta .bad b { color: var(--st); }
+.node svg.spark { margin-top: auto; }
+.link { flex: 0 0 46px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; list-style: none; }
+.link .wire { width: 100%; height: 10px; overflow: visible; }
+.link .wire line { stroke: var(--st); stroke-width: 2; stroke-dasharray: 3 5; vector-effect: non-scaling-stroke; }
+.chain.is-live .link:not(.broken) .wire line { animation: flow 1.2s linear infinite; }
+.link.broken .wire line { stroke-dasharray: 2 6; opacity: .7; }
+.link .cut { position: absolute; top: calc(50% - 22px); color: var(--crit); background: var(--surface-1); border-radius: 50%; display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid color-mix(in srgb, var(--crit) 50%, transparent); }
+.link .delta { font: var(--fw-semi) var(--fs-xs) var(--mono); color: var(--ink-2); background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 1px 6px; white-space: nowrap; }
+.link.st-warn .delta, .link.st-crit .delta, .link.st-busy .delta { color: var(--st); border-color: color-mix(in srgb, var(--st) 45%, var(--line)); }
+.chain-none { list-style: none; align-self: center; padding: var(--sp-3) var(--sp-4); color: var(--ink-3); font-size: var(--fs-sm); }
+.path-extra { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-4); }
+.pe-h { font-size: var(--fs-xs); color: var(--ink-3); margin-right: var(--sp-1); }
+.pe-list { display: contents; }
+.pe { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; font: inherit; font-size: var(--fs-sm); color: var(--ink-1);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 10px 3px 8px; cursor: pointer; }
+.pe:hover, .pe:focus-visible { border-color: var(--line-strong); }
+.pe .i { color: var(--st); flex: none; }
+.pe-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pe b { font-weight: var(--fw-semi); color: var(--ink-2); flex: none; }
+.hero-foot { display: flex; gap: var(--sp-2) var(--sp-5); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px dashed var(--line); font-size: var(--fs-xs); color: var(--ink-3); flex-wrap: wrap; align-items: center; }
+.hero-foot span { display: inline-flex; align-items: center; gap: 5px; }
+.hero-foot b { color: var(--ink-2); }
+.hero-foot .grow { justify-content: flex-end; }
+/* Many nodes (more than five): narrower links, tighter nodes */
+.chain[data-dense="1"] .link { flex-basis: 34px; }
+.chain[data-dense="1"] .node { padding: var(--sp-2); gap: 6px; }
+.chain[data-dense="1"] .node-ic { width: 26px; height: 26px; }
+.chain[data-dense="1"] .node-top { gap: 6px; }
+.chain[data-dense="1"] .node-val b { font-size: var(--fs-xl); }
+.chain[data-dense="1"] .link .delta { padding: 1px 4px; font-size: 10px; }
+/* Many nodes in a medium hero (about 1024 px): the node icon goes, the label keeps its room */
+@container (min-width: 861px) and (max-width: 1100px) {
+  .chain[data-dense="1"] .node-ic { display: none; }
+  .chain[data-dense="1"] .link { flex-basis: 24px; }
+  .chain[data-dense="1"] .node { padding: var(--sp-2) 6px; }
+  /* the delta pills are wider than the links: they sit under the gaps, below the nodes */
+  .chain[data-dense="1"] { padding-bottom: 24px; }
+  .chain[data-dense="1"] .link .delta { position: absolute; bottom: -24px; left: 50%; transform: translateX(-50%); z-index: 1; }
+  /* a thin stem from the wire down to its pill, so the pill reads as that link's */
+  .chain[data-dense="1"] .link::after { content: ""; position: absolute; left: 50%; top: 50%; bottom: -5px; border-left: 1px dashed var(--st); opacity: .6; }
+  .chain[data-dense="1"] .node-val b { font-size: var(--fs-lg); }
+}
+/* Narrow hero (container query: wherever the panel sits) -> vertical chain */
+@container (max-width: 860px) {
+  .verdict { flex-wrap: wrap; }
+  .verdict h3 { font-size: var(--fs-lg); }
+  .verdict-txt { flex-basis: 100%; order: 2; }
+  .verdict-act { margin-left: auto; }
+  .chain { flex-direction: column; }
+  .link { flex: 0 0 30px; flex-direction: row; justify-content: flex-start; padding-left: 46px; gap: 10px; }
+  .link .wire { display: none; }
+  .link::before { content: ""; position: absolute; left: 27px; top: 0; bottom: 0; border-left: 2px dashed var(--st); }
+  .link.broken::before { border-left-style: dotted; opacity: .7; }
+  .link .cut { position: absolute; left: 19px; top: 6px; }
+  .node { padding: 10px var(--sp-3); }
+  .origin { flex: none; flex-direction: row; justify-content: flex-start; gap: 8px; text-align: left; padding: 2px 4px; }
+  .origin-ic { margin: 0; width: 26px; height: 26px; }
+  .origin-m + .origin-m::before { content: "· "; }
+  .chain[data-dense="1"] .link { flex-basis: 30px; }
+  .chain[data-dense="1"] .node { padding: 10px var(--sp-3); }
+  .node { display: grid; grid-template-columns: auto auto 1fr; grid-template-areas: "top top top" "name name name" "val meta spark"; align-items: center; column-gap: var(--sp-3); row-gap: 6px; }
+  .node-top { grid-area: top; } .node-name { grid-area: name; margin-top: -3px; } .node-val { grid-area: val; min-height: 0; } .node-meta { grid-area: meta; flex-direction: column; gap: 0; }
+  .node svg.spark { grid-area: spark; width: 100%; max-width: 150px; justify-self: end; margin: 0; }
+  .node-val b { font-size: var(--fs-xl); }
+  .hero-foot .grow { display: none; }
+}
+
+@media (max-width: 720px) {
+  .hero .panel-b { padding: var(--sp-4); }
+  .hero-foot { display: none; }
+}
+.node-spark { display: block; margin-top: auto; }
+.node-spark svg.spark { margin-top: 0; }
+.ink-busy { color: var(--busy); }
+.node .node-st svg.i { width: 18px; height: 18px; }
+@container (max-width: 860px) {
+  .node { grid-template-areas: "top top top" "name name name" "val meta spark"; }
+  .node-spark { grid-area: spark; width: 100%; max-width: 150px; justify-self: end; margin: 0; }
+}

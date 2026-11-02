@@ -1,0 +1,191 @@
+# Unit tests and the browser (UI) tests, run the same way as locally: scripts/test.sh and scripts/test-ui.sh, which use
+# Podman (preinstalled on GitHub's ubuntu runners). Then the package: the wheel and sdist are built once ("package"),
+# and that same wheel is what the container image (amd64 and arm64) and a plain Python install on Linux are tested with.
+# Also called by release.yml before an image is published; the wheel it publishes is this run's artifact "dist".
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Allow unprivileged ICMP (the probe tests open real ping sockets)
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+      - name: Run the unit tests
+        run: scripts/test.sh -p no:warnings
+
+  ui:
+    name: Browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # The runner image (Chromium, Node, puppeteer-core, ESLint) is slow to build and only changes with its own files,
+      # so it is kept as a saved image keyed on their hash.
+      - name: Restore the browser runner image
+        id: runner-cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ${{ runner.temp }}/ui-test-runner.tar
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+      - name: Load the cached runner image
+        if: steps.runner-cache.outputs.cache-hit == 'true'
+        run: podman load -i "$RUNNER_TEMP/ui-test-runner.tar"
+      - name: Build the runner image
+        if: steps.runner-cache.outputs.cache-hit != 'true'
+        run: |
+          tests/ui/runner/build.sh
+          podman save -o "$RUNNER_TEMP/ui-test-runner.tar" localhost/ui-test-runner:1
+      - name: Run the browser tests
+        run: scripts/test-ui.sh -p no:warnings
+
+  # The wheel and the sdist, built once, in the Dockerfile's build stage: the hash-locked build backend, no build
+  # isolation, no download. The same command as a local `podman build`; everything below installs this wheel.
+  package:
+    name: Wheel and sdist
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build the wheel and the sdist
+        run: podman build --target wheel-built -o type=local,dest=dist .
+      - name: List what is in them
+        run: |
+          ls -l dist
+          {
+            echo "### Package contents"
+            for f in dist/*.whl dist/*.tar.gz; do
+              echo; echo "**$(basename "$f")** ($(stat -c %s "$f") bytes)"; echo '```'
+              case "$f" in *.whl) unzip -l "$f" ;; *) tar tzvf "$f" ;; esac
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: The wheel has the dashboard and nothing else it should not
+        run: |
+          set -eu
+          whl="$(ls dist/pengumon-*.whl)"
+          unzip -Z1 "$whl" > "$RUNNER_TEMP/wheel.txt"
+          grep -q '^pengumon/web/static/' "$RUNNER_TEMP/wheel.txt"
+          grep -q '^pengumon/web/templates/' "$RUNNER_TEMP/wheel.txt"
+          if grep -E '(^|/)(tests?|config\.ya?ml)(/|$)' "$RUNNER_TEMP/wheel.txt"; then echo "test or config files in the wheel" >&2; exit 1; fi
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # The image built from that wheel and tested as it is run (read-only root, uid 10001, data volume), on a native
+  # runner for each architecture (no QEMU). The browser check needs the runner image, built here for amd64 only: the
+  # arm64 runner has not been seen building it yet (Debian's chromium and the pinned node image do have arm64 builds),
+  # so turn "e2e" on for arm64 once it does.
+  container:
+    name: Image (${{ matrix.arch }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, arch: amd64, args: ""}
+          - {os: ubuntu-24.04-arm, arch: arm64, args: "--no-e2e"}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: dist
+          path: dist
+      - name: Allow unprivileged ICMP
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+      - name: Restore the browser runner image
+        if: matrix.args == ''
+        id: runner-cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ${{ runner.temp }}/ui-test-runner.tar
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+      - name: Load the cached runner image
+        if: matrix.args == '' && steps.runner-cache.outputs.cache-hit == 'true'
+        run: podman load -i "$RUNNER_TEMP/ui-test-runner.tar"
+      - name: Build the runner image
+        if: matrix.args == '' && steps.runner-cache.outputs.cache-hit != 'true'
+        run: |
+          tests/ui/runner/build.sh
+          podman save -o "$RUNNER_TEMP/ui-test-runner.tar" localhost/ui-test-runner:1
+      - name: Build the image from the wheel and test it
+        run: scripts/test-container.sh --prebuilt ${{ matrix.args }}
+
+  # A plain Python install, as a user without a container does it: the locked dependencies, then the wheel.
+  native-linux:
+    name: Native install (Linux)
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Allow unprivileged ICMP
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+      - name: Install the locked dependencies and the wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --require-hashes --no-deps --only-binary :all: -r requirements.txt
+          "$RUNNER_TEMP/venv/bin/pip" install --no-deps dist/pengumon-*.whl
+      - name: Run pengumon and check it
+        run: |
+          set -eu
+          export PATH="$RUNNER_TEMP/venv/bin:$PATH"
+          export PENGUMON_DATA="$RUNNER_TEMP/pengumon-data"
+          cat > "$RUNNER_TEMP/config.yaml" <<'YAML'
+          prober: {interval_seconds: 1.0}
+          targets:
+            - {id: t_local, name: "Local", category: local, address: "127.0.0.1", enabled: true}
+            - {id: t_public, name: "Public", category: public, address: "127.0.0.1", enabled: true}
+          YAML
+          export PENGUMON_CONFIG="$RUNNER_TEMP/config.yaml"
+          cd "$RUNNER_TEMP"   # not the checkout: the installed package must work without the source tree
+          pengumon version
+          pengumon paths
+          pengumon run > "$RUNNER_TEMP/pengumon.log" 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true; cat "$RUNNER_TEMP/pengumon.log" | tail -n 20' EXIT
+          for _ in $(seq 1 60); do
+            curl -sf -m 2 http://127.0.0.1:8000/api/health > "$RUNNER_TEMP/health.json" && break
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/health.json"; echo
+          grep -q "\"version\":\"$(pengumon version | awk '{print $NF}')\"" "$RUNNER_TEMP/health.json"
+          curl -sf -m 5 http://127.0.0.1:8000/ | tee "$RUNNER_TEMP/index.html" | grep -q '/static/v/'
+          asset="$(grep -o '/static/v/[0-9a-f]*/[^"]*\.js' "$RUNNER_TEMP/index.html" | head -n1)"
+          curl -sf -m 5 -o /dev/null "http://127.0.0.1:8000$asset"

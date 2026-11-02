@@ -1,0 +1,12 @@
+/* Dialog trace: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Trace */
+.trace-form { display: flex; gap: var(--sp-3); align-items: flex-end; margin-bottom: var(--sp-4); }
+.trace-empty { flex-direction: column; align-items: center; text-align: center; padding: var(--sp-6); }
+.trace-empty > div { max-width: 52ch; }
+.trace-art { width: 260px; height: 40px; }
+@media (max-width: 720px) {
+  .trace-form { flex-direction: column; align-items: stretch; }
+}
+.trace .tr-act { white-space: nowrap; }
+.trace .lost { color: var(--crit); font-weight: var(--fw-semi); }
+#traceNote:not(:empty) { margin-top: var(--sp-3); }

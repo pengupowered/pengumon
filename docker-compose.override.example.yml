@@ -1,0 +1,8 @@
+# Copy to docker-compose.override.yml (git-ignored) for mounts that only exist on this machine. podman-compose and
+# docker compose merge it into docker-compose.yml automatically, so scripts/deploy.sh picks it up.
+services:
+  pengumon:
+    volumes:
+      # A private CA, to verify an HTTPS health endpoint listed under service_checks in config.yaml
+      # (that service sets ca_file: /app/certs/home-ca.pem)
+      - /path/to/ca.pem:/app/certs/home-ca.pem:ro

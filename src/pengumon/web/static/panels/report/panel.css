@@ -1,0 +1,26 @@
+/* Panel report: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* ---------- Reliability ---------- */
+.rep-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--sp-4); flex-wrap: wrap; }
+.hero-num { font-size: 40px !important; letter-spacing: -.03em; line-height: 1.05; }
+.rep-mini { display: flex; gap: var(--sp-4); }
+.rep-days { margin-top: var(--sp-4); }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; height: 64px; margin-top: var(--sp-2); border-bottom: 1px solid var(--line); }
+.day { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--ink-3); }
+.day { position: relative; padding-bottom: 16px; }
+.day span { position: absolute; bottom: 0; }
+.day i { width: 100%; max-width: 26px; border-radius: 4px 4px 0 0; background: var(--accent); opacity: .85; }
+.day.nodata i { background: var(--nodata); height: 3px !important; }
+.rep-days .rep-note { margin-top: 6px; }
+.rep-causes { margin-top: 14px; }
+@container (min-width: 760px) { .rep-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr); gap: var(--sp-6); align-items: end; } .rep-grid .days { height: 84px; } .rep-days, .rep-causes { margin-top: 0; } }
+.causes { list-style: none; display: flex; flex-direction: column; gap: 7px; margin-top: var(--sp-2); }
+.causes li { display: grid; grid-template-columns: minmax(112px, auto) 1fr 38px; gap: var(--sp-2); align-items: center; font-size: var(--fs-sm); color: var(--ink-2); }
+.causes b { text-align: right; color: var(--ink-1); }
+.cbar { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.cbar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+
+@media (max-width: 720px) {
+  .causes li { grid-template-columns: 96px 1fr 34px; }
+}
+.rep-tables { display: grid; gap: var(--sp-4); margin-top: var(--sp-4); }
+.rep-note { font-size: var(--fs-xs); color: var(--ink-3); margin-top: var(--sp-2); }

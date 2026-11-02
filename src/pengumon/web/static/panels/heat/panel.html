@@ -1,0 +1,11 @@
+<!-- When it breaks: packet loss by day and hour, last 7 days (panels/heat.js, GET /api/report/loss-grid) -->
+<section data-panel="heat" aria-label="When it breaks">
+  <article class="panel" data-size="4">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-heat"/></svg><h2 class="panel-t">When it breaks</h2><span class="panel-m">loss by hour, 7 days</span></header>
+    <div class="panel-b">
+      <div class="heat" id="heatGrid" role="group" data-roving="24" aria-label="Packet loss by day and hour"><div class="skel block" style="grid-column: 1 / -1; height: 150px"></div></div>
+      <div class="heat-foot"><div class="scale-legend"><span>0%</span><i style="background:var(--q0)"></i><i style="background:var(--q1)"></i><i style="background:var(--q2)"></i><i style="background:var(--q3)"></i><i style="background:var(--q4)"></i><span>≥ 5%</span></div><span class="fine" id="heatHint" hidden>Click an hour for its incidents</span></div>
+      <p class="insight" id="heatInsight" hidden><svg class="i sm" aria-hidden="true"><use href="#i-clock"/></svg><span></span></p>
+    </div>
+  </article>
+</section>

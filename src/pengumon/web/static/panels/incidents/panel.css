@@ -1,0 +1,40 @@
+/* Panel incidents: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* ---------- Incidents ---------- */
+.tl { position: relative; margin-bottom: var(--sp-4); padding-bottom: 2px; }
+.tl-lane { display: grid; grid-template-columns: 64px 1fr; align-items: center; height: 24px; }
+.tl-l { font-size: var(--fs-xs); color: var(--ink-3); }
+.tl-track { position: relative; height: 16px; border-radius: 4px; background: repeating-linear-gradient(90deg, var(--surface-2) 0 calc(100% / 7 - 1px), var(--line) calc(100% / 7 - 1px) calc(100% / 7)); }
+.tl-bar { position: absolute; top: 2px; bottom: 2px; min-width: 5px; border: 0; border-radius: 3px; background: var(--st-fill, var(--st)); cursor: pointer; padding: 0; }
+.tl-bar.exp { background: repeating-linear-gradient(135deg, var(--st) 0 3px, color-mix(in srgb, var(--st) 40%, transparent) 3px 6px); }
+.tl-bar.ongoing { box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 3px var(--st); }
+.tl-bar:hover { filter: brightness(1.2); }
+.tl-axis { display: grid; grid-template-columns: 64px 1fr; font-size: var(--fs-xs); color: var(--ink-3); margin-top: 4px; }
+.tl-axis > div { display: grid; grid-template-columns: repeat(7, 1fr); }
+.tl-axis > div span { padding-left: 4px; }
+.tl-now { position: absolute; top: 0; bottom: 18px; width: 2px; background: var(--accent); border-radius: 1px; }
+.inc-list .when { color: var(--ink-2); white-space: nowrap; }
+/* One line per incident: the title is cut with an ellipsis, the rest is the inspector's (a row opens it). */
+.inc-list td { padding-block: 6px; }
+.inc-list .primary { border: 0; background: none; padding: 0; font: inherit; font-weight: var(--fw-semi); color: var(--ink-1); text-align: left; cursor: pointer; display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inc-list .go { color: var(--ink-4); width: 1%; }
+.inc-list .go svg.i { width: 14px; height: 14px; vertical-align: middle; }
+.inc-list tr.row-click:hover .go { color: var(--ink-2); }
+.inc-list td.lead { min-width: 0; } /* on narrow cards the one-line title must not widen its grid column */
+@container (min-width: 561px) { .inc-list td.lead { max-width: 0; width: 100%; } }
+/* The time another panel picked (an hour of When it breaks, a block of Uptime): the list shows only its incidents. */
+.inc-window { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); padding: 6px 6px 6px var(--sp-3); border-radius: var(--r-md); background: var(--accent-bg); color: var(--ink-2); font-size: var(--fs-sm); }
+.inc-window b { color: var(--ink-1); }
+.inc-window:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tl-win { position: absolute; top: 0; bottom: 18px; left: calc(64px + (100% - 64px) * var(--a)); width: max(3px, calc((100% - 64px) * (var(--b) - var(--a)))); background: color-mix(in srgb, var(--accent) 16%, transparent); border-inline: 1px solid var(--accent); pointer-events: none; }
+@media (max-width: 720px) { .tl-win { left: calc(50px + (100% - 50px) * var(--a)); width: max(3px, calc((100% - 50px) * (var(--b) - var(--a)))); } }
+.dur { font: var(--fw-semi) var(--fs-xs) var(--mono); color: var(--ink-2); background: var(--surface-3); padding: 2px 6px; border-radius: var(--r-sm); white-space: nowrap; }
+
+@media (max-width: 720px) {
+  .tl-lane, .tl-axis { grid-template-columns: 50px 1fr; }
+}
+.tl-bar.busy { --st: var(--busy); }
+.load-flag { color: var(--ink-3); text-decoration: line-through; }
+.tl-now { left: calc(64px + (100% - 64px) * var(--now, 1)); }
+@media (max-width: 720px) { .tl-now { left: calc(50px + (100% - 50px) * var(--now, 1)) !important; } }
+
+@media (max-width: 720px) { #incidentPaginationInfo { flex-basis: 100%; } .panel-f #incidentPageNum { margin-inline: auto; } }

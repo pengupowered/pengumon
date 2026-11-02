@@ -1,0 +1,20 @@
+<!-- Trace route -->
+<div class="modal" id="tracerouteModal" role="dialog" aria-modal="true" aria-labelledby="traceTitle">
+  <div class="modal-content" style="--w: 760px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><h2 class="modal-t" id="traceTitle">Trace route</h2><span class="modal-m">discover the hops to a host</span>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="tracerouteModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <form class="trace-form" data-submit="runTraceroute">
+        <div class="field grow"><label for="traceTargetInput">Host or address</label><input class="input mono" type="text" id="traceTargetInput" value="1.1.1.1" placeholder="1.1.1.1 or example.com"></div>
+        <button type="submit" class="btn primary" id="btnRunTrace"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span>Run trace</span></button>
+      </form>
+      <div id="tracerouteResults" role="status" aria-live="polite">
+        <div class="empty trace-empty">
+          <svg class="trace-art" viewBox="0 0 300 44" aria-hidden="true"><path d="M14 22H286" stroke="var(--line-strong)" stroke-dasharray="4 5"/><circle cx="14" cy="22" r="9" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="82" cy="22" r="6" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="150" cy="22" r="6" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="218" cy="22" r="6" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="286" cy="22" r="9" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/></svg>
+          <div><b>See every hop between this host and a destination</b>A trace sends probes with rising time-to-live and lists who answers, from your PC through the router and the modem to the destination. Use it to find the ISP hops worth monitoring; each one can be added as a target with one click. Usually 5 to 15 s, up to about 45 s when hops do not answer.</div>
+        </div>
+      </div>
+    </div>
+    <footer class="modal-f"><button type="button" class="btn" data-action="closeModal" data-arg="tracerouteModal">Close</button></footer>
+  </div>
+</div>

@@ -1,0 +1,11 @@
+/* Dialog sign-out: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+.so-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); padding: var(--sp-3) 0; border-top: 1px solid var(--line); }
+.so-row:first-child { border-top: 0; padding-top: 0; }
+.so-row > div { display: flex; flex-direction: column; min-width: 0; }
+.so-row > div span { font-size: var(--fs-sm); color: var(--ink-3); }
+.so-row form { margin: 0; flex: none; }
+.so-row > .btn { flex: none; }
+.so-confirm { margin-top: var(--sp-2); padding: var(--sp-3); border: 1px solid color-mix(in srgb, var(--crit) 40%, transparent); border-radius: var(--r-md); background: var(--crit-bg); }
+.so-confirm p { margin: 0 0 var(--sp-3); }
+.so-btns { display: flex; justify-content: flex-end; gap: var(--sp-2); flex-wrap: wrap; }
+@media (max-width: 720px) { .so-row { flex-direction: column; align-items: stretch; } .so-row .btn { width: 100%; justify-content: center; } }

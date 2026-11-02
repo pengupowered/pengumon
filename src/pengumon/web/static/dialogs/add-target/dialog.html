@@ -1,0 +1,29 @@
+<!-- Add target -->
+<div class="modal" id="addTargetModal" role="dialog" aria-modal="true" aria-labelledby="addTargetTitle">
+  <div class="modal-content" style="--w: 560px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><h2 class="modal-t" id="addTargetTitle">Add target</h2><span class="modal-m">probed every second</span>
+      <button type="button" class="btn icon m-close" data-action="cancelAddTarget" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <form id="addTargetForm" data-submit="addTarget" novalidate>
+      <div class="modal-b">
+        <div class="form">
+          <div class="empty st st-crit compact" id="addTargetError" role="alert" hidden></div>
+          <div class="field" data-field="name"><label for="targetName">Name</label><input class="input" type="text" id="targetName" required placeholder="Game server (east)" maxlength="100" autocomplete="off" data-input="validateTargetField" data-change="touchTargetField" aria-describedby="targetNameMsg"><span class="hint" id="targetNameMsg">What the dashboard calls it.</span></div>
+          <div class="field" data-field="address"><label for="targetAddress">Host or address</label><input class="input mono" type="text" id="targetAddress" required placeholder="203.0.113.10 or example.com" maxlength="255" autocomplete="off" autocapitalize="off" spellcheck="false" data-input="validateTargetField" data-change="touchTargetField" aria-describedby="targetAddressMsg"><span class="hint" id="targetAddressMsg">An IPv4 or IPv6 address, or a host name.</span></div>
+          <div class="field" data-field="category"><label for="targetCategory">Where it sits on the path</label>
+            <select class="input" id="targetCategory">
+              <option value="local">Home network (router, mesh)</option>
+              <option value="gateway">Gateway (modem, ONT)</option>
+              <option value="isp">ISP hop</option>
+              <option value="public">Public internet</option>
+              <option value="custom" selected>Custom (not on the path)</option>
+            </select><span class="hint">Path targets appear in the path health chain and the uptime strips, in order.</span></div>
+          <div class="field" data-field="id"><label for="targetId">Unique id</label><input class="input mono" type="text" id="targetId" required placeholder="game_server_1" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" data-input="validateTargetField" data-change="touchTargetField" aria-describedby="targetIdMsg"><span class="hint" id="targetIdMsg">Letters, digits, - and _ (for example game_server_east). Filled in from the name.</span></div>
+        </div>
+      </div>
+      <footer class="modal-f">
+        <button type="button" class="btn" data-action="cancelAddTarget">Cancel</button>
+        <button type="submit" class="btn primary" id="btnAddTarget"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span>Add target</span></button>
+      </footer>
+    </form>
+  </div>
+</div>

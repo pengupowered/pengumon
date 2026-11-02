@@ -1,0 +1,101 @@
+{
+ "calls": [
+  [
+   "get_incidents_since",
+   1759913600.0
+  ],
+  [
+   "get_hop_stats",
+   1759913600.0
+  ],
+  [
+   "get_latest_docsis_snapshot"
+  ],
+  [
+   "get_docsis_snapshots_in_range",
+   1759913600.0,
+   1760000000.0,
+   0
+  ]
+ ],
+ "key_order": [
+  "observation_hours",
+  "total_incidents",
+  "total_duration_seconds",
+  "total_duration_minutes",
+  "excluded_expected",
+  "primary_failing_hop",
+  "hop_stats",
+  "docsis",
+  "formatted_markdown"
+ ],
+ "markdown": [
+  "# Broadband Packet Loss Evidence Report",
+  "**Generated:** 2025-10-09 08:53:20 | **Observation window:** past 24 hours",
+  "**Local hardware:** no local or gateway probes in this window",
+  "",
+  "## 1. Summary",
+  "- **Recorded incidents:** 0",
+  "- **Cumulative duration:** 0.0 minutes (0 seconds)",
+  "- **First hop with elevated loss:** ISP Hub (198.51.100.5) (2.0% loss).",
+  "",
+  "## 2. Loss per hop",
+  "Probes are ICMP/DNS requests sent about once per second per target; the table counts every probe in the window, including those during heavy line load. Hops are listed from the premises outward.",
+  "",
+  "| Hop | Target | Sent | Lost | Loss % | Avg RTT | Max RTT | Note |",
+  "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+  "| `router` | Local Router | 0 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `gateway` | Modem Gateway | 0 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `isp` | ISP Hub | 1000 | 20 | 2.0% | 10.0 ms | 30.0 ms | First hop with elevated loss |",
+  "",
+  "Later hops show no comparable loss. Loss at a single intermediate hop can also be that router rate-limiting or deprioritising ping, rather than traffic being dropped.",
+  "",
+  "## 3. Modem (DOCSIS) telemetry",
+  "- No modem data: modem credentials are not configured in Pengumon.",
+  "",
+  "## 4. What the data shows",
+  "- No modem data is available, so nothing can be said about the RF side.",
+  "- Loss first appears at ISP Hub (198.51.100.5).",
+  "",
+  "## 5. Summary for a support ticket",
+  "```text",
+  "Over the past 24 hours Pengumon recorded 0 incidents totalling 0.0 minutes.",
+  "Loss is first elevated at ISP Hub (198.51.100.5): 2.0%.",
+  "```"
+ ],
+ "payload": {
+  "docsis": null,
+  "excluded_expected": 0,
+  "hop_stats": [
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 0,
+    "target_id": "router"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 0,
+    "target_id": "gateway"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 2.0,
+    "lost": 20,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "isp"
+   }
+  ],
+  "observation_hours": 24,
+  "primary_failing_hop": "isp",
+  "total_duration_minutes": 0.0,
+  "total_duration_seconds": 0,
+  "total_incidents": 0
+ }
+}

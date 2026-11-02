@@ -1,0 +1,20 @@
+<!-- Path health: the classifier's verdict and the path from this host to the internet, hop by hop (panels/diagnosis.js) -->
+<section data-panel="diagnosis" aria-label="Path health">
+  <article class="panel hero" data-size="12" id="diagnosisBanner" data-status="unknown">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-path"/></svg><h2 class="panel-t">Path health</h2><span class="panel-m">this host → internet · last 60 s</span>
+      <div class="panel-tools"><button type="button" class="info" data-action="toggleHelp" data-help="diagnosis" aria-label="About the diagnosis"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></div></header>
+    <div class="panel-b">
+      <div class="verdict">
+        <span class="badge st-unknown" id="statusBadge"><svg class="i" aria-hidden="true"><use href="#i-unknown"/></svg>Connecting</span>
+        <div class="verdict-txt"><h3 id="diagnosisTitle">Analyzing network hops...</h3><p id="diagnosisDesc">Starting the probes to your router, the gateway and the public resolvers.</p></div>
+      </div>
+      <ol class="chain" id="pathChain" aria-label="Network path from this host to the internet"></ol>
+      <div class="path-extra" id="pathExtra" hidden><span class="pe-h">Also watched</span><div class="pe-list"></div></div>
+      <div class="hero-foot" id="pathFoot">
+        <span><svg class="i sm ink-good" aria-hidden="true"><use href="#i-ok"/></svg>Healthy</span><span><svg class="i sm ink-warn" aria-hidden="true"><use href="#i-warn"/></svg>Degraded</span><span><svg class="i sm ink-crit" aria-hidden="true"><use href="#i-down"/></svg>Down</span>
+        <span><b class="mono">+1.0 ms</b> latency the segment adds</span>
+        <span class="grow">Big number: median round trip, last 60 s (Internet: median of its servers) · sparkline: last 60 probes, red ticks are lost probes</span>
+      </div>
+    </div>
+  </article>
+</section>

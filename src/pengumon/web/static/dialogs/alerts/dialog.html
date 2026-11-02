@@ -1,0 +1,33 @@
+<!-- Alerts -->
+<div class="modal" id="alertsModal" role="dialog" aria-modal="true" aria-labelledby="alertsTitle">
+  <div class="modal-content" style="--w: 560px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><h2 class="modal-t" id="alertsTitle" tabindex="-1">Alerts</h2><span class="modal-m">pop-up and sound: this browser</span>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="alertsModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <div class="opt-row"><div><b>Desktop notifications</b><span>A pop-up when an outage starts or ends.</span></div><span class="al-state"><span id="notifStatusBadge" class="badge quiet st-unknown">Checking</span>
+        <label class="switch" id="notifSwitch" hidden><input type="checkbox" role="switch" data-action="toggleNotificationsEnabled" aria-label="Desktop notifications on"><span></span></label></span></div>
+      <p class="fine" id="notifHelpText">If the browser blocks notifications for this address, allow them from the site settings (the icon left of the address), then press Test. On plain http over the LAN most browsers refuse them; <a href="http://localhost:8000">localhost</a> works, and so does the sound below.</p>
+      <div class="row-btns"><button type="button" class="btn outline sm" id="btnRequestNotif" data-action="requestDesktopPermission">Allow notifications</button><button type="button" class="btn sm" data-action="sendTestNotification">Test</button></div>
+      <div class="opt-row al-sound"><div><b id="alSoundLabel">Sound</b><span>A short tone in this tab, no permission needed.</span></div>
+        <label class="switch"><input type="checkbox" id="btnToggleSound" role="switch" data-action="toggleSoundAlerts" aria-labelledby="alSoundLabel"><span></span></label></div>
+      <div class="row-btns">
+        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="down" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-down"/></svg>Outage tone</button>
+        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="degraded" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg>Warning tone</button>
+        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="healthy" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg>Restored chime</button>
+      </div>
+      <fieldset class="opts"><legend>Alert me when</legend>
+        <label class="check"><input type="checkbox" id="alertDown" data-change="setAlertOption" data-arg="down"> The internet goes down</label>
+        <label class="check"><input type="checkbox" id="alertDegraded" data-change="setAlertOption" data-arg="degraded"> Loss or latency is degraded</label>
+        <label class="check"><input type="checkbox" id="alertRecovered" data-change="setAlertOption" data-arg="recovered"> It recovers</label>
+        <span class="fine">Applies to the pop-up and the sound alike. Kept in this browser.</span>
+      </fieldset>
+      <section class="al-server" aria-labelledby="alServerTitle">
+        <div class="opt-row"><div><b id="alServerTitle">Server alerts</b><span id="alChannelsText">Checking…</span></div>
+          <button type="button" class="btn sm" id="btnServerTest" data-action="sendServerTest" hidden>Send test</button></div>
+        <ul class="al-channels" id="alChannels"></ul>
+        <p class="fine" id="alServerResult" role="status"></p>
+      </section>
+    </div>
+    <footer class="modal-f"><button type="button" class="btn primary" data-action="closeModal" data-arg="alertsModal">Done</button></footer>
+  </div>
+</div>

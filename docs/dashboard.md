@@ -1,0 +1,193 @@
+# Dashboard
+
+The dashboard is a single page served by the FastAPI app: plain ES modules (no build step), a strict CSP
+(`script-src 'self'`, no inline script or handlers) and one live WebSocket. This page describes what a person sees and
+how the code is organised. Tests that guard it: `scripts/test.sh` (`tests/test_frontend.py`) and `scripts/test-ui.sh`
+(a headless-browser smoke test and ESLint).
+
+## The header
+
+Left to right:
+
+- **Status pill**: the classifier's verdict in a word ("Healthy", "Degraded", "Down", "Busy"), a status dot and, when
+  there is something to say, the worst loss on the path and the latency to the internet. The page tint and the tab
+  title follow it. Until the first message it is grey and says "Connecting"; the page never shows green before data.
+- **Live indicator**: "Live · 1 s" while the socket is open, "Reconnecting" when it is not.
+- **LAN address chip** (when the server knows its LAN URL) with a copy button.
+- **Tools**: Trace (route trace), Dossier (ISP outage dossier), Alerts (browser notifications on or off), Target (add a
+  probe target), **Layout** (panel arrangement), theme toggle, and a **Grafana** menu with links to the dashboards
+  when `PENGUMON_GRAFANA_URL` is set (partial `templates/features/grafana.html`; without it the button is not rendered).
+  On a phone the tools collapse into a "more" menu that copies them.
+
+## Panels
+
+One card group per panel, each in its own folder. What a panel needs, and what it does without it:
+
+| Panel (`id`) | Tab | Needs | Without it |
+|---|---|---|---|
+| Path health (`diagnosis`) | Live | nothing | always shown |
+| Latency (`latency`) | Live | nothing | always shown |
+| Hop details (`matrix`) | Live | nothing | always shown |
+| Uptime (`strips`) | Live | nothing | always shown |
+| Line (`line`) | Line | a device offering `access_line` | no card, no Line tab, listed in the Layout dialog with the reason; the path chain goes router to ISP hops |
+| Router (`router`) | Network | a device offering `wan_counters` or `router_system` (one card per such device); the client and mesh blocks need the `clients` / `mesh` features | no card; a missing client list shows one muted line saying why |
+| Host services (`services`) | Network | the `host_services` feature (config `service_checks`) | no card, with the reason in the Layout dialog |
+| Incidents (`incidents`) | Incidents | nothing | always shown |
+| When it breaks (`heat`) | Incidents | nothing | always shown |
+| Reliability (`report`) | Incidents | nothing | always shown |
+
+Availability is decided by each panel's `available(ctx)` (or `instances(ctx)`), from `/api/devices` and `/api/features`.
+A panel that is not available is never mounted. The page with no devices at all still works (the smoke test's `bare`
+variant).
+
+**Path health** is the hero. It shows the verdict, then the chain this host, router, line, every ISP hop, internet,
+built from the configured targets' categories (DNS probes stand in when there is no public target). Each node has a
+short label (Router, Line, ISP hop 1, Internet) with the configured target name as a second line (whole in the tooltip),
+the median of the last probes, loss, jitter and a sparkline; each link shows the latency the segment adds. A node opens
+that target's history. The Internet node (several public servers) and a folded run of ISP hops open the history of all
+their targets together, titled as the node is ("Internet · median of 3 public servers", "ISP · 9 hops"): **All** draws a
+line per member in its own colour and the node's figure as a bold line (the median, or the last hop that answers), loss
+per member, a strip per member, and figures by the node's rules; a switcher shows one member as its own history. A
+node opens its history on the Live range (its own figure is of the last minute), shows that figure as it is now ("On
+the path now: 10.9 ms, the median of the servers' last 60 probes", from the same `path.js` `pathNodes` that paints the
+node), and every figure in the dialog says the window it covers ("Median, last 5 min"). With more than five nodes (four in a medium card) the links and nodes get tighter, and in a
+medium-width card (about 1024 px) the node icons go and the latency pills move under the gaps. When even that leaves a
+node too little room (a long traceroute's worth of ISP hops), the ISP hops fold into one node: the worst hop sets its
+status and the last hop that answers its latency; Hop details still lists each one. In a narrow card (container query,
+860 px) the chain turns vertical and shows every hop.
+
+A hop that never answers ping while a later hop does is up (the probes pass through it; many provider routers ignore
+ping): it reads "Ignores ping" in grey, its loss counts nowhere, and the next link measures from the last hop that
+answered. The server decides it, once (`engine/path_rules.py`, from every target's status after each probe round), and
+flags the target with `ignores_ping` in the live message and `/api/targets`; the page only reads the flag
+(`static/js/path.js` `ignoringPing`). Every view follows it: Hop details says "no ping", Uptime and the target history give
+it no outage blocks and no availability (its blocks open no incidents), the report's Every hop table lists it as
+"Ignores ping", "When it breaks" (`/api/report/loss-grid`) leaves its probes out, the dossier never names it as the
+failing hop, and an incident does not list it among its affected targets. The flag never decides whether an incident
+opens. It describes the hop as it is now, so the longer views apply the current verdict to their whole window. Custom targets are chips under the chain ("Also watched"); with no path target at all the chain says so.
+
+The same short labels name a target everywhere else (`static/js/path.js` `shortLabels`): Router, Line, ISP hop N,
+Internet (with its address when there are several public servers), DNS lookup N, a custom target by its name; the
+configured name is the secondary text.
+
+**Latency** draws three path series by default: Router (worst local target), Line (worst gateway target) and Internet
+(median of the public targets; DNS lookups stand in when there is none). The legend names each series' targets, the
+tooltip gives every member's own value, and a note says what the view leaves out. **Each target** draws one thin line
+per pinged target (ISP hops included, DNS lookups not: they time a lookup, not a round trip) in the colours Hop details
+uses (a target's configured `color`, else the next of eight validated series colours in path order, then the first one no other target of its category has, so the members of one group always differ; grey past eight in one category); the choice is kept per browser. Under the chart a thin loss lane shows the worst target's loss and names it in
+the tooltip. The chart takes the height its row gives the card.
+
+**Hop details**: every figure covers the last 60 probes except "Lost since start". Click a row for the target's
+history. Sparklines are drawn by `static/js/sparkline.js` (SVG, not Chart.js); a lost probe is a red tick and a gap.
+
+**When it breaks** (loss by day and hour) and **Uptime** (a strip per target) are ways into the incident log: every hour
+or block that has begun opens the Incidents panel filtered to that time (on a phone, the Incidents tab), where each
+incident opens its inspector as usual. A time with nothing to list says why: nothing probed, every probe answered,
+busy-line incidents hidden, or loss too small or brief to open an incident.
+
+The **router** card's client and mesh counts come from the device's live summary (`clients`: counts only, never a
+client row); only the Local network dialog fetches the client list.
+
+Each card has a "..." menu: move up, move down, hide, Layout.
+
+## Layout
+
+The **Layout** dialog (`dialogs/layout/`, logic in `static/js/layout.js`) lists the panels with up/down buttons and a
+switch each, applied at once. "Reset to default" returns to the default. Panels that are not available on this install
+are listed apart with the reason. A panel with several cards (one per device) is one row; its cards move together, so
+adding a device needs no layout change.
+
+Two layers:
+
+1. The **default**, from the server: `dashboard:` in `config.yaml`, `order:` (these panels first, the rest follow in
+   their usual order) and `hidden:` (not shown). Unknown or repeated ids are a config error; the valid ids are the
+   panel folder names. It reaches the page on `<body data-layout>`.
+2. The **browser's own choice**, in `localStorage` (`pengumon.layout.v1`) after the first change. It wins over the
+   default, so the phone and the PC can differ. A stored layout never hides a panel added later.
+
+Cards fill a 12-column grid (`data-size` 4, 8 or 12); the last card of a row that would leave a gap widens.
+
+## Mobile tabs
+
+At 720 px and below a bottom bar (`static/js/tabs.js`) shows one group at a time: **Live** (path health, latency, hop
+details, uptime), **Network** (router, host services), **Line** and **Incidents** (incident log, when it breaks,
+reliability). A panel names its tab in its registry entry (`tab:`). The tab is kept in `location.hash`, so back and
+reload return to it; a tab with no available, unhidden panel is left out; a dot marks a tab whose cards are not fine.
+Wider than 720 px there is no bar and every shown panel appears.
+
+## Dialogs
+
+- Owned by a panel (extra `*.html` in its folder): **Local network** (SVG topology, filter chips, clients table) and
+  **Router history** (router), **Channels** with a per-channel history (line, DOCSIS only), **Inspector** (incidents).
+- Standalone (`static/dialogs/<id>/`): **add-target**, **alerts**, **device-setup** (credentials and a test poll for a
+  device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **target-history**, **trace**.
+
+Dialogs are `div.modal` toggled by `.active` (`openModal` in `util.js`); on a phone they open as a bottom sheet. Their
+help texts and labels live in their own folder.
+
+## States
+
+- **Connecting**: grey pill, "Connecting" indicator, skeleton nodes in the chain.
+- **Disconnected**: when the socket closes, `body` and the header get `data-conn="lost"`: the pill goes grey, cards dim
+  and a banner under the header says whether data was ever received ("Connection lost. Showing the last data" or
+  "Cannot reach pengumon"). The socket retries every 2 s.
+- **Stale**: device cards (`static/js/device-panel.js`) show a "reading N min old" chip and dim when the last reading is
+  older than three poll intervals (at least 2 min); this is re-checked every 30 s. The card also shows "read HH:MM
+  · every N".
+- **Device errors**: a device whose status is `error` shows "No reading", with an error block saying what to do; an
+  unconfigured one shows "Not set up" and a setup button; warning and critical readings use the server's grades (the
+  browser never grades a number itself).
+- **Busy**: a line load that explains the latency is "Busy" (purple, expected), not a fault.
+
+Status always has an icon and a word as well as a colour.
+
+## Theming
+
+Dark first. `static/tokens.css` holds every colour and size as a CSS variable; light values apply under
+`prefers-color-scheme: light` and again under `[data-theme="light"]`, so the header toggle wins both ways. The choice is
+kept in `localStorage` (`pengumon.theme`); with none, the operating system's setting applies. Charts are drawn on
+canvas, so `static/js/chart-theme.js` reads the tokens and `chrome.js` redraws them on a theme change. Rule: no hex
+literal outside `tokens.css`.
+
+## Where things live
+
+All under `src/pengumon/web/static/`:
+
+- `tokens.css`: design tokens (colours, type scale `--fs-*`, spacing `--sp-*`, radii, motion).
+- `components.css`: shared components (panel, badge, button, modal, menu, table), tokens only.
+- `page.css`, `style.css`: page layout (header, grid, banners), and the app layer (panel groups, modal behaviour).
+- `js/`: the core and shared library: `main.js` (entry), `live.js` (the socket; one bus topic per key of each
+  message), `bus.js`, `layout.js`, `tabs.js`, `chrome.js` (theme and menus), `dispatch.js` (delegated actions),
+  `devices.js` and `device-feed.js` (devices and features), `device-panel.js`, `help.js`, `util.js`, `state.js`,
+  `grades.js`, `path.js`, `sparkline.js`, `chart-theme.js`.
+- `panels/<id>/`, `dialogs/<id>/`: the features.
+- `vendor/`: Chart.js. The page is served from `/static/v/<hash>/` where the hash covers the whole tree, so all modules
+  are cache-busted together and cached for a year.
+
+Event handlers are delegated: markup carries `data-action`, `data-input`, `data-change` or `data-submit`, and modules
+register the handler with `registerActions`, which keeps the CSP.
+
+**Metric help.** An info button (`data-help="<key>"`) opens a popover saying what a number measures and what is
+normal. Each folder registers its texts with `registerHelp` in its `help.js`; a key must exist and be used, and quoted
+thresholds must match the code. Use this instead of `title=` (which stays on icon-only buttons).
+
+## Adding a panel
+
+A panel is one folder, `static/panels/<id>/`; no shared file names it (the page, the config, the loader and the core
+modules find it by discovery in `pengumon/ui.py`). Files:
+
+- `panel.json`: `{"order": <number>}`, its default place.
+- `panel.html`: exactly one `<section data-panel="<id>">` holding one or more `.panel` cards (`data-size` 4, 8 or 12).
+  Any other `*.html` in the folder is a dialog the panel owns, included outside `<main>`.
+- `panel.js`: default-exports `{ id, title, tab, icon, core?, available(ctx) | instances(ctx), reason?(ctx),
+  prepare?(ctx), mount?(section, ctx) }`. `id` is the folder name; `tab` is `live`, `network`, `line` or `incidents`;
+  `available` must exist. Subscribe to the live data with `ctx.bus`.
+- `help.js`: its `registerHelp({...})` texts.
+- `*.css`: its styles, linked automatically; tokens only.
+
+The folder name becomes a valid `dashboard:` id on its own. Rules enforced by `tests/test_frontend.py`: every folder has
+the three files and one section with its own id, and module ids match folder names; core modules name no optional panel
+and import only core files; a folder imports only `static/js` and its own files, never another folder; no inline
+handlers or scripts; every delegated action in the markup is registered (once); every `getElementById` literal exists;
+no vendor names or fixed hosts; device templates carry no ids (one card per device); help keys exist and are used;
+tabs are named consistently. Add a smoke step to `tests/ui/smoke.mjs` for what a person does with the panel.

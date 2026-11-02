@@ -1,0 +1,15 @@
+<!-- Uptime: one strip per target in path order, 15-minute blocks or days (panels/strips.js, GET /api/uptime) -->
+<section data-panel="strips" aria-label="Uptime">
+  <article class="panel" data-size="8">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><h2 class="panel-t">Uptime</h2><span class="panel-m" id="stripsMeta">15-min blocks, path order</span>
+      <div class="panel-tools"><span class="seg" role="group" id="stripsRanges" aria-label="Uptime window">
+        <button type="button" class="active" aria-pressed="true" data-action="setUptimeWindow" data-arg="24h">24 h</button>
+        <button type="button" aria-pressed="false" data-action="setUptimeWindow" data-arg="7d">7 d</button>
+        <button type="button" aria-pressed="false" data-action="setUptimeWindow" data-arg="30d">30 d</button></span></div></header>
+    <div class="panel-b">
+      <div class="strips" id="stripsBody"><div class="skel-stack" style="grid-column: 1 / -1"><div class="skel line" style="height:16px;width:92%"></div><div class="skel line" style="height:16px;width:84%"></div><div class="skel line" style="height:16px;width:88%"></div></div></div>
+      <div class="legend strip-legend"><span><i class="key" style="--c:var(--good)"></i>No loss</span><span><i class="key" style="--c:var(--warn)"></i>Loss or a dead minute</span><span><i class="key" style="--c:var(--crit)"></i>Outage</span><span><i class="key hatch"></i>Busy line (expected)</span><span><i class="key" style="--c:var(--nodata)"></i>No data</span>
+        <span class="muted grow">Path order: a problem that starts at one hop repeats in every row below it.</span></div>
+    </div>
+  </article>
+</section>

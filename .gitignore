@@ -1,0 +1,55 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+.env
+.env.*
+*.secret*
+secrets.yaml
+secrets.json
+data/secrets.json
+data/*.secret
+.venv
+venv/
+ENV/
+
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Backups (contain database copies), deploy artefacts
+.backup-*/
+*.db-journal
+!.env.example
+
+# local preview containers (never committed)
+.preview-data/
+
+# Your own configuration (copy of config.example.yaml)
+config.yaml
+# machine-specific compose mounts (copy docker-compose.override.example.yml)
+docker-compose.override.yml

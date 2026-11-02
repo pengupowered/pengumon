@@ -1,0 +1,20 @@
+<!-- Router history: WAN traffic against the line capacity, CPU and memory, clients; one time axis, one crosshair (history.js) -->
+<div class="modal" id="routerHistModal" role="dialog" aria-modal="true" aria-labelledby="routerHistTitle">
+  <div class="modal-content" style="--w: 1000px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg><h2 class="modal-t" id="routerHistTitle">Router history</h2>
+      <button type="button" class="info" data-action="toggleHelp" data-help="router.history" aria-label="About router history"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button>
+      <span class="modal-m" id="routerHistStatus"></span>
+      <div class="tools"><span class="seg" role="group" aria-label="Time range" id="routerHistRanges">
+        <button type="button" aria-pressed="true" data-action="setRouterHistoryRange" data-arg="3600">1 h</button>
+        <button type="button" aria-pressed="false" data-action="setRouterHistoryRange" data-arg="21600">6 h</button>
+        <button type="button" aria-pressed="false" data-action="setRouterHistoryRange" data-arg="86400">24 h</button>
+        <button type="button" aria-pressed="false" data-action="setRouterHistoryRange" data-arg="604800">7 d</button></span></div>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="routerHistModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <p class="fine top">Charts share one time axis: hover any of them, or focus one and use the arrow keys, and the crosshair follows on all. Solid lines are the average of each bucket, thin dashed lines the peak. Line capacity <button type="button" class="info" data-action="toggleHelp" data-help="line.capacity" aria-label="About line capacity"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></p>
+      <section class="stack-chart" id="routerHistWanBox"><h3 class="section-t">WAN traffic<span class="muted" id="routerHistWanSub">Mbps, against line capacity</span><span class="tools legend" id="routerHistWanLegend"></span></h3><p class="rh-read" id="routerHistWanRead" aria-hidden="true"></p><div class="chart-box" style="--h: 190px"><canvas id="routerHistWanChart" tabindex="0" role="img" aria-label="WAN traffic over time. Arrow keys move the crosshair."></canvas></div></section>
+      <section class="stack-chart" id="routerHistSystemBox"><h3 class="section-t">CPU and memory<span class="muted">% used</span><span class="tools legend" id="routerHistSystemLegend"></span></h3><p class="rh-read" id="routerHistSystemRead" aria-hidden="true"></p><div class="chart-box" style="--h: 150px"><canvas id="routerHistSystemChart" tabindex="0" role="img" aria-label="CPU and memory over time. Arrow keys move the crosshair."></canvas></div></section>
+      <section class="stack-chart" id="routerHistClientsBox"><h3 class="section-t">Clients<span class="tools legend" id="routerHistClientsLegend"></span></h3><p class="rh-read" id="routerHistClientsRead" aria-hidden="true"></p><div class="chart-box" style="--h: 130px"><canvas id="routerHistClientsChart" tabindex="0" role="img" aria-label="Connected clients over time. Arrow keys move the crosshair."></canvas></div></section>
+    </div>
+  </div>
+</div>

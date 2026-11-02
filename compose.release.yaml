@@ -1,0 +1,60 @@
+# Install without building: runs the published image. With Docker or Podman:
+#   curl -fsSL https://raw.githubusercontent.com/pengupowered/pengumon/main/compose.release.yaml -o compose.yaml
+#   curl -fsSL https://raw.githubusercontent.com/pengupowered/pengumon/main/config.example.yaml -o config.yaml
+#   (edit config.yaml: your router, modem and provider hops)
+#   docker compose up -d          # or: podman compose up -d
+# Settings (access token, ntfy, device passwords) come from a .env file next to this one, if there is one (see
+# .env.example in the repository). Empty values count as unset. Open http://<host>:8000 afterwards.
+#
+# This file is for installing a release; save it as compose.yaml in a directory of its own. In the repository it is
+# named compose.release.yaml so that it does not shadow docker-compose.yml, which builds from source and is what
+# scripts/deploy.sh uses (Docker and Podman prefer a file called compose.yaml over docker-compose.yml).
+#
+# Host networking, so probes and traceroute measure this machine's own path with no proxy in between (Linux hosts;
+# on Docker Desktop the "host" is its virtual machine, see the README).
+# Rootless Podman, and Docker with a non-root user namespace, need unprivileged ping allowed for the user:
+#   net.ipv4.ping_group_range = 0 2147483647   (e.g. in /etc/sysctl.d/60-unprivileged-ping.conf)
+# NET_RAW stays because the image's Python carries cap_net_raw as a file capability, and a binary with a file
+# capability outside the bounding set can't be executed.
+#
+# To upgrade, change the tag below to the new version and run `docker compose up -d` again.
+services:
+  pengumon:
+    image: ghcr.io/pengupowered/pengumon:0.16.0
+    container_name: pengumon
+    restart: always
+    network_mode: host
+    cap_add:
+      - NET_RAW
+    # The root filesystem is read-only; the app writes only to the data volume and /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - pengumon_data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - PENGUMON_HOST=0.0.0.0
+      - PENGUMON_PORT=8000
+      - PENGUMON_ACCESS_TOKEN=${PENGUMON_ACCESS_TOKEN:-}
+      - PENGUMON_ALLOWED_HOSTS=${PENGUMON_ALLOWED_HOSTS:-}
+      - PENGUMON_SESSION_MAX_AGE_DAYS=${PENGUMON_SESSION_MAX_AGE_DAYS:-}
+      - PENGUMON_NOTIFY_URL=${PENGUMON_NOTIFY_URL:-}
+      - PENGUMON_NOTIFY_TOKEN=${PENGUMON_NOTIFY_TOKEN:-}
+      # OpenTelemetry export (empty: none). This container uses the host network, so a collector on the same host is
+      # http://127.0.0.1:4318. PENGUMON_GRAFANA_URL adds links to the telemetry in the page header.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-pengumon}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-}
+      - PENGUMON_GRAFANA_URL=${PENGUMON_GRAFANA_URL:-}
+      # Credentials of the devices in config.yaml (PENGUMON_DEVICE_<ID>_*); unset, the dashboard's are used
+      - PENGUMON_DEVICE_MODEM_USERNAME=${PENGUMON_DEVICE_MODEM_USERNAME:-}
+      - PENGUMON_DEVICE_MODEM_PASSWORD=${PENGUMON_DEVICE_MODEM_PASSWORD:-}
+      - PENGUMON_DEVICE_ROUTER_USERNAME=${PENGUMON_DEVICE_ROUTER_USERNAME:-}
+      - PENGUMON_DEVICE_ROUTER_PASSWORD=${PENGUMON_DEVICE_ROUTER_PASSWORD:-}
+    # No container healthcheck, as in docker-compose.yml: rootless podman runs them as systemd timers and nothing
+    # reads their status. Check http://<host>:8000/api/health (200 once the first probe round is done).
+
+volumes:
+  pengumon_data:
+    driver: local

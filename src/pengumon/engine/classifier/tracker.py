@@ -1,0 +1,129 @@
+"""The incident state machine: turns the per-round verdicts into incidents (onset, escalation, recovery)."""
+
+from dataclasses import dataclass
+from typing import Optional
+
+from pengumon.engine.classifier_settings import ClassifierConfig
+from pengumon.db.repository import DatabaseRepository
+from pengumon.engine.classifier.verdict import Verdict
+from pengumon.engine.load import LoadReading
+from pengumon.incidents.model import Incident
+from pengumon.observability.telemetry import incidents_started
+
+
+@dataclass
+class TrackerOutcome:
+    started: Optional[Incident] = None  # created (and stored) this round
+    resolved: Optional[Incident] = None  # resolved this round (no longer active)
+
+
+class IncidentTracker:
+    """Turns the per-round verdicts into incidents: onset, escalation, recovery. Knows nothing about probes.
+
+    Side effects that belong to the classifier (the path-trace task, log lines, callbacks) are left to the
+    caller, which reads them from the returned TrackerOutcome.
+    """
+
+    def __init__(self, config: ClassifierConfig, repository: Optional[DatabaseRepository] = None):
+        self.config = config
+        self.repository = repository
+        self.active_incident: Optional[Incident] = None
+        self.failure_counter: int = 0
+        self.loss_failure_counter: int = 0
+        self.latency_failure_counter: int = 0
+        self.recovery_counter: int = 0
+        self.last_failure_ts: float = 0.0
+        self._stored_load_pct: Optional[float] = None
+
+    async def observe(
+        self, verdict: Verdict, *, is_loss_or_outage: bool, reading: Optional[LoadReading], ts: float
+    ) -> TrackerOutcome:
+        """Feeds one round's verdict in. `is_loss_or_outage` is judged on the base diagnosis, before the load
+        adjustment; `reading` is the line load of this round, if known."""
+        outcome = TrackerOutcome()
+        if reading is not None and self.active_incident is not None:
+            self.active_incident.load_pct = max(self.active_incident.load_pct or 0.0, reading.pct)
+
+        # "busy" counts like healthy: the delay is explained by the load, so it neither builds up toward an
+        # incident nor keeps an active one open.
+        if verdict.is_fault:
+            self.recovery_counter = 0
+            self.last_failure_ts = ts
+
+            if is_loss_or_outage:
+                self.loss_failure_counter += 1
+                self.failure_counter = self.loss_failure_counter
+            else:
+                self.latency_failure_counter += 1
+                self.failure_counter = self.latency_failure_counter
+
+            latency_threshold = self.config.consecutive_failures_for_latency_incident
+            should_trigger = (
+                self.loss_failure_counter >= self.config.consecutive_failures_for_incident
+                or self.latency_failure_counter >= latency_threshold
+            )
+
+            if should_trigger:
+                if not self.active_incident:
+                    # Start new incident accurately timed from onset
+                    counter = self.loss_failure_counter if is_loss_or_outage else self.latency_failure_counter
+                    actual_start = round(ts - max(0, counter - 1), 2)
+                    self.active_incident = Incident(
+                        start_time=actual_start,
+                        kind=verdict.kind,
+                        cause_code=verdict.cause,
+                        title=verdict.title,
+                        description=verdict.description,
+                        severity=verdict.severity,
+                        affected_targets=list(verdict.affected),
+                        resolved=False,
+                        load_pct=reading.pct if reading else None,
+                    )
+                    self._stored_load_pct = self.active_incident.load_pct
+                    if self.repository:
+                        inc_id = await self.repository.create_incident(self.active_incident)
+                        self.active_incident.id = inc_id
+                    outcome.started = self.active_incident
+                    incidents_started.add(1, {"kind": verdict.kind, "severity": verdict.severity})
+                else:
+                    # Update active incident if cause escalated
+                    if verdict.severity == "critical" and self.active_incident.severity != "critical":
+                        self.active_incident.severity = "critical"
+                        self.active_incident.kind = verdict.kind
+                        self.active_incident.cause_code = verdict.cause
+                        self.active_incident.title = verdict.title
+                        self.active_incident.description = verdict.description
+                        if self.repository and self.active_incident.id:
+                            await self.repository.update_incident_classification(
+                                self.active_incident.id,
+                                self.active_incident.kind,
+                                self.active_incident.cause_code,
+                                self.active_incident.title,
+                                self.active_incident.description,
+                                self.active_incident.severity,
+                            )
+        else:
+            self.loss_failure_counter = 0
+            self.latency_failure_counter = 0
+            self.failure_counter = 0
+            if self.active_incident:
+                self.recovery_counter += 1
+                if self.recovery_counter >= self.config.consecutive_failures_for_incident:
+                    # Resolve incident accurately at the last anomalous sample
+                    resolve_ts = self.last_failure_ts if self.last_failure_ts > 0 else ts
+                    self.active_incident.end_time = resolve_ts
+                    self.active_incident.duration_seconds = round(max(1.0, resolve_ts - self.active_incident.start_time), 1)
+                    self.active_incident.resolved = True
+                    if self.repository and self.active_incident.id:
+                        await self.repository.resolve_incident(
+                            self.active_incident.id,
+                            self.active_incident.end_time
+                        )
+                        if self.active_incident.load_pct != self._stored_load_pct:
+                            # Peak load over the whole incident, not just at its start.
+                            await self.repository.set_incident_load(
+                                self.active_incident.id, self.active_incident.load_pct
+                            )
+                    outcome.resolved = self.active_incident
+                    self.active_incident = None
+        return outcome

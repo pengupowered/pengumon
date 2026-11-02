@@ -1,0 +1,50 @@
+<!-- Line channels (DOCSIS adapter view): current channels and their history (docsis.js, channel-history.js) -->
+<div class="modal" id="channelsModal" role="dialog" aria-modal="true" aria-labelledby="channelsTitle">
+  <div class="modal-content" style="--w: 1060px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-channels"/></svg><h2 class="modal-t" id="channelsTitle">Line channels</h2><span class="modal-m" id="channelsSummaryBadge">channels</span>
+      <div class="tools"><span class="seg" role="group" id="channelsTabs" hidden>
+        <button type="button" class="active" data-action="showChannelsTab" data-arg="current">Now</button>
+        <button type="button" id="btnChannelsHistory" data-action="showChannelsTab" data-arg="history">History</button></span></div>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="channelsModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <div class="empty st st-crit compact" id="channelsAlertBox" hidden></div>
+      <div id="channelsCurrentPane">
+        <div class="ch-sum" id="channelsGauges"></div>
+        <section class="sect"><h3 class="section-t">Downstream power per channel<span class="muted" id="channelsPowerNote">dBmV</span></h3>
+          <div id="channelsPowerChart"></div></section>
+        <section class="sect"><h3 class="section-t">Downstream SNR per channel<span class="muted" id="channelsSnrNote">dB</span></h3>
+          <div id="channelsSnrChart"></div></section>
+        <section class="sect" id="channelsUpSection" hidden><h3 class="section-t">Upstream power per channel<span class="muted" id="channelsUpNote">dBmV</span></h3>
+          <div id="channelsUpChart"></div></section>
+        <section class="sect"><h3 class="section-t">Channels<span class="muted">errors since boot and since the last reading</span>
+          <button type="button" class="info" data-action="toggleHelp" data-help="docsis.cumulative" aria-label="About the cumulative count"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
+          <table class="dlist">
+            <thead><tr><th>Channel</th><th>Status</th><th class="r">Power</th><th class="r">SNR</th><th class="r hide-narrow">Corrected</th><th class="r">New errors</th><th class="r">Uncorrectable</th></tr></thead>
+            <tbody id="channelsTableBody"><tr><td colspan="7" class="muted">Loading channel metrics...</td></tr></tbody>
+          </table></section>
+      </div>
+      <div id="channelsHistoryPane" hidden>
+        <div class="section-t">
+          <span class="seg" role="group" id="chHistRanges">
+            <button type="button" class="active" data-action="setChannelHistoryRange" data-arg="86400">24 h</button>
+            <button type="button" data-action="setChannelHistoryRange" data-arg="604800">7 d</button></span>
+          <span class="seg" role="group" id="chHistMetrics">
+            <button type="button" class="active" data-action="setChannelHistoryMetric" data-arg="snr">SNR (downstream)</button>
+            <button type="button" data-action="setChannelHistoryMetric" data-arg="power">Power (all)</button></span>
+          <span class="muted" id="chHistStatus"></span>
+        </div>
+        <p class="fine top">One row per channel over time, coloured by the server's grade for that reading. Click a channel row for its detail. <button type="button" class="info" data-action="toggleHelp" data-help="channel.heatmap" aria-label="About the channel heatmap"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></p>
+        <div class="status-line" id="chHistHover"></div>
+        <canvas id="chHistCanvas" class="ch-hist-canvas"></canvas>
+        <div class="heat-foot"><div class="scale-legend"><i style="background:var(--good)"></i>good<i style="background:var(--warn-fill)"></i>warning<i style="background:var(--crit)"></i>critical<i style="background:var(--nodata)"></i>no reading</div></div>
+        <div class="empty" id="chHistEmpty" hidden>No channel readings in this range.</div>
+        <section class="sect" id="chHistDetailBox" hidden>
+          <h3 class="section-t" id="chHistDetailTitle"></h3>
+          <div class="chart-box" style="--h: 200px"><canvas id="chHistDetailChart"></canvas></div>
+        </section>
+      </div>
+    </div>
+    <footer class="modal-f"><span class="fine" style="margin-right: auto">Colours are pengumon's grades for each channel; the shaded zones are the good ranges.</span>
+      <button type="button" class="btn" data-action="closeModal" data-arg="channelsModal">Close</button></footer>
+  </div>
+</div>

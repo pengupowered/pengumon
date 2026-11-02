@@ -1,0 +1,129 @@
+/* pengumon design tokens
+   Dark-first: dark values on bare :root, light values under prefers-color-scheme: light (unless the user picked
+   dark) and again under [data-theme="light"] so the in-app toggle wins both ways.
+   Rule: no hex literal outside this file. CSS, canvas/SVG code and the chart theme all read these tokens. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces: elevation by lightness, shadows only on overlays */
+  --bg: #0a0e13;
+  --surface-1: #10151c;      /* panel */
+  --surface-2: #151c25;      /* inset / well / node card */
+  --surface-3: #1c2530;      /* hover, chips, tracks */
+  --line: #222d3b;           /* hairlines, grid */
+  --line-strong: #324155;    /* borders that must be seen, axis baseline */
+  --scrim: rgba(3, 6, 10, .62);
+
+  /* Ink: four levels. --ink-4 only for >= 12 px non-essential text (axis ticks get --ink-3) */
+  --ink-1: #edf1f5;
+  --ink-2: #b3bfcc;
+  --ink-3: #8b98a8;
+  --ink-4: #76849a;
+
+  /* Accent: links, selection, primary buttons. Not green: green means healthy */
+  --accent: #5aa2ff;
+  --accent-bg: rgba(90, 162, 255, .14);
+  --on-accent: #04101f;      /* text on an accent fill (AA on #5aa2ff) */
+  --focus: #8cc0ff;
+
+  /* Status (reserved): never a series colour; always shown with an icon and a word */
+  --good: #2bb556;     --good-bg: rgba(43, 181, 86, .13);
+  --warn: #f0ad1c;     --warn-bg: rgba(240, 173, 28, .13); --warn-fill: #f0ad1c; /* fills: strips, bars */
+  --serious: #ec835a;  --serious-bg: rgba(236, 131, 90, .14);
+  --crit: #ef5a5f;     --crit-bg: rgba(239, 90, 95, .14);
+  --busy: #9d8cff;     --busy-bg: rgba(157, 140, 255, .14);   /* expected: busy line, maintenance */
+  --unknown: #7d8a9b;  --unknown-bg: rgba(125, 138, 155, .14); /* connecting, no data yet, stale */
+  --nodata: #243041;   /* empty cell in strips and heatmaps */
+
+  /* Categorical series, fixed order (dataviz validator: dark surface #10151c, 3 slots pass all-pairs, all 8 pass
+     adjacent; light #ffffff: 8 pass adjacent, slots 3-5 under 3:1 so they always come with a legend and Hop details).
+     Charts where lines cross use at most 3; a 4th only with direct labels. Slots 1-8 also colour targets that have no
+     colour of their own (util.js), in path order. */
+  --s1: #3987e5;  /* blue    */
+  --s2: #d95926;  /* orange  */
+  --s3: #199e70;  /* aqua    */
+  --s4: #c98500;  /* yellow  */
+  --s5: #d55181;  /* magenta */
+  --s6: #008300;  /* green   */
+  --s7: #9085e9;  /* violet  */
+  --s8: #e66767;  /* red     */
+
+  /* Sequential (loss heat): one warm family, surface -> amber -> red */
+  --q0: #18212c; --q1: #3f3420; --q2: #7c5414; --q3: #c9821a; --q4: #e5484d;
+
+  /* Typography: system sans, tabular numbers wherever digits update; mono only for addresses, ids, code */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", "Liberation Sans", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --fs-xs: 11px;    /* axis ticks, captions */
+  --fs-sm: 12.5px;  /* meta, table cells, labels */
+  --fs-md: 14px;    /* body */
+  --fs-lg: 17px;    /* values, dialog titles */
+  --fs-xl: 22px;    /* verdict headline */
+  --fs-2xl: 30px;   /* hero numbers */
+  --fw-medium: 500; --fw-semi: 600; --fw-bold: 650;
+
+  /* Spacing: 4 px grid */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+
+  /* Radii */
+  --r-xs: 3px; --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-pill: 999px;
+
+  /* Elevation: only overlays (popovers, dialogs, tooltips) */
+  --shadow-pop: 0 14px 36px rgba(0, 0, 0, .5), 0 0 0 1px var(--line-strong);
+  --shadow-sheet: 0 -10px 40px rgba(0, 0, 0, .55);
+  --glow-warn: 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent), 0 6px 22px -6px color-mix(in srgb, var(--warn) 40%, transparent);
+  --glow-crit: 0 0 0 1px color-mix(in srgb, var(--crit) 50%, transparent), 0 6px 22px -6px color-mix(in srgb, var(--crit) 45%, transparent);
+
+  /* Motion: 150-250 ms; everything off under prefers-reduced-motion (components.css) */
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --t-fast: 150ms; --t-med: 220ms;
+
+  /* Layers */
+  --z-sticky: 20; --z-pop: 40; --z-modal: 60; --z-toast: 80;
+
+  /* Layout */
+  --page-max: 1400px;
+  --tabbar-h: 64px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f1f4f7; --surface-1: #ffffff; --surface-2: #f6f8fa; --surface-3: #eaeef3;
+    --line: #e1e6ec; --line-strong: #c9d2dd; --scrim: rgba(15, 23, 32, .38);
+    --ink-1: #0f1720; --ink-2: #384556; --ink-3: #566477; --ink-4: #637086;
+    --accent: #1a64c4; --accent-bg: rgba(31, 111, 214, .10); --on-accent: #ffffff; --focus: #1a64c4;
+    --good: #12722f; --good-bg: rgba(22, 131, 58, .10);
+    --warn: #8f5c00; --warn-bg: rgba(240, 173, 28, .17); --warn-fill: #e5a00d;
+    --serious: #a8461a; --serious-bg: rgba(236, 131, 90, .15);
+    --crit: #c0262d; --crit-bg: rgba(204, 44, 51, .10);
+    --busy: #5b49cf; --busy-bg: rgba(98, 80, 214, .11);
+    --unknown: #5c6a7e; --unknown-bg: rgba(102, 116, 138, .12);
+    --nodata: #e3e8ee;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+    --q0: #edf1f5; --q1: #fbe5ad; --q2: #f5bf55; --q3: #e2861a; --q4: #cc2c33;
+    --shadow-pop: 0 14px 36px rgba(15, 23, 32, .16), 0 0 0 1px var(--line-strong);
+    --shadow-sheet: 0 -10px 40px rgba(15, 23, 32, .18);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f1f4f7; --surface-1: #ffffff; --surface-2: #f6f8fa; --surface-3: #eaeef3;
+  --line: #e1e6ec; --line-strong: #c9d2dd; --scrim: rgba(15, 23, 32, .38);
+  --ink-1: #0f1720; --ink-2: #384556; --ink-3: #566477; --ink-4: #637086;
+  --accent: #1a64c4; --accent-bg: rgba(31, 111, 214, .10); --on-accent: #ffffff; --focus: #1a64c4;
+  --good: #12722f; --good-bg: rgba(22, 131, 58, .10);
+  --warn: #8f5c00; --warn-bg: rgba(240, 173, 28, .17); --warn-fill: #e5a00d;
+  --serious: #a8461a; --serious-bg: rgba(236, 131, 90, .15);
+  --crit: #c0262d; --crit-bg: rgba(204, 44, 51, .10);
+  --busy: #5b49cf; --busy-bg: rgba(98, 80, 214, .11);
+  --unknown: #5c6a7e; --unknown-bg: rgba(102, 116, 138, .12);
+  --nodata: #e3e8ee;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --q0: #edf1f5; --q1: #fbe5ad; --q2: #f5bf55; --q3: #e2861a; --q4: #cc2c33;
+  --shadow-pop: 0 14px 36px rgba(15, 23, 32, .16), 0 0 0 1px var(--line-strong);
+  --shadow-sheet: 0 -10px 40px rgba(15, 23, 32, .18);
+}

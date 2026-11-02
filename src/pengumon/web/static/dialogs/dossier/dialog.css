@@ -1,0 +1,34 @@
+/* Dialog dossier: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Dossier */
+.doc { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-6); max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-3); }
+.doc h3 { font-size: var(--fs-xl); letter-spacing: -.02em; }
+.doc h4 { font-size: var(--fs-md); margin-top: var(--sp-3); display: flex; gap: 8px; align-items: center; }
+.doc p { color: var(--ink-2); max-width: 72ch; }
+.doc-meta { font-size: var(--fs-sm); color: var(--ink-3) !important; }
+.doc-tag { font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--ink-3); background: var(--surface-3); padding: 1px 8px; border-radius: var(--r-pill); }
+.doc-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); padding: var(--sp-3) 0; border-block: 1px solid var(--line); }
+@container (max-width: 640px) { .doc { padding: var(--sp-4); } .doc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.doc-path { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; }
+.dp { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); padding: 4px 9px; border-radius: var(--r-pill); background: var(--good-bg); color: var(--ink-1); border: 1px solid color-mix(in srgb, var(--good) 30%, transparent); white-space: nowrap; }
+.dp.bad { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.dp.me { background: var(--accent-bg); border-color: var(--accent); }
+.doc-path i { width: 14px; height: 2px; background: var(--line-strong); }
+.dossier-code {
+  font-family: var(--mono); font-size: var(--fs-sm); white-space: pre-wrap; word-break: break-word; color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-4);
+}
+.doc ul { padding-left: 18px; color: var(--ink-2); display: flex; flex-direction: column; gap: 4px; }
+.doc code { font-family: var(--mono); font-size: .92em; background: var(--surface-3); padding: 0 4px; border-radius: 3px; }
+.doc header { display: flex; flex-direction: column; gap: var(--sp-1); }
+.doc h5 { font-size: var(--fs-sm); color: var(--ink-2); margin-top: var(--sp-2); }
+.doc .stat .lbl { text-transform: none; }
+.doc-scroll { overflow-x: auto; }
+.doc .dlist td, .doc .dlist th { white-space: normal; }
+.dp small { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.dp.bad small { color: var(--ink-2); }
+.doc pre.dossier-code { margin: 0; }
+.doc > .muted { color: var(--ink-3); }
+.doc-stats .val.txt { font-size: var(--fs-md); white-space: normal; line-height: 1.3; }
+.doc .dlist td.num { white-space: nowrap; }
+@media (max-width: 640px) { .doc .dlist td.num { white-space: normal; } }
+@container (max-width: 640px) { .doc-path { gap: 6px; } .doc-path i { display: none; } }

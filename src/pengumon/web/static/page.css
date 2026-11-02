@@ -1,0 +1,130 @@
+/* Page layout and panel-specific styles. Reads tokens only. */
+
+body { min-height: 100vh; }
+.skip { position: absolute; left: -999px; top: 8px; z-index: 100; background: var(--surface-1); padding: 8px 12px; border-radius: var(--r-sm); }
+.skip:focus { left: 8px; }
+.grow { flex: 1; }
+.st-good-ink { color: var(--good); } .st-warn-ink { color: var(--warn); } .st-crit-ink { color: var(--crit); } .st-busy-ink { color: var(--busy); }
+
+/* Status glow behind the header: the page's one ambient flourish */
+.glow { position: fixed; inset: 0 0 auto; height: 420px; pointer-events: none; z-index: 0;
+  background: radial-gradient(900px 260px at 22% -80px, color-mix(in srgb, var(--gst, var(--accent)) 16%, transparent), transparent 70%); transition: background .6s; }
+body[data-status="good"] { --gst: var(--accent); }
+body[data-status="warn"] { --gst: var(--warn); }
+body[data-status="crit"] { --gst: var(--crit); }
+body[data-status="busy"] { --gst: var(--busy); }
+body[data-status="unknown"] { --gst: var(--unknown); }
+
+/* ---------- Page grid: 12 columns, panels size s/m/l = 4/8/12 ---------- */
+.page {
+  position: relative; z-index: 1; max-width: var(--page-max); margin: 0 auto;
+  padding-block: var(--sp-2) var(--sp-10);
+  padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px));
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-flow: row dense; gap: var(--sp-4); align-items: stretch;
+}
+.page > .panel { grid-column: span 12; }
+.page > .panel[data-size="8"] { grid-column: span 8; }
+.page > .panel[data-size="4"] { grid-column: span 4; }
+@media (min-width: 1101px) { .page > .panel[data-span="12"] { grid-column: span 12; } .page > .panel[data-span="8"] { grid-column: span 8; } }
+@media (max-width: 1100px) {
+  .page > .panel[data-size="8"], .page > .panel[data-size="4"] { grid-column: span 12; }
+  .page > .panel[data-size="4"] { grid-column: span 6; }
+}
+
+/* ---------- Header ---------- */
+.topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: var(--z-sticky); }
+.topbar::before { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.tb-inner {
+  position: relative; max-width: var(--page-max); margin: 0 auto; display: flex; align-items: center; gap: var(--sp-3);
+  padding-block: 10px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px));
+}
+.brand { display: inline-flex; align-items: center; gap: 9px; color: var(--ink-1); font-weight: var(--fw-bold); font-size: var(--fs-lg); letter-spacing: -.02em; text-decoration: none; }
+.brand:hover { text-decoration: none; }
+.brand-mark { width: 30px; height: 30px; display: block; flex: none; }
+.status-pill {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0; height: 34px; padding: 0 13px 0 10px; border-radius: var(--r-pill);
+  background: var(--st-bg); border: 1px solid color-mix(in srgb, var(--st) 42%, transparent); font-size: var(--fs-sm); white-space: nowrap;
+}
+.status-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--st); flex: none; }
+.status-pill .sp-ic { display: none; color: var(--st); }
+.status-pill b { font-weight: var(--fw-semi); }
+.status-pill .sp-word { display: none; }
+.status-pill .sep { color: var(--ink-4); }
+.status-pill .sp-metrics { display: inline-flex; gap: 7px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.status-pill .sp-note { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding-left: 9px; border-left: 1px solid var(--line-strong); color: var(--warn); }
+.topbar.st-good .status-pill .dot, .topbar.st-warn .status-pill .dot, .topbar.st-busy .status-pill .dot, .topbar.st-crit .status-pill .dot { animation: breathe 2.4s var(--ease) infinite; }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+.live i { width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+.live-connecting i { background: var(--unknown); animation: breathe 1.2s infinite; --st: var(--unknown); }
+.live-stale { color: var(--warn); }
+.tb-actions { display: flex; align-items: center; gap: 2px; }
+.tb-sep { width: 1px; height: 20px; background: var(--line-strong); margin: 0 6px; }
+.tb-grafana { margin-left: 6px; }
+.tb-more { display: none; }
+@media (max-width: 1280px) { .tb-actions .btn .lbl { display: none; } .tb-actions .btn:not(.icon) { width: 32px; padding: 0; } .tb-grafana .btn { width: auto !important; padding: 0 8px !important; } }
+@media (max-width: 1000px) { .status-pill .sp-metrics > :nth-child(n+3) { display: none; } }
+
+
+/* Status fills (bars, timeline): the warning colour of a fill is a step lighter */
+.st-warn { --st-fill: var(--warn-fill); }
+
+/* ---------- Dialog views ---------- */
+.fine { font-size: var(--fs-xs); color: var(--ink-3); margin-top: var(--sp-2); }
+.fine.top { margin: 0 0 var(--sp-3); }
+.lead-p { color: var(--ink-2); margin-bottom: var(--sp-4); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--sp-3); }
+.form { display: flex; flex-direction: column; gap: var(--sp-4); }
+.result { display: flex; gap: 8px; align-items: flex-start; padding: var(--sp-3); border-radius: var(--r-md); background: var(--st-bg); font-size: var(--fs-sm); color: var(--ink-1); }
+.result svg.i { color: var(--st); margin-top: 1px; }
+.sm-select { height: 30px; width: auto; font-size: var(--fs-sm); }
+/* ---------- Phone ---------- */
+@media (max-width: 720px) {
+  .page { padding-block: var(--sp-3) calc(var(--tabbar-h) + 28px + env(safe-area-inset-bottom, 0px)); padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); gap: var(--sp-3); }
+  .page > .panel, .page > .panel[data-size] { grid-column: span 12; }
+  .page > .panel[data-off="true"] { display: none; }
+  .tb-inner { padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); gap: var(--sp-2); padding-block: 8px; flex-wrap: nowrap; }
+  .brand-name, .live, .tb-actions, .tb-inner > .grow { display: none; }
+  .tb-more { display: inline-flex; margin-left: auto; }
+  .status-pill { flex: 1; height: 36px; overflow: hidden; }
+  .status-pill .sp-metrics > :nth-child(n+3) { display: none; }
+  .status-pill .sp-metrics { flex-shrink: 3; min-width: 0; }
+  .status-pill .sp-note { display: none; }
+  .status-pill b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the verdict's title is a sentence; the phone's pill says its one word (the hero card has the title) */
+  .status-pill #statusPillText { display: none; }
+  .status-pill .sp-word { display: inline; flex: none; }
+  .panel-h { padding: 8px var(--sp-2) 8px var(--sp-3); min-height: 46px; }
+  .panel-b { padding: var(--sp-3); }
+  .panel-m { flex-basis: 100%; order: 5; white-space: normal; font-size: var(--fs-xs); margin-top: -2px; }
+  .panel-tools { margin-left: auto; }
+}
+
+/* Legend swatch for a busy (expected) period, as the strips and the chart hatch it */
+.legend .key.hatch { background: repeating-linear-gradient(135deg, var(--busy) 0 2px, transparent 2px 4px); }
+
+/* ---------- States: connection lost ---------- */
+.conn-banner {
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; width: min(calc(100% - 48px), calc(var(--page-max) - 48px)); margin: 8px auto 0;
+  padding: 8px 12px; border-radius: var(--r-md); background: var(--unknown-bg); color: var(--ink-1); font-size: var(--fs-sm);
+  border: 1px solid color-mix(in srgb, var(--unknown) 45%, transparent);
+}
+.conn-banner[hidden] { display: none; }
+.conn-banner svg.i { color: var(--unknown); flex: none; }
+@media (max-width: 720px) { .conn-banner { margin-inline: 12px; width: auto; } }
+/* the verdict is not known while the data is not arriving: the pill turns grey and the cards dim */
+.topbar[data-conn="lost"] .status-pill.status-pill { --st: var(--unknown); --st-bg: var(--unknown-bg); }
+.topbar[data-conn="lost"] .status-pill .dot { animation: none; }
+body[data-conn="lost"] .page .panel-b { opacity: .55; filter: saturate(.5); transition: opacity var(--t-med); }
+
+/* ---------- Phone: shell details ---------- */
+@media (max-width: 720px) {
+  /* a card header whose tools do not fit beside the title (filters, selects) puts them on their own row */
+  .panel-h { flex-wrap: wrap; row-gap: 6px; }
+  .panel-tools:has(.input, .chip) { flex-basis: 100%; margin-left: 0; flex-wrap: wrap; }
+  .panel-tools .input { flex: 1 1 110px; min-width: 0; width: auto !important; }
+  .panel-tools select.input { flex: 0 0 auto; }
+  .panel-f { row-gap: 6px; }
+  /* tools that are only reference (the help buttons of a card) stay on the title row */
+  .tabbar button { min-height: 48px; justify-content: center; }
+  .tabbar .tab-dot { top: 4px; }
+}

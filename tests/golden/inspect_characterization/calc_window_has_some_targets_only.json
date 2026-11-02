@@ -1,0 +1,366 @@
+{
+ "docsis_correlation": {
+  "active_errors_in_window": 0,
+  "gateway_offline": false,
+  "lowest_snr": null,
+  "nearest_snapshot": {
+   "channels": [],
+   "downstream_power_avg": 1.5,
+   "downstream_snr_avg": 37.5,
+   "error_message": null,
+   "errors_affected_channels": 0,
+   "errors_note": null,
+   "errors_probe_loss": null,
+   "errors_recurring": false,
+   "errors_span_mhz": null,
+   "status": "healthy",
+   "timestamp": 1759992805.0,
+   "uncorrectables_interval_seconds": null,
+   "uncorrectables_rate_per_sec": 0.0,
+   "uncorrectables_ratio": null,
+   "uncorrectables_recent": 0,
+   "uncorrectables_total": 0,
+   "upstream_power_avg": 42.0
+  },
+  "rf_correlated": false,
+  "status": "healthy",
+  "worst_channel": null
+ },
+ "docsis_snapshots": [
+  {
+   "channels": [],
+   "downstream_power_avg": 1.5,
+   "downstream_snr_avg": 37.5,
+   "error_message": null,
+   "errors_affected_channels": 0,
+   "errors_note": null,
+   "errors_probe_loss": null,
+   "errors_recurring": false,
+   "errors_span_mhz": null,
+   "status": "healthy",
+   "timestamp": 1759992805.0,
+   "uncorrectables_interval_seconds": null,
+   "uncorrectables_rate_per_sec": 0.0,
+   "uncorrectables_ratio": null,
+   "uncorrectables_recent": 0,
+   "uncorrectables_total": 0,
+   "upstream_power_avg": 42.0
+  }
+ ],
+ "event_end": 1759992830.0,
+ "event_start": 1759992800.0,
+ "hop_impact": [
+  {
+   "avg_ms": 3.91,
+   "category": "local",
+   "jitter_ms": 0.73,
+   "loss_pct": 0.0,
+   "max_ms": 5.0,
+   "min_ms": 3.0,
+   "name": "Local Router",
+   "received": 11,
+   "sent": 11,
+   "target_id": "router"
+  }
+ ],
+ "incident": {
+  "cause_code": "access_line_drop",
+  "end_time": 1759992830.0,
+  "id": 1,
+  "kind": "isp_loss",
+  "start_time": 1759992800.0
+ },
+ "router_snapshots": [],
+ "samples": [
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 8.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992760.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 9.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992761.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 10.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992762.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 8.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992763.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 9.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992764.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 8.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992765.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 9.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992766.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 10.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992767.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 8.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992768.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 9.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992769.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 8.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992770.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 9.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992771.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 10.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992772.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 8.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992773.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 9.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992774.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 8.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992775.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 9.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992776.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 10.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992777.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 8.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992778.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 9.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992779.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 8.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "isp",
+   "timestamp": 1759992780.0022
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 3.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992795.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 4.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992796.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 5.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992797.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 3.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992798.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 4.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992799.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 3.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992800.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 4.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992801.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 5.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992802.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 1.0,
+   "latency_ms": 3.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992803.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.5,
+   "latency_ms": 4.5,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992804.00453
+  },
+  {
+   "error": null,
+   "jitter_ms": 0.75,
+   "latency_ms": 3.0,
+   "packet_loss_pct": 0.0,
+   "success": 1,
+   "target_id": "router",
+   "timestamp": 1759992805.00453
+  }
+ ],
+ "window_end": 1759992875.0,
+ "window_start": 1759992755.0
+}

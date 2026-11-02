@@ -1,0 +1,27 @@
+/* Dialog alerts: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Alerts */
+.opt-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); padding: var(--sp-3) 0; border-top: 1px solid var(--line); }
+.opt-row:first-child { border-top: 0; padding-top: 0; }
+.opt-row > div { display: flex; flex-direction: column; } .opt-row > div span { font-size: var(--fs-sm); color: var(--ink-3); }
+.al-sound { margin-top: var(--sp-4); }
+.opts { border: 0; display: flex; flex-direction: column; gap: 6px; margin-top: var(--sp-4); padding: var(--sp-4) 0 0; border-top: 1px solid var(--line); min-width: 0; }
+.opts legend { font-weight: var(--fw-semi); margin-bottom: 4px; padding: 0; float: left; width: 100%; }
+.opts legend + * { clear: both; }
+.opts .check { min-height: 26px; }
+.switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
+.switch input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+.switch span:first-of-type { position: absolute; inset: 0; border-radius: 11px; background: var(--surface-3); border: 1px solid var(--line-strong); transition: background var(--t-fast); }
+.switch span:first-of-type::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-2); transition: transform var(--t-fast) var(--ease); }
+.switch input:checked + span { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + span::after { transform: translateX(18px); background: var(--on-accent); }
+.switch input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .switch span:first-of-type, .switch span:first-of-type::after { transition: none; }
+}
+@media (max-width: 720px) { .opt-row { align-items: flex-start; } }
+.al-state { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.al-state [hidden] { display: none; }
+.al-server { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
+.al-server .opt-row { border-top: 0; padding-top: 0; }
+.al-channels { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--ink-3); overflow-wrap: anywhere; }
+.al-channels b { color: var(--ink); font-weight: var(--fw-semi); }

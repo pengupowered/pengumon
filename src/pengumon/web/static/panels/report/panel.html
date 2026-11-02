@@ -1,0 +1,12 @@
+<!-- Reliability: availability, downtime, causes and worst hours (report.js) -->
+<section data-panel="report" aria-label="Reliability">
+  <article class="panel" data-size="4">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-report"/></svg><h2 class="panel-t">Reliability</h2><span class="panel-m">to the internet</span>
+      <div class="panel-tools"><span class="seg" role="group" id="reportRangeButtons" aria-label="Report range">
+        <button type="button" class="active" data-action="loadReport" data-arg="7">7 d</button>
+        <button type="button" data-action="loadReport" data-arg="30">30 d</button>
+        <button type="button" data-action="loadReport" data-arg="90">90 d</button></span></div></header>
+    <div class="panel-b" id="reportOutput">Loading report...</div>
+    <footer class="panel-f"><span id="reportFoot"></span><span class="grow"></span><button type="button" class="btn sm outline" data-action="openDossierModal"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Dossier</button></footer>
+  </article>
+</section>

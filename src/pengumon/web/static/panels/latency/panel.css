@@ -1,0 +1,16 @@
+/* Panel latency: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+.lat-head { display: flex; align-items: flex-start; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; }
+.lat-legend { flex: 1 1 300px; min-width: 0; row-gap: 4px; }
+.lat-legend .lg { min-width: 0; max-width: 100%; }
+.lat-legend .lg b { font-weight: var(--fw-semi); color: var(--ink-1); }
+/* the configured names: secondary, cut with an ellipsis (the whole text is in the tooltip) */
+.lat-legend .lg .muted { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 34ch; }
+.lat-view { flex: none; margin-left: auto; }
+.lat-view button { font-size: var(--fs-xs); }
+.lat-note { margin: 6px 0 var(--sp-2); font-size: var(--fs-xs); color: var(--ink-3); }
+.lat-note:empty { display: none; }
+/* the chart takes the height the row gives the card; the loss lane stays a thin strip under it */
+[data-panel="latency"] .panel-b { display: flex; flex-direction: column; }
+[data-panel="latency"] .chart-box.lat-main { flex: 1 1 250px; min-height: 250px; }
+[data-panel="latency"] .chart-box.lat-loss { flex: none; }
+@media (max-width: 720px) { .lat-legend .lg { white-space: normal; } .lat-legend .lg .muted { white-space: normal; max-width: none; } }

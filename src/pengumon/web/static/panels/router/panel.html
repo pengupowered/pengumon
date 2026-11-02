@@ -1,0 +1,33 @@
+<!-- Router: one card per device offering wan_counters or router_system (panels/router.js); each block only when the
+     device offers what it shows. -->
+<section data-panel="router" aria-label="Router">
+  <template id="tpl-router">
+    <article class="panel" data-size="8" data-status="unknown">
+      <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-router"/></svg><h2 class="panel-t" data-f="title">Router</h2><span class="panel-m" data-f="meta"></span>
+        <div class="panel-tools"><span class="chip stale-chip" data-f="stale" hidden></span><span class="badge quiet st-unknown" data-f="badge">Waiting</span></div></header>
+      <div class="panel-b">
+        <div class="empty st st-crit" data-f="error" hidden></div>
+        <div data-f="body">
+          <div class="rgrid" data-f="grid">
+            <section class="rblock wan" data-f="wan" hidden><h3 class="rb-t"><svg class="i sm" aria-hidden="true"><use href="#i-activity"/></svg>WAN traffic <span class="muted" data-f="capNote">vs line capacity</span><button type="button" class="info" data-action="toggleHelp" data-help="router.wan" aria-label="About WAN traffic"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
+              <div class="meter" data-f="rx"><span class="lbl"><svg class="i sm" aria-hidden="true"><use href="#i-download"/></svg>Download</span><span class="val"><span data-f="v">–</span><small data-f="of"> Mbps</small></span><div class="track" role="img"><div class="fill" style="width:0"></div></div></div>
+              <div class="meter" data-f="tx"><span class="lbl"><svg class="i sm" aria-hidden="true"><use href="#i-up"/></svg>Upload</span><span class="val"><span data-f="v">–</span><small data-f="of"> Mbps</small></span><div class="track" role="img"><div class="fill" style="width:0"></div></div></div>
+              <div class="wan-chart" data-f="wanChart"></div></section>
+            <section class="rblock sys" data-f="sys" hidden><h3 class="rb-t"><svg class="i sm" aria-hidden="true"><use href="#i-cpu"/></svg>System</h3>
+              <div class="meter" data-f="cpu"><span class="lbl">CPU <button type="button" class="info" data-action="toggleHelp" data-help="router.cpu" aria-label="About router cpu"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></span><span class="val"><span data-f="v">–</span><small> %</small></span><div class="track" role="img"><div class="fill" style="width:0"></div></div></div>
+              <div class="meter" data-f="mem"><span class="lbl">Memory <button type="button" class="info" data-action="toggleHelp" data-help="router.mem" aria-label="About router memory"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></span><span class="val"><span data-f="v">–</span><small> %</small></span><div class="track" role="img"><div class="fill" style="width:0"></div></div></div></section>
+            <section class="rblock clients" data-f="clients" hidden><h3 class="rb-t"><svg class="i sm" aria-hidden="true"><use href="#i-users"/></svg>Clients<button type="button" class="info" data-action="toggleHelp" data-help="router.clients" aria-label="About active clients"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
+              <button type="button" class="big-count stat-open" data-f="count" data-action="openNetworkModal"><b class="num" data-f="countVal">–</b><span>online</span></button>
+              <div class="stackbar" role="img" data-f="bands"></div><div class="legend" data-f="bandLegend"></div></section>
+            <section class="rblock mesh" data-f="mesh" hidden><h3 class="rb-t"><svg class="i sm" aria-hidden="true"><use href="#i-mesh"/></svg>Mesh nodes <span class="muted" data-f="meshCount"></span></h3><ul class="nodes" data-f="nodes"></ul></section>
+          </div>
+          <p class="cap-note" data-f="capNoteMissing" hidden><svg class="i sm" aria-hidden="true"><use href="#i-info"/></svg><span></span></p>
+        </div>
+      </div>
+      <footer class="panel-f"><svg class="i sm" aria-hidden="true"><use href="#i-clock"/></svg><span data-f="read">waiting for the first reading</span><span class="grow"></span>
+        <button type="button" class="btn sm outline" data-f="lan" data-action="openNetworkModal" hidden><svg class="i" aria-hidden="true"><use href="#i-home"/></svg>Local network</button>
+        <button type="button" class="btn sm outline" data-f="history" data-action="openRouterHistory" hidden><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>History</button>
+        <button type="button" class="btn sm" data-action="openDeviceSetup" data-f="setup"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg>Setup</button></footer>
+    </article>
+  </template>
+</section>

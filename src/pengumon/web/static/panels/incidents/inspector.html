@@ -1,0 +1,64 @@
+<!-- Incident inspector: verdict, per-hop lanes, what happened, synced tracks, evidence, path trace (inspector.js) -->
+<div class="modal" id="incidentInspectorModal" role="dialog" aria-modal="true" aria-labelledby="inspModalTitle">
+  <div class="modal-content" style="--w: 1080px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-inspect"/></svg><h2 class="modal-t" id="inspModalTitle">Incident</h2><span class="modal-m" id="inspTimeWindowLabel"></span>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="incidentInspectorModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <div class="insp-head st-warn" id="inspDiagnosisCard">
+        <span class="badge" id="inspBadge">Loading</span>
+        <div><h3 id="inspCauseTitle">Loading incident details...</h3><p id="inspCauseDesc"></p><div class="chips" id="inspChips"></div></div>
+      </div>
+      <div class="insp-grid">
+        <section><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-path"/></svg>Where it happened<span class="muted" id="inspLanesNote">per hop, around the incident</span></h3>
+          <div class="lanes" id="inspLanes" role="img" aria-label="Probe results per hop over the incident window"></div>
+          <p class="fine top" id="inspHopResolution" hidden></p></section>
+        <section><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg>What happened</h3>
+          <ol class="events" id="inspEvents"></ol></section>
+      </div>
+      <div class="sect">
+        <p class="fine top">All tracks share one time axis; the shaded band is the incident. Hover any chart: the crosshair follows on all.</p>
+        <section class="stack-chart"><h3 class="section-t">Latency and loss<span class="tools legend" id="inspLatLegend"></span></h3>
+          <div class="chart-box" style="--h: 220px"><canvas id="incidentZoomChart"></canvas></div>
+          <div class="chart-box" style="--h: 90px"><canvas id="incidentZoomLossChart"></canvas></div></section>
+        <section class="stack-chart" id="incidentZoomDocsisContainer" hidden><h3 class="section-t"><span id="inspDocsisTrackTitle">Line signal</span><span class="muted" id="inspDocsisLegend"></span></h3>
+          <div class="chart-box" style="--h: 100px"><canvas id="incidentZoomDocsisChart"></canvas></div></section>
+        <section class="stack-chart" id="incidentZoomRouterContainer" hidden><h3 class="section-t">Router<span class="muted" id="inspRouterLegend"></span></h3>
+          <div class="chart-box" style="--h: 100px"><canvas id="incidentZoomRouterChart"></canvas></div></section>
+      </div>
+      <section class="sect">
+        <h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg>Verdict and evidence</h3>
+        <ul class="evidence" id="inspEvidence"></ul>
+      </section>
+      <section class="sect" id="inspDocsisCard" hidden>
+        <h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-modem"/></svg>Line during the incident<span class="badge quiet" id="inspDocsisBadge">Clean</span><span class="muted" id="inspDocsisTime"></span></h3>
+        <p class="lead-p" id="inspDocsisDesc"></p>
+        <ul class="evidence" id="inspDocsisGrid">
+          <li><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg><b>Uncorrectable errors</b><span id="inspDocsisFecVal">-</span></li>
+          <li><svg class="i" aria-hidden="true"><use href="#i-channels"/></svg><b id="inspDocsisWorstLabel">Worst channel SNR</b><span id="inspDocsisWorstVal">-</span></li>
+          <li><svg class="i" aria-hidden="true"><use href="#i-download"/></svg><b>Downstream power</b><span id="inspDocsisDsPower">-</span></li>
+          <li><svg class="i" aria-hidden="true"><use href="#i-up"/></svg><b>Upstream power</b><span id="inspDocsisUsPower">-</span></li>
+          <li><svg class="i" aria-hidden="true"><use href="#i-modem"/></svg><b>Reachability</b><span id="inspDocsisStatusVal">-</span></li>
+        </ul>
+      </section>
+      <section class="sect">
+        <h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-path"/></svg>Hop figures<span class="muted">per hop during the incident</span></h3>
+        <table class="dlist">
+          <thead><tr><th>Hop</th><th>Category</th><th class="r">Loss</th><th class="r">Avg</th><th class="r">Peak</th><th class="r">Jitter</th><th class="r">Received / sent</th></tr></thead>
+          <tbody id="inspHopTableBody"><tr><td colspan="7" class="muted">Loading hop impact...</td></tr></tbody>
+        </table>
+      </section>
+      <section class="sect" id="inspPathTraceContainer" hidden>
+        <h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg>Path trace during the drop</h3>
+        <table class="dlist trace">
+          <thead><tr><th>Hop</th><th>Address</th><th>Name</th><th class="r">RTT</th></tr></thead>
+          <tbody id="inspPathTraceBody"></tbody>
+        </table>
+      </section>
+    </div>
+    <footer class="modal-f">
+      <div class="left"><button type="button" class="btn outline" id="btnSnapDashboard" data-action="showIncidentInChart"><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg>Show in latency chart</button></div>
+      <button type="button" class="btn outline" data-action="openDossierModal"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Dossier</button>
+      <button type="button" class="btn primary" data-action="closeModal" data-arg="incidentInspectorModal">Done</button>
+    </footer>
+  </div>
+</div>

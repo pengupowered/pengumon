@@ -1,0 +1,334 @@
+"""Device credentials (pengumon.secrets): every source and its precedence, writing new credentials, the one-shot
+conversion of the flat secrets.json keys, and never exposing a password."""
+
+import json
+import logging
+import os
+import stat
+
+import pytest
+
+from pengumon import secrets as secrets_module
+from pengumon.devices.settings import DeviceConfig
+from pengumon.secrets import CredentialSources, Credentials, SecretStore, credential_updates, update_secrets
+
+SECRET = "hunter2-very-secret"
+
+
+def _device(device_id="wan", **kw) -> DeviceConfig:
+    return DeviceConfig(id=device_id, driver="asuswrt", url="http://192.168.1.1", **kw)
+
+
+def _sources(tmp_path, env=None, store=None, files=None, store_file=None) -> CredentialSources:
+    secrets_dir = tmp_path / "run-secrets"
+    secrets_dir.mkdir(exist_ok=True)
+    for name, text in (files or {}).items():
+        (secrets_dir / name).write_text(text)
+    path = tmp_path / "secrets.json"
+    if store is not None:
+        path.write_text(json.dumps(store))
+        os.chmod(path, 0o600)
+    return CredentialSources(env=env or {}, secrets_dir=secrets_dir, secrets_file=store_file or path)
+
+
+# --- new sources ----------------------------------------------------------------------------------------------------
+
+def test_without_any_source_there_is_no_password_and_the_config_username(tmp_path):
+    creds = _sources(tmp_path).resolve(_device(username="root"))
+    assert creds == Credentials("root", None, "config", None)
+    assert not creds.has_password and creds.describe() == "no password configured"
+
+
+def test_the_environment_wins_over_the_secret_file_and_secrets_json(tmp_path):
+    sources = _sources(
+        tmp_path,
+        env={"PENGUMON_DEVICE_MY_WAN_PASSWORD": "from-env", "PENGUMON_DEVICE_MY_WAN_USERNAME": "env-user"},
+        files={"pengumon_my-wan_password": "from-file\n"},
+        store={"devices": {"my-wan": {"username": "stored-user", "password": "from-json"}}})
+    creds = sources.resolve(_device("my-wan"))
+    assert (creds.username, creds.password) == ("env-user", "from-env")
+    assert creds.password_source == "environment PENGUMON_DEVICE_MY_WAN_PASSWORD"
+    assert creds.username_source == "environment PENGUMON_DEVICE_MY_WAN_USERNAME"
+
+
+def test_the_secret_file_wins_over_secrets_json_and_loses_one_trailing_newline(tmp_path):
+    sources = _sources(tmp_path, files={"pengumon_wan_password": "from file \r\n"},
+                       store={"devices": {"wan": {"username": "stored-user", "password": "from-json"}}})
+    creds = sources.resolve(_device())
+    assert creds.password == "from file "  # inner and trailing spaces are part of the password
+    assert creds.password_source.endswith("run-secrets/pengumon_wan_password")
+    assert (creds.username, creds.username_source) == ("stored-user", f"{tmp_path / 'secrets.json'} devices.wan.username")
+    assert creds.describe() == (f"password from {creds.password_source}, "
+                                f"username from {tmp_path / 'secrets.json'} devices.wan.username")
+
+
+def test_secrets_json_is_the_last_new_source(tmp_path):
+    creds = _sources(tmp_path, store={"devices": {"wan": {"password": "from-json"}}}).resolve(_device())
+    assert creds.password == "from-json"
+    assert creds.password_source == f"{tmp_path / 'secrets.json'} devices.wan.password"
+    assert creds.username_source == "config"
+
+
+def test_an_empty_or_unreadable_secret_file_falls_through_with_a_warning(tmp_path, caplog):
+    sources_dir = tmp_path / "run-secrets"
+    sources_dir.mkdir()
+    (sources_dir / "pengumon_wan_password").write_text("\n")
+    (sources_dir / "pengumon_lan_password").mkdir()  # reading a directory fails with an OSError
+    store = tmp_path / "secrets.json"
+    store.write_text(json.dumps({"devices": {"wan": {"password": "j1"}, "lan": {"password": "j2"}}}))
+    os.chmod(store, 0o600)
+    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"):
+        sources = CredentialSources(env={}, secrets_dir=sources_dir, secrets_file=store)
+        assert sources.resolve(_device("wan")).password == "j1"
+        assert sources.resolve(_device("lan")).password == "j2"
+    assert [r.getMessage() for r in caplog.records] == [
+        "Secret file is empty; trying the next credential source",
+        "Secret file is not a regular file; trying the next credential source"]
+
+
+def test_the_environment_is_used_only_for_its_own_device(tmp_path):
+    sources = _sources(tmp_path, env={"PENGUMON_DEVICE_OTHER_PASSWORD": "x"})
+    assert sources.resolve(_device("wan")).password is None
+
+
+@pytest.mark.parametrize("name", ["PENGUMON_ROUTER_PASSWORD", "ROUTER_PASSWORD", "PENGUMON_ROUTER_USERNAME",
+                                  "PENGUMON_MODEM_PASSWORD", "GATEWAY_PASSWORD", "PENGUMON_MODEM_USERNAME"])
+def test_the_names_of_the_builds_before_devices_are_not_read(tmp_path, name):
+    sources = _sources(tmp_path, env={name: "old"})
+    for device_id in ("modem", "router"):
+        assert sources.resolve(_device(device_id)) == Credentials("admin", None, "config", None)
+
+
+# --- secrets.json problems ------------------------------------------------------------------------------------------
+
+def test_an_unparsable_secrets_file_is_reported_without_its_content(tmp_path, caplog):
+    path = tmp_path / "secrets.json"
+    path.write_text('{"devices": {"router": {"password": "' + SECRET + '"')
+    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"):
+        creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device("router"))
+    assert creds.password is None
+    assert "not valid JSON" in caplog.text and SECRET not in caplog.text
+
+
+def test_a_secrets_file_readable_by_others_is_reported(tmp_path, caplog):
+    path = tmp_path / "secrets.json"
+    path.write_text(json.dumps({"devices": {"wan": {"password": SECRET}}}))
+    os.chmod(path, 0o644)
+    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"):
+        creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device())
+    assert creds.password == SECRET
+    assert "readable by other users (mode 0644)" in caplog.text and SECRET not in caplog.text
+
+
+def test_non_string_values_are_ignored(tmp_path):
+    store = {"devices": {"wan": {"password": 1234, "username": ["x"]}}, "devices_extra": None}
+    assert _sources(tmp_path, store=store).resolve(_device()) == Credentials("admin", None, "config", None)
+    assert _sources(tmp_path, store={"devices": "nonsense"}).resolve(_device()).password is None
+
+
+def test_the_secrets_file_default_is_looked_up_when_the_sources_are_made(tmp_path, monkeypatch):
+    path = tmp_path / "elsewhere.json"
+    path.write_text(json.dumps({"devices": {"wan": {"password": "p"}}}))
+    os.chmod(path, 0o600)
+    monkeypatch.setattr(secrets_module, "SECRETS_PATH", path)
+    assert CredentialSources(env={}, secrets_dir=None).resolve(_device()).password == "p"
+
+
+# --- never exposed --------------------------------------------------------------------------------------------------
+
+def test_credentials_never_show_the_password():
+    creds = Credentials("admin", SECRET, "config", "environment X")
+    assert SECRET not in repr(creds) and SECRET not in str(creds) and SECRET not in creds.describe()
+    assert creds.describe() == "password from environment X, username from config"
+
+
+# --- writing --------------------------------------------------------------------------------------------------------
+
+def test_new_credentials_are_written_under_the_device_only():
+    assert credential_updates("router", "admin", "pw") == {"devices": {"router": {"username": "admin", "password": "pw"}}}
+    assert credential_updates("upstairs", "u", "p") == {"devices": {"upstairs": {"username": "u", "password": "p"}}}
+
+
+def test_written_credentials_are_read_back(tmp_path):
+    path = tmp_path / "secrets.json"
+    update_secrets(credential_updates("router", "root", "router-pw"), path)
+    creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device("router"))
+    assert (creds.username, creds.password) == ("root", "router-pw")
+    assert creds.password_source == f"{path} devices.router.password"
+
+
+# --- /run/secrets files ---------------------------------------------------------------------------------------------
+
+def _from_file(tmp_path, make, caplog):
+    secrets_dir = tmp_path / "run"
+    secrets_dir.mkdir()
+    make(secrets_dir / "pengumon_wan_password")
+    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"):
+        creds = CredentialSources(env={}, secrets_dir=secrets_dir, store={}).resolve(_device())
+    return creds, [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.parametrize("content, expected", [
+    ("pw\r\n", "pw"),
+    ("pw\n", "pw"),
+    ("pw\n\n", "pw\n"),          # exactly one newline is removed
+    ("pw\r\n\r\n", "pw\r\n"),
+    ("pw\r", "pw\r"),           # a lone CR is part of the password
+    ("  pw  ", "  pw  "),
+    ("x" * 4096, "x" * 4096),   # the limit itself is fine
+])
+def test_a_secret_file_loses_exactly_one_trailing_newline(tmp_path, caplog, content, expected):
+    creds, warnings = _from_file(tmp_path, lambda p: p.write_bytes(content.encode()), caplog)
+    assert creds.password == expected and warnings == []
+
+
+@pytest.mark.parametrize("make, problem", [
+    (lambda p: p.mkdir(), "is not a regular file"),
+    (lambda p: os.mkfifo(p), "is not a regular file"),
+    (lambda p: p.write_bytes(b"x" * 4097), "is larger than 4096 bytes"),
+    (lambda p: p.write_bytes(b"\xff\xfe pw"), "is not UTF-8 text"),
+    (lambda p: p.write_text("\r\n"), "is empty"),
+], ids=["directory", "fifo", "oversized", "binary", "only-a-newline"])
+def test_a_secret_file_that_is_not_a_small_text_file_is_skipped_by_path(tmp_path, caplog, make, problem):
+    creds, warnings = _from_file(tmp_path, make, caplog)  # a FIFO must not block: it is never opened
+    assert creds.password is None
+    assert warnings == [f"Secret file {problem}; trying the next credential source"]
+    (record,) = caplog.records
+    assert record.pengumon_context["path"].endswith("run/pengumon_wan_password")
+
+
+def test_a_secret_file_is_read_once(tmp_path):
+    secrets_dir = tmp_path / "run"
+    secrets_dir.mkdir()
+    (secrets_dir / "pengumon_wan_password").write_text("first")
+    sources = CredentialSources(env={}, secrets_dir=secrets_dir, store={})
+    assert sources.resolve(_device()).password == "first"
+    (secrets_dir / "pengumon_wan_password").write_text("second")
+    assert sources.resolve(_device()).password == "first"
+
+
+# --- SecretStore ----------------------------------------------------------------------------------------------------
+
+def test_the_store_reads_once_and_writes_through(tmp_path):
+    path = tmp_path / "secrets.json"
+    path.write_text(json.dumps({"note": "a"}))
+    os.chmod(path, 0o600)
+    store = SecretStore(path)
+    assert store.data() == {"note": "a"}
+    path.write_text(json.dumps({"note": "changed behind our back"}))
+    assert store.data() == {"note": "a"}  # read once
+    store.write({"devices": {"wan": {"username": "u", "password": "p"}}})
+    assert store.data()["devices"] == {"wan": {"username": "u", "password": "p"}}
+    on_disk = json.loads(path.read_text())
+    assert on_disk["devices"] == {"wan": {"username": "u", "password": "p"}}
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert store.label("devices.wan.password") == f"{path} devices.wan.password"
+
+
+def test_the_sources_and_the_store_share_one_file(tmp_path):
+    store = SecretStore(tmp_path / "s.json", data={"devices": {"wan": {"password": "p"}}})
+    sources = CredentialSources(env={}, secrets_dir=None, store=store)
+    assert sources.store is store
+    assert sources.resolve(_device()).password_source == f"{tmp_path / 's.json'} devices.wan.password"
+
+
+def test_the_default_store_path_is_config_secrets_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(secrets_module, "SECRETS_PATH", tmp_path / "x.json")
+    assert SecretStore().path == tmp_path / "x.json"
+
+
+# --- what outranks the store ----------------------------------------------------------------------------------------
+
+
+def test_outranking_names_the_source_that_would_override_saved_credentials(tmp_path):
+    secrets_dir = tmp_path / "run"
+    secrets_dir.mkdir()
+    (secrets_dir / "pengumon_router_password").write_text("file")
+    router = _device("router")
+
+    def outranking(env=None, secrets_dir_=None):
+        store = {"devices": {"router": {"password": "s"}}}
+        return CredentialSources(env=env or {}, secrets_dir=secrets_dir_, store=store).outranking(router)
+
+    assert outranking(env={"PENGUMON_DEVICE_ROUTER_PASSWORD": "e"}, secrets_dir_=secrets_dir) == \
+        "environment PENGUMON_DEVICE_ROUTER_PASSWORD"
+    assert outranking(secrets_dir_=secrets_dir) == str(secrets_dir / "pengumon_router_password")
+    assert outranking() is None  # only secrets.json: nothing outranks it
+    assert outranking(env={"PENGUMON_DEVICE_ROUTER_USERNAME": "root"}) == "environment PENGUMON_DEVICE_ROUTER_USERNAME"
+
+
+# --- one-shot conversion of the flat keys (remove with the conversion) ----------------------------------------------
+
+FLAT = {"modem_username": "cusadmin", "modem_password": "modem-" + SECRET,
+        "router_username": "admin", "router_password": "router-" + SECRET}
+
+
+def _store_file(tmp_path, data, mode=0o600):
+    path = tmp_path / "secrets.json"
+    path.write_text(json.dumps(data))
+    os.chmod(path, mode)
+    return path
+
+
+def test_the_flat_keys_move_under_the_devices_on_first_read(tmp_path, caplog):
+    path = _store_file(tmp_path, FLAT, mode=0o644)
+    with caplog.at_level(logging.INFO, logger="pengumon.secrets"):
+        store = SecretStore(path)
+        sources = CredentialSources(env={}, secrets_dir=None, store=store)
+        modem, router = sources.resolve(_device("modem")), sources.resolve(_device("router"))
+    expected = {"devices": {"modem": {"username": "cusadmin", "password": "modem-" + SECRET},
+                            "router": {"username": "admin", "password": "router-" + SECRET}}}
+    assert json.loads(path.read_text()) == expected == store.data()
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert not list(tmp_path.glob("*.tmp"))
+    assert (modem.username, modem.password) == ("cusadmin", "modem-" + SECRET)
+    assert (router.username, router.password) == ("admin", "router-" + SECRET)
+    assert router.password_source == f"{path} devices.router.password"
+    infos = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert [r.getMessage() for r in infos] == [
+        f"Moved modem_username, modem_password, router_username, router_password in {path} under devices.modem / "
+        "devices.router"]
+    assert SECRET not in caplog.text
+    # the next start finds nothing to convert
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="pengumon.secrets"):
+        assert SecretStore(path).data() == expected
+    assert caplog.records == []
+
+
+def test_a_devices_entry_wins_over_a_flat_key_and_other_keys_stay(tmp_path):
+    path = _store_file(tmp_path, {"router_password": "flat", "modem_password": "m",
+                                  "devices": {"router": {"password": "kept"}, "wan": {"password": "w"}}, "other": 1})
+    assert SecretStore(path).data() == {
+        "devices": {"router": {"password": "kept"}, "wan": {"password": "w"}, "modem": {"password": "m"}}, "other": 1}
+    assert json.loads(path.read_text())["devices"]["router"] == {"password": "kept"}
+
+
+def test_a_file_without_flat_keys_is_not_rewritten(tmp_path):
+    path = _store_file(tmp_path, {"devices": {"router": {"password": "p"}}})
+    old = os.stat(path).st_mtime_ns - 10**9
+    os.utime(path, ns=(old, old))
+    SecretStore(path).data()
+    assert os.stat(path).st_mtime_ns == old
+
+
+def test_a_save_after_the_conversion_does_not_bring_the_flat_keys_back(tmp_path):
+    path = _store_file(tmp_path, FLAT)
+    SecretStore(path).write(credential_updates("router", "root", "new"))
+    assert json.loads(path.read_text()) == {"devices": {
+        "modem": {"username": "cusadmin", "password": "modem-" + SECRET},
+        "router": {"username": "root", "password": "new"}}}
+
+
+def test_a_conversion_that_cannot_be_written_still_serves_the_credentials(tmp_path, caplog, monkeypatch):
+    path = _store_file(tmp_path, FLAT)
+
+    def refuse(data, path=None):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(secrets_module, "write_secrets", refuse)
+    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"):
+        creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device("router"))
+    assert creds.password == "router-" + SECRET
+    assert "could not be rewritten" in caplog.text and SECRET not in caplog.text
+    assert json.loads(path.read_text()) == FLAT

@@ -1,0 +1,14 @@
+.git/
+.gitignore
+.gitattributes
+.backup-*/
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+.pytest_cache/
+**/__pycache__/
+*.rejected
+.depguard-*

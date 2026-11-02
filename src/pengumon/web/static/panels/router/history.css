@@ -1,0 +1,8 @@
+/* Router history dialog (history.html). Tokens only. */
+/* Router history: the readout under each heading (the crosshair's values) */
+.rh-read { min-height: 1.4em; margin: 0 0 var(--sp-1); font-size: var(--fs-xs); color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: pre-wrap; }
+#routerHistModal .stack-chart .section-t .tools { margin-left: auto; }
+#routerHistModal .stack-chart .legend { gap: 4px var(--sp-3); }
+#routerHistModal .stack-chart canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+#routerHistModal .stack-chart + .stack-chart { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+#routerHistModal .stack-chart .section-t { margin-bottom: var(--sp-1); font-size: var(--fs-sm); }

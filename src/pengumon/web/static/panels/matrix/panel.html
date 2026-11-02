@@ -1,0 +1,26 @@
+<!-- Hop details: every target's loss, latency range, jitter and last 60 probes (panels/matrix.js) -->
+<section data-panel="matrix" aria-label="Hop details">
+  <article class="panel matrix-panel" data-size="12">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><h2 class="panel-t">Hop details</h2><span class="panel-m">every target, last 60 probes</span>
+      <div class="panel-tools narrow-help">
+        <button type="button" class="info lbl" data-action="toggleHelp" data-help="hop.category" aria-label="About target categories"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg>Names</button>
+        <button type="button" class="info lbl" data-action="toggleHelp" data-help="hop.loss" aria-label="About packet loss"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg>Loss</button>
+        <button type="button" class="info lbl" data-action="toggleHelp" data-help="hop.latency" aria-label="About latency"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg>Latency</button>
+        <button type="button" class="info lbl" data-action="toggleHelp" data-help="hop.jitter" aria-label="About jitter"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg>Jitter</button>
+      </div></header>
+    <div class="panel-b">
+      <table class="dlist hops">
+        <thead><tr>
+          <th class="c-target">Target <button type="button" class="info" data-action="toggleHelp" data-help="hop.category" aria-label="About target categories"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+          <th class="c-loss">Loss <button type="button" class="info" data-action="toggleHelp" data-help="hop.loss" aria-label="About packet loss"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+          <th class="c-range">Min · avg · max <button type="button" class="info" data-action="toggleHelp" data-help="hop.latency" aria-label="About latency"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+          <th class="r c-last">Last</th>
+          <th class="r c-jit">Jitter <button type="button" class="info" data-action="toggleHelp" data-help="hop.jitter" aria-label="About jitter"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+          <th class="r c-total">Lost since start</th>
+          <th class="c-spark">Last 60 probes</th>
+        </tr></thead>
+        <tbody id="hopMatrixBody"><tr><td colspan="7" class="muted">Waiting for the first probes...</td></tr></tbody>
+      </table>
+    </div>
+  </article>
+</section>

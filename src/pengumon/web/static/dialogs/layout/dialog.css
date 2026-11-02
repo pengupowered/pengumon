@@ -1,0 +1,16 @@
+/* Dialog layout: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Layout dialog */
+.lay-intro { color: var(--ink-2); font-size: var(--fs-sm); margin-bottom: var(--sp-4); }
+.lay-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.lay-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.lay-row.off { opacity: .62; }
+.lay-row.off .lay-ic { filter: grayscale(1); }
+.lay-row.na { grid-template-columns: 34px 1fr; border-style: dashed; background: none; opacity: .75; }
+.lay-ic { width: 34px; height: 34px; border-radius: 8px; background: var(--surface-3); display: grid; place-items: center; color: var(--ink-2); }
+.lay-name { display: flex; flex-direction: column; min-width: 0; }
+.lay-name span { font-size: var(--fs-xs); color: var(--ink-3); }
+.lay-move { display: flex; gap: 4px; }
+.lay-sub { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); margin: var(--sp-5) 0 var(--sp-2); }
+@container (max-width: 480px) { .lay-row { grid-template-columns: 34px minmax(0, 1fr) auto; } .lay-show { grid-column: 2; } .lay-move { grid-column: 3; grid-row: 1 / span 2; flex-direction: column; } }
+
+.lay-list label.check { white-space: nowrap; }

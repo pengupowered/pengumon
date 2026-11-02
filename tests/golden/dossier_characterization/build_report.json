@@ -1,0 +1,276 @@
+{
+ "calls": [
+  [
+   "get_daily_availability",
+   1759740800.0,
+   -300
+  ],
+  [
+   "get_incidents_since",
+   1759740800.0
+  ],
+  [
+   "get_hourly_loss",
+   1759740800.0,
+   -300
+  ]
+ ],
+ "key_order": [
+  "days",
+  "tz_offset_minutes",
+  "generated_at",
+  "availability",
+  "incidents",
+  "loss_by_hour",
+  "worst_hours"
+ ],
+ "payload": {
+  "availability": {
+   "days": [
+    "2025-10-07",
+    "2025-10-08"
+   ],
+   "hops": [
+    {
+     "availability_pct": 100.0,
+     "name": "Local Router",
+     "per_day": [
+      100.0,
+      null
+     ],
+     "target_id": "router"
+    },
+    {
+     "availability_pct": 99.691,
+     "name": "ISP Hub",
+     "per_day": [
+      99.537,
+      100.0
+     ],
+     "target_id": "isp"
+    },
+    {
+     "availability_pct": 99.769,
+     "name": "Cloudflare 1.1.1.1",
+     "per_day": [
+      null,
+      99.769
+     ],
+     "target_id": "cloudflare"
+    },
+    {
+     "availability_pct": 50.0,
+     "name": "zzz",
+     "per_day": [
+      null,
+      50.0
+     ],
+     "target_id": "zzz"
+    }
+   ]
+  },
+  "days": 3,
+  "generated_at": 1760000000.0,
+  "incidents": {
+   "by_cause": [
+    {
+     "cause_code": "isp_loss",
+     "count": 2,
+     "minutes": 3.0
+    },
+    {
+     "cause_code": "a_cause",
+     "count": 1,
+     "minutes": 0.0
+    },
+    {
+     "cause_code": "dns_resolver_failure",
+     "count": 1,
+     "minutes": 5.0
+    }
+   ],
+   "count": 4,
+   "excluded_expected": 1,
+   "minutes": 8.0
+  },
+  "loss_by_hour": [
+   {
+    "hour": 0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 1,
+    "loss_pct": 0.194,
+    "lost": 7,
+    "sent": 3600
+   },
+   {
+    "hour": 2,
+    "loss_pct": 0.083,
+    "lost": 3,
+    "sent": 3600
+   },
+   {
+    "hour": 3,
+    "loss_pct": 0.278,
+    "lost": 10,
+    "sent": 3600
+   },
+   {
+    "hour": 4,
+    "loss_pct": 0.167,
+    "lost": 6,
+    "sent": 3600
+   },
+   {
+    "hour": 5,
+    "loss_pct": 0.0,
+    "lost": 2,
+    "sent": 0
+   },
+   {
+    "hour": 6,
+    "loss_pct": 0.25,
+    "lost": 9,
+    "sent": 3600
+   },
+   {
+    "hour": 7,
+    "loss_pct": 0.139,
+    "lost": 5,
+    "sent": 3600
+   },
+   {
+    "hour": 8,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 9,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 10,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 11,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 12,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 13,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 14,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 15,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 16,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 17,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 18,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 19,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 20,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 21,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 22,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   },
+   {
+    "hour": 23,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "sent": 3600
+   }
+  ],
+  "tz_offset_minutes": -300,
+  "worst_hours": [
+   {
+    "hour": 3,
+    "loss_pct": 0.278,
+    "lost": 10,
+    "sent": 3600
+   },
+   {
+    "hour": 6,
+    "loss_pct": 0.25,
+    "lost": 9,
+    "sent": 3600
+   },
+   {
+    "hour": 1,
+    "loss_pct": 0.194,
+    "lost": 7,
+    "sent": 3600
+   },
+   {
+    "hour": 4,
+    "loss_pct": 0.167,
+    "lost": 6,
+    "sent": 3600
+   },
+   {
+    "hour": 7,
+    "loss_pct": 0.139,
+    "lost": 5,
+    "sent": 3600
+   }
+  ]
+ }
+}

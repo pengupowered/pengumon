@@ -1,0 +1,19 @@
+# python:3.12-slim as of 2026-10-11 (update: depguard.ps1 base-image <project>)
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+WORKDIR /app
+
+# Security updates of OS packages (test image matches production).
+RUN apt-get update && apt-get -y --no-install-recommends upgrade && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+COPY requirements-dev.txt requirements-build.txt ./
+# The build backend too: tests/test_wheel.py builds the wheel the way the release does.
+RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary :all: -r requirements-dev.txt \
+    && pip install --no-cache-dir --require-hashes --no-deps --only-binary :all: -r requirements-build.txt
+COPY pyproject.toml config.example.yaml README.md LICENSE requirements.in ./
+COPY src/ src/
+COPY tests/ tests/
+COPY scripts/ scripts/
+COPY compose.release.yaml docker-compose.yml Dockerfile CHANGELOG.md ./
+COPY .github/ .github/
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]

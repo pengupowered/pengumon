@@ -1,0 +1,22 @@
+<!-- Latency and packet loss over time: live feed and stored history (panels/latency.js, charts.js, history.js) -->
+<section data-panel="latency" aria-label="Latency">
+  <article class="panel" data-size="8">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg><h2 class="panel-t">Latency</h2><span class="panel-m" id="chartModeLabel">last 60 s · every probe</span>
+      <div class="panel-tools"><span class="seg" role="group" id="timeRangeButtons" aria-label="Time range">
+        <button type="button" class="active" data-action="setTimeRange" data-arg="live">Live</button>
+        <button type="button" data-action="setTimeRange" data-arg="900">15 m</button>
+        <button type="button" data-action="setTimeRange" data-arg="3600">1 h</button>
+        <button type="button" data-action="setTimeRange" data-arg="86400">24 h</button></span></div></header>
+    <div class="panel-b">
+      <div class="lat-head">
+        <div class="legend lat-legend" id="latencyLegend"></div>
+        <span class="seg lat-view" role="group" id="latencyViewButtons" aria-label="Lines">
+          <button type="button" data-action="setLatencyView" data-arg="path" aria-pressed="true" title="Three lines: router, line and internet">Path</button>
+          <button type="button" data-action="setLatencyView" data-arg="targets" aria-pressed="false" title="One line per pinged target, ISP hops included">Each target</button></span>
+      </div>
+      <p class="lat-note" id="latencyNote"></p>
+      <div class="chart-box lat-main" style="--h: 250px"><canvas id="latencyChart" role="img" aria-label="Latency over time per target"></canvas></div>
+      <div class="chart-box lat-loss" style="--h: 44px"><canvas id="lossChart" role="img" aria-label="Packet loss over time, worst target"></canvas></div>
+    </div>
+  </article>
+</section>

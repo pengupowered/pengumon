@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e13">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>pengumon</title>
+  <link rel="icon" href="/static/v/{{ v.tree }}/favicon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/static/v/{{ v.tree }}/icons/app-180.png">
+  <link rel="manifest" href="/static/v/{{ v.tree }}/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/v/{{ v.tree }}/tokens.css">
+  <link rel="stylesheet" href="/static/v/{{ v.tree }}/components.css">
+  <link rel="stylesheet" href="/static/v/{{ v.tree }}/page.css">
+  <link rel="stylesheet" href="/static/v/{{ v.tree }}/style.css">
+  {% for css in ui.css %}<link rel="stylesheet" href="/static/v/{{ v.tree }}/{{ css }}">
+  {% endfor %}
+  <!-- Chart.js, vendored -->
+  <script src="/static/v/{{ v.tree }}/vendor/chart.umd.min.js"></script>
+</head>
+<body data-layout='{{ layout|tojson }}' data-modules='{{ ui.modules|tojson }}' data-status="unknown">
+  <a class="skip" href="#panels">Skip to panels</a>
+  <div class="glow" aria-hidden="true"></div>
+
+  <!-- Header: brand, overall status (written by the panel that owns the verdict), live socket, tools -->
+  <header id="topbar" class="topbar st-unknown">
+    <div class="tb-inner">
+      <a class="brand" href="/" aria-label="pengumon home"><img class="brand-mark" src="/static/v/{{ v.tree }}/favicon.svg" width="30" height="30" alt=""><span class="brand-name">pengumon</span></a>
+      <div class="status-pill st-unknown" id="statusPill" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span><b id="statusPillText">Connecting</b><b class="sp-word" id="statusPillWord" aria-hidden="true">Connecting</b><span class="sp-metrics" id="statusPillMetrics"></span>
+      </div>
+      <span class="live live-connecting" id="wsStatus" title="Live updates"><i aria-hidden="true"></i><span id="wsText">Connecting</span></span>
+      <span class="lan-pill" id="lanPill" hidden>
+        <span>LAN</span><a id="lanUrlLink" href="#" target="_blank" rel="noopener">Loading...</a>
+        <button type="button" class="btn icon sm" id="btnCopyLan" data-action="copyLanUrl" title="Copy the LAN address" aria-label="Copy the LAN address"><svg class="i" id="copyIcon" aria-hidden="true"><use href="#i-copy"/></svg></button>
+      </span>
+      <span class="grow"></span>
+      <nav class="tb-actions" id="headerTools" aria-label="Tools">
+        <button type="button" class="btn" data-action="openModal" data-arg="tracerouteModal" title="Trace route"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span class="lbl">Trace</span></button>
+        <button type="button" class="btn" data-action="openDossierModal" title="ISP outage dossier"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span class="lbl">Dossier</span></button>
+        <button type="button" class="btn" id="btnNotify" data-action="toggleNotifications" title="Alerts: off"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span class="lbl">Alerts</span></button>
+        <button type="button" class="btn" data-action="openModal" data-arg="addTargetModal" title="Add target"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Target</span></button>
+        <span class="tb-sep" aria-hidden="true"></span>
+        <button type="button" class="btn" data-action="openLayoutDialog" title="Arrange panels"><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="lbl">Layout</span></button>
+        <button type="button" class="btn icon" id="btnTheme" data-action="toggleTheme" title="Switch theme" aria-label="Switch theme"><svg class="i" aria-hidden="true"><use href="#i-sun"/></svg></button>
+        {% if grafana_links %}{% include "features/grafana.html" %}{% endif %}
+        <!-- shown by chrome.js when /api/info says this browser is signed in with the access token (dialogs/sign-out) -->
+        <button type="button" class="btn" id="btnSignOut" data-action="openModal" data-arg="signOutModal" data-sign-out hidden title="Sign out"><svg class="i" aria-hidden="true"><use href="#i-logout"/></svg><span class="lbl">Sign out</span></button>
+      </nav>
+      <button type="button" class="btn icon tb-more" data-action="toggleMenu" data-arg="headerMenu" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="headerMenu"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button>
+      <div class="menu fixed" id="headerMenu" role="menu" aria-label="More actions" hidden><!-- the tools above, copied by chrome.js --></div>
+    </div>
+  </header>
+  <div class="conn-banner" id="connBanner" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-stale"/></svg><span><b>Connection lost.</b> Showing the last data; reconnecting every 2 s.</span></div>
+
+  <!-- Panels: one section per panel folder (static/panels/<id>/panel.html, found by pengumon.ui); layout.js arranges them -->
+  <main class="page" id="panels" aria-label="Dashboard panels">
+    {% for panel in ui.panels %}{% include panel.template %}
+    {% endfor %}
+  </main>
+
+  <!-- Phone tab bar (720 px and below): shows the panels whose tab is the selected one; see tabs.js -->
+  <nav class="tabbar" id="mobileTabs" role="tablist" aria-label="Dashboard sections">
+    <button type="button" role="tab" data-action="selectTab" data-arg="live" aria-selected="true"><svg class="i" aria-hidden="true"><use href="#i-path"/></svg><span>Live</span></button>
+    <button type="button" role="tab" data-action="selectTab" data-arg="network" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-home"/></svg><span>Network</span></button>
+    <button type="button" role="tab" data-action="selectTab" data-arg="line" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-line"/></svg><span>Line</span></button>
+    <button type="button" role="tab" data-action="selectTab" data-arg="incidents" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span>Incidents</span></button>
+  </nav>
+
+  <!-- Dialogs: those the panels own and those of static/dialogs/<id>/ (pengumon.ui) -->
+  {% for dialog in ui.dialog_templates %}{% include dialog %}
+  {% endfor %}
+  {% include "icons.svg" %}
+  <script type="module" src="/static/v/{{ v.tree }}/js/main.js"></script>
+</body>
+</html>

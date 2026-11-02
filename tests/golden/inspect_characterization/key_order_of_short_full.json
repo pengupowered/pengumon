@@ -1,0 +1,35 @@
+{
+ "docsis_correlation": [
+  "rf_correlated",
+  "active_errors_in_window",
+  "nearest_snapshot",
+  "worst_channel",
+  "lowest_snr",
+  "status",
+  "gateway_offline"
+ ],
+ "hop_impact": [
+  "target_id",
+  "name",
+  "category",
+  "sent",
+  "received",
+  "loss_pct",
+  "avg_ms",
+  "min_ms",
+  "max_ms",
+  "jitter_ms"
+ ],
+ "top": [
+  "incident",
+  "window_start",
+  "window_end",
+  "event_start",
+  "event_end",
+  "hop_impact",
+  "samples",
+  "docsis_snapshots",
+  "docsis_correlation",
+  "router_snapshots"
+ ]
+}

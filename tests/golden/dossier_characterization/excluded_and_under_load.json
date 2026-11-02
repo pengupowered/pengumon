@@ -1,0 +1,121 @@
+{
+ "calls": [
+  [
+   "get_incidents_since",
+   1759913600.0
+  ],
+  [
+   "get_hop_stats",
+   1759913600.0
+  ],
+  [
+   "get_latest_docsis_snapshot"
+  ],
+  [
+   "get_docsis_snapshots_in_range",
+   1759913600.0,
+   1760000000.0,
+   0
+  ]
+ ],
+ "key_order": [
+  "observation_hours",
+  "total_incidents",
+  "total_duration_seconds",
+  "total_duration_minutes",
+  "excluded_expected",
+  "primary_failing_hop",
+  "hop_stats",
+  "docsis",
+  "formatted_markdown"
+ ],
+ "markdown": [
+  "# Broadband Packet Loss Evidence Report",
+  "**Generated:** 2025-10-09 08:53:20 | **Observation window:** past 24 hours",
+  "**Local hardware:** 0.0% worst loss across local and gateway hops (below the 0.5% threshold)",
+  "",
+  "## 1. Summary",
+  "- **Recorded incidents:** 4",
+  "- **Cumulative duration:** 12.5 minutes (750 seconds)",
+  "- **By cause:** isp_loss: 2 (2.5 min), local_wifi_mesh_drop: 1 (0.0 min), dns_resolver_failure: 1 (10.0 min)",
+  "- 2 of these occurred while the line was at 70% load or more.",
+  "- 2 events during heavy line load were excluded (expected).",
+  "- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by 0.5 points or more.",
+  "",
+  "## 2. Loss per hop",
+  "Probes are ICMP/DNS requests sent about once per second per target; the table counts every probe in the window, including those during heavy line load. Hops are listed from the premises outward.",
+  "",
+  "| Hop | Target | Sent | Lost | Loss % | Avg RTT | Max RTT | Note |",
+  "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+  "| `router` | Local Router | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `gateway` | Modem Gateway | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `isp` | ISP Hub | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `cloudflare` | Cloudflare 1.1.1.1 | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `dns_google` | Google DNS | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "",
+  "## 3. Modem (DOCSIS) telemetry",
+  "- No modem data: modem credentials are not configured in Pengumon.",
+  "",
+  "## 4. What the data shows",
+  "- No modem data is available, so nothing can be said about the RF side.",
+  "- The probes did not isolate a single failing hop.",
+  "",
+  "## 5. Summary for a support ticket",
+  "```text",
+  "Over the past 24 hours Pengumon recorded 4 incidents totalling 12.5 minutes (2 further events during heavy line load were excluded as expected).",
+  "Loss to Local Router and Modem Gateway: at most 0.0%.",
+  "No single failing hop could be isolated from the probe data.",
+  "```"
+ ],
+ "payload": {
+  "docsis": null,
+  "excluded_expected": 2,
+  "hop_stats": [
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "router"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "gateway"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "isp"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "cloudflare"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "dns_google"
+   }
+  ],
+  "observation_hours": 24,
+  "primary_failing_hop": null,
+  "total_duration_minutes": 12.5,
+  "total_duration_seconds": 750.5,
+  "total_incidents": 4
+ }
+}

@@ -1,0 +1,164 @@
+{
+ "calls": [
+  [
+   "get_incidents_since",
+   1759913600.0
+  ],
+  [
+   "get_hop_stats",
+   1759913600.0
+  ],
+  [
+   "get_latest_docsis_snapshot"
+  ],
+  [
+   "get_docsis_snapshots_in_range",
+   1759913600.0,
+   1760000000.0,
+   0
+  ]
+ ],
+ "key_order": [
+  "observation_hours",
+  "total_incidents",
+  "total_duration_seconds",
+  "total_duration_minutes",
+  "excluded_expected",
+  "primary_failing_hop",
+  "hop_stats",
+  "docsis",
+  "formatted_markdown"
+ ],
+ "markdown": [
+  "# Broadband Packet Loss Evidence Report",
+  "**Generated:** 2025-10-09 08:53:20 | **Observation window:** past 24 hours",
+  "**Local hardware:** 0.0% worst loss across local and gateway hops (below the 0.5% threshold)",
+  "",
+  "## 1. Summary",
+  "- **Recorded incidents:** 0",
+  "- **Cumulative duration:** 0.0 minutes (0 seconds)",
+  "- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by 0.5 points or more.",
+  "",
+  "## 2. Loss per hop",
+  "Probes are ICMP/DNS requests sent about once per second per target; the table counts every probe in the window, including those during heavy line load. Hops are listed from the premises outward.",
+  "",
+  "| Hop | Target | Sent | Lost | Loss % | Avg RTT | Max RTT | Note |",
+  "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+  "| `router` | Local Router | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `gateway` | Modem Gateway | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `isp` | ISP Hub | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `cloudflare` | Cloudflare 1.1.1.1 | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "| `dns_google` | Google DNS | 1000 | 0 | 0.0% | 10.0 ms | 30.0 ms | No material loss |",
+  "",
+  "## 3. Modem (DOCSIS) telemetry",
+  "- Downstream average power: 1.2 dBmV (typical range -7 to +7)",
+  "- Downstream average SNR: 37.8 dB (typically above 33)",
+  "- Upstream average power: 42.5 dBmV (typically 38 to 48)",
+  "- Uncorrectable codewords since modem boot: 5,000",
+  "",
+  "### Channels outside typical levels",
+  "",
+  "| Direction | Channel | Frequency | Modulation | Power | SNR | Corrected | Uncorrectable | Finding |",
+  "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+  "| Downstream | `1` | - | QAM256 | 1.0 dBmV | - | 100 | 800 | High uncorrectable count |",
+  "",
+  "1 of 1 channels are outside typical levels; the most affected is downstream channel 1.",
+  "",
+  "## 4. What the data shows",
+  "- The modem reports RF-level signs: 1 channel(s) outside typical levels. These are consistent with a cable-plant (RF) problem and justify a line check, but the probes alone do not prove the link.",
+  "- The probes did not isolate a single failing hop.",
+  "",
+  "## 5. Summary for a support ticket",
+  "```text",
+  "Over the past 24 hours Pengumon recorded 0 incidents totalling 0.0 minutes.",
+  "Loss to Local Router and Modem Gateway: at most 0.0%.",
+  "No single failing hop could be isolated from the probe data.",
+  "Modem: downstream channel 1 is outside typical levels (1 channel(s) in total).",
+  "Request: please check the line (tap, drop, connectors) for RF impairment.",
+  "```"
+ ],
+ "payload": {
+  "docsis": {
+   "channels": [
+    {
+     "channel_id": 1,
+     "correcteds": 100,
+     "direction": "downstream",
+     "frequency_mhz": 0.0,
+     "grades": {},
+     "modulation": "QAM256",
+     "power_dbmv": 1.0,
+     "snr_db": null,
+     "uncorrectables": 800,
+     "uncorrectables_recent": 0,
+     "unerrored": null
+    }
+   ],
+   "downstream_power_avg": 1.2,
+   "downstream_snr_avg": 37.8,
+   "error_message": null,
+   "errors_affected_channels": 0,
+   "errors_note": null,
+   "errors_probe_loss": null,
+   "errors_recurring": false,
+   "errors_span_mhz": null,
+   "grades": {},
+   "status": "healthy",
+   "timestamp": 1759999940.0,
+   "uncorrectables_interval_seconds": null,
+   "uncorrectables_rate_per_sec": 0.0,
+   "uncorrectables_ratio": null,
+   "uncorrectables_recent": 0,
+   "uncorrectables_total": 5000,
+   "upstream_power_avg": 42.5
+  },
+  "excluded_expected": 0,
+  "hop_stats": [
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "router"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "gateway"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "isp"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "cloudflare"
+   },
+   {
+    "avg_ms": 10.0,
+    "loss_pct": 0.0,
+    "lost": 0,
+    "max_ms": 30.0,
+    "sent": 1000,
+    "target_id": "dns_google"
+   }
+  ],
+  "observation_hours": 24,
+  "primary_failing_hop": null,
+  "total_duration_minutes": 0.0,
+  "total_duration_seconds": 0,
+  "total_incidents": 0
+ }
+}

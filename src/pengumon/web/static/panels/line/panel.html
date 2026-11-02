@@ -1,0 +1,29 @@
+<!-- Line: one card per device offering access_line (panels/line.js). The common part is technology-free; the body comes
+     from the line technology's adapter (lines/docsis.js and its template below); an unknown technology gets the common
+     part only. -->
+<section data-panel="line" aria-label="Line">
+  <template id="tpl-line">
+    <article class="panel" data-size="4" data-status="unknown">
+      <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-modem"/></svg><h2 class="panel-t" data-f="title">Line</h2><span class="panel-m" data-f="meta"></span>
+        <div class="panel-tools"><span class="chip stale-chip" data-f="stale" hidden></span><span class="badge quiet st-unknown" data-f="badge">Waiting</span></div></header>
+      <div class="panel-b">
+        <div class="empty st st-crit" data-f="error" hidden></div>
+        <div data-f="body"><div class="gauge-skel"><div class="skel-stack"><div class="skel line" style="width:92%"></div><div class="skel line" style="width:76%"></div><div class="skel line" style="width:84%"></div></div><div class="skel-stack"><div class="skel line" style="width:60%"></div><div class="skel line" style="width:70%"></div></div></div></div>
+      </div>
+      <footer class="panel-f"><svg class="i sm" aria-hidden="true"><use href="#i-clock"/></svg><span data-f="read">waiting for the first reading</span><span class="grow"></span>
+        <span data-f="actions" class="row-actions"></span>
+        <button type="button" class="btn sm" data-action="openDeviceSetup" data-f="setup"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg>Setup</button></footer>
+    </article>
+  </template>
+  <!-- DOCSIS adapter body: range gauges, uncorrectable errors in plain words, channel summary -->
+  <template id="tpl-line-docsis">
+    <div class="line-docsis">
+      <div class="gauge" data-f="g_ds_power"><div class="g-name"><span data-f="ic"></span><span>Downstream power</span><button type="button" class="info" data-action="toggleHelp" data-help="docsis.dspower" aria-label="About downstream power"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></div><div class="g-val"><span data-f="val">–</span><small>dBmV</small></div><div class="g-bar" role="img" data-f="bar"></div><div class="g-scale" data-f="scale"></div></div>
+      <div class="gauge" data-f="g_ds_snr"><div class="g-name"><span data-f="ic"></span><span>Downstream SNR</span><button type="button" class="info" data-action="toggleHelp" data-help="docsis.snr" aria-label="About downstream snr"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></div><div class="g-val"><span data-f="val">–</span><small>dB</small></div><div class="g-bar" role="img" data-f="bar"></div><div class="g-scale" data-f="scale"></div></div>
+      <div class="gauge" data-f="g_us_power"><div class="g-name"><span data-f="ic"></span><span>Upstream power</span><button type="button" class="info" data-action="toggleHelp" data-help="docsis.uspower" aria-label="About upstream power"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></div><div class="g-val"><span data-f="val">–</span><small>dBmV</small></div><div class="g-bar" role="img" data-f="bar"></div><div class="g-scale" data-f="scale"></div></div>
+      <div class="gauge fec" data-f="g_uncorr"><div class="g-name"><span data-f="ic"></span><span>Uncorrectable errors</span><button type="button" class="info" data-action="toggleHelp" data-help="docsis.uncorr" aria-label="About uncorrectable errors"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></div><div class="g-val"><span data-f="val">0</span><small data-f="per">new</small></div>
+        <p class="fec-note" data-f="note">No new uncorrectable errors.</p><p class="fec-detail" data-f="detail"></p><div class="g-bar-free" data-f="bars"></div><div class="g-scale" data-f="scale"><span data-f="since">since this page opened</span><span>now</span></div></div>
+      <div class="chan-sum"><div class="chan-txt" data-f="chanTxt"></div><div class="strip slim chan-strip" role="img" data-f="chanStrip"></div></div>
+    </div>
+  </template>
+</section>

@@ -1,0 +1,71 @@
+{
+ "calls": [
+  [
+   "get_incidents_since",
+   1759913600.0
+  ],
+  [
+   "get_hop_stats",
+   1759913600.0
+  ],
+  [
+   "get_latest_docsis_snapshot"
+  ],
+  [
+   "get_docsis_snapshots_in_range",
+   1759913600.0,
+   1760000000.0,
+   0
+  ]
+ ],
+ "key_order": [
+  "observation_hours",
+  "total_incidents",
+  "total_duration_seconds",
+  "total_duration_minutes",
+  "excluded_expected",
+  "primary_failing_hop",
+  "hop_stats",
+  "docsis",
+  "formatted_markdown"
+ ],
+ "markdown": [
+  "# Broadband Packet Loss Evidence Report",
+  "**Generated:** 2025-10-09 08:53:20 | **Observation window:** past 24 hours",
+  "**Local hardware:** no local or gateway probes in this window",
+  "",
+  "## 1. Summary",
+  "- **Recorded incidents:** 0",
+  "- **Cumulative duration:** 0.0 minutes (0 seconds)",
+  "- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by 0.5 points or more.",
+  "",
+  "## 2. Loss per hop",
+  "Probes are ICMP/DNS requests sent about once per second per target; the table counts every probe in the window, including those during heavy line load. Hops are listed from the premises outward.",
+  "",
+  "| Hop | Target | Sent | Lost | Loss % | Avg RTT | Max RTT | Note |",
+  "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+  "",
+  "## 3. Modem (DOCSIS) telemetry",
+  "- No modem data: modem credentials are not configured in Pengumon.",
+  "",
+  "## 4. What the data shows",
+  "- No modem data is available, so nothing can be said about the RF side.",
+  "- The probes did not isolate a single failing hop.",
+  "",
+  "## 5. Summary for a support ticket",
+  "```text",
+  "Over the past 24 hours Pengumon recorded 0 incidents totalling 0.0 minutes.",
+  "No single failing hop could be isolated from the probe data.",
+  "```"
+ ],
+ "payload": {
+  "docsis": null,
+  "excluded_expected": 0,
+  "hop_stats": [],
+  "observation_hours": 24,
+  "primary_failing_hop": null,
+  "total_duration_minutes": 0.0,
+  "total_duration_seconds": 0,
+  "total_incidents": 0
+ }
+}

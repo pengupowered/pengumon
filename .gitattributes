@@ -1,0 +1,13 @@
+* text=auto
+# Files that run inside Linux containers must keep LF line endings on Windows checkouts
+*.sh text eol=lf
+Dockerfile* text eol=lf
+
+# Vendored third-party files must stay byte-identical (hash-verified by tests)
+src/pengumon/web/static/vendor/** -text
+requirements*.txt text eol=lf
+*.in text eol=lf
+*.cdx.json text eol=lf
+
+# Vendored homeguard source must keep LF line endings (hash-verified by tests)
+src/pengumon/_vendor/homeguard/** text eol=lf

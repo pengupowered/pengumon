@@ -1,0 +1,46 @@
+/* Local network dialog: the topology (SVG wide, an HTML tree narrow) and the clients table. Tokens only. */
+.topo { width: 100%; height: auto; display: block; overflow: visible; }
+.topo .tn rect:first-child { fill: var(--surface-2); stroke: var(--line-strong); }
+.topo .tn.st-warn rect:first-child { stroke: color-mix(in srgb, var(--warn) 60%, var(--line)); }
+.topo .tn.st-crit rect:first-child { stroke: color-mix(in srgb, var(--crit) 60%, var(--line)); }
+.topo .tn .bar { fill: var(--st); }
+.topo .tn svg.i { color: var(--ink-2); }
+.topo text { font-family: var(--font); fill: var(--ink-1); }
+.topo .tk { font-size: 10px; fill: var(--ink-3); letter-spacing: .06em; }
+.topo .tname { font-size: 13px; font-weight: 600; }
+.topo .tsub { font-size: 11px; fill: var(--ink-3); }
+.topo .tl { stroke: var(--st); stroke-width: 2; stroke-dasharray: 3 5; fill: none; }
+.topo .tc rect { fill: var(--accent-bg); stroke: color-mix(in srgb, var(--accent) 40%, transparent); }
+.topo .tc svg.i { color: var(--accent); }
+.topo .tgo { cursor: pointer; outline: none; }
+.topo .tgo:hover .tn rect:first-child, .topo .tgo:focus-visible .tn rect:first-child, .topo .tgo[aria-pressed="true"] .tn rect:first-child { stroke: var(--accent); }
+.topo .tgo:focus-visible .tn rect:first-child, .topo .tgo[aria-pressed="true"] .tn rect:first-child { stroke-width: 2; }
+.topo .tgo:hover .tc rect, .topo .tgo[aria-pressed="true"] .tc rect, .topo .tgo:focus-visible .tc rect { stroke: var(--accent); stroke-width: 2; }
+.topology-panel:empty { display: none; }
+.topo-narrow { display: none; list-style: none; padding: 0; margin: 0; }
+@container (max-width: 640px) { .topo-wide { display: none; } .topo-narrow { display: flex; flex-direction: column; gap: 0; } }
+.tv { display: flex; align-items: center; gap: var(--sp-3); padding: 8px 10px; position: relative; border-left: 2px solid var(--st); margin-left: 14px; }
+.tv.d1 { margin-left: 40px; }
+.tv[role="button"] { cursor: pointer; border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+.tv[role="button"]:hover, .tv[aria-pressed="true"] { background: var(--accent-bg); }
+.tv[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tv-ic { width: 30px; height: 30px; border-radius: 8px; background: var(--surface-3); display: grid; place-items: center; color: var(--ink-2); flex: none; }
+.tv-ic svg.i { width: 18px; height: 18px; }
+.tv > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; font-size: var(--fs-sm); }
+.tv-k { font-size: var(--fs-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+.tv-s { font-size: var(--fs-xs); color: var(--ink-3); }
+.tv-st { margin-left: auto; display: inline-flex; gap: 4px; align-items: center; font-size: var(--fs-xs); color: var(--st); }
+
+/* Clients */
+.cl-name { display: inline-flex; align-items: center; gap: 10px; }
+.cl-name > svg.i { color: var(--ink-3); flex: none; }
+.cl-name > span { display: flex; flex-direction: column; min-width: 0; }
+.cl-name .sub { overflow-wrap: anywhere; }
+.dlist th[aria-sort] button { color: var(--ink-1); }
+.dlist th button svg.i { width: 12px; height: 12px; }
+.dlist tr.offline td { opacity: .55; }
+.clients-empty { color: var(--ink-3); text-align: center; padding: var(--sp-4) !important; }
+.dlist td .chip svg.i { color: var(--ink-3); }
+#clientsLegend { margin-bottom: var(--sp-2); }
+@media (max-width: 640px) { .dlist td.clients-empty { display: block; } }
+.clients-only[hidden] { display: none; }

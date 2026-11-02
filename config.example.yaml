@@ -1,0 +1,203 @@
+# Pengumon configuration example. Copy it to config.yaml (git-ignored) and adjust the addresses to your network:
+#   cp config.example.yaml config.yaml
+# The addresses are placeholders: common LAN defaults, and RFC 5737 documentation ranges for the ISP hops and DNS.
+# Every section is described in docs/configuration.md; devices, service checks and the client list have their own
+# pages: docs/devices.md, docs/services.md, docs/clients.md.
+
+server:
+  # host: "127.0.0.1"   # listen address; the default is this computer only. PENGUMON_HOST (the container sets it
+  #                       to 0.0.0.0) wins over this line. Use "0.0.0.0" to reach the dashboard from the LAN.
+  port: 8000            # PENGUMON_PORT wins over this line
+  log_level: "info"
+
+prober:
+  interval_seconds: 1.0
+  timeout_seconds: 1.0
+  ping_count_per_probe: 1
+
+# A target (or DNS probe) may set `color: "#rrggbb"` for its chart line. Leave it out to get the dashboard's validated
+# series colours (both themes), given so that no two targets of one category share one.
+targets:
+  - id: "local_router"
+    name: "Hop 1: Local Router (LAN)"
+    category: "local"
+    address: "192.168.1.1"
+    enabled: true
+
+  - id: "isp_gateway"
+    name: "Hop 2: ISP Modem / Gateway"
+    category: "gateway"
+    address: "192.168.100.1"
+    enabled: true
+
+  - id: "isp_hop_1"
+    name: "Hop 3: ISP Regional Hub"
+    category: "isp"
+    address: "198.51.100.1"
+    enabled: true
+
+  - id: "isp_hop_2"
+    name: "Hop 4: ISP Backbone"
+    category: "isp"
+    address: "198.51.100.2"
+    enabled: true
+
+  - id: "isp_dns"
+    name: "ISP DNS (203.0.113.53)"
+    category: "isp"
+    address: "203.0.113.53"
+    enabled: true
+
+  - id: "cloudflare_dns"
+    name: "Public: Cloudflare Anycast (1.1.1.1)"
+    category: "public"
+    address: "1.1.1.1"
+    enabled: true
+
+  - id: "google_dns"
+    name: "Public: Google Anycast (8.8.8.8)"
+    category: "public"
+    address: "8.8.8.8"
+    enabled: true
+
+  - id: "quad9_dns"
+    name: "Public: Quad9 Anycast (9.9.9.9)"
+    category: "public"
+    address: "9.9.9.9"
+    enabled: true
+
+dns_probes:
+  - id: "dns_system_google"
+    name: "DNS Lookup (google.com - System DNS)"
+    domain: "google.com"
+    nameserver: null # Uses system default resolver
+    record_type: "A"
+    enabled: true
+
+  - id: "dns_direct_cloudflare"
+    name: "DNS Lookup (cloudflare.com via 1.1.1.1)"
+    domain: "cloudflare.com"
+    nameserver: "1.1.1.1"
+    record_type: "A"
+    enabled: true
+
+classifier:
+  local_latency_spike_threshold_ms: 25.0
+  gateway_latency_spike_threshold_ms: 35.0
+  public_latency_spike_threshold_ms: 80.0
+  public_jitter_spike_threshold_ms: 45.0
+  dns_timeout_threshold_ms: 300.0
+  consecutive_failures_for_incident: 3
+  consecutive_failures_for_latency_incident: 10
+  # Latency (and loss seen only at ISP hops) while the WAN runs at or above this share of the line
+  # capacity is expected queueing delay (bufferbloat): status "busy", no incident.
+  busy_load_pct: 60
+
+# Internet line capacity in Mbps, used for the load %. null = learned from the router history
+# (99.9th percentile of the 10 s WAN rates over the last 7 days, refreshed hourly).
+line:
+  down_mbps: 1000   # your plan's speed
+  up_mbps: 40
+  isp_name: "Your ISP"  # names the outage dossier
+
+database:
+  # The database file is <data directory>/pengumon.db (`pengumon paths` shows where); db_path is only for moving it.
+  retention_days: 7          # raw 1 s samples, DOCSIS and router telemetry
+  rollup_retention_days: 400 # per-minute probe rollups (long-range charts)
+
+# Other apps on this host: each health endpoint is fetched every interval_seconds; failures_for_incident failed
+# checks in a row open a "not responding" incident (kind service_down), the next good answer resolves it. With
+# services listed, the dashboard shows a "Host services" card (status, latency, reason, history, an Open link); with
+# none, nothing about services is shown. ntfy hears of an outage only after notify_after_seconds of failing checks.
+# More in docs/services.md.
+service_checks:
+  interval_seconds: 30
+  failures_for_incident: 3
+  notify_after_seconds: 300
+  services: []
+  # services:
+  #   - id: "my_app"
+  #     name: "My app"
+  #     url: "http://127.0.0.1:9000/health"          # what is checked; never shown as a link
+  #     open_url: "http://myhost.lan:9000/"           # optional: the "Open" link (http or https, no credentials, no ?query)
+  #     description: "What this app does"             # optional
+  #     notify: true                                  # false: shown on the dashboard, never sent to ntfy
+  #   - id: "my_tls_app"                  # HTTPS with a private CA: mount the CA file into the container
+  #     name: "My TLS app"
+  #     url: "https://127.0.0.1:9443/health"
+  #     ca_file: "/app/certs/home-ca.pem"
+
+# Alerts by webhook, next to the ntfy topic (PENGUMON_NOTIFY_URL): either, both, or several webhooks. They get the same
+# alerts as ntfy, after the same quiet rules. format: json (default; Pengumon's own payload, good for Home Assistant
+# and scripts), slack or discord. A header value is sent as written, or as "secret:<name>", which is looked up in
+# the environment variable PENGUMON_WEBHOOK_SECRET_<NAME>, the file /run/secrets/pengumon_webhook_<name>, or
+# data/secrets.json {"webhooks": {"<name>": "..."}}, so the token stays out of this file. Examples, payloads and a
+# test with curl in docs/webhooks.md.
+notifications:
+  public_url: null    # e.g. "http://pengu.lan:8000": the dashboard link in json, Slack and Discord messages
+  webhooks: []
+  # webhooks:
+  #   - name: "home-assistant"
+  #     url: "http://homeassistant.lan:8123/api/webhook/pengumon-alerts"   # a webhook trigger's URL
+  #     format: json
+  #   - name: "discord"
+  #     url: "https://discord.com/api/webhooks/<id>/<token>"
+  #     format: discord
+  #   - name: "slack"
+  #     url: "https://hooks.slack.com/services/<T>/<B>/<token>"
+  #     format: slack
+  #   - name: "my-api"
+  #     url: "https://alerts.example.com/pengumon"
+  #     headers:
+  #       Authorization: "secret:my_api_token"
+
+# What the API tells about the devices on your network. client_details: "token" (default) shows connected clients'
+# names, IP and MAC addresses only when PENGUMON_ACCESS_TOKEN is set; "full" always shows them; "masked" never does
+# (vendor and the last four hex digits of the MAC instead). Counts are always shown. More in docs/clients.md.
+privacy:
+  client_details: token
+
+# The modem and router read over HTTP (or SNMP). The ids are also the keys of their stored history and of their
+# credentials (PENGUMON_DEVICE_<ID>_USERNAME / _PASSWORD, /run/secrets/pengumon_<id>_password, or the dashboard
+# settings). Drivers (xfinity_xb, asuswrt, openwrt, snmp), their options, TLS and credentials: docs/devices.md.
+devices:
+  - id: modem
+    driver: xfinity_xb
+    url: "http://192.168.100.1"
+    poll_interval_seconds: 900  # 15 minutes (polling a cable gateway more often can exhaust it)
+  - id: router
+    driver: asuswrt
+    url: "http://192.168.1.1"
+    poll_interval_seconds: 10
+    options:
+      clientlist_interval_seconds: 60
+      # Mesh node names, by the node's MAC (or its last six hex digits); used before the names the router reports.
+      # mesh_node_labels:
+      #   "AA:BB:CC:00:11:22": "Hall"
+      #   "334455": "Study"
+  # An OpenWrt router instead (ubus over HTTP; the user needs the rpcd ACL in docs/devices.md):
+  # - id: router
+  #   driver: openwrt
+  #   url: "https://192.168.1.1"
+  #   username: root                    # the default for openwrt; better a read-only rpcd user (docs/devices.md)
+  #   options:
+  #     wan_interface: wan              # the logical interface carrying internet traffic (default "wan")
+  #     clientlist_interval_seconds: 60
+  # Any SNMPv2c device (a router, a switch's uplink, a NAS): the community string is its password.
+  # - id: switch
+  #   driver: snmp
+  #   url: "snmp://192.168.1.2"         # UDP 161; snmp://host:port for another port
+  #   options:
+  #     wan_interface: "eth1"           # ifName or ifDescr; unset: the interface of the default route
+  #     timeout_seconds: 2
+  #     retries: 1
+
+# The cards of the dashboard, for every browser: which come first and which are hidden. The ids are the panel folder
+# names (docs/dashboard.md); an unknown id stops the start with a message that lists the valid ones. Cards left out of
+# `order` follow in their usual order. Each browser can override this with the "Layout" button on the page (kept in
+# that browser only).
+dashboard:
+  order: []
+  hidden: []
+  # order: [diagnosis, matrix, latency]
+  # hidden: [report]

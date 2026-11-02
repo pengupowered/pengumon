@@ -1,0 +1,113 @@
+/* The app layer over the design system (tokens.css, components.css, page.css: ported from the redesign mockup).
+   Holds what the app has and the mockup does not: panel groups (one <section data-panel> per panel, one card per
+   instance inside it), the modal as a div toggled by .active (util.js openModal), the classes modules still emit
+   (badge-healthy ..., seg buttons with .active), and the views not redesigned yet. Reads tokens only. */
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* ---------- Panel groups: the layout moves <section data-panel>; its cards are the grid items ---------- */
+.page > [data-panel] { display: contents; }
+.page > [data-panel] > .panel { grid-column: span 12; }
+.page > [data-panel] > .panel[data-size="8"] { grid-column: span 8; }
+.page > [data-panel] > .panel[data-size="4"] { grid-column: span 4; }
+.page > [data-panel] > .panel[data-span="12"] { grid-column: span 12; }
+.page > [data-panel] > .panel[data-span="8"] { grid-column: span 8; }
+@media (max-width: 1100px) {
+  .page > [data-panel] > .panel[data-size="8"], .page > [data-panel] > .panel[data-span] { grid-column: span 12; }
+  .page > [data-panel] > .panel[data-size="4"] { grid-column: span 6; }
+}
+@media (max-width: 720px) {
+  .page > [data-panel] > .panel, .page > [data-panel] > .panel[data-size], .page > [data-panel] > .panel[data-span] { grid-column: span 12; }
+}
+.panel-h .info { margin-left: -4px; }
+.panel-h h2.panel-t { margin: 0; }
+.panel-b.flush { padding: 0; }
+.panel-f .grow, .grow { flex: 1; }
+
+/* ---------- Header extras ---------- */
+.lan-pill { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; min-width: 0; }
+.lan-pill a { color: var(--ink-2); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1180px) { .lan-pill { display: none !important; } }
+/* where both fit, the LAN address gives way before the status pill: the pill's numbers were cut ("11.2 ms to i") */
+@media (min-width: 1181px) { .status-pill { flex-shrink: 0; } .lan-pill { flex-shrink: 1; } }
+#btnNotify.is-on { color: var(--accent); }
+#btnNotify.is-on::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: -2px; }
+.tb-grafana { position: relative; }
+.menu[hidden] { display: none; }
+.menu.fixed { position: fixed; }
+.live-live i { background: var(--good); }
+
+/* ---------- Status vocabulary for the classes the modules emit ---------- */
+.badge-healthy, .badge-up { --st: var(--good); --st-bg: var(--good-bg); }
+.badge-degraded, .badge-warning { --st: var(--warn); --st-bg: var(--warn-bg); }
+.badge-down, .badge-critical, .badge-error { --st: var(--crit); --st-bg: var(--crit-bg); }
+.badge-busy { --st: var(--busy); --st-bg: var(--busy-bg); }
+.badge-secondary, .badge-unknown { --st: var(--unknown); --st-bg: var(--unknown-bg); }
+.loss-zero { color: var(--good); }
+.loss-some { color: var(--warn); }
+.loss-high { color: var(--crit); }
+.ink-good { color: var(--good); } .ink-warn { color: var(--warn); } .ink-crit { color: var(--crit); } .ink-muted { color: var(--ink-3); }
+
+/* Segmented control: modules mark the current button with .active (kept), new markup with aria-pressed */
+.seg button.active { background: var(--surface-3); color: var(--ink-1); box-shadow: 0 0 0 1px var(--line-strong); }
+
+/* Metric help button (help.js) */
+.info {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: var(--ink-4); cursor: pointer; vertical-align: middle; flex: none;
+}
+.info svg.i { width: 14px; height: 14px; }
+.info:hover, .info[aria-expanded="true"] { color: var(--accent); background: var(--accent-bg); }
+/* with a word: where a card has more than one help button, each says what it explains */
+.info.lbl { display: inline-flex; align-items: center; gap: 3px; width: auto; height: 20px; padding: 0 6px 0 3px; border-radius: var(--r-pill); font-size: var(--fs-xs); color: var(--ink-3); }
+.help-popover {
+  position: fixed; z-index: var(--z-toast); background: var(--surface-1); color: var(--ink-2); box-shadow: var(--shadow-pop);
+  border-radius: var(--r-md); padding: 10px 12px; font-size: var(--fs-sm); line-height: 1.5;
+}
+.help-popover[hidden] { display: none; }
+
+/* ---------- Modal: a div opened with .active (util.js); dialog look on desktop, bottom sheet on phones ---------- */
+.modal {
+  position: fixed; inset: 0; z-index: var(--z-modal); display: none; align-items: center; justify-content: center;
+  padding: 24px; background: var(--scrim); backdrop-filter: blur(2px);
+}
+.modal.active { display: flex; }
+.modal-content {
+  position: relative; display: flex; flex-direction: column; overflow: hidden; color: var(--ink-1);
+  background: var(--surface-1); border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
+  width: min(var(--w, 980px), calc(100vw - 48px)); max-height: calc(100vh - 48px);
+  animation: pop var(--t-med) var(--ease);
+}
+.modal-content > form { display: contents; }
+@media (max-width: 720px) {
+  .modal { padding: 0; align-items: flex-end; }
+  .modal-content {
+    width: 100vw; max-width: 100vw; max-height: calc(100dvh - 28px); border-radius: 18px 18px 0 0;
+    box-shadow: var(--shadow-sheet); animation: sheet var(--t-med) var(--ease);
+  }
+  .modal-content::before { content: ""; display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: 8px auto 0; flex: none; }
+}
+.modal-b > .table-wrap, .table-wrap { overflow-x: auto; }
+.modal-b table:not(.dlist) { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.modal-b table:not(.dlist) th { text-align: left; font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; padding: 0 10px 8px; white-space: nowrap; }
+.modal-b table:not(.dlist) td { padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: middle; }
+.status-line { font-size: var(--fs-xs); color: var(--ink-3); min-height: 1.2em; }
+.status-line.ok { color: var(--good); } .status-line.bad { color: var(--crit); }
+.chart-box { position: relative; height: var(--h, 200px); }
+.chart-box > canvas { position: absolute; inset: 0; }
+
+/* ---------- Mobile tab bar (tabs.js keeps [hidden] and aria-selected) ---------- */
+.tabbar button[hidden] { display: none; }
+
+
+/* The canvas sparkline (sparkline.js) */
+canvas.sparkline { display: block; width: 100%; max-width: 120px; height: 22px; }
+
+/* Cards scrolled into view clear the sticky header */
+.panel { scroll-margin-top: 72px; }
+
+/* Device cards (device-panel.js): the last body dimmed under an error, a note on what is missing */
+.cap-note { margin-top: var(--sp-4); }
+.dim { transition: opacity var(--t-med); }
+.panel-b .dim, .panel.is-error [data-f=body].dim { opacity: .4; filter: grayscale(1); }
+.result b { font-weight: var(--fw-semi); }

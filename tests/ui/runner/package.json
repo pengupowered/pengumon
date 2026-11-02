@@ -1,0 +1,11 @@
+{
+  "name": "ui-test-runner-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Test-only tooling for the browser tests (tests/ui/runner). Never part of a production image.",
+  "devDependencies": {
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
+    "puppeteer-core": "25.16.0"
+  }
+}

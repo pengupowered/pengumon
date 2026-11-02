@@ -1,0 +1,17 @@
+<!-- Layout dialog (layout.js): which panels the page shows and in what order, kept in this browser -->
+<div class="modal" id="layoutModal" role="dialog" aria-modal="true" aria-labelledby="layoutTitle">
+  <div class="modal-content" style="--w: 620px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><h2 class="modal-t" id="layoutTitle">Layout</h2><span class="modal-m">panels on this page</span>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="layoutModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <p class="lay-intro">Order and visibility apply right away and are saved in this browser only, so the phone and the PC can differ. A device panel appears once per device; its instances move together.</p>
+      <ul class="lay-list" id="layoutList"></ul>
+      <h3 class="lay-sub" id="layoutUnavailableTitle" hidden>Not available on this install</h3>
+      <ul class="lay-list" id="layoutUnavailable"></ul>
+    </div>
+    <footer class="modal-f">
+      <div class="left"><button type="button" class="btn outline" data-action="resetLayout"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Reset to default</button></div>
+      <button type="button" class="btn primary" data-action="closeModal" data-arg="layoutModal">Done</button>
+    </footer>
+  </div>
+</div>

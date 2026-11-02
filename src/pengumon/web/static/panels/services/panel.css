@@ -1,0 +1,20 @@
+/* Panel services: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* ---------- Services ---------- */
+.svc { list-style: none; display: flex; flex-direction: column; }
+.svc li { display: grid; grid-template-columns: 62px minmax(0, 1fr) 46px 64px 28px; gap: var(--sp-2); align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.svc li:first-child { border-top: 0; padding-top: 0; }
+.svc-st { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--st); }
+.svc-id { display: flex; flex-direction: column; min-width: 0; font-size: var(--fs-sm); }
+.svc-id .mono { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.svc-why { font-size: var(--fs-xs); color: var(--crit); }
+.svc-ms { font-size: var(--fs-sm); color: var(--ink-2); text-align: right; }
+.svc li.st-crit { background: linear-gradient(90deg, var(--crit-bg), transparent 70%); border-radius: var(--r-sm); }
+
+@media (max-width: 720px) {
+  .svc li { grid-template-columns: 58px minmax(0, 1fr) 44px auto; }
+}
+.svc li { grid-template-columns: 66px minmax(0, 1fr) 52px auto; row-gap: 4px; }
+.svc li > .svc-actions { display: flex; gap: 2px; }
+.svc li .svc-more { grid-column: 2 / -1; font-size: var(--fs-xs); color: var(--ink-3); display: flex; flex-direction: column; gap: 4px; }
+.svc-history { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
+.svc-history strong { color: var(--ink-2); font-weight: var(--fw-semi); }

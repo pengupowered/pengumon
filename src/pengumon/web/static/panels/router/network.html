@@ -1,0 +1,45 @@
+<!-- Local network: the topology (topology.js) and, when a device lists its clients, the clients (clients.js) -->
+<div class="modal" id="networkModal" role="dialog" aria-modal="true" aria-labelledby="networkTitle">
+  <div class="modal-content" style="--w: 1040px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-home"/></svg><h2 class="modal-t" id="networkTitle">Local network</h2><span class="modal-m" id="clientsUpdated"></span>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="networkModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <section class="sect"><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-path"/></svg>Topology<span class="muted" id="topologySummary"></span></h3><div id="topologyBody" class="topology-panel"></div></section>
+      <section class="sect clients-only"><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Clients
+          <span class="tools"><label class="check"><input type="checkbox" id="clientsShowOffline" data-change="toggleOfflineClients"> Show offline</label></span></h3>
+          <p class="fine top" id="clientsPrivacyNote" hidden></p>
+          <div class="chips" id="clientsChips" role="group" aria-label="Filter the clients"></div>
+          <p class="fine top" id="clientsNodeFilter" aria-live="polite"></p>
+          <table class="dlist clients">
+            <thead>
+              <tr>
+                <th scope="col"><button type="button" class="clients-sort" data-action="sortClients" data-arg="label">Device</button></th>
+                <th scope="col"><button type="button" class="clients-sort" data-action="sortClients" data-arg="connection">Connection</button> <button type="button" class="info" data-action="toggleHelp" data-help="clients.band" aria-label="About connection and band"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+                <th scope="col" id="clientsNodeHead"><button type="button" class="clients-sort" data-action="sortClients" data-arg="node">Node</button> <button type="button" class="info" data-action="toggleHelp" data-help="clients.node" aria-label="About the mesh node"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+                <th scope="col"><button type="button" class="clients-sort" data-action="sortClients" data-arg="rssi_dbm">Signal</button> <button type="button" class="info" data-action="toggleHelp" data-help="clients.signal" aria-label="About signal strength"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+                <th scope="col"><button type="button" class="clients-sort" data-action="sortClients" data-arg="link_tx_mbps">Link speed</button> <button type="button" class="info" data-action="toggleHelp" data-help="clients.speed" aria-label="About link speed"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+                <th scope="col"><button type="button" class="clients-sort" data-action="sortClients" data-arg="connected_s">Connected</button> <button type="button" class="info" data-action="toggleHelp" data-help="clients.connected" aria-label="About connected time"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th>
+              </tr>
+            </thead>
+            <tbody id="clientsBody"><tr><td colspan="6" class="clients-empty">Loading clients...</td></tr></tbody>
+          </table>
+          <p class="fine">Link speed (Wi-Fi rate), not traffic: the rate the radio negotiated with the router. Per-device traffic is not available.</p>
+        </section>
+      <section class="sect clients-only"><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Clients over time
+          <span class="tools">
+            <span class="seg" role="group" aria-label="Group by" id="clientsModeButtons">
+              <button type="button" aria-pressed="true" data-action="setClientsChartMode" data-arg="band">By band</button>
+              <button type="button" aria-pressed="false" data-action="setClientsChartMode" data-arg="node" id="clientsNodeModeBtn">By node</button></span>
+            <span class="seg" role="group" aria-label="Time range" id="clientsRangeButtons">
+              <button type="button" aria-pressed="false" data-action="setClientsRange" data-arg="3600">1 h</button>
+              <button type="button" aria-pressed="true" data-action="setClientsRange" data-arg="86400">24 h</button>
+              <button type="button" aria-pressed="false" data-action="setClientsRange" data-arg="604800">7 d</button></span>
+          </span></h3>
+          <div class="legend" id="clientsLegend"></div>
+          <div class="chart-box" style="--h: 170px"><canvas id="clientsChart" role="img" aria-label="Clients over time"></canvas></div>
+          <p class="fine" id="clientsChartNote"></p>
+        </section>
+      <section class="sect" id="clientsEmpty" hidden><div class="empty"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg><div><b>No client list on this install</b>None of the configured devices lists its clients, so the clients table and chart are left out. The topology above still shows the path.</div></div></section>
+    </div>
+  </div>
+</div>

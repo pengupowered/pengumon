@@ -1,0 +1,23 @@
+/* Dialog target-history: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Target */
+.tgt-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--sp-4); }
+@container (max-width: 640px) { .tgt-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tgt-axis { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--ink-3); margin-top: 4px; }
+#targetHistModal .tgt-loss { margin-top: var(--sp-1); }
+/* A group (the Internet node, a folded run of ISP hops): All or one member; wraps on a phone instead of scrolling sideways */
+.tgt-switch { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; margin-bottom: var(--sp-4); }
+.tgt-switch button { display: inline-flex; align-items: center; gap: 6px; }
+.tgt-strips { display: grid; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr) 62px; align-items: center; column-gap: var(--sp-3); row-gap: 7px; font-size: var(--fs-sm); }
+.tgt-strips > .num { text-align: right; color: var(--ink-1); }
+.tgt-sn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-1); max-width: 160px; }
+.tgt-none { font-size: var(--fs-xs); color: var(--ink-3); }
+/* On a phone a strip beside its name had about 2 px per block and blurred: name and figure on one line, the strip under them
+   at full width (dense flow puts each figure back beside its name) */
+@container (max-width: 560px) {
+  .tgt-strips { grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense; row-gap: 4px; }
+  .tgt-strips > .strip, .tgt-strips > .strip-quiet, .tgt-strips > .tgt-none, .tgt-strips > .tgt-axis { grid-column: 1 / -1; }
+  .tgt-strips > .tgt-sn:not(:first-child) { margin-top: var(--sp-2); }
+  .tgt-strips > span:empty { display: none; }
+  .tgt-sn { max-width: none; }
+}
+.tgt-now { margin: var(--sp-3) 0 0; color: var(--ink-3); }

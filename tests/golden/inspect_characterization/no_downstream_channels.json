@@ -1,0 +1,144 @@
+{
+ "docsis_correlation": {
+  "active_errors_in_window": 0,
+  "gateway_offline": false,
+  "lowest_snr": null,
+  "nearest_snapshot": {
+   "channels": [
+    {
+     "channel_id": 7,
+     "correcteds": 70,
+     "direction": "upstream",
+     "frequency_mhz": 607.0,
+     "modulation": "QAM256",
+     "power_dbmv": 1.0,
+     "snr_db": null,
+     "uncorrectables": 0,
+     "uncorrectables_recent": 0
+    }
+   ],
+   "downstream_power_avg": 1.5,
+   "downstream_snr_avg": 37.5,
+   "error_message": null,
+   "errors_affected_channels": 0,
+   "errors_note": null,
+   "errors_probe_loss": null,
+   "errors_recurring": false,
+   "errors_span_mhz": null,
+   "status": "healthy",
+   "timestamp": 1759992805.0,
+   "uncorrectables_interval_seconds": null,
+   "uncorrectables_rate_per_sec": 0.0,
+   "uncorrectables_ratio": null,
+   "uncorrectables_recent": 0,
+   "uncorrectables_total": 0,
+   "upstream_power_avg": 42.0
+  },
+  "rf_correlated": false,
+  "status": "healthy",
+  "worst_channel": null
+ },
+ "docsis_snapshots": [
+  {
+   "channels": [
+    {
+     "channel_id": 7,
+     "correcteds": 70,
+     "direction": "upstream",
+     "frequency_mhz": 607.0,
+     "modulation": "QAM256",
+     "power_dbmv": 1.0,
+     "snr_db": null,
+     "uncorrectables": 0,
+     "uncorrectables_recent": 0
+    }
+   ],
+   "downstream_power_avg": 1.5,
+   "downstream_snr_avg": 37.5,
+   "error_message": null,
+   "errors_affected_channels": 0,
+   "errors_note": null,
+   "errors_probe_loss": null,
+   "errors_recurring": false,
+   "errors_span_mhz": null,
+   "status": "healthy",
+   "timestamp": 1759992805.0,
+   "uncorrectables_interval_seconds": null,
+   "uncorrectables_rate_per_sec": 0.0,
+   "uncorrectables_ratio": null,
+   "uncorrectables_recent": 0,
+   "uncorrectables_total": 0,
+   "upstream_power_avg": 42.0
+  }
+ ],
+ "event_end": 1759992830.0,
+ "event_start": 1759992800.0,
+ "hop_impact": [
+  {
+   "avg_ms": 2.98,
+   "category": "local",
+   "jitter_ms": 0.75,
+   "loss_pct": 0.0,
+   "max_ms": 4.0,
+   "min_ms": 2.0,
+   "name": "Local Router",
+   "received": 42,
+   "sent": 42,
+   "target_id": "router"
+  }
+ ],
+ "incident": {
+  "cause_code": "access_line_drop",
+  "end_time": 1759992830.0,
+  "id": 1,
+  "kind": "isp_loss",
+  "start_time": 1759992800.0
+ },
+ "router_snapshots": [],
+ "samples": {
+  "count": 120,
+  "first": [
+   {
+    "error": null,
+    "jitter_ms": 0.5,
+    "latency_ms": 2.0,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "router",
+    "timestamp": 1759992755.00453
+   },
+   {
+    "error": null,
+    "jitter_ms": 0.75,
+    "latency_ms": 3.0,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "router",
+    "timestamp": 1759992756.00453
+   }
+  ],
+  "last": [
+   {
+    "error": null,
+    "jitter_ms": 0.75,
+    "latency_ms": 2.5,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "router",
+    "timestamp": 1759992873.00453
+   },
+   {
+    "error": null,
+    "jitter_ms": 1.0,
+    "latency_ms": 3.5,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "router",
+    "timestamp": 1759992874.00453
+   }
+  ],
+  "sha256": "da3729171320558feb4644ab883ec2b02b7178ee0463acea2c48d9b27723e7c4"
+ },
+ "window_end": 1759992875.0,
+ "window_start": 1759992755.0
+}

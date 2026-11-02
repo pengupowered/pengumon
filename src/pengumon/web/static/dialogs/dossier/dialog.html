@@ -1,0 +1,23 @@
+<!-- ISP outage dossier -->
+<div class="modal" id="dossierModal" role="dialog" aria-modal="true" aria-labelledby="dossierTitleText">
+  <div class="modal-content" style="--w: 880px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg><h2 class="modal-t" id="dossierTitleText">ISP outage dossier</h2>
+      <div class="tools"><span class="seg" role="group" aria-label="View" id="dossierViews">
+          <button type="button" class="active" aria-pressed="true" data-action="setDossierView" data-arg="doc">Document</button>
+          <button type="button" aria-pressed="false" data-action="setDossierView" data-arg="md">Markdown</button></span>
+        <label class="sr-only" for="dossierWindowSelect">Window</label>
+        <select class="input sm-select" id="dossierWindowSelect" data-change="fetchDossier">
+          <option value="24" selected>Past 24 hours</option><option value="72">Past 3 days</option><option value="168">Past 7 days</option><option value="336">Past 14 days</option><option value="720">Past 30 days</option>
+        </select></div>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="dossierModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <article class="doc" id="dossierDoc" aria-live="polite"><p class="muted">Generating dossier...</p></article>
+      <pre class="dossier-code" id="dossierOutput" hidden aria-label="The dossier as Markdown"></pre>
+    </div>
+    <footer class="modal-f">
+      <div class="left"><button type="button" class="btn primary" data-action="copyDossierToClipboard" id="btnCopyDossier"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy as Markdown</span></button>
+        <button type="button" class="btn outline" data-action="downloadDossierMarkdown"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download .md</button></div>
+      <button type="button" class="btn" data-action="closeModal" data-arg="dossierModal">Done</button>
+    </footer>
+  </div>
+</div>

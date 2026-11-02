@@ -1,0 +1,129 @@
+# Publishing: a pushed tag vX.Y.Z runs the tests (ci.yml, which also builds the wheel and sdist once and tests the image
+# built from that wheel). The image is then built from that same wheel on a native runner for each architecture (amd64,
+# arm64 for a Raspberry Pi; no QEMU), the two are joined into one multi-architecture image
+# ghcr.io/pengupowered/pengumon:X.Y.Z (and latest), and a GitHub release is created from CHANGELOG.md with the wheel and
+# the sdist attached. See docs/releasing.md.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  image:
+    name: Image (${{ matrix.arch }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        include:
+          - {os: ubuntu-24.04, arch: amd64}
+          - {os: ubuntu-24.04-arm, arch: arm64}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/pengupowered/pengumon
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Check the tag against the package version
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          declared="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/pengumon/__init__.py | head -n1)"
+          if [ "$version" != "$declared" ]; then
+            echo "tag $GITHUB_REF_NAME does not match __version__ $declared in src/pengumon/__init__.py" >&2
+            exit 1
+          fi
+          scripts/changelog-section.sh "$version" > /dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The wheel the tests ran against (artifact of the called ci.yml run), not a rebuild.
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: dist
+          path: dist
+      - name: Check the wheel is this version
+        run: ls dist/pengumon-${{ steps.version.outputs.version }}-*.whl dist/pengumon-${{ steps.version.outputs.version }}.tar.gz
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: .
+          build-args: WHEEL_STAGE=wheel-prebuilt
+          platforms: linux/${{ matrix.arch }}
+          provenance: false
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.title=Pengumon
+            org.opencontainers.image.description=Self-hosted network monitor that shows where your internet breaks: Wi-Fi, modem, provider or beyond.
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
+
+  manifest:
+    name: Multi-architecture image
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/pengupowered/pengumon
+    steps:
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Join the two images under X.Y.Z and latest
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx imagetools create -t "$IMAGE:$version" -t "$IMAGE:latest" "$IMAGE:$version-amd64" "$IMAGE:$version-arm64"
+          docker buildx imagetools inspect "$IMAGE:$version"
+
+  release:
+    name: GitHub release
+    needs: manifest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: dist
+          path: dist
+      - name: Take this version's notes from CHANGELOG.md
+        run: scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+      - name: Create the release, with the wheel and the sdist attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          (cd dist && sha256sum pengumon-* > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Pengumon ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" dist/pengumon-* dist/SHA256SUMS

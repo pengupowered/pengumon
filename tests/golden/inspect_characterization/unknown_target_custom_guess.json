@@ -1,0 +1,94 @@
+{
+ "docsis_correlation": {
+  "active_errors_in_window": 0,
+  "gateway_offline": false,
+  "lowest_snr": null,
+  "nearest_snapshot": null,
+  "rf_correlated": false,
+  "status": "unknown",
+  "worst_channel": null
+ },
+ "docsis_snapshots": [],
+ "event_end": 1759992830.0,
+ "event_start": 1759992800.0,
+ "hop_impact": [
+  {
+   "avg_ms": 2.98,
+   "category": "local",
+   "jitter_ms": 0.75,
+   "loss_pct": 0.0,
+   "max_ms": 4.0,
+   "min_ms": 2.0,
+   "name": "Local Router",
+   "received": 42,
+   "sent": 42,
+   "target_id": "router"
+  },
+  {
+   "avg_ms": 7.98,
+   "category": "custom",
+   "jitter_ms": 0.75,
+   "loss_pct": 0.0,
+   "max_ms": 9.0,
+   "min_ms": 7.0,
+   "name": "mystery",
+   "received": 42,
+   "sent": 42,
+   "target_id": "mystery"
+  }
+ ],
+ "incident": {
+  "cause_code": "access_line_drop",
+  "end_time": 1759992830.0,
+  "id": 1,
+  "kind": "isp_loss",
+  "start_time": 1759992800.0
+ },
+ "router_snapshots": [],
+ "samples": {
+  "count": 240,
+  "first": [
+   {
+    "error": null,
+    "jitter_ms": 0.5,
+    "latency_ms": 2.0,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "router",
+    "timestamp": 1759992755.00453
+   },
+   {
+    "error": null,
+    "jitter_ms": 0.5,
+    "latency_ms": 7.0,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "mystery",
+    "timestamp": 1759992755.00545
+   }
+  ],
+  "last": [
+   {
+    "error": null,
+    "jitter_ms": 1.0,
+    "latency_ms": 3.5,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "router",
+    "timestamp": 1759992874.00453
+   },
+   {
+    "error": null,
+    "jitter_ms": 1.0,
+    "latency_ms": 8.5,
+    "packet_loss_pct": 0.0,
+    "success": 1,
+    "target_id": "mystery",
+    "timestamp": 1759992874.00545
+   }
+  ],
+  "sha256": "7452aae9b5165135967f044f20683eec544a2380b14d37f8bee748ea6193d9d8"
+ },
+ "window_end": 1759992875.0,
+ "window_start": 1759992755.0
+}

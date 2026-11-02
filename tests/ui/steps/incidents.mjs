@@ -1,0 +1,211 @@
+// The incident log and its Inspector dialog. The inspector steps open incidents from the table, so they keep the page size the table step chose.
+
+export const subject = "panel:incidents";
+export const variants = ["full"];
+
+export const steps = [
+  ["incident table: paging, search, page size, expected-events toggle", async ({ click, eq, ok, page, shown, text, waitCount, waitText }) => {
+    await waitCount("#incidentsBody tr.incident-row", 10);
+    eq("count", await text("#incidentCountBadge"), "14 recorded events");
+    eq("info", await text("#incidentPaginationInfo"), "Showing 1–10 of 14 events");
+    await click("#btnPageNext");
+    await waitText("#incidentPageNum", /^Page 2 of 2$/);
+    await waitCount("#incidentsBody tr.incident-row", 4);
+    await click("#btnPageFirst");
+    await waitText("#incidentPageNum", /^Page 1 of 2$/);
+    await page.type("#incidentSearchInput", "blip 1");
+    await waitCount("#incidentsBody tr.incident-row", 4); // blips 1, 10, 11, 12
+    await waitText("#incidentPaginationInfo", /\(filtered\)/);
+    await page.$eval("#incidentSearchInput", (i) => { i.value = ""; i.dispatchEvent(new Event("input", { bubbles: true })); });
+    await page.select("#incidentPageSizeSelect", "50");
+    await waitCount("#incidentsBody tr.incident-row", 14);
+    eq("toggle visible", await shown("#btnToggleExpected"), true);
+    ok("toggle label", /Show 1 expected/.test(await text("#btnToggleExpected")));
+    await click("#btnToggleExpected");
+    await waitCount("#incidentsBody tr.incident-row", 15);
+    await waitText("#incidentCountBadge", /^15 recorded events$/);
+    ok("busy badge", /Expected/.test(await text("#incidentsBody")));
+    await click("#btnToggleExpected");
+    await waitCount("#incidentsBody tr.incident-row", 14);
+  }],
+
+  ["incident rows: one line each, the details are the inspector's, and a click anywhere on the row opens it", async ({ click, count, eq, ok, page, until, waitText }) => {
+    eq("no description line in the list", await count("#incidentsBody .sub"), 0);
+    eq("no load or busy chips in the list", /load|busy line/.test(await page.$eval("#incidentsBody", (e) => e.textContent)), false);
+    const heights = await page.$$eval("#incidentsBody tr.incident-row", (els) => els.map((e) => e.getBoundingClientRect().height));
+    ok(`rows stay small (${Math.max(...heights).toFixed(0)} px)`, Math.max(...heights) <= 44);
+    await page.evaluate(() => [...document.querySelectorAll("#incidentsBody tr")].find((tr) => tr.textContent.includes("Short gateway drop")).querySelector(".when").click());
+    await waitText("#inspCauseTitle", /^Short gateway drop$/);
+    ok("the description is in the inspector", /seeded/.test(await page.$eval("#inspCauseDesc", (e) => e.textContent)));
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+    await until(() => !document.getElementById("incidentInspectorModal").classList.contains("active"));
+  }],
+
+  ["incident timeline: bars, lanes by cause", async ({ count, ok, until }) => {
+    await until(() => document.querySelectorAll("#incidentTimeline .tl-bar").length >= 10);
+    ok("lanes by cause", (await count("#incidentTimeline .tl-lane")) >= 1);
+  }],
+
+  ["lanes use Path health's words: Router, Line, ISP, Internet, DNS, Load, Service; the cause help explains them", async ({ eq, ok, page, until }) => {
+    const r = await page.evaluate(async () => {
+      const main = [...document.scripts].find((s) => s.type === "module").src;
+      const m = await import(main.replace(/js\/main\.js$/, "panels/incidents/incidents.js"));
+      return { lanes: m.CAUSES.map(([k, w]) => `${k}=${w}`).join(","), words: ["router", "line", "isp"].map((c) => m.causeOf({ cause: c })).join(">") };
+    });
+    eq("lane keys and words", r.lanes, "router=Router,line=Line,isp=ISP,internet=Internet,dns=DNS,load=Load,service=Service,unknown=Other");
+    eq("the server's router, line and isp categories", r.words, "Router>Line>ISP");
+    await until(() => document.querySelectorAll("#incidentTimeline .tl-l").length >= 1);
+    ok("no lane is still called Home", !/Home/.test(await page.$eval("#incidentTimeline", (e) => e.textContent)));
+  }],
+
+  ["an incident lasts as long as its probes were lost: the list shows the loss, the detected span on hover; the inspector both", async ({ click, eq, inspectNamed, ok, page, text, until, waitText }) => {
+    // seeded: detected 3 s after the gateway's probes start failing, closed 8 s after they answer again (98 s), the
+    // probes lost for about 90 s; the blips have no affected targets, so only their recorded duration is known
+    const rows = await page.$$eval("#incidentsBody tr.incident-row", (trs) => Object.fromEntries(trs.map((tr) => {
+      const d = tr.querySelector(".dur");
+      return [tr.querySelector("td.lead").textContent.trim(), { text: d.textContent, title: d.title }];
+    })));
+    const drop = rows["Short gateway drop"];
+    ok(`the loss, not the detected span: ${JSON.stringify(drop)}`, /^1m (29|30|31)s lost$/.test(drop.text) && /open 1m 38s/.test(drop.title) && /first to last lost probe/.test(drop.title));
+    eq("an incident without a loss span keeps its duration", rows["Seeded blip 1"].text, "20s");
+    ok("and says why on hover", /no stored probes/.test(rows["Seeded blip 1"].title));
+    await inspectNamed("Short gateway drop");
+    await waitText("#inspCauseTitle", /^Short gateway drop$/);
+    ok(`the inspector gives both: ${await text("#inspDuration")}`, /^Loss 1m (29|30|31)s · incident 1m 38s$/.test((await text("#inspDuration")).trim()));
+    ok("so does its header", /Loss 1m \d\ds · incident 1m 38s$/.test(await text("#inspTimeWindowLabel")));
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+  }],
+
+  ["inspector: hop table, path trace, DOCSIS card and four charts", async ({ chartLabels, count, eq, hasChart, inspect, ok, outDir, page, path, shown, text, waitText }) => {
+    await inspect("Short gateway drop");
+    await waitText("#inspCauseTitle", /^Short gateway drop$/);
+    eq("modal", await page.$eval("#incidentInspectorModal", (m) => m.classList.contains("active")), true);
+    eq("hop rows", await count("#inspHopTableBody tr"), 3);
+    const names = await page.$$eval("#inspHopTableBody tr td:first-child .primary", (els) => els.map((e) => `${e.textContent.trim()}|${e.title}`));
+    eq("canonical hop order, the page's short names, the configured name on hover", names.join(","),
+      "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+    eq("path trace rows", await count("#inspPathTraceBody tr"), 2);
+    eq("path trace shown", await shown("#inspPathTraceContainer"), true);
+    eq("docsis card shown", await shown("#inspDocsisCard"), true);
+    ok("docsis badge", (await text("#inspDocsisBadge")).trim().length > 0);
+    for (const id of ["incidentZoomChart", "incidentZoomLossChart", "incidentZoomDocsisChart", "incidentZoomRouterChart"]) await hasChart(id);
+    ok("zoom chart has data", (await chartLabels("incidentZoomChart")) > 100);
+    eq("docsis track shown", await shown("#incidentZoomDocsisContainer"), true);
+    eq("router track shown", await shown("#incidentZoomRouterContainer"), true);
+    await page.screenshot({ path: path.join(outDir, "inspector.png") });
+  }],
+
+  ["inspector: 'view in main history chart' loads the window and closes the modal", async ({ click, eq, page, until, waitText }) => {
+    await click("#btnSnapDashboard");
+    eq("closed", await page.$eval("#incidentInspectorModal", (m) => m.classList.contains("active")), false);
+    await waitText("#chartModeLabel", /^incident window /);
+    await until(() => Chart.getChart(document.getElementById("latencyChart")).data.labels.length > 50);
+  }],
+
+  ["inspector: a two hour incident comes back as buckets and renders", async ({ chartLabels, click, hasChart, inspect, ok, waitText }) => {
+    await inspect("Long evening outage");
+    await waitText("#inspCauseTitle", /^Long evening outage$/);
+    await hasChart("incidentZoomChart");
+    const n = await chartLabels("incidentZoomChart");
+    ok(`bucketed labels ${n}`, n > 100 && n <= 1900);
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+  }],
+
+  ["inspector: verdict, lanes per hop, what happened, synced tracks, evidence, hop figures", async ({ count, dialogShot, eq, hasChart, inspectNamed, modalOpen, ok, page, setTheme, text, until, waitText }) => {
+    await setTheme("dark");
+    await inspectNamed("Short gateway drop");
+    await waitText("#inspCauseTitle", /^Short gateway drop$/);
+    await until(() => document.querySelectorAll("#inspLanes .strip").length >= 3);
+    ok("verdict chips name the cause", /Cause: /.test(await text("#inspChips")));
+    eq("one lane per hop", await count("#inspLanes .strip"), 3);
+    ok("the gateway lane shows lost probes", (await count("#inspLanes .strip:nth-of-type(2) i.w, #inspLanes .strip:nth-of-type(2) i.c")) > 3);
+    ok("the router lane has none", (await count("#inspLanes .strip:nth-of-type(1) i.w, #inspLanes .strip:nth-of-type(1) i.c")) === 0);
+    ok("events: window, first loss, end", (await count("#inspEvents li")) >= 3 && /First lost probes at/.test(await text("#inspEvents")));
+    ok("evidence: line, load and first hop with loss", (await count("#inspEvidence li")) >= 4 && /Line load/.test(await text("#inspEvidence")));
+    ok("an incident without a load figure says so", /unknown/.test(await text("#inspEvidence")));
+    for (const id of ["incidentZoomChart", "incidentZoomLossChart", "incidentZoomDocsisChart", "incidentZoomRouterChart"]) await hasChart(id);
+    // one gutter for every track: the plot areas line up
+    const areas = await page.evaluate(() => ["incidentZoomChart", "incidentZoomLossChart", "incidentZoomDocsisChart", "incidentZoomRouterChart"].map((i) => { const a = Chart.getChart(document.getElementById(i)).chartArea; return `${Math.round(a.left)}-${Math.round(a.right)}`; }));
+    ok(`tracks share one plot width (${areas})`, new Set(areas).size === 1);
+    // one reading per hop in every probe round (the seeded probes straddle the half second), losses where they happened,
+    // a lost probe breaking the latency line, and tooltips that describe values, never "null"
+    const tracks = await page.evaluate(() => {
+      const lat = Chart.getChart(document.getElementById("incidentZoomChart"));
+      const loss = Chart.getChart(document.getElementById("incidentZoomLossChart"));
+      // the router and Cloudflare never lose a probe in the seed: a hole in their lines is a round split in two
+      const none = [0, 2].map((k) => lat.data.datasets[k].data.slice(1, -1).filter((v) => v === null).length);
+      const i = loss.data.datasets[1].data.findIndex((v) => v !== null);
+      const t = loss.options.plugins.tooltip;
+      const lines = loss.data.datasets.map((d, k) => ({ datasetIndex: k, dataIndex: i, raw: d.data[i], parsed: { y: d.data[i] }, dataset: d }))
+        .filter(t.filter || (() => true)).map(t.callbacks.label);
+      const latLines = lat.data.datasets.map((d) => lat.options.plugins.tooltip.callbacks.label({ dataset: d, dataIndex: i, parsed: { y: d.data[i] } }));
+      return { none: none.join(","), lines: lines.join(" | "), latLines: latLines.join(" | "), gaps: lat.data.datasets.every((d) => d.spanGaps === false) };
+    });
+    eq("every probe round has a reading from the hops that never lost one", tracks.none, "0,0");
+    ok(`the loss tooltip names only the hop that lost, by its short name (${tracks.lines})`, /^Line lost 100%$/.test(tracks.lines));
+    ok(`the latency tooltip: router answered, gateway lost, internet answered (${tracks.latLines})`,
+      /^Router: \d+\.\d+ ms \| Line: lost \| Internet: \d+\.\d+ ms$/.test(tracks.latLines));
+    // every label in the inspector names a hop as the rest of the page does, the configured name only on hover
+    const labels = await page.evaluate(() => ({
+      lanes: [...document.querySelectorAll("#inspLanes .lane-n")].map((e) => `${e.textContent}|${e.title}`).join(","),
+      tip: document.querySelector("#inspLanes .strip:nth-of-type(2) i").dataset.tip,
+      legend: [...document.querySelectorAll("#inspLatLegend > span")].map((e) => `${e.textContent}|${e.title}`).join(","),
+      text: ["#inspChips", "#inspEvents", "#inspEvidence"].map((s) => document.querySelector(s).textContent).join(" ")
+    }));
+    eq("lanes", labels.lanes, "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+    ok(`a lane's tooltip (${labels.tip})`, /^Line · /.test(labels.tip));
+    eq("chart legend", labels.legend, "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+    ok(`no configured name in the chips, events or evidence: ${labels.text}`, !/Hop \d:|Public:/.test(labels.text) && /First lost probes at Line/.test(labels.text));
+    eq("a lost probe breaks the latency line", tracks.gaps, true);
+    eq("keyboard focus starts on close", await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Close");
+    await dialogShot("inspector-dark");
+    const box = await page.$eval("#incidentZoomChart", (c) => { const r = c.getBoundingClientRect(); return { x: r.left + r.width * 0.5, y: r.top + r.height * 0.5 }; });
+    await page.mouse.move(box.x, box.y);
+    await dialogShot("inspector-hover-dark");
+    await page.mouse.move(2, 2);
+    await setTheme("light");
+    await dialogShot("inspector-light");
+    await setTheme("dark");
+    await page.keyboard.press("Escape");
+    eq("escape closes it", await modalOpen("incidentInspectorModal"), false);
+  }],
+
+  ["inspector: a busy-line incident and one with an unusable load figure", async ({ click, count, dialogShot, eq, inspectNamed, ok, text, until, waitText }) => {
+    await inspectNamed("Busy line slowdown");
+    await waitText("#inspCauseTitle", /^Busy line slowdown$/);
+    await until(() => document.querySelectorAll("#inspLanes .strip").length >= 3);
+    ok("load shown", /96% load/.test(await text("#inspChips")) && /96% of capacity/.test(await text("#inspEvidence")));
+    ok("lanes hatch the busy period", (await count("#inspLanes .strip i.b")) > 3);
+    await dialogShot("inspector-busy-dark");
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+    await inspectNamed("Short gateway drop", { suspectLoad: true });
+    await until(() => /not a valid figure/.test(document.getElementById("inspChips").textContent));
+    ok("evidence says the same", /load: not a valid figure/.test(await text("#inspEvidence")));
+    eq("no figure shown", /912/.test(await text("#incidentInspectorModal")), false);
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+  }],
+
+  ["inspector: the dossier opens on top and Escape closes only the dossier", async ({ click, eq, inspectNamed, modalOpen, page, until, waitText }) => {
+    await inspectNamed("Short gateway drop");
+    await waitText("#inspCauseTitle", /^Short gateway drop$/);
+    await click("#incidentInspectorModal [data-action=openDossierModal]");
+    await until(() => document.getElementById("dossierModal").classList.contains("active"));
+    await page.keyboard.press("Escape");
+    eq("dossier closed", await modalOpen("dossierModal"), false);
+    eq("inspector still open", await modalOpen("incidentInspectorModal"), true);
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+  }],
+
+  ["the inspector as a bottom sheet on a phone: it fits the width and scrolls inside", async ({ click, dialogShot, eq, hasChart, inspectNamed, noSideScroll, phone, setTheme, until }) => {
+    await phone(async () => {
+      await setTheme("dark");
+      await inspectNamed("Short gateway drop");
+      await until(() => document.querySelectorAll("#inspLanes .strip").length >= 3);
+      await hasChart("incidentZoomChart");
+      eq("inspector fits", await noSideScroll("incidentInspectorModal"), true);
+      await dialogShot("inspector-phone");
+      await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+      await setTheme(null);
+    });
+  }],
+];

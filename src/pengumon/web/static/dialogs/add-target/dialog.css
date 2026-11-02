@@ -1,0 +1,6 @@
+/* Dialog add-target: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Add target */
+.field.invalid .input { border-color: var(--crit); }
+.field.invalid .input:focus-visible { outline-color: var(--crit); }
+.field.invalid .hint { color: var(--crit); }
+.field.valid .input { border-color: color-mix(in srgb, var(--good) 55%, var(--line-strong)); }

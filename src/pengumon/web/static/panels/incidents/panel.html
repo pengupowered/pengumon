@@ -1,0 +1,33 @@
+<!-- Incidents: when and where the network broke (incidents.js); a row opens the inspector (inspector.js) -->
+<section data-panel="incidents" aria-label="Incidents">
+  <article class="panel" data-size="8">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><h2 class="panel-t">Incidents</h2><span class="panel-m" id="incidentCountBadge">loading...</span>
+      <div class="panel-tools">
+        <button type="button" class="chip" id="btnToggleExpected" data-action="toggleExpectedIncidents" aria-pressed="false" hidden></button>
+        <button type="button" class="info" data-action="toggleHelp" data-help="line.load" aria-label="About line load and expected events"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button>
+        <label class="sr-only" for="incidentSearchInput">Filter incidents</label>
+        <input type="search" class="input sm-select" id="incidentSearchInput" placeholder="Filter" data-input="handleIncidentSearch" style="width: 130px">
+        <label class="sr-only" for="incidentPageSizeSelect">Per page</label>
+        <select class="input sm-select" id="incidentPageSizeSelect" data-change="changeIncidentPageSize">
+          <option value="10" selected>10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option>
+        </select>
+      </div></header>
+    <div class="panel-b">
+      <div class="tl" id="incidentTimeline" hidden></div>
+      <div class="inc-window" id="incidentWindow" tabindex="-1" hidden><svg class="i sm" aria-hidden="true"><use href="#i-clock"/></svg><span>Incidents in <b data-f="label"></b> · <span data-f="found"></span></span><span class="grow"></span><button type="button" class="chip" data-action="clearIncidentWindow"><svg class="i sm" aria-hidden="true"><use href="#i-close"/></svg>Show all</button></div>
+      <table class="dlist inc-list">
+        <thead><tr><th>What</th><th>Status</th><th>When</th><th class="r">Duration</th><th>Cause <button type="button" class="info" data-action="toggleHelp" data-help="incident.cause" aria-label="About the cause and load"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th><th></th></tr></thead>
+        <tbody id="incidentsBody"><tr><td colspan="6" class="muted">No network incidents recorded.</td></tr></tbody>
+      </table>
+    </div>
+    <footer class="panel-f">
+      <span id="incidentPaginationInfo">Showing 0 events</span><span class="grow"></span>
+      <button type="button" class="btn sm icon" id="btnPageFirst" data-action="gotoIncidentPage" data-arg="first" aria-label="First page" title="First page"><svg class="i" aria-hidden="true"><use href="#i-up"/></svg></button>
+      <button type="button" class="btn sm" id="btnPagePrev" data-action="gotoIncidentPage" data-arg="prev">Previous</button>
+      <span id="incidentPageNum" class="num">Page 1 of 1</span>
+      <button type="button" class="btn sm" id="btnPageNext" data-action="gotoIncidentPage" data-arg="next">Next</button>
+      <button type="button" class="btn sm icon" id="btnPageLast" data-action="gotoIncidentPage" data-arg="last" aria-label="Last page" title="Last page"><svg class="i" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+      <button type="button" class="btn sm outline" data-action="openDossierModal"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>ISP dossier</button>
+    </footer>
+  </article>
+</section>

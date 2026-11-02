@@ -1,0 +1,24 @@
+<!-- Sign out: behind the header's Sign out button, which chrome.js shows only when this browser signed in with the
+     access token. Both choices are plain same-origin form posts to /logout (homeguard), which ends the sign-in and
+     redirects to the sign-in page; "everywhere" asks first (dialog.js). -->
+<div class="modal" id="signOutModal" role="dialog" aria-modal="true" aria-labelledby="signOutTitle">
+  <div class="modal-content" style="--w: 520px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-logout"/></svg><h2 class="modal-t" id="signOutTitle">Sign out</h2><span class="modal-m">signed in with the access token</span>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="signOutModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <div class="so-row">
+        <div><b>This browser</b><span>Ends the sign-in here. Other browsers stay signed in.</span></div>
+        <form method="post" action="/logout"><button type="submit" class="btn primary" id="btnSignOutHere"><svg class="i" aria-hidden="true"><use href="#i-logout"/></svg><span>Sign out</span></button></form>
+      </div>
+      <div class="so-row" data-sign-out-everywhere hidden>
+        <div><b>Every browser and device</b><span>Ends every sign-in at once, this one too, without changing the token. For a lost device or a sign-in that was shared.</span></div>
+        <button type="button" class="btn danger" id="btnSignOutEverywhere" data-action="askSignOutEverywhere" aria-controls="signOutEverywhereConfirm" aria-expanded="false">Sign out everywhere</button>
+      </div>
+      <form class="so-confirm" id="signOutEverywhereConfirm" method="post" action="/logout?everywhere=1" hidden>
+        <p><b>Sign out every browser and device?</b> Each one, this one included, needs the access token to sign in again.</p>
+        <div class="so-btns"><button type="button" class="btn" data-action="cancelSignOutEverywhere">Cancel</button><button type="submit" class="btn danger" id="btnSignOutEverywhereConfirm">Yes, sign out everywhere</button></div>
+      </form>
+    </div>
+    <footer class="modal-f"><button type="button" class="btn" data-action="closeModal" data-arg="signOutModal">Close</button></footer>
+  </div>
+</div>

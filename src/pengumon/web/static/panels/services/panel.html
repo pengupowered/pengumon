@@ -1,0 +1,9 @@
+<!-- Host services: the apps on this host whose health is checked (config: service_checks; panels/services.js) -->
+<section data-panel="services" aria-label="Host services">
+  <article class="panel" data-size="4" id="servicesCard">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-service"/></svg><h2 class="panel-t">Host services</h2><span class="panel-m" id="servicesSummary">checking...</span>
+      <div class="panel-tools"><button type="button" class="info lbl" data-action="toggleHelp" data-help="service.status" aria-label="About service status"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg>Status</button><button type="button" class="info lbl" data-action="toggleHelp" data-help="service.latency" aria-label="About service response time"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg>Time</button></div></header>
+    <div class="panel-b"><ul class="svc" id="servicesList"></ul></div>
+    <footer class="panel-f"><svg class="i sm" aria-hidden="true"><use href="#i-clock"/></svg><span id="servicesFoot">checked every 30 s</span></footer>
+  </article>
+</section>

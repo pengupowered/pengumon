@@ -1,0 +1,24 @@
+# Project image for the opt-in dashboard browser tests (tests/test_ui_smoke.py, tests/test_ui_lint.py): the generic UI
+# test runner (Chromium, fonts, node, puppeteer-core/eslint/globals in /opt/pgbrowser; built by
+# tests/ui/runner/build.sh) plus pengumon's Python test setup. Test-only: nothing of it enters the production
+# image. Run it with scripts/test-ui.sh.
+ARG BASE=localhost/ui-test-runner:1
+FROM ${BASE}
+WORKDIR /app
+
+USER root
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary :all: -r requirements-dev.txt
+COPY pyproject.toml config.example.yaml ./
+COPY src/ src/
+COPY tests/ tests/
+
+# The container runs with a read-only root filesystem, so everything that writes (pytest tmp dirs, the seeded database,
+# screenshots, Chromium's profile and crash files) goes under /tmp, a tmpfs. The base image already sets uid 10001,
+# PGBROWSER, PUPPETEER_EXECUTABLE_PATH and HOME/XDG under /tmp.
+# PENGUMON_BROWSER_ARGS: smoke.mjs adds these to Chromium; taken from the base's UI_BROWSER_ARGS (--no-sandbox).
+USER 10001
+ENV PENGUMON_UI_SMOKE=1
+ENV PENGUMON_BROWSER_ARGS=${UI_BROWSER_ARGS}
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_ui_smoke.py", "tests/test_ui_lint.py", "tests/test_ui_steps.py"]

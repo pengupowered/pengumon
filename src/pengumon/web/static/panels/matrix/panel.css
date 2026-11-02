@@ -1,0 +1,30 @@
+/* Panel matrix: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* ---------- Hop details ---------- */
+.range { position: relative; display: inline-block; width: min(260px, 60%); height: 8px; border-radius: 4px; background: var(--surface-3); vertical-align: middle; margin-right: 10px; }
+.range i { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.range b { position: absolute; top: -3px; width: 3px; height: 14px; margin-left: -1.5px; background: var(--ink-1); border-radius: 2px; }
+.range-n { font-size: var(--fs-xs); color: var(--ink-3); }
+
+.matrix-panel .range { width: min(200px, 100%); }
+.range-n { display: block; margin-top: 3px; white-space: nowrap; }
+/* the help buttons sit in the column headers; a narrow card (no header row) keeps them in the card's header */
+.matrix-panel .narrow-help { display: none; }
+@container (max-width: 560px) { .matrix-panel .narrow-help { display: flex; } }
+
+/* Fixed column widths on a wide card: a figure that changes width (LOST, a large jitter, a long probe count) no longer
+   moves the other columns, and the target column takes what is left, its names cut with an ellipsis (the full name is
+   the tooltip). A medium card drops the since-start total, then the sparkline, before it squeezes the names. */
+@container (min-width: 561px) {
+  .hops { table-layout: fixed; }
+  .hops .c-loss { width: 96px; }
+  .hops .c-range { width: 236px; }
+  .hops .c-last { width: 88px; }
+  .hops .c-jit { width: 96px; }
+  .hops .c-total { width: 196px; }
+  .hops .c-spark { width: 150px; }
+  .hops td { overflow: hidden; }
+  .hops td.lead .primary, .hops td.lead .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hops td.num, .hops .range-n { white-space: nowrap; }
+}
+@container (min-width: 561px) and (max-width: 1000px) { .hops .c-total { display: none; } }
+@container (min-width: 561px) and (max-width: 820px) { .hops .c-spark { display: none; } }
