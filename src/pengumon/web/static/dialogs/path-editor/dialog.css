@@ -1,0 +1,61 @@
+/* Dialog path-editor: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* The device setup dialog a hop's "Connect" opens goes over the editor (both are modals; the editor comes later in the page) */
+#deviceSetupModal.active { z-index: calc(var(--z-modal) + 1); }
+
+#pathEditorNote:not(:empty) { margin-bottom: var(--sp-4); }
+.pe-notes { margin: var(--sp-2) 0 0 1.1em; }
+.pe-hops { list-style: none; padding: 0; margin: var(--sp-4) 0 0; display: flex; flex-direction: column; gap: var(--sp-3); counter-reset: hop; }
+.pe-hop {
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); padding: var(--sp-3) var(--sp-4);
+  display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0;
+}
+.pe-hop.gone { border-style: dashed; border-color: color-mix(in srgb, var(--crit) 45%, var(--line)); }
+.pe-hop-h { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.pe-n {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center;
+  background: var(--surface-3); color: var(--ink-2); font-size: var(--fs-xs); font-weight: var(--fw-semi);
+}
+.pe-name { flex: 1 1 200px; min-width: 0; font-weight: var(--fw-semi); }
+.pe-hop-sub { display: flex; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-xs); color: var(--ink-3); min-width: 0; }
+.pe-addr { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.pe-hop-b { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-3); align-items: end; }
+.pe-hop-b .field span { font-size: var(--fs-xs); color: var(--ink-3); }
+.pe-hop-b .input { width: 100%; min-width: 0; }
+.pe-join { white-space: nowrap; padding-bottom: 6px; }
+.pe-join input:disabled + * { color: var(--ink-4); }
+.pe-ev { margin: 0 0 0 1.1em; font-size: var(--fs-sm); color: var(--ink-2); }
+.pe-suggest { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; font-size: var(--fs-sm); color: var(--ink-2); }
+.pe-suggest code { font-family: var(--mono); font-size: var(--fs-xs); }
+.pe-hop-f { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.pe-down svg.i { transform: rotate(180deg); }
+.pe-test { font-size: var(--fs-sm); color: var(--ink-2); display: inline-flex; gap: 4px; align-items: center; }
+.pe-test .ok { color: var(--good); }
+.pe-test .bad { color: var(--crit); }
+.pe-test .quiet { color: var(--ink-3); }
+.pe-test svg.i { vertical-align: -2px; }
+.pe-remove { margin-left: auto; }
+.pe-removed { margin-top: var(--sp-5); }
+.pe-gone { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.pe-gone li {
+  display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--line-strong); border-radius: var(--r-md); font-size: var(--fs-sm);
+}
+.pe-gone-n { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.pe-gone li .btn { margin-left: auto; }
+.pe-add, .pe-disc { margin-top: var(--sp-6); padding-top: var(--sp-5); border-top: 1px solid var(--line); }
+.pe-add-row { display: flex; gap: var(--sp-3); align-items: flex-end; flex-wrap: wrap; }
+.pe-add-row .field.grow { flex: 1 1 220px; min-width: 0; }
+.pe-add-row .field:not(.grow) { flex: 0 1 auto; min-width: 0; }
+.pe-add-row select.input { max-width: 100%; }
+.pe-add.invalid #pathAddMsg { color: var(--crit); }
+.pe-add.invalid .input#pathAddAddress { border-color: var(--crit); }
+.pe-disc { display: flex; flex-direction: column; gap: var(--sp-2); }
+.pe-disclose { margin: 0 0 var(--sp-2) 24px; max-width: 70ch; }
+
+@media (max-width: 720px) {
+  .pe-hop { padding: var(--sp-3); }
+  .pe-hop-b { grid-template-columns: minmax(0, 1fr); }
+  .pe-join { padding-bottom: 0; }
+  .pe-add-row { flex-direction: column; align-items: stretch; }
+  .pe-add-row .field:not(.grow) { flex: 1 1 auto; }
+}

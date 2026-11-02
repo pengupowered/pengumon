@@ -5,12 +5,14 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
 from pengumon import __version__
+from platform_helpers import posix_shell
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -57,6 +59,7 @@ def test_the_repository_has_no_file_named_compose_yaml():
     assert not (ROOT / "compose.yaml").exists()
 
 
+@posix_shell
 def test_changelog_has_unreleased_and_a_section_for_the_current_version():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [Unreleased]" in text
@@ -68,6 +71,7 @@ def test_changelog_has_unreleased_and_a_section_for_the_current_version():
     assert "]: https://" not in notes.stdout  # the link references at the bottom are not release notes
 
 
+@posix_shell
 def test_changelog_section_fails_for_an_unknown_version():
     res = subprocess.run(
         [str(ROOT / "scripts" / "changelog-section.sh"), "0.0.0"], capture_output=True, text=True, check=False
@@ -82,7 +86,8 @@ def test_workflows_pin_actions_to_commit_shas_and_default_to_read_only(name):
     for step in _steps(workflow):
         uses = step.get("uses")
         if uses:
-            assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", uses), f"{uses} is not pinned to a commit SHA"
+            # owner/repo[/sub-action]@<40 hex>, with the release it is in a comment (actions/cache/restore@...)
+            assert re.fullmatch(r"[\w.-]+/[\w.-]+(/[\w.-]+)*@[0-9a-f]{40}", uses), f"{uses} is not pinned to a commit SHA"
     for job in workflow["jobs"].values():
         if "uses" in job:  # a reusable workflow of this repository
             assert job["uses"].startswith("./.github/workflows/")
@@ -91,6 +96,45 @@ def test_workflows_pin_actions_to_commit_shas_and_default_to_read_only(name):
 def test_ci_runs_on_push_and_pull_request_and_can_be_called():
     triggers = _load(WORKFLOWS / "ci.yml")["on"]
     assert {"push", "pull_request", "workflow_call"} <= set(triggers)
+    assert triggers["push"]["branches"] == ["main", "ci/**"]  # ci/<topic>: a run of a branch before it is merged
+
+
+@pytest.mark.parametrize("name", ["ci.yml", "release.yml"])
+def test_workflow_actions_run_on_node24_releases(name):
+    """The node20 releases made every job warn ("Node.js 20 is deprecated"); these commits are node24 releases.
+    A new pin needs its version comment and an entry here, checked against its action.yml at that commit."""
+    node24 = {
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1": "v7.0.1",
+        "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9": "v6.1.0",
+        "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9": "v6.1.0",
+        "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9": "v7.0.2",
+        "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333": "v8.0.2",
+        "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97": "v7.0.0",
+        "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069": "v4.4.1",
+        "docker/login-action@dbcb813823bdd20940b903addbd779551569679f": "v4.6.0",
+        "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc": "v7.4.0",
+        # actions/attest-build-provenance 4.2.2 wraps actions/attest 4.2.1 (node24); both released more than 14 days ago
+        "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8": "v4.2.2",
+        # a composite action that runs the publisher in a container (no node); v1.14.3 is too new to use yet
+        "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33": "v1.14.2",
+    }
+    text = (WORKFLOWS / name).read_text(encoding="utf-8")
+    for uses, comment in re.findall(r"uses: ([\w./-]+@[0-9a-f]{40}) # (\S+)", text):
+        assert node24.get(uses) == comment, f"{uses} # {comment} is not a known node24 release"
+    assert len(re.findall(r"uses: [\w./-]+@", text)) == len(re.findall(r"uses: [\w./-]+@[0-9a-f]{40} # v", text))
+
+
+def test_one_job_saves_the_browser_runner_image_and_the_others_restore_it():
+    """Two jobs saving one cache key collide (a 409 warning); a restore that may miss warns too."""
+    jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
+    savers = [n for n, j in jobs.items() for s in j.get("steps", []) if str(s.get("uses", "")).startswith("actions/cache/save@")]
+    assert savers == ["runner-image"]
+    assert not any(str(s.get("uses", "")).startswith("actions/cache@") for j in jobs.values() for s in j.get("steps", []))
+    for name, job in jobs.items():
+        for step in job.get("steps", []):
+            if str(step.get("uses", "")).startswith("actions/cache/restore@") and name != "runner-image":
+                assert step["with"].get("fail-on-cache-miss") is True, name
+                assert "runner-image" in job["needs"], name
 
 
 def test_release_runs_the_tests_first_and_only_publishes_with_the_permissions_it_needs():
@@ -102,8 +146,56 @@ def test_release_runs_the_tests_first_and_only_publishes_with_the_permissions_it
     assert jobs["image"]["permissions"] == {"contents": "read", "packages": "write"}
     assert jobs["manifest"]["needs"] == "image"
     assert jobs["manifest"]["permissions"] == {"contents": "read", "packages": "write"}
-    assert jobs["release"]["needs"] == "manifest"
+    assert jobs["release"]["needs"] == ["manifest", "attest-image", "attest-files"]
     assert jobs["release"]["permissions"] == {"contents": "write"}
+
+
+def test_only_the_publishing_and_attesting_jobs_may_ask_for_an_identity_token():
+    """id-token: write lets a job prove who it is to PyPI and Sigstore; nothing else gets it."""
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    holders = {name for name, job in jobs.items() if (job.get("permissions") or {}).get("id-token") == "write"}
+    assert holders == {"pypi", "attest-image", "attest-files"}
+    assert jobs["pypi"]["permissions"] == {"id-token": "write"}  # nothing else: not even the repository contents
+    assert jobs["attest-files"]["permissions"] == {"contents": "read", "id-token": "write", "attestations": "write"}
+    assert jobs["attest-image"]["permissions"] == {
+        "contents": "read", "packages": "write", "id-token": "write", "attestations": "write"}
+    assert "id-token" not in (_load(WORKFLOWS / "release.yml")["permissions"])
+    assert "id-token" not in str(_load(WORKFLOWS / "ci.yml"))
+
+
+def test_pypi_publishing_waits_for_approval_comes_last_and_publishes_the_tested_wheel_and_sdist():
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    pypi = jobs["pypi"]
+    assert pypi["environment"]["name"] == "pypi"  # the GitHub environment with the required reviewer
+    assert pypi["needs"] == "release"  # a version on PyPI cannot be withdrawn, so everything else came first
+    names = [s["with"]["name"] for s in pypi["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact@")]
+    assert names == ["dist"]  # the wheel and sdist of the tested run, not the install scripts or the lock
+    publish = next(s for s in pypi["steps"] if str(s.get("uses", "")).startswith("pypa/gh-action-pypi-publish@"))
+    assert publish["with"] == {"packages-dir": "dist"}  # no password or token anywhere: trusted publishing
+    assert "secrets." not in str(pypi)
+    assert not any(job.get("environment") for name, job in jobs.items() if name != "pypi")
+
+
+def test_release_attests_the_files_and_the_multi_arch_image_by_digest():
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    files = next(s for s in jobs["attest-files"]["steps"] if str(s.get("uses", "")).startswith("actions/attest-build-provenance@"))
+    assert files["with"] == {"subject-path": "release-assets/*"}
+    image = next(s for s in jobs["attest-image"]["steps"] if str(s.get("uses", "")).startswith("actions/attest-build-provenance@"))
+    assert image["with"]["subject-name"] == "ghcr.io/pengupowered/pengumon"
+    assert image["with"]["subject-digest"] == "${{ needs.manifest.outputs.digest }}"
+    assert image["with"]["push-to-registry"] is True
+    assert jobs["attest-image"]["needs"] == "manifest" and jobs["manifest"]["outputs"]["digest"]
+
+
+def test_release_attaches_the_files_the_install_jobs_installed_from():
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    steps = jobs["release"]["steps"]
+    assert [s["with"]["name"] for s in steps if str(s.get("uses", "")).startswith("actions/download-artifact@")] == ["release-assets"]
+    create = next(s["run"] for s in steps if "gh release create" in s.get("run", ""))
+    assert "release-assets/*" in create and "sha256sum --check SHA256SUMS" in create
+    ci_jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
+    upload = next(s for s in ci_jobs["release-assets"]["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact@"))
+    assert upload["with"]["name"] == "release-assets"
 
 
 def test_release_builds_each_architecture_natively_from_the_tested_wheel_and_joins_them():
@@ -121,7 +213,7 @@ def test_release_builds_each_architecture_natively_from_the_tested_wheel_and_joi
     join = next(s["run"] for s in jobs["manifest"]["steps"] if "imagetools create" in s.get("run", ""))
     assert '-t "$IMAGE:latest"' in join and "-amd64" in join and "-arm64" in join
     release = next(s["run"] for s in jobs["release"]["steps"] if "gh release create" in s.get("run", ""))
-    assert "dist/pengumon-*" in release  # the wheel and the sdist are attached
+    assert "release-assets/*" in release  # the wheel, the sdist, the lock, the install scripts and SHA256SUMS
 
 
 def test_release_checks_the_tag_against_the_version_in_the_package_not_in_pyproject():
@@ -132,19 +224,36 @@ def test_release_checks_the_tag_against_the_version_in_the_package_not_in_pyproj
 
 def test_ci_builds_the_package_once_and_tests_that_wheel_in_the_image_and_natively():
     jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
-    assert {"unit", "ui", "package", "container", "native-linux"} <= set(jobs)
+    assert {"unit", "ui", "package", "container", "native", "netns-trace", "internet-trace", "release-assets",
+            "install"} <= set(jobs)
     upload = next(s for s in jobs["package"]["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact@"))
     assert upload["with"]["name"] == "dist"
-    for name in ("container", "native-linux"):
-        assert jobs[name]["needs"] == "package"
+    for name in ("container", "native"):
+        assert "package" in jobs[name]["needs"]
         download = next(s for s in jobs[name]["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact@"))
         assert download["with"]["name"] == "dist"
     runners = {m["arch"]: m["os"] for m in jobs["container"]["strategy"]["matrix"]["include"]}
     assert runners == {"amd64": "ubuntu-24.04", "arm64": "ubuntu-24.04-arm"}
-    script = next(s["run"] for s in jobs["container"]["steps"] if "test-container.sh" in s.get("run", ""))
-    assert "--prebuilt" in script
-    native = "\n".join(s.get("run", "") for s in jobs["native-linux"]["steps"])
+    test = next(s for s in jobs["container"]["steps"] if "test-container.sh" in s.get("run", ""))
+    assert "--prebuilt" in test["run"]
+    assert "if" not in test  # every architecture builds and tests the image; only the browser check is amd64-only
+    assert "--no-e2e" in test["run"]
+    assert jobs["native"]["strategy"]["matrix"]["os"] == ["ubuntu-24.04", "ubuntu-24.04-arm", "macos-14", "windows-latest"]
+    assert jobs["native"]["env"]["PENGUMON_REQUIRE_ICMP"] == "1"
+    native = "\n".join(s.get("run", "") for s in jobs["native"]["steps"])
     assert "--require-hashes" in native and "pengumon run" in native and "/api/health" in native
+    assert "pengumon doctor" in native and "pytest" in native
+    assert jobs["internet-trace"]["continue-on-error"] is True
+
+
+def test_every_pytest_run_in_ci_reports_failures_as_annotations():
+    jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
+    for name in ("unit", "ui", "native"):
+        steps = jobs[name]["steps"]
+        annotate = [s for s in steps if "junit-annotations.py" in s.get("run", "")]
+        assert annotate and annotate[0]["if"] == "always()", name
+        runs = "\n".join(s.get("run", "") for s in steps)
+        assert "PENGUMON_JUNIT_DIR" in runs or "--junitxml" in runs, name
 
 
 def test_the_dockerfile_installs_the_wheel_and_sets_the_documented_environment():
@@ -162,6 +271,8 @@ def test_the_dockerfile_installs_the_wheel_and_sets_the_documented_environment()
 @pytest.fixture
 def deploy_tree(tmp_path):
     """A copy of scripts/deploy.sh in a tree with a config.yaml, so it gets as far as the dependency gate."""
+    if sys.platform == "win32":
+        pytest.skip("scripts/deploy.sh is the maintainer's bash deploy on Linux")
     (tmp_path / "scripts").mkdir()
     shutil.copy(ROOT / "scripts" / "deploy.sh", tmp_path / "scripts" / "deploy.sh")
     (tmp_path / "config.yaml").write_text("{}\n")
@@ -210,3 +321,49 @@ def test_deploy_still_refuses_when_an_installed_depguard_fails(deploy_tree, tmp_
     res = _run_gate(deploy_tree, _fake_depguard(tmp_path / "dg", 1))
     assert res.returncode == 1
     assert "Dependency gate failed" in res.stderr
+
+
+@pytest.mark.parametrize("name", ["ci.yml", "release.yml"])
+def test_no_step_only_function_outside_steps(name):
+    """hashFiles() is evaluated only inside steps; in the workflow's or a job's env GitHub rejects the whole file
+    (a run with no jobs at all)."""
+    workflow = _load(WORKFLOWS / name)
+    assert "hashFiles" not in str(workflow.get("env", {}))
+    for job in workflow["jobs"].values():
+        assert "hashFiles" not in str(job.get("env", {})) and "hashFiles" not in str(job.get("strategy", {}))
+
+
+def test_the_install_job_runs_the_install_scripts_from_the_release_files_on_three_systems_and_uninstalls():
+    jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
+    install = jobs["install"]
+    assert install["needs"] == "release-assets"
+    assert install["strategy"]["matrix"]["os"] == ["ubuntu-24.04", "macos-14", "windows-latest"]
+    assert install["strategy"]["fail-fast"] is False
+    download = next(s for s in install["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact@"))
+    assert download["with"]["name"] == "release-assets"
+    runs = "\n".join(s.get("run", "") for s in install["steps"])
+    assert "install.sh --from release-assets --yes --no-browser" in runs
+    assert "install.ps1 -From release-assets -NoBrowser" in runs
+    assert "install.sh --uninstall --yes" in runs and "install.ps1 -Uninstall" in runs
+    for phase in ("installed", "upgraded", "removed"):
+        assert f"ci-install-check.sh {phase}" in runs
+    diagnose = next(s for s in install["steps"] if "ci-install-check.sh diagnose" in s.get("run", ""))
+    assert diagnose["if"] == "failure()"
+    assert runs.index("ci-install-check.sh installed") < runs.index("ci-install-check.sh upgraded") < runs.index(
+        "ci-install-check.sh removed")
+
+
+def test_the_image_takes_the_wheel_by_copy_so_the_build_cache_keys_on_its_content():
+    # A RUN --mount=type=bind layer is cached on the command text alone: Podman reused a layer holding another
+    # tree's wheel (reproduced: two trees differing by one line, built one after the other, the second image held the
+    # first tree's code). COPY --from keys the cache on the wheel's content.
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "--mount=type=bind,from=wheel" not in dockerfile
+    assert "COPY --from=wheel" in dockerfile
+
+
+def test_deploy_and_the_container_test_check_the_image_holds_this_trees_code():
+    deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+    container_test = (ROOT / "scripts" / "test-container.sh").read_text(encoding="utf-8")
+    assert "scripts/image-matches-tree.sh" in deploy and "fail " in deploy.split("image-matches-tree.sh", 1)[1][:200]
+    assert "scripts/image-matches-tree.sh" in container_test

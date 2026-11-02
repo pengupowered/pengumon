@@ -22,6 +22,7 @@ from pengumon.db import retention, storage
 from pengumon.devices import component as devices
 from pengumon.engine import line_load, probing
 from pengumon.engine.classifier import component as classifier
+from pengumon.engine.discovery import component as discovery
 from pengumon.live import component as live
 from pengumon.observability import apply_config_level, get_logger, grafana, setup_logging
 from pengumon.observability.export import setup_telemetry
@@ -39,7 +40,7 @@ logger = get_logger("pengumon")
 COMPONENTS = [
     devices,        # first: a device config that cannot run stops the start before the database opens
     storage,        # opens (migrates) the database; closes it after every later component has stopped
-    probing,        # the prober with the stored custom targets; starts the probe loop
+    probing,        # the probe path (stored in the database), the prober; starts the probe loop
     retention,      # the start-up cleanup, before the load backfills read the history
     line_load,      # line capacity, the load backfills, the monitors' load and probe-loss hooks
     notify,         # ntfy, for the classifier and the service checks
@@ -47,6 +48,7 @@ COMPONENTS = [
     services,       # optional: host service checks
     clients,        # optional: the client list
     live,           # the websocket broadcaster
+    discovery,      # optional: network discovery on request (POST /api/discovery); stops a running one first
 ]
 
 
@@ -57,7 +59,7 @@ async def lifespan(app: FastAPI):
     paths.ensure_data_dir()  # a first start on a fresh system: the database, secrets and sessions live in it
     config = load_config()
     apply_config_level(config.server.log_level)
-    logger.info(f"Loaded config with {len(config.targets)} ICMP targets and {len(config.dns_probes)} DNS probes.")
+    logger.info(f"Loaded config with {len(config.dns_probes)} DNS probes (the probe path is loaded from the database).")
 
     state = AppState(config=config, repository=storage.repository_for(config))
     async with run_components(app, config, COMPONENTS, state):

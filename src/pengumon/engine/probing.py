@@ -1,19 +1,21 @@
-"""The probing component: the prober with every target (config.yaml's, then those added from the dashboard in
-earlier runs) and the probe loop (engine/loop.py), which it starts once every component has registered."""
+"""The probing component: the probe path (engine/path.py: stored in the database, imported once from config.yaml and
+the custom targets), the prober with every target and the probe loop (engine/loop.py), which it starts once every
+component has registered. It owns the app's ICMP backend (engine/icmp_select.shared_backend), which traceroute and
+the incident path trace use too."""
 
 from pengumon.components import Component, Context
+from pengumon.engine.icmp_base import IcmpUnavailable
+from pengumon.engine.icmp_select import close_shared_backend
 from pengumon.engine.loop import check_live_parts, probe_background_worker
+from pengumon.engine.path import PathManager
 from pengumon.engine.prober import NetworkProber
 
 
 async def register(ctx: Context) -> Component:
     config, repository = ctx.config, ctx.state.repository
 
-    # Targets added from the dashboard in earlier runs. A config.yaml target with the same id wins.
-    configured_ids = {t.id for t in config.targets}
-    for custom in await repository.list_custom_targets():
-        if custom.id not in configured_ids:
-            config.targets.append(custom)
+    path = PathManager(config, repository)
+    await path.load()  # config.targets is the stored path from here on
 
     prober = NetworkProber(
         ping_timeout=config.prober.timeout_seconds,
@@ -24,11 +26,20 @@ async def register(ctx: Context) -> Component:
         prober.register_target(t)
     for d in config.dns_probes:
         prober.register_dns_target(d)
+    path.prober = prober
     ctx.state.prober = prober
+    ctx.state.path = path
 
     async def start() -> None:
+        try:
+            prober.backend()  # opened (and its name and resolution logged, or why not) at startup, not mid-round
+        except IcmpUnavailable:
+            pass  # logged by icmp_select; every probe records the reason, and opening is retried
         parts = ctx.live_parts()
         check_live_parts(parts)
         ctx.spawn(probe_background_worker(config, prober, ctx.state.classifier, repository, live_parts=parts))
 
-    return Component("probing", start=start)
+    async def stop() -> None:
+        close_shared_backend()
+
+    return Component("probing", start=start, stop=stop)

@@ -2,6 +2,7 @@
 availability (pengumon.capabilities.features)."""
 
 import logging
+import re
 import ssl
 
 import certifi
@@ -148,7 +149,7 @@ def test_an_unusable_ca_file_stops_the_build_naming_the_device(tmp_path):
     bad = tmp_path / "not-a-cert.pem"
     bad.write_text("hello")
     for path in (tmp_path / "missing.pem", bad):
-        with pytest.raises(DeviceConfigError, match=f"device wifi: tls.ca_file '{path}' cannot be used"):
+        with pytest.raises(DeviceConfigError, match=re.escape(f"device wifi: tls.ca_file '{path}' cannot be used")):
             build_device(_cfg("wifi", "asuswrt", url="https://router.lan", tls={"ca_file": str(path)}))
 
 

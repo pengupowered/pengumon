@@ -558,6 +558,18 @@ def test_no_browser_test_file_is_shipped_in_the_static_tree():
     assert stray == []
 
 
+def test_templates_are_refused_whichever_separator_the_path_has():
+    """The plain /static mount gets an OS path from Starlette (backslashes on Windows): panels\\line\\panel.html was
+    served there while the URL form was refused."""
+    from pengumon.web.assets import not_served
+
+    for path in ("panels/line/panel.html", "panels\\line\\panel.html", "dialogs\\trace\\dialog.html",
+                 "panels\\line\\panel.json"):
+        assert not_served(path), path
+    for path in ("panels/line/panel.js", "panels\\line\\panel.css", "js\\util.js"):
+        assert not not_served(path), path
+
+
 @pytest.mark.asyncio
 async def test_a_smoke_step_path_is_not_served():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:

@@ -82,7 +82,7 @@ async def test_fresh_database_gets_the_latest_schema(tmp_path):
 
     assert _query(path, "PRAGMA user_version")[0][0] == migrations.LATEST_VERSION
     tables = _tables(path)
-    assert {"targets", "samples", "rollup_1m", "incidents", "device_samples", "line_samples", "custom_targets",
+    assert {"targets", "samples", "rollup_1m", "incidents", "device_samples", "line_samples", "custom_targets", "path_targets",
             "meta"} <= tables
     assert not {"probe_samples", "docsis_signals", "docsis_logs", "router_metrics"} & tables
     assert _query(path, "PRAGMA auto_vacuum")[0][0] == 2  # INCREMENTAL
@@ -495,7 +495,8 @@ async def test_two_long_lived_connections_serve_every_call(tmp_path, monkeypatch
         assert await repo.get_meta("k") == str(i)
         await repo.get_history(now - 5, now + 60)
         await repo.get_recent_incidents()
-    await repo.count_custom_targets()
+    await repo.list_custom_targets()
+    await repo.load_path()
     assert len(opened) == migration_connections + 2
     await repo.close()
 

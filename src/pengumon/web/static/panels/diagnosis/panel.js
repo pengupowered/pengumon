@@ -11,7 +11,8 @@
 
 import { escapeHtml, icon, latestMs, setBadge, setText, STATUS } from '../../js/util.js';
 import { sparkSvg } from '../../js/sparkline.js';
-import { IGNORES_PING, IGNORES_PING_WHY, pathNodes } from '../../js/path.js';
+import { pathNodes } from '../../js/path.js';
+import { fetchPath, startDiscovery, waitDiscovery } from '../../js/path-api.js';
 import './help.js';
 
 // The classifier's status -> the design's status level and its word.
@@ -88,7 +89,8 @@ export function deltaText(d) {
 }
 
 function paintNode(el, link, n, prev) {
-  const word = n.quiet ? IGNORES_PING : STATUS[n.level].word;
+  const word = n.quiet ? n.quietWords.word : STATUS[n.level].word; // ignores ping, or IPv6 unavailable on this host
+  const unprobed = n.quiet && n.quietWords.kind === 'ipv6'; // its last figures are from before IPv6 went away
   // what a click opens follows the node (its worst target, or the members of a group can change under the same key)
   if (el.dataset.arg !== n.target) el.dataset.arg = n.target;
   const group = n.history ? JSON.stringify(n.history) : '';
@@ -97,7 +99,7 @@ function paintNode(el, link, n, prev) {
     else delete el.dataset.group;
   }
   el.className = `node st-${n.level}${n.level !== 'good' && !n.quiet ? ' alert' : ''}`;
-  el.setAttribute('aria-label', `${n.label}: ${n.name}, ${word}${has(n.ms) ? `, ${n.ms.toFixed(1)} milliseconds` : ''}. Show its history`);
+  el.setAttribute('aria-label', `${n.label}: ${n.name}, ${word}${has(n.ms) && !unprobed ? `, ${n.ms.toFixed(1)} milliseconds` : ''}. Show its history`);
   setText(el.querySelector('.node-kind'), n.count > 1 ? `${n.label} · ${n.count}` : n.label);
   // the configured name is long ("Hop 3: <provider> ..."): one line under the short label, whole in the tooltip
   const name = el.querySelector('.node-name');
@@ -109,10 +111,11 @@ function paintNode(el, link, n, prev) {
     st.title = word;
     st.innerHTML = icon(STATUS[n.level].icon);
   }
-  el.querySelector('.node-val').innerHTML = has(n.ms) ? `<b class="num">${fmtMs(n.ms)}</b><span>ms</span>` : '<b class="node-word">No reply</b>';
-  el.querySelector('.node-meta').innerHTML = n.quiet ? `<span title="${escapeHtml(IGNORES_PING_WHY)}">ignores ping · traffic passes</span>`
+  el.querySelector('.node-val').innerHTML = unprobed ? '<b class="node-word">Not probed</b>'
+    : has(n.ms) ? `<b class="num">${fmtMs(n.ms)}</b><span>ms</span>` : '<b class="node-word">No reply</b>';
+  el.querySelector('.node-meta').innerHTML = n.quiet ? `<span title="${escapeHtml(n.quietWords.why)}">${escapeHtml(n.quietWords.meta)}</span>`
     : `<span class="${n.loss > 0 ? 'bad' : ''}">loss <b class="num">${fmtPct(n.loss)}</b></span>${has(n.jitter) && has(n.ms) ? `<span>jitter <b class="num">${(+n.jitter).toFixed(1)}</b></span>` : ''}`;
-  el.querySelector('.node-spark').innerHTML = sparkSvg(n.spark, n.level);
+  el.querySelector('.node-spark').innerHTML = sparkSvg(unprobed ? [] : n.spark, n.level);
   // the link before the node: what this segment adds (from the last hop before it that answers)
   const broken = !has(n.ms) && !n.quiet;
   const linkLevel = n.level;
@@ -121,7 +124,7 @@ function paintNode(el, link, n, prev) {
   const delta = link.querySelector('.delta');
   delta.title = 'Latency this segment adds';
   let text = '';
-  if (n.quiet) { text = '–'; delta.title = IGNORES_PING_WHY; }
+  if (n.quiet) { text = '–'; delta.title = n.quietWords.why; }
   else if (broken) { text = 'no reply'; delta.title = 'No answer from this hop'; }
   else if (!prev || !has(prev.ms)) text = `${n.ms.toFixed(1)} ms`;
   else {
@@ -180,7 +183,7 @@ function updateChain(targets) {
   });
   paintExtras(targets.filter((t) => t.enabled !== false));
   // the header pill: the worst loss on the path (hops that only ignore ping left out) and the internet's latency
-  const internet = nodes[nodes.length - 1];
+  const internet = nodes.find((n) => n.kind === 'Internet') || nodes[nodes.length - 1]; // the first Internet node, not its IPv6 servers
   const worst = nodes.filter((n) => n.loss !== null).reduce((a, b) => (b.loss > (a ? a.loss : -1) ? b : a), null);
   const parts = [];
   if (worst && worst.loss > 0) parts.push(`${fmtPct(worst.loss)} loss`);
@@ -206,6 +209,36 @@ function inspectButton(diagnosis) {
   button.dataset.arg = String(id);
 }
 
+// First run (a path never applied: revision 0, the default targets are probed): discovery starts by itself (the server
+// starts it at most once per process; later loads show that run) and the banner
+// offers its draft for review in the path editor (dialogs/path-editor). The automatic run looks up no operators (the
+// ASN lookup sends hop addresses to a public service): the editor's Rediscover, with its disclosure, can. Until Apply
+// the defaults keep probing, so the dashboard is never empty.
+function banner(html) {
+  const box = document.getElementById('pathBanner');
+  box.hidden = !html;
+  box.innerHTML = html;
+}
+
+const review = (arg, title, text) => `<div class="result st-unknown">${icon('path')}<span><b>${escapeHtml(title)}</b> ${escapeHtml(text)}</span>`
+  + `<button type="button" class="btn sm primary" data-action="openPathEditor" data-arg="${escapeHtml(arg)}">Review</button></div>`;
+
+export async function firstRun() {
+  let path;
+  try { path = await fetchPath(); } catch (_) { return; }
+  if (path.revision !== 0) { banner(''); return; }
+  banner(`<div class="result st-unknown">${icon('route')}<span><b>Finding your network path…</b> <span data-f="progress">Tracing the hops to the internet.</span></span></div>`);
+  try {
+    const id = await startDiscovery({ asnLookup: false, snmp: false, firstRun: true });
+    const run = id ? await waitDiscovery(id, (text) => { const p = document.querySelector('#pathBanner [data-f=progress]'); if (p) p.textContent = text; }) : null;
+    if (run && run.state === 'done') {
+      banner(review(`discovery:${id}`, 'Pengumon found your network path', '· Review it: until you apply it, the default targets are probed.'));
+      return;
+    }
+  } catch (_) { /* no discovery in this build, or it failed: the defaults can be reviewed all the same */ }
+  banner(review('', 'Review your network path', '· The default targets are probed until you apply a path of your own.'));
+}
+
 export function mountDiagnosis(bus, ctx) {
   document.getElementById('pathChain').innerHTML = skeleton();
   const foot = document.getElementById('pathFoot');
@@ -215,6 +248,7 @@ export function mountDiagnosis(bus, ctx) {
     foot.children[2].after(busy);
   }
   bus.subscribe('targets', updateChain);
+  firstRun();
   // a wider or narrower hero may fit a node per ISP hop, or no longer
   new ResizeObserver(() => { if (lastTargets) updateChain(lastTargets); }).observe(document.getElementById('pathChain'));
   return bus.subscribe('diagnosis', (d) => { updateDiagnosisBanner(d); inspectButton(d); });

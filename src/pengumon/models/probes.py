@@ -22,6 +22,24 @@ class TargetConfig(BaseModel):
     record_type: Optional[str] = "A"
     nameserver: Optional[str] = None
     color: Optional[str] = None  # chart colour #rrggbb; None = the category's colour
+    # A host name is probed at its address of this family (4: IPv4, 6: IPv6); an IP literal is probed as it is
+    family: Literal[4, 6] = 4
+    # The path editor's fields (pengumon.engine.path): hops of one role sharing a group are one node on Path health;
+    # ignores_ping None = decided by engine.path_rules, True/False = the owner's answer; device_id = the configured
+    # device (config.yaml devices:) this hop is.
+    group: Optional[str] = Field(None, max_length=64)
+    ignores_ping: Optional[bool] = None
+    device_id: Optional[str] = Field(None, max_length=64)
+
+    @field_validator("group", "device_id")
+    @classmethod
+    def validate_optional_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if not ID_PATTERN.match(v):
+            raise ValueError("must be 1-64 letters, digits, hyphens or underscores")
+        return v
 
     @field_validator("color")
     @classmethod
@@ -51,6 +69,7 @@ class TargetConfig(BaseModel):
 class TracerouteRequest(BaseModel):
     """Request model for on-demand traceroute."""
     target_host: str = Field(default="1.1.1.1", max_length=255)
+    family: Literal[4, 6] = 4  # for a host name: trace to its IPv4 or IPv6 address (a literal is traced as it is)
 
     @field_validator("target_host")
     @classmethod
@@ -78,6 +97,7 @@ class TargetStats(BaseModel):
     address: str
     enabled: bool
     color: Optional[str] = None  # from the target's config; None = the category's colour
+    group: Optional[str] = None  # from the target's config: hops of one role with the same group are one node
     sent: int = 0
     received: int = 0
     loss_pct: float = 0.0  # Cumulative lifetime loss %
@@ -91,6 +111,9 @@ class TargetStats(BaseModel):
     status: Literal["up", "degraded", "down"] = "up"
     # No reply while a later stage of the path answers: up, only ignoring ping (engine.path_rules). Set every round.
     ignores_ping: bool = False
+    # An IPv6 target while this host has no IPv6 (no route, or none in the OS): not probed, no samples, no verdict
+    # (engine.prober; re-checked every few minutes). Shown as "IPv6 unavailable on this host", like ignores_ping.
+    ipv6_unavailable: bool = False
 
 
 

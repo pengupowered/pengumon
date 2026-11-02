@@ -48,9 +48,18 @@ async def test_colors_reach_targets_api_in_config_order(app_state):
 
 @pytest.mark.asyncio
 async def test_the_example_config_leaves_colors_to_the_dashboard(app_state):
-    config = load_config(str(Path(__file__).resolve().parents[1] / "config.example.yaml"))
-    assert {t.id: t.color for t in [*config.targets, *config.dns_probes]} == dict.fromkeys(EXAMPLE_ORDER)
-    assert [t.id for t in [*config.targets, *config.dns_probes]] == EXAMPLE_ORDER
+    import yaml
+
+    path = Path(__file__).resolve().parents[1] / "config.example.yaml"
+    config = load_config(str(path))
+    assert not config.targets_from_file  # the example's targets are documentation only (a fresh install discovers)
+    # the documented targets, uncommented, are the ones below: no colour set on any
+    text = path.read_text(encoding="utf-8")
+    block = text[text.index("# targets:"):text.index("dns_probes:")]
+    documented = yaml.safe_load("\n".join(l[2:] if l.startswith("# ") else "" for l in block.split("\n")))["targets"]
+    assert [t["id"] for t in documented] + [p.id for p in config.dns_probes] == EXAMPLE_ORDER
+    assert {t.id: t.color for t in config.dns_probes} == dict.fromkeys(["dns_system_google", "dns_direct_cloudflare"])
+    assert not any("color" in t for t in documented)
     assert config.line.isp_name == "Your ISP"
 
 

@@ -1,7 +1,7 @@
 <!-- Latency and packet loss over time: live feed and stored history (panels/latency.js, charts.js, history.js) -->
 <section data-panel="latency" aria-label="Latency">
   <article class="panel" data-size="8">
-    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg><h2 class="panel-t">Latency</h2><span class="panel-m" id="chartModeLabel">last 60 s · every probe</span>
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg><h2 class="panel-t">Latency</h2><span class="panel-m"><span id="chartModeLabel">last 60 s · every probe</span><span id="probeResolution" hidden title="This system reports round trips in whole milliseconds (Windows IcmpSendEcho2), so readings under 1 ms show as 0 or 1"> · <span id="probeResolutionText">1 ms resolution</span></span></span>
       <div class="panel-tools"><span class="seg" role="group" id="timeRangeButtons" aria-label="Time range">
         <button type="button" class="active" data-action="setTimeRange" data-arg="live">Live</button>
         <button type="button" data-action="setTimeRange" data-arg="900">15 m</button>

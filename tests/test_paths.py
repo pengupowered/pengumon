@@ -6,6 +6,7 @@ import pytest
 
 from pengumon import paths
 from pengumon.config import AppConfig, DatabaseConfig, ServerConfig, load_config, load_server_config
+from platform_helpers import assert_mode
 
 
 def test_data_dir_prefers_pengumon_data():
@@ -15,10 +16,14 @@ def test_data_dir_prefers_pengumon_data():
     assert paths.backups_dir({"PENGUMON_DATA": "/srv/pg"}) == Path("/srv/pg/backups")
 
 
+# An absolute path on the OS running the test ("/x/state" has no drive on Windows, so it is not absolute there)
+XDG = Path("/x/state").resolve()
+
+
 def test_os_defaults(monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path("/home/u")))
     assert paths.default_data_dir({}, "linux") == Path("/home/u/.local/state/pengumon")
-    assert paths.default_data_dir({"XDG_STATE_HOME": "/x/state"}, "linux") == Path("/x/state/pengumon")
+    assert paths.default_data_dir({"XDG_STATE_HOME": str(XDG)}, "linux") == XDG / "pengumon"
     assert paths.default_data_dir({"XDG_STATE_HOME": "relative"}, "linux") == Path("/home/u/.local/state/pengumon")
     assert paths.default_data_dir({}, "darwin") == Path("/home/u/Library/Application Support/Pengumon")
     win = paths.default_data_dir({"LOCALAPPDATA": "C:/Users/u/AppData/Local"}, "win32")
@@ -27,16 +32,16 @@ def test_os_defaults(monkeypatch):
 
 def test_data_dir_uses_the_platform_default_when_unset(monkeypatch):
     monkeypatch.delenv("PENGUMON_DATA", raising=False)
-    monkeypatch.setenv("XDG_STATE_HOME", "/x/state")
+    monkeypatch.setenv("XDG_STATE_HOME", str(XDG))
     monkeypatch.setattr(paths.sys, "platform", "linux")
-    assert paths.data_dir() == Path("/x/state/pengumon")
+    assert paths.data_dir() == XDG / "pengumon"
     assert paths.data_dir_source() == "default for this system"
 
 
 def test_ensure_data_dir_creates_it_private(tmp_path):
     target = tmp_path / "a" / "pg"
     assert paths.ensure_data_dir({"PENGUMON_DATA": str(target)}) == target
-    assert (target.stat().st_mode & 0o777) == 0o700
+    assert_mode(target, 0o700)
 
 
 def test_config_defaults_to_the_data_directory():
@@ -58,7 +63,7 @@ def test_load_config_without_a_path_follows_the_environment(tmp_path, monkeypatc
 
 
 def test_db_path_unset_is_in_the_data_directory():
-    assert paths.db_path(None, {"PENGUMON_DATA": "/srv/pg"}) == "/srv/pg/pengumon.db"
+    assert paths.db_path(None, {"PENGUMON_DATA": "/srv/pg"}) == str(Path("/srv/pg") / "pengumon.db")
     assert DatabaseConfig().db_path is None
 
 

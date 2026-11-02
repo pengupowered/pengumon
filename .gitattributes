@@ -11,3 +11,4 @@ requirements*.txt text eol=lf
 
 # Vendored homeguard source must keep LF line endings (hash-verified by tests)
 src/pengumon/_vendor/homeguard/** text eol=lf
+*.ps1 text eol=lf

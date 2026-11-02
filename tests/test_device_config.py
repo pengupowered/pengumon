@@ -48,7 +48,7 @@ def test_the_example_config_is_still_read_by_the_older_build():
                          "service_checks", "devices", "privacy", "dashboard", "notifications"}
     assert "docsis" not in data and "router" not in data
     assert "auto_discover_gateway" not in data["prober"]
-    assert all("type" not in t for t in data["targets"])
+    assert "targets" not in data  # documented only: a fresh install discovers its path
 
 
 # --- devices: -------------------------------------------------------------------------------------------------------
@@ -148,7 +148,8 @@ def test_no_default_route_means_no_gateway(table):
 
 
 def test_an_unreadable_route_table_means_no_gateway(tmp_path):
-    assert get_default_gateway_ip(tmp_path / "missing") is None
+    # without the route table the first router of a TTL=1 probe is asked (tests/test_icmp_select.py); none here
+    assert get_default_gateway_ip(tmp_path / "missing", lambda: None) is None
     (tmp_path / "route").write_text(ROUTE_TABLE)
     assert get_default_gateway_ip(tmp_path / "route") == "192.168.20.1"
 

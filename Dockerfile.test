@@ -10,7 +10,7 @@ COPY requirements-dev.txt requirements-build.txt ./
 # The build backend too: tests/test_wheel.py builds the wheel the way the release does.
 RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary :all: -r requirements-dev.txt \
     && pip install --no-cache-dir --require-hashes --no-deps --only-binary :all: -r requirements-build.txt
-COPY pyproject.toml config.example.yaml README.md LICENSE requirements.in ./
+COPY pyproject.toml config.example.yaml README.md LICENSE requirements.in requirements.txt ./
 COPY src/ src/
 COPY tests/ tests/
 COPY scripts/ scripts/

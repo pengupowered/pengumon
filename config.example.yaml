@@ -15,56 +15,61 @@ prober:
   timeout_seconds: 1.0
   ping_count_per_probe: 1
 
+# The probe path (targets) lives in the database and is edited in the dashboard (Path health > Edit). This list is
+# imported once, with its ids, on the first start of a database that has no path yet; after that it is ignored (the
+# startup log says so). A fresh install leaves it out and has the path discovered instead.
 # A target (or DNS probe) may set `color: "#rrggbb"` for its chart line. Leave it out to get the dashboard's validated
 # series colours (both themes), given so that no two targets of one category share one.
-targets:
-  - id: "local_router"
-    name: "Hop 1: Local Router (LAN)"
-    category: "local"
-    address: "192.168.1.1"
-    enabled: true
-
-  - id: "isp_gateway"
-    name: "Hop 2: ISP Modem / Gateway"
-    category: "gateway"
-    address: "192.168.100.1"
-    enabled: true
-
-  - id: "isp_hop_1"
-    name: "Hop 3: ISP Regional Hub"
-    category: "isp"
-    address: "198.51.100.1"
-    enabled: true
-
-  - id: "isp_hop_2"
-    name: "Hop 4: ISP Backbone"
-    category: "isp"
-    address: "198.51.100.2"
-    enabled: true
-
-  - id: "isp_dns"
-    name: "ISP DNS (203.0.113.53)"
-    category: "isp"
-    address: "203.0.113.53"
-    enabled: true
-
-  - id: "cloudflare_dns"
-    name: "Public: Cloudflare Anycast (1.1.1.1)"
-    category: "public"
-    address: "1.1.1.1"
-    enabled: true
-
-  - id: "google_dns"
-    name: "Public: Google Anycast (8.8.8.8)"
-    category: "public"
-    address: "8.8.8.8"
-    enabled: true
-
-  - id: "quad9_dns"
-    name: "Public: Quad9 Anycast (9.9.9.9)"
-    category: "public"
-    address: "9.9.9.9"
-    enabled: true
+# Only to give your own hops (a fixed list, the first start only): uncomment and edit. With no targets here a
+# fresh install discovers its path on the first visit to the dashboard.
+# targets:
+#   - id: "local_router"
+#     name: "Hop 1: Local Router (LAN)"
+#     category: "local"
+#     address: "192.168.1.1"
+#     enabled: true
+#
+#   - id: "isp_gateway"
+#     name: "Hop 2: ISP Modem / Gateway"
+#     category: "gateway"
+#     address: "192.168.100.1"
+#     enabled: true
+#
+#   - id: "isp_hop_1"
+#     name: "Hop 3: ISP Regional Hub"
+#     category: "isp"
+#     address: "198.51.100.1"
+#     enabled: true
+#
+#   - id: "isp_hop_2"
+#     name: "Hop 4: ISP Backbone"
+#     category: "isp"
+#     address: "198.51.100.2"
+#     enabled: true
+#
+#   - id: "isp_dns"
+#     name: "ISP DNS (203.0.113.53)"
+#     category: "isp"
+#     address: "203.0.113.53"
+#     enabled: true
+#
+#   - id: "cloudflare_dns"
+#     name: "Public: Cloudflare Anycast (1.1.1.1)"
+#     category: "public"
+#     address: "1.1.1.1"
+#     enabled: true
+#
+#   - id: "google_dns"
+#     name: "Public: Google Anycast (8.8.8.8)"
+#     category: "public"
+#     address: "8.8.8.8"
+#     enabled: true
+#
+#   - id: "quad9_dns"
+#     name: "Public: Quad9 Anycast (9.9.9.9)"
+#     category: "public"
+#     address: "9.9.9.9"
+#     enabled: true
 
 dns_probes:
   - id: "dns_system_google"

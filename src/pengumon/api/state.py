@@ -22,7 +22,9 @@ if TYPE_CHECKING:
     from pengumon.config import AppConfig
     from pengumon.db.repository import DatabaseRepository
     from pengumon.devices.registry import DeviceRegistry
+    from pengumon.engine.discovery.jobs import DiscoveryJobs
     from pengumon.engine.classifier import OutageClassifier
+    from pengumon.engine.path import PathManager
     from pengumon.engine.prober import NetworkProber
     from pengumon.notify import Notifier
     from pengumon.services.checker import ServiceChecker
@@ -36,12 +38,14 @@ class AppState:
     config: Optional["AppConfig"] = None
     repository: Optional["DatabaseRepository"] = None
     prober: Optional["NetworkProber"] = None
+    path: Optional["PathManager"] = None  # the probe path's store and live reload (engine/path.py)
     classifier: Optional["OutageClassifier"] = None
     devices: Optional["DeviceRegistry"] = None
     service_checker: Optional["ServiceChecker"] = None
     notifier: Optional["Notifier"] = None  # ntfy and the webhooks; None when no channel is configured
     secret_store: Optional["SecretStore"] = None  # data/secrets.json, shared by the credential sources and endpoints
     credentials: Optional["CredentialSources"] = None  # where the devices' credentials came from at startup
+    discovery: Optional["DiscoveryJobs"] = None  # the network discovery runs (engine/discovery)
 
     def line_history(self) -> Optional[docsis.DocsisHistory]:
         """The stored readings of the device that reports the access line (DeviceRegistry.primary, so a device

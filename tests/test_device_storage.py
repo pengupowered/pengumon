@@ -191,7 +191,7 @@ async def test_v9_migration_keeps_every_reading_as_the_api_showed_it(tmp_path, m
     monkeypatch.setattr(v009_device_tables, "tracer", spans)
 
     with caplog.at_level(logging.INFO, logger="pengumon.db"):
-        assert await migrations.migrate(path) == migrations.LATEST_VERSION == 12
+        assert await migrations.migrate(path) == migrations.LATEST_VERSION == 13
 
     repo = DatabaseRepository(db_path=path)
     await repo.initialize()
@@ -466,6 +466,10 @@ async def test_the_rate_percentile_is_the_nearest_rank_from_either_end(repo):
 def _bytes(path, *names):
     con = sqlite3.connect(path)
     try:
+        try:
+            con.execute("SELECT 1 FROM dbstat LIMIT 1")
+        except sqlite3.OperationalError:
+            pytest.skip("this SQLite build has no dbstat table (SQLITE_ENABLE_DBSTAT_VTAB; e.g. Python on Windows)")
         return sum(con.execute("SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name = ?", (n,)).fetchone()[0]
                    for n in names)
     finally:

@@ -5,7 +5,7 @@
 // that changes width (LOST, a large jitter) does not move the others.
 
 import { getTargetInfo, icon, latestMs, setClass, setText, STATUS, targetList } from '../../js/util.js';
-import { ignoringPing, shortLabels } from '../../js/path.js';
+import { quietTargets, shortLabels } from '../../js/path.js';
 import { createSparkline, drawSparkline } from '../../js/sparkline.js';
 import './help.js';
 
@@ -64,7 +64,8 @@ function updateHopMatrix(targets) {
     return ok.length ? { min: Math.min(...ok), max: Math.max(...ok), avg: t.avg_ms } : { min: null, max: null, avg: null };
   };
   const stats = new Map(targets.map((t) => [t.target_id, windowStats(t)]));
-  const quiet = ignoringPing(targets); // no reply, but later hops answer: traffic passes (path.js)
+  // no reply, but later hops answer: traffic passes; or an IPv6 target this host cannot probe (path.js)
+  const quiet = quietTargets(targets);
   const labels = shortLabels(targetList().length ? targetList() : targets.map((t) => ({ id: t.target_id, ...t })));
   // one scale for every row's range bar, so the rows compare
   const scale = Math.max(20, ...[...stats.values()].map((w) => (has(w.max) ? w.max : 0)));
@@ -76,6 +77,7 @@ function updateHopMatrix(targets) {
     // Recent 1-minute rolling loss
     const recentLoss = (t.loss_recent_pct !== undefined) ? t.loss_recent_pct : t.loss_pct;
     const ignores = quiet.has(t.target_id);
+    const unprobed = ignores && quiet.get(t.target_id).kind === 'ipv6';
     const level = ignores ? 'unknown' : lossLevel(t, recentLoss);
     const w = stats.get(t.target_id);
     const totalLost = Math.max(0, t.sent - t.received);
@@ -89,11 +91,13 @@ function updateHopMatrix(targets) {
     setText(r.addr, t.address);
     r.addrWrap.hidden = nameSaysAddress(t.name, t.address);
     r.sub.title = r.addrWrap.hidden ? t.name : `${t.name} · ${t.address}`;
-    if (r.loss.dataset.key !== `${level}|${recentLoss}|${ignores}`) {
-      r.loss.dataset.key = `${level}|${recentLoss}|${ignores}`;
+    if (r.loss.dataset.key !== `${level}|${recentLoss}|${ignores}|${unprobed}`) {
+      r.loss.dataset.key = `${level}|${recentLoss}|${ignores}|${unprobed}`;
       r.loss.className = recentLoss > 0 || level !== 'good' ? `chip st st-${level}` : 'chip';
-      r.loss.innerHTML = ignores ? `${icon(STATUS.unknown.icon, 'sm')}no ping` : `${icon(STATUS[level].icon, 'sm')}${recentLoss}%`;
-      r.loss.title = ignores ? 'Does not answer ping, but the hops after it do: traffic passes through it (many provider routers ignore ping)' : '';
+      r.loss.innerHTML = unprobed ? `${icon(STATUS.unknown.icon, 'sm')}no IPv6`
+        : ignores ? `${icon(STATUS.unknown.icon, 'sm')}no ping` : `${icon(STATUS[level].icon, 'sm')}${recentLoss}%`;
+      r.loss.title = unprobed ? quiet.get(t.target_id).why
+        : ignores ? 'Does not answer ping, but the hops after it do: traffic passes through it (many provider routers ignore ping)' : '';
     }
     if (has(w.min) && has(w.max)) {
       r.band.style.left = pct(w.min);
@@ -105,9 +109,10 @@ function updateHopMatrix(targets) {
     } else {
       r.band.style.width = '0';
       r.mark.hidden = true;
-      setText(r.rangeText, 'no reply');
+      setText(r.rangeText, unprobed ? 'not probed' : 'no reply');
     }
-    setText(r.last, lost ? (ignores ? 'no reply' : 'LOST') : ms(latest)); setClass(r.last, lost ? (ignores ? 'ink-muted' : 'ink-crit') : '');
+    if (unprobed) { setText(r.last, 'not probed'); setClass(r.last, 'ink-muted'); }
+    else { setText(r.last, lost ? (ignores ? 'no reply' : 'LOST') : ms(latest)); setClass(r.last, lost ? (ignores ? 'ink-muted' : 'ink-crit') : ''); }
     setText(r.jitter, ms(t.jitter_ms));
     // loss_pct is rounded to 0.1 %: a few lost probes among many read 0.0, so the count decides
     const totalPct = totalLost > 0 && t.loss_pct < 0.1 ? '<0.1' : t.loss_pct;

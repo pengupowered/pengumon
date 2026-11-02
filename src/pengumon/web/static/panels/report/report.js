@@ -3,16 +3,17 @@
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';
 import { escapeHtml, percentText, targetList } from '../../js/util.js';
-import { IGNORES_PING, IGNORES_PING_WHY, ignoringPing, median, quietKey, shortLabels } from '../../js/path.js';
+import { median, quietKey, quietTargets, shortLabels } from '../../js/path.js';
 
 let shown = null; // the last report and where it went, drawn again when the hops that ignore ping change
-let quiet = new Set();
+let quiet = new Map(); // target id -> its neutral words (path.js quietTargets)
 
-// A hop that ignores ping (path.js ignoringPing, from the live `targets` topic) is listed with those words instead of an
-// availability that is only its unanswered pings, and never stands in for the internet figure.
+// A hop that ignores ping (path.js quietTargets, from the live `targets` topic) is listed with those words instead of an
+// availability that is only its unanswered pings, and never stands in for the internet figure; so is an IPv6 target
+// while this host has no IPv6, with its own words.
 export function followQuietHops() {
   return bus.subscribe('targets', (targets) => {
-    const next = ignoringPing(targets);
+    const next = quietTargets(targets);
     if (quietKey(next) === quietKey(quiet)) return;
     quiet = next;
     if (shown && shown.out.isConnected) renderReport(shown.out, shown.report);
@@ -88,7 +89,8 @@ function renderReport(out, report) {
   const daysNote = peak > 0 ? `Worst: ${escapeHtml(dayName(days[peakDay]))} ${escapeHtml(days[peakDay])}, ${fmtPct(peak)} lost` : 'No probe lost on any day';
   const hopRows = hops.map((h) => {
     if (quiet.has(h.target_id)) {
-      return `<tr><td class="lead">${hopName(h)}</td><td class="r aside muted" title="${escapeHtml(IGNORES_PING_WHY)}">${IGNORES_PING}</td>`
+      const q = quiet.get(h.target_id);
+      return `<tr><td class="lead">${hopName(h)}</td><td class="r aside muted" title="${escapeHtml(q.why)}">${escapeHtml(q.word)}</td>`
         + '<td class="r num" data-l="Worst day">–</td></tr>';
     }
     let worst = null;

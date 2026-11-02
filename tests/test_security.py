@@ -24,6 +24,7 @@ from pengumon import paths
 from pengumon.security import SESSION_COOKIE, SESSIONS_PATH, FileSessionStore, SecurityConfig
 
 from device_helpers import build_modem, build_router
+from platform_helpers import assert_mode
 
 TOKEN = "s3cret-token"
 
@@ -151,7 +152,7 @@ def test_secrets_file_mode_and_merge(tmp_path):
     path = tmp_path / "data" / "secrets.json"
     secrets_module.update_secrets({"devices": {"modem": {"password": "a"}}}, path)
     secrets_module.update_secrets({"devices": {"router": {"password": "b"}}}, path)
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert_mode(path, 0o600)
     assert json.loads(path.read_text()) == {"devices": {"modem": {"password": "a"}, "router": {"password": "b"}}}
     assert not list(path.parent.glob("*.tmp"))
 
@@ -164,7 +165,7 @@ async def test_credentials_endpoint_writes_secrets_0600(tmp_path, monkeypatch, a
     async with _client() as ac:
         res = await ac.post("/api/devices/modem/credentials", json={"password": "pw"})
     assert res.status_code == 200
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert_mode(path, 0o600)
 
 
 # -- rate limits --------------------------------------------------------------------------------
@@ -272,7 +273,7 @@ async def test_sign_out_and_sign_out_everywhere(sessions):
         assert (await ac.get("/api/status", headers=_cookie(other))).status_code == 401
         assert (await ac.get("/api/status", headers={"Authorization": f"Bearer {TOKEN}"})).status_code != 401
         assert json.loads(sessions.path.read_text())["not_before_ms"] > 0
-        assert stat.S_IMODE(os.stat(sessions.path).st_mode) == 0o600
+        assert_mode(sessions.path, 0o600)
         cross = await ac.post("/logout?everywhere=1", headers={"Origin": "http://evil.example", **_cookie(other)})
         assert cross.status_code == 403
 

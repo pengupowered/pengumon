@@ -1,5 +1,6 @@
 """Operations endpoints: host info, overall status, liveness, on-demand traceroute and the Prometheus /metrics."""
 
+import asyncio
 import time
 from typing import List
 
@@ -23,10 +24,11 @@ metrics_router = APIRouter()  # /metrics is outside /api
 
 @router.get("/info")
 async def get_network_info(request: Request, state: StateDep):
-    """Returns the host machine's LAN IP addresses and access URLs, and whether this browser may sign out (`session`:
-    signed in with the access token's cookie; and "everywhere", which ends every browser's sign-in)."""
+    """Returns the host machine's LAN IP addresses and access URLs, whether this browser may sign out (`session`:
+    signed in with the access token's cookie; and "everywhere", which ends every browser's sign-in), and how probes
+    are sent (`probe`: the ICMP backend and its RTT resolution in ms)."""
     port = state.config.server.port if state.config else 8000
-    lan_ips = get_lan_ips()
+    lan_ips = await asyncio.to_thread(get_lan_ips)  # a host name lookup: never on the event loop
     lan_urls = [f"http://{ip}:{port}" for ip in lan_ips]
     return {
         "port": port,
@@ -36,6 +38,8 @@ async def get_network_info(request: Request, state: StateDep):
         "primary_lan_url": lan_urls[0] if lan_urls else f"http://127.0.0.1:{port}",
         "isp_name": state.config.line.isp_name if state.config else None,
         "session": session_status(request),
+        # How probes are sent: {"backend", "resolution_ms", "error", "fix"} (NetworkProber.probe_method)
+        "probe": state.prober.probe_method() if state.prober else None,
     }
 
 
@@ -51,7 +55,7 @@ async def get_system_status(state: StateDep):
 async def run_traceroute(state: StateDep, req: TracerouteRequest = Body(...)):
     """Triggers an on-demand hop-by-hop traceroute to discover path routers with validation."""
     known_targets = state.config.targets if state.config else None
-    engine = MtrEngine(target_host=req.target_host, known_targets=known_targets)
+    engine = MtrEngine(target_host=req.target_host, known_targets=known_targets, family=req.family)
     return await engine.run_trace()
 
 
@@ -67,9 +71,6 @@ async def get_health(response: Response, state: StateDep):
         return {"status": "ok", "version": __version__}
     response.status_code = 503
     return {"status": "unhealthy", "reason": reason, "version": __version__}
-
-
-metrics_router = APIRouter()
 
 
 @metrics_router.get("/metrics")

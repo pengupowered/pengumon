@@ -1,12 +1,13 @@
-"""Host validation for ping and traceroute: option-like values are refused before any process starts."""
+"""Host validation for probe targets and traceroute: option-like and malformed values are refused, and never reach
+the ICMP backend."""
 
-import asyncio
 from pathlib import Path
 
 import pytest
 from httpx import AsyncClient, ASGITransport
 from pydantic import ValidationError
 
+from icmp_fakes import FakeBackend
 from pengumon.config import load_config
 from pengumon.engine.mtr import MtrEngine
 from pengumon.engine.prober import NetworkProber
@@ -43,10 +44,14 @@ def test_option_like_and_bad_hosts_rejected(host):
 
 def test_config_yaml_targets_still_validate():
     root = Path(__file__).resolve().parents[1]
-    cfg = load_config(str(root / "config.example.yaml"))
-    assert cfg.targets
-    for target in cfg.targets:
-        assert validate_host(target.address) == target.address
+    import yaml
+
+    text = (root / "config.example.yaml").read_text(encoding="utf-8")
+    block = text[text.index("# targets:"):text.index("dns_probes:")]  # the documented targets, commented out
+    targets = yaml.safe_load("\n".join(l[2:] if l.startswith("# ") else "" for l in block.split("\n")))["targets"]
+    assert targets
+    for target in targets:
+        assert validate_host(target["address"]) == target["address"]
 
 
 @pytest.mark.asyncio
@@ -64,62 +69,25 @@ async def test_add_target_rejects_option_address():
         assert res.status_code == 422
 
 
-class _FakeProc:
-    returncode = 1
-
-    async def communicate(self):
-        return b"", b""
-
-
-def _recording_exec(calls):
-    async def fake_exec(*cmd, **kwargs):
-        calls.append(list(cmd))
-        return _FakeProc()
-    return fake_exec
+@pytest.mark.asyncio
+async def test_an_option_like_or_bad_address_never_reaches_the_backend():
+    """No program is started any more (the backend sends ICMP itself), but a target built without validation still
+    never gets as far as a send: the prober only hands the backend an IPv4 literal."""
+    backend = FakeBackend()
+    prober = NetworkProber(ping_timeout=0.5, history_window=5, backend=backend)
+    for address in ("-f", "--help", "1.1.1.1 && whoami"):
+        sample = await prober.probe_icmp(TargetConfig.model_construct(id="t1", name="n", address=address, enabled=True))
+        assert sample.success is False and sample.error == "invalid address"
+    assert backend.sent == []
 
 
 @pytest.mark.asyncio
-async def test_linux_ping_argv_has_double_dash(monkeypatch):
-    calls = []
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(calls))
-    prober = NetworkProber(ping_timeout=1.0, history_window=5)
-    prober._is_windows = False
-    await prober._system_ping_fallback(TargetConfig(id="t1", name="n", address="1.1.1.1"), 0.0)
-    assert calls[0][-2:] == ["--", "1.1.1.1"]
-
-
-@pytest.mark.asyncio
-async def test_windows_ping_argv_unchanged(monkeypatch):
-    calls = []
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(calls))
-    prober = NetworkProber(ping_timeout=1.0, history_window=5)
-    prober._is_windows = True
-    await prober._system_ping_fallback(TargetConfig(id="t1", name="n", address="1.1.1.1"), 0.0)
-    assert calls[0] == ["ping", "-n", "1", "-w", "1000", "1.1.1.1"]
-
-
-@pytest.mark.asyncio
-async def test_ping_guard_for_constructed_target(monkeypatch):
-    calls = []
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(calls))
-    prober = NetworkProber(ping_timeout=1.0, history_window=5)
-    prober._is_windows = False
-    target = TargetConfig.model_construct(id="t1", name="n", address="-f")
-    sample = await prober._system_ping_fallback(target, 0.0)
-    assert sample.success is False
-    assert sample.error == "invalid address"
-    assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_linux_traceroute_argv_has_double_dash(monkeypatch):
-    calls = []
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(calls))
-    monkeypatch.delenv("PENGUMON_TRACE_BRIDGE", raising=False)
-    engine = MtrEngine(target_host="1.1.1.1")
-    engine._is_windows = False
-    assert await engine._trace_linux() == []
-    assert calls[0][-2:] == ["--", "1.1.1.1"]
+async def test_an_option_like_trace_host_never_reaches_the_backend():
+    backend = FakeBackend()
+    engine = MtrEngine(target_host="1.1.1.1", backend=backend)
+    engine.target_host = "-f"  # past the constructor's check
+    assert await engine.run_trace() == []
+    assert backend.sent == []
 
 
 def test_mtr_engine_refuses_option_host():

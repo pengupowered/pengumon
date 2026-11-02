@@ -4,6 +4,15 @@ export const subject = "panel:latency";
 export const variants = ["full"];
 
 export const steps = [
+  ["the chart says \"1 ms resolution\" only where the backend times in whole milliseconds", async ({ eq, page, until, variant }) => {
+    const coarse = variant === "longpath"; // serve.py's stand-in: windows-icmpapi, 1 ms; otherwise kernel timestamps
+    if (coarse) await until(() => !document.getElementById("probeResolution").hidden);
+    else await until(() => window.document.readyState === "complete"); // hidden from the start; nothing to wait for
+    eq("resolution note shown", await page.$eval("#probeResolution", (n) => !n.hidden), coarse);
+    if (coarse) eq("resolution note", await page.$eval("#probeResolution", (n) => n.textContent.trim()), "· 1 ms resolution");
+    eq("the mode label is unchanged", await page.$eval("#chartModeLabel", (n) => n.textContent), "last 60 s · every probe");
+  }, { variants: ["full", "longpath"] }],
+
   ["live chart is fed by the websocket", async ({ chartLabels, eq, hasChart, ok, page, text, until }) => {
     await hasChart("latencyChart");
     await hasChart("lossChart");
@@ -74,5 +83,30 @@ export const steps = [
     await click('#latencyViewButtons button[data-arg="targets"]');
     await until(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.filter((d) => String(d.id).startsWith("t:")).length === 8);
     ok("ISP hops in the legend", /ISP hop 1.*ISP hop 2.*ISP hop 3/.test(await text("#latencyLegend")));
+  }, { variants: ["longpath"] }],
+
+  ["the Internet line covers the IPv4 servers only; the IPv6 group is a line of its own, as on Path health", async ({ click, eq, ok, page, stubFetch, until }) => {
+    const live = await page.evaluate(async () => (await (await fetch("/api/targets")).json()));
+    const publics = live.filter((t) => t.category === "public");
+    const v6 = publics[publics.length - 1].target_id;
+    const marked = live.map((t) => (t.target_id === v6 ? { ...t, group: "internet_v6", address: "2001:db8::53" } : { ...t, group: t.group || "" }));
+    await stubFetch({ "GET /api/targets": { body: marked } });
+    try {
+      await click('#latencyViewButtons button[data-arg="path"]');
+      await until(() => /Internet \(IPv6\)/.test(document.getElementById("latencyLegend")?.textContent ?? ""));
+      const items = await page.$$eval("#latencyLegend .lg", (els) => els.map((e) => e.textContent));
+      const v4 = items.find((t) => /^Internet(?! \(IPv6\))/.test(t));
+      ok(`Internet is the median of the two IPv4 servers: ${v4}`, v4 && /median of .+, .+/.test(v4) && !/median of .+, .+, .+/.test(v4));
+      const sets = await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.map((d) => d.id).join());
+      ok(`a separate IPv6 series (${sets})`, /path_internet,/.test(sets) && /path_internet_v6/.test(sets));
+      const lines = await page.evaluate(() => {
+        const c = Chart.getChart(document.getElementById("latencyChart"));
+        const i = c.data.labels.length - 1;
+        return ["path_internet", "path_internet_v6"].map((id) => c.options.plugins.tooltip.callbacks.afterLabel({ dataset: { id }, dataIndex: i }).length);
+      });
+      eq("tooltip members: two IPv4 servers, and the IPv6 one alone", JSON.stringify(lines), JSON.stringify([2, 0]));
+    } finally {
+      await stubFetch(null);
+    }
   }, { variants: ["longpath"] }],
 ];

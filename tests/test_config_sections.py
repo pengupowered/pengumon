@@ -3,6 +3,7 @@ only AppConfig (one line per section), the two core sections and the YAML loadin
 pengumon.config to reach its own settings."""
 
 import ast
+import os
 import subprocess
 import sys
 import typing
@@ -71,5 +72,10 @@ def test_only_the_app_imports_pengumon_config():
 def test_each_settings_module_imports_first_without_a_cycle(module):
     """Imported first in a fresh interpreter, so an import cycle that a different import order hides shows up."""
     run = subprocess.run([sys.executable, "-c", f"import {module}"], capture_output=True, text=True, timeout=60,
-                         env={"PYTHONPATH": str(SRC.parent), "PATH": "/usr/bin:/bin"})
+                         env={"PYTHONPATH": str(SRC.parent), "PATH": "/usr/bin:/bin",
+                              # Windows: without SYSTEMROOT, Winsock (asyncio's _overlapped) cannot load at all, and
+                              # without the profile variables there is no home directory
+                              **{k: os.environ[k] for k in ("SYSTEMROOT", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+                                                            "LOCALAPPDATA", "APPDATA", "TEMP", "TMP")
+                                 if k in os.environ}})
     assert run.returncode == 0, run.stderr[-2000:]

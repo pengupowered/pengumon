@@ -1,0 +1,41 @@
+<!-- Path editor: the probe path as a draft (dialog.js); nothing goes live until Apply -->
+<div class="modal" id="pathEditorModal" role="dialog" aria-modal="true" aria-labelledby="pathEditorTitle">
+  <div class="modal-content" style="--w: 860px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-path"/></svg><h2 class="modal-t" id="pathEditorTitle">Edit the probe path</h2><span class="modal-m" id="pathEditorMeta">nothing changes until Apply</span>
+      <button type="button" class="btn icon m-close" data-action="cancelPathEditor" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <p class="lead-p">The hops pengumon probes every second, nearest first. Rename them, change their role, reorder, group or remove them, or add one by its address; <b>Apply</b> makes the new path live. A removed hop stops being probed and its history is kept, hidden.</p>
+      <div id="pathEditorNote" role="status" aria-live="polite"></div>
+      <ol class="pe-hops" id="pathEditorHops" aria-label="Hops in path order, nearest first"></ol>
+      <div class="pe-removed" id="pathEditorRemoved" hidden></div>
+      <form class="pe-add" id="pathAddForm" data-submit="addPathHop" novalidate>
+        <h3 class="section-t">Add a hop</h3>
+        <div class="pe-add-row">
+          <div class="field grow"><label for="pathAddAddress">Address</label><input class="input mono" type="text" id="pathAddAddress" placeholder="198.51.100.1 or example.com" maxlength="255" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="pathAddMsg"></div>
+          <div class="field"><label for="pathAddRole">Role</label><select class="input" id="pathAddRole"></select></div>
+          <div class="field"><label for="pathAddFamily">A host name as</label><select class="input" id="pathAddFamily"><option value="4" selected>IPv4</option><option value="6">IPv6</option></select></div>
+          <div class="field"><label for="pathAddPosition">Where</label><select class="input" id="pathAddPosition"></select></div>
+          <button type="submit" class="btn outline" id="btnAddPathHop"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span>Add</span></button>
+        </div>
+        <span class="hint" id="pathAddMsg">An IPv4 or IPv6 address, or a host name (probed at its IPv4 or IPv6 address, as picked). Test it before you apply.</span>
+      </form>
+      <div class="pe-disc">
+        <h3 class="section-t">Rediscover</h3>
+        <p class="fine top">Traces the path to 1.1.1.1, 8.8.8.8 and 9.9.9.9 and proposes every hop with a role and the reasons for it, compared with the path above. Nothing is applied until you press Apply.</p>
+        <label class="check"><input type="checkbox" id="pathDiscAsn" checked> Look up who operates each hop</label>
+        <p class="fine pe-disclose">Sends the public hop addresses the trace found (never a private address from your network), as DNS queries through your resolver, to Team Cymru's public lookup service, which answers with the network that operates each one.</p>
+        <label class="check"><input type="checkbox" id="pathDiscSnmp"> Ask devices over SNMP (community "public")</label>
+        <div><button type="button" class="btn outline sm" id="btnRediscover" data-action="rediscoverPath"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span>Rediscover</span></button></div>
+      </div>
+    </div>
+    <footer class="modal-f">
+      <div class="left">
+        <a class="btn sm" id="pathExportLink" href="/api/path/export" download="pengumon-path.yaml"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export</a>
+        <button type="button" class="btn sm" data-action="importPath"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Import</button>
+        <input type="file" id="pathImportFile" accept=".yaml,.yml,text/yaml,application/yaml" data-change="importPathFile" hidden>
+      </div>
+      <button type="button" class="btn" data-action="cancelPathEditor">Cancel</button>
+      <button type="button" class="btn primary" id="btnApplyPath" data-action="applyPath"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg><span>Apply</span></button>
+    </footer>
+  </div>
+</div>

@@ -12,7 +12,11 @@ def test_load_default_config():
     assert config.server.port == 8000
 
 
-def test_config_target_categories():
+def test_config_target_categories(monkeypatch):
+    # the gateway target needs a known gateway: the route table on Linux, the first router elsewhere (which a CI
+    # runner's network may not show); a fixed one here
+    import pengumon.config
+    monkeypatch.setattr(pengumon.config, "get_default_gateway_ip", lambda: "192.168.1.1")
     config = load_config("non_existent_path.yaml")
     categories = {t.category for t in config.targets}
     assert "local" in categories

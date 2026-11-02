@@ -110,4 +110,60 @@ export const steps = [
     await until(() => document.querySelectorAll("#stripsBody .strip-quiet").length === 0);
     ok("answering again: blocks again", (await text("#stripsBody")).includes("%"));
   }],
+
+  ["an IPv6 target while this host has no IPv6 is neutral on the path, in Uptime, Hop details and its history, with its own words", async ({ click, eq, ok, page, text, until }) => {
+    await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
+    // the internet target as an IPv6 one the server cannot probe (engine/prober.py): its last figures are stale, its
+    // stale status "down" must not show; and a second public target keeps answering, so the Internet node stays judged
+    await page.evaluate(() => {
+      window.__smokeMutate = (d) => d.targets.forEach((t) => {
+        if (t.target_id === "cloudflare_dns") Object.assign(t, { address: "2606:4700:4700::1111", status: "down", last_ms: null, recent_latencies: Array(30).fill(null), loss_pct: 100, loss_recent_pct: 100, ipv6_unavailable: true });
+      });
+    });
+    await until(() => document.querySelector("#pathChain .node[data-node^='Internet'] .node-st")?.title === "IPv6 unavailable on this host");
+    const node = await page.$eval("#pathChain .node[data-node^='Internet']", (n) => ({ cls: n.className, val: n.querySelector(".node-val").textContent,
+      meta: n.querySelector(".node-meta").textContent, why: n.querySelector(".node-meta span").title }));
+    ok(`the Internet node is neutral, not down (${node.cls})`, /st-unknown/.test(node.cls) && !/alert/.test(node.cls));
+    eq("it says it is not probed", node.val, "Not probed");
+    eq("and why, in a line", node.meta, "not probed · no IPv6 here");
+    ok("the tooltip says it is no outage and is checked again", /not an outage/.test(node.why) && /every few minutes/.test(node.why));
+    await until(() => document.querySelectorAll("#stripsBody .strip-quiet").length === 1);
+    const row = await page.evaluate(() => {
+      const quiet = document.querySelector("#stripsBody .strip-quiet");
+      return { name: quiet.previousElementSibling.querySelector("span").textContent, text: quiet.textContent, pct: quiet.nextElementSibling.textContent, cells: quiet.querySelectorAll("button, .cell").length };
+    });
+    eq("the internet's uptime row", row.name, "Internet");
+    ok(`with the same words (${row.text})`, /^IPv6 unavailable on this host · not probed, not counted$/.test(row.text));
+    eq("no availability, no blocks", `${row.pct}|${row.cells}`, "–|0");
+    const hop = await page.evaluate(() => {
+      const tr = [...document.querySelectorAll("#hopMatrixBody tr")].find((r) => r.textContent.includes("Cloudflare"));
+      return { loss: tr.querySelector("[data-f=loss]").textContent, title: tr.querySelector("[data-f=loss]").title, last: tr.querySelector("[data-f=last]").textContent };
+    });
+    eq("Hop details: no IPv6, not LOST", `${hop.loss}|${hop.last}`, "no IPv6|not probed");
+    ok("Hop details explains it", /no IPv6 route/.test(hop.title));
+    await click("#stripsBody .s-name[data-arg=cloudflare_dns]");
+    await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
+    await until(() => document.querySelector("#targetHistStrip .strip-quiet") && /IPv6 unavailable/.test(document.querySelector("#targetHistStats .val").textContent));
+    eq("its history counts no availability or loss", await page.$$eval("#targetHistStats .val", (v) => `${v[3].textContent}|${v[4].textContent}`), "–|–");
+    await click("[data-action=closeModal][data-arg=targetHistModal]");
+    // a second public target that answers: the Internet node is judged by it alone; when it fails too, it is down
+    const second = (status) => page.evaluate((st) => {
+      window.__smokeMutate = (d) => {
+        const cf = d.targets.find((t) => t.target_id === "cloudflare_dns");
+        Object.assign(cf, { status: "up", last_ms: 50, recent_latencies: Array(30).fill(50), loss_pct: 0, loss_recent_pct: 0, ipv6_unavailable: true });
+        const down = st === "down";
+        d.targets.push({ ...cf, target_id: "x_quad9", name: "Public: Example Resolver (192.0.2.9)", address: "192.0.2.9", ipv6_unavailable: false, status: st,
+          last_ms: down ? null : 10, recent_latencies: Array(30).fill(down ? null : 10), loss_pct: down ? 100 : 0, loss_recent_pct: down ? 100 : 0 });
+      };
+    }, status);
+    await second("up");
+    await until(() => /^10\.0ms$/.test(document.querySelector("#pathChain .node[data-node^='Internet'] .node-val")?.textContent ?? ""));
+    eq("the unprobed target's stale 50 ms is no part of the Internet figure", await text("#pathChain .node[data-node^='Internet'] .node-val"), "10.0ms");
+    await second("down");
+    await until(() => /st-crit/.test(document.querySelector("#pathChain .node[data-node^='Internet']")?.className ?? ""));
+    ok("its stale \"up\" does not keep the Internet node up", /st-crit/.test(await page.$eval("#pathChain .node[data-node^='Internet']", (n) => n.className)));
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    await until(() => document.querySelectorAll("#stripsBody .strip-quiet").length === 0);
+    ok("IPv6 back: blocks again", (await text("#stripsBody")).includes("%"));
+  }],
 ];

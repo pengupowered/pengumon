@@ -55,7 +55,7 @@ class OutageClassifier:
         self.on_incident_resolved = on_incident_resolved
         self.config = config
         self.repository = repository
-        self.known_targets = known_targets or []
+        self.known_targets = known_targets if known_targets is not None else []  # shared: a path edit updates it
         self.load = load
         self.line = wording(line_technology)  # how access-line faults are described (pengumon.lines)
         self.tracker = IncidentTracker(config, repository)

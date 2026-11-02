@@ -117,3 +117,8 @@ button.node:hover { transform: translateY(-2px); border-color: var(--line-strong
   .node { grid-template-areas: "top top top" "name name name" "val meta spark"; }
   .node-spark { grid-area: spark; width: 100%; max-width: 150px; justify-self: end; margin: 0; }
 }
+
+/* the first-run banner: a discovered path to review (panel.js firstRun) */
+.path-banner { margin: var(--sp-3) 0 0; }
+.path-banner .result { align-items: center; flex-wrap: wrap; }
+.path-banner .result > span { flex: 1 1 240px; min-width: 0; }

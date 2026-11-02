@@ -22,7 +22,7 @@ class CategoryMetrics:
     """Rolling loss, latency and jitter of one target category, over the last WINDOW probes of each target."""
 
     category: str
-    targets: Tuple[TargetStats, ...]  # enabled targets of the category, in stats order
+    targets: Tuple[TargetStats, ...]  # enabled targets of the category, in stats order (not ipv6_unavailable)
     loss_pct: float
     avg_latency_ms: Optional[float]
     jitter_ms: Optional[float]
@@ -126,7 +126,8 @@ def round_metrics(stats: Dict[str, TargetStats], samples: List[ProbeSample]) -> 
     """All category metrics for one round, from one pass over the stats and one over the samples."""
     targets: Dict[str, List[TargetStats]] = {c: [] for c in CATEGORIES}
     for st in stats.values():
-        if st.enabled and st.category in targets:
+        # an IPv6 target while this host has no IPv6 is not probed: its last window is no evidence either way
+        if st.enabled and st.category in targets and not st.ipv6_unavailable:
             targets[st.category].append(st)
 
     cat_samples: Dict[str, List[ProbeSample]] = {c: [] for c in CATEGORIES}

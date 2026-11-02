@@ -6,7 +6,9 @@ ICMP and DNS probes always succeed, with a latency that wiggles so sparklines ch
 slow DOCSIS and router collectors answer with fixed snapshots instead of calling a modem and a router, graded the way the
 real monitors grade them. A device with the id "router2" answers as a second, quieter router (the `tworouters`
 variant); PENGUMON_SMOKE_LINE_TECHNOLOGY turns the modem driver into another line technology (the `unknownline`
-variant: the page has no adapter for it).
+variant: the page has no adapter for it). The ICMP backend is a stand-in that only names itself: "linux-dgram" with
+kernel timestamps, or, with PENGUMON_SMOKE_PROBE_RESOLUTION_MS (the `longpath` variant), "windows-icmpapi" with that
+resolution (the latency panel then says so); it answers the path editor's test probes.
 """
 import os
 
@@ -16,6 +18,7 @@ import time
 import uvicorn
 
 from pengumon.devices.device import Device
+from pengumon.engine.icmp_base import ProbeResult
 from pengumon.engine.prober import NetworkProber
 from pengumon.capabilities import BAND_2G, BAND_5G, Client, ClientsReading, MeshNode, MeshReading
 from pengumon.drivers.xfinity_xb import XfinityXbDriver
@@ -87,6 +90,24 @@ async def probe_icmp(self, target):
                        latency_ms=1.0 + (sum(map(ord, target.id)) % 7) / 10 + int(time.time() * 1000) % 4 / 10, jitter_ms=0.2)
 
 
+class StandInBackend:
+    """What /api/info reports as the ICMP backend. The prober never asks it (probe_icmp above answers instead); the path
+    editor's Test button does, and every address answers in 1.5 ms."""
+
+    def __init__(self, resolution_ms: float):
+        self.resolution_ms = resolution_ms
+        self.name = "windows-icmpapi" if resolution_ms >= 1 else "linux-dgram"
+
+    async def probe(self, address: str, *, timeout: float, ttl: int = 64) -> ProbeResult:
+        return ProbeResult("reply", address, 1.5)
+
+    def close(self) -> None:
+        pass
+
+
+STAND_IN_BACKEND = StandInBackend(float(os.environ.get("PENGUMON_SMOKE_PROBE_RESOLUTION_MS") or 0.001))
+
+
 async def probe_dns(self, dns_cfg):
     if not dns_cfg.enabled:
         return None
@@ -122,10 +143,75 @@ async def device_poll(self, force=False, **_):
     return self.monitor.latest_snapshot
 
 
+# ---- network discovery (engine/discovery) runs for real on a made-up network: these replace only what it sends ----
+# Three traces through a home router (an AsusWRT front page), two provider hops (names and AS numbers in DNS), then
+# each public server; this host "has IPv6" but its IPv6 traces get no answer, so the IPv6 servers are proposed as a
+# group of their own. The dashboard's targets (all 127.0.0.1) answer ping, so the home ones stay.
+DISCOVERY_SHARED = [("192.168.1.1", 0.6), ("198.51.100.1", 9.4), ("198.51.100.2", 11.2)]
+DISCOVERY_DNS = {
+    "1.100.51.198.in-addr.arpa": ("PTR", ["lag-1.edge1.city.example.net."]),
+    "2.100.51.198.in-addr.arpa": ("PTR", ["be-10.core1.city.example.net."]),
+}
+
+
+async def fake_trace(host):
+    from pengumon.engine.mtr import TracerouteHop
+    if ":" in host:
+        return []
+    hops = DISCOVERY_SHARED + [(host, 14.0)]
+    return [TracerouteHop(hop_number=n, ip=a, rtt_ms=r) for n, (a, r) in enumerate(hops, start=1)]
+
+
+async def fake_dns(qname, rdtype):
+    from pengumon.engine.discovery.lookups import origin_name
+    for address in ("198.51.100.1", "198.51.100.2"):
+        if qname == origin_name(address) and rdtype == "TXT":
+            return ["64500 | 198.51.100.0/24 | ZZ | arin | 2001-01-01"]
+    if qname == "AS64500.asn.cymru.com" and rdtype == "TXT":
+        return ["64500 | ZZ | arin | 2001-01-01 | EXAMPLE-NET - Example Networks, ZZ"]
+    kind, answer = DISCOVERY_DNS.get(qname, (None, []))
+    return list(answer) if kind == rdtype else []
+
+
+def fake_lan_client():
+    import httpx
+
+    def handler(request):
+        if request.url.host == "192.168.1.1" and request.url.scheme == "http":
+            return httpx.Response(200, text="<HTML><HEAD><script>window.top.location.href='/Main_Login.asp';</script></HEAD></HTML>",
+                                  headers={"content-type": "text/html"})
+        raise httpx.ConnectError("connection refused", request=request)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False)
+
+
+async def no_ssdp():
+    return []
+
+
+async def no_snmp(address):
+    return None
+
+
+async def answers_ping(address):
+    return address == "127.0.0.1"
+
+
+def discovery_deps(**kwargs):
+    from pengumon.engine.discovery.engine import Deps
+    return Deps(trace=fake_trace, query=fake_dns, http_client=fake_lan_client, ssdp=no_ssdp, snmp_get=no_snmp,
+                gateway=lambda: "192.168.1.1", ping=answers_ping, ipv6=lambda: None, **kwargs)
+
+
+import pengumon.engine.discovery.component as discovery_component  # noqa: E402
+
+discovery_component.Deps = discovery_deps
+
 if os.environ.get("PENGUMON_SMOKE_LINE_TECHNOLOGY"):
     XfinityXbDriver.line_technology = os.environ["PENGUMON_SMOKE_LINE_TECHNOLOGY"]
 NetworkProber.probe_icmp = probe_icmp
 NetworkProber.probe_dns = probe_dns
+NetworkProber.backend = lambda self: STAND_IN_BACKEND
 Device.poll = device_poll
 
 

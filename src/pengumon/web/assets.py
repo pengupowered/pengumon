@@ -19,7 +19,9 @@ TEMPLATES_DIR = WEB_DIR / "templates"
 
 
 def not_served(asset_path: str) -> bool:
-    """The panel and dialog folders hold templates and manifests next to their assets; those are not files to serve."""
+    """The panel and dialog folders hold templates and manifests next to their assets; those are not files to serve.
+    Starlette hands the plain /static mount an OS path (backslashes on Windows), the versioned route a URL path."""
+    asset_path = asset_path.replace("\\", "/")
     return asset_path.startswith(("panels/", "dialogs/")) and asset_path.endswith(NOT_SERVED)
 
 

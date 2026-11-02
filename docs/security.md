@@ -6,7 +6,8 @@ address, `localhost`, a single-label name, a `.local/.lan/.home.arpa/.internal` 
 `PENGUMON_ALLOWED_HOSTS` (blocks DNS rebinding); state-changing requests must be same-origin; request bodies
 are size limited; the websocket checks Host, Origin and the token. Responses carry a strict CSP (scripts from
 `'self'` only, no inline scripts). `data/secrets.json` is written atomically with mode 0600. The traceroute and
-credential endpoints are rate limited.
+credential endpoints are rate limited. No external program is started for probing: ping and traceroute are sent by the
+app itself, to IPv4 or IPv6 addresses, after the host is validated.
 
 | Variable | Purpose |
 |---|---|
@@ -16,6 +17,14 @@ credential endpoints are rate limited.
 | `PENGUMON_MAX_BODY_BYTES` | Request body limit (default 262144) |
 | `PENGUMON_COOKIE_SECURE` | `1` when served over HTTPS (marks the session cookie `Secure`) |
 | `PENGUMON_SESSION_MAX_AGE_DAYS` | How long a sign-in lasts, enforced by the server (default 30; at least 1 hour (0.0417), at most 400; fractions allowed) |
+
+## Without an access token
+
+With no token, any device that can reach the port can change settings, including the probe path: it can remove hops and
+delete a removed hop's history (from 0.19 on, also the hops that came from `config.yaml`, which the API could not remove
+before). The default listens on this computer only, which is safe. If you open the dashboard to your network and other
+people's devices share it (guests, children's computers, smart-home gadgets), set `PENGUMON_ACCESS_TOKEN`
+([Opening the dashboard from other devices](install.md#opening-the-dashboard-from-other-devices)).
 
 ## Signing out
 

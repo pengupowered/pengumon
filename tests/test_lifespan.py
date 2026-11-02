@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from pengumon import main
+from platform_helpers import posix_signals
 from pengumon.db import retention
 from pengumon.db.repository import DatabaseRepository
 from pengumon.engine import probing
@@ -216,6 +217,7 @@ async def test_no_warning_when_every_stored_device_is_configured(tmp_path, monke
 
 # --- podman stop: SIGTERM ends the real server cleanly ---------------------------------------------------------------
 
+@posix_signals
 def test_sigterm_shuts_the_server_down_cleanly_within_podman_stops_grace_period(tmp_path):
     """`podman stop` sends SIGTERM and kills the container 10 s later. The real entry point (pengumon.main.main, as the
     image runs it) must run the whole lifespan shutdown in that time, without an error or a traceback, and end on the

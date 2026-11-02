@@ -2,7 +2,7 @@
 
 import { registerActions } from './dispatch.js';
 
-// Target order, names and colours come from /api/targets (config.yaml: targets, then DNS probes; `color` per target).
+// Target order, names and colours come from /api/targets (the probe path, then the DNS probes; `color` per target).
 // Both are filled by initTargets() before the first render and mutated in place, so importers keep their reference.
 export const canonicalTargetOrder = [];
 
@@ -36,6 +36,7 @@ export async function initTargets() {
     if (res.ok) {
       const targets = await res.json();
       if (Array.isArray(targets)) {
+        canonicalTargetOrder.length = 0; // in place: the path's order now (an applied edit can reorder or remove)
         let slot = 0;
         const taken = {}; // category -> the slots its targets have
         targets.forEach(t => {
@@ -48,11 +49,9 @@ export async function initTargets() {
             token = slot < SLOTS ? `--s${++slot}` : (free || '--ink-3');
             mine.add(token);
           }
-          targetMeta[tid] = { name: t.name || tid, category: t.category, address: t.address || '', enabled: t.enabled !== false,
+          targetMeta[tid] = { name: t.name || tid, category: t.category, address: t.address || '', enabled: t.enabled !== false, group: t.group || '',
             get color() { return t.color || tokenColor(token); } };
-          if (!canonicalTargetOrder.includes(tid)) {
-            canonicalTargetOrder.push(tid);
-          }
+          if (!canonicalTargetOrder.includes(tid)) canonicalTargetOrder.push(tid);
         });
       }
     }
@@ -151,6 +150,17 @@ export function openModal(id) {
 
 export function closeModal(id) {
   document.getElementById(id).classList.remove('active');
+}
+
+// Why the server would refuse a host (models/hosts.validate_host), in words, or '' when it would take it.
+const HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?)*\.?$/;
+export function hostProblem(v) {
+  if (!v) return 'Enter a host name or an IP address.';
+  if (/\s/.test(v) || v.startsWith('-')) return 'A host has no spaces and does not start with a dash.';
+  // an IPv6 address, a link-local one with its zone (fe80::1%eth0)
+  if (v.includes(':')) return /^[0-9A-Fa-f:.]+(%[A-Za-z0-9_.-]+)?$/.test(v) && (v.match(/:/g) || []).length >= 2 ? '' : 'That is not a valid IPv6 address.';
+  if (/^[0-9.]+$/.test(v)) return v.split('.').length === 4 && v.split('.').every((p) => p !== '' && Number(p) <= 255 && String(Number(p)) === p) ? '' : 'That is not a valid IPv4 address.';
+  return HOST_RE.test(v) && v.length <= 255 ? '' : 'That is not a valid host name.';
 }
 
 export function escapeHtml(text) {

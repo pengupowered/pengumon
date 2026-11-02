@@ -14,7 +14,6 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.29.0",
     "websockets>=12.0",
-    "icmplib>=3.0.4",
     "dnspython>=2.6.1",
     "aiosqlite>=0.20.0",
     "pydantic>=2.7.0",
@@ -34,6 +33,10 @@ dev = [
 
 [project.scripts]
 pengumon = "pengumon.cli:main"
+
+# Same command without a console window (Windows; elsewhere an ordinary script): what the logon task starts.
+[project.gui-scripts]
+pengumonw = "pengumon.cli:main"
 
 [tool.setuptools.dynamic]
 # The single source of the version (the tests run from src/ without installing, so metadata cannot be it).

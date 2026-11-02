@@ -8,12 +8,14 @@ import pytest
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.lines.docsis import channel_finding
 from pengumon.reports.dossier import DossierFacts, hop_note, render_dossier_markdown
+from platform_helpers import skip_without_tzset
 
 NOW = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 
 
 @pytest.fixture(autouse=True)
 def utc_clock(monkeypatch):
+    skip_without_tzset()
     monkeypatch.setenv("TZ", "UTC")
     time.tzset()
     yield

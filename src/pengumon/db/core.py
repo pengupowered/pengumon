@@ -4,7 +4,7 @@ the repository builds on. Holds the state the other mixins share (`_db`, the tar
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import aiosqlite
 
@@ -34,6 +34,8 @@ class RepositoryCore:
         # targets table cache (key <-> id); tiny, and only grows when a new target first reports.
         self._target_ids: Dict[str, int] = {}
         self._target_keys: Dict[int, str] = {}
+        # Hops removed from the path (db/path.py): their history is kept but left out of every per-target answer.
+        self.hidden_targets: Set[str] = set()
         # Probe samples are committed in batches (see insert_samples); 0 commits every call.
         self.sample_flush_seconds = sample_flush_seconds
         self._sample_buffer: List[ProbeSample] = []
@@ -55,6 +57,11 @@ class RepositoryCore:
     def target_key(self, target_id: int) -> str:
         """The key of a target id as stored in the samples tables (the id itself, as text, if none is known)."""
         return self._target_keys.get(target_id, str(target_id))
+
+    def shown(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The rows (each with a "target_id") of targets that are not hidden (removed from the path)."""
+        hidden = self.hidden_targets
+        return [r for r in rows if r["target_id"] not in hidden] if hidden else rows
 
     @property
     def incidents_version(self) -> int:
@@ -97,6 +104,8 @@ class RepositoryCore:
                 for target_id, key in await cursor.fetchall():
                     self._target_ids[key] = target_id
                     self._target_keys[target_id] = key
+            async with db.execute("SELECT id FROM path_targets WHERE deleted_at IS NOT NULL") as cursor:
+                self.hidden_targets = {row[0] for row in await cursor.fetchall()}
         # Needs the target map: the loss span of incidents closed above or by an older build (db/incidents.py).
         await self.backfill_incident_loss()
         logger.info(f"Database initialized at {self.db_path}")

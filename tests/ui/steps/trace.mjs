@@ -11,7 +11,7 @@ export const steps = [
   }],
 
   ["trace dialog: a real empty state, a trace lists hops, Monitor adds a hop as a target, a failure is shown", async ({ click, count, eq, ok, page, shots, shown, text, until, waitCount }) => {
-    // The trace and the add-target calls are answered by the page itself (no traceroute in the container, and adding a
+    // The trace and the add-target calls are answered by the page itself (the test app sends no ICMP, and adding a
     // target would change the row counts the later steps check); everything else goes to the server.
     await page.evaluate(() => {
       window.__posted = [];
@@ -22,10 +22,10 @@ export const steps = [
           window.__posted.push(["trace", body]);
           if (body.target_host === "bad.example") return Promise.resolve(new Response(JSON.stringify({ detail: "Traceroute failed" }), { status: 500 }));
           return Promise.resolve(new Response(JSON.stringify([
-            { hop_number: 1, ip: "192.0.2.10", rtt_ms: 0.6, label: "Hop 1: Local Router (192.0.2.10)" },
-            { hop_number: 2, ip: "198.51.100.1", rtt_ms: 9.6, label: "Hop 2: ISP Node / CMTS (198.51.100.1)" },
+            { hop_number: 1, ip: "192.0.2.10", rtt_ms: 0.6, label: "Hop 1" },
+            { hop_number: 2, ip: "198.51.100.1", rtt_ms: 9.6, label: "Hop 2" },
             { hop_number: 3, ip: null, rtt_ms: null, label: "Request Timed Out" },
-            { hop_number: 4, ip: body.target_host, rtt_ms: 11.6, label: "Transit Router" }]), { status: 200 }));
+            { hop_number: 4, ip: body.target_host, rtt_ms: 11.6, label: "Hop 4" }]), { status: 200 }));
         }
         if (opts && opts.method === "POST" && String(url).endsWith("/api/targets")) { window.__posted.push(["target", body]); return Promise.resolve(new Response("{}", { status: 200 })); }
         return window.__realFetch(url, opts);

@@ -58,6 +58,25 @@ export async function createContext({ base, outDir, variant }) {
       get onmessage() { return super.onmessage; }
     };
   });
+  // sessionStorage.smokeFetch = {"METHOD /path": {status, body}}: those calls are answered by the page itself from its first
+  // script on (stubFetch below sets it and reloads), e.g. a state the test server is not in; window.__stubbed lists them,
+  // and window.__fetched every call of that page load ([key, body]), stubbed or not.
+  await page.evaluateOnNewDocument(() => {
+    const raw = sessionStorage.getItem("smokeFetch");
+    if (!raw) return;
+    const stubs = JSON.parse(raw);
+    const real = window.fetch.bind(window);
+    window.__stubbed = [];
+    window.__fetched = [];
+    window.fetch = (url, opts = {}) => {
+      const key = `${(opts.method || "GET").toUpperCase()} ${new URL(String(url), location.href).pathname}`;
+      window.__fetched.push([key, opts.body ?? null]);
+      const hit = stubs[key];
+      if (!hit) return real(url, opts);
+      window.__stubbed.push([key, opts.body ?? null]);
+      return Promise.resolve(new Response(JSON.stringify(hit.body), { status: hit.status ?? 200, headers: { "content-type": "application/json" } }));
+    };
+  });
   const problems = [];
   const dialogs = [];
   // A step that ends the page's sign-in on purpose (expectRefusals(true)) expects 401s until it says otherwise.
@@ -113,6 +132,13 @@ export async function createContext({ base, outDir, variant }) {
   const phone = async (fn) => {
     await page.setViewport(PHONE);
     try { await pageReady(); await fn(); } finally { await page.setViewport(DESKTOP); await pageReady(); }
+  };
+  // the page answers these calls itself (see smokeFetch above) from a fresh load on; null: no stubs (and a fresh load)
+  const stubFetch = async (stubs) => {
+    await page.evaluate((s) => { if (s) sessionStorage.setItem("smokeFetch", JSON.stringify(s)); else sessionStorage.removeItem("smokeFetch"); }, stubs);
+    await page.reload({ waitUntil: "load" });
+    await waitText("#wsText", /^Live/);
+    await layoutMounted();
   };
   const noSideScroll = (modal) => page.evaluate((id) => { const b = document.querySelector(`#${id} .modal-b`); return b.scrollWidth <= b.clientWidth + 1; }, modal);
 
@@ -246,7 +272,7 @@ export async function createContext({ base, outDir, variant }) {
     browser, page, client, base, outDir, variant, bare, problems, dialogs, stats, report,
     LINE, ROUTER, USUAL_PANELS, PHONE, DESKTOP, SHOTS, systemTheme, fs, path,
     sleep, until, text, count, shown, visible, click, clickAt, waitText, waitCount, chartLabels, hasChart, modalOpen, eq, ok,
-    panelOrder, layoutMounted, openLayout, pageReady, phone, noSideScroll, setTheme,
+    panelOrder, layoutMounted, openLayout, pageReady, phone, noSideScroll, setTheme, stubFetch,
     shot, dialogShot, snap, shots, inspect, inspectNamed, canvasSig, inkedPixels, moduleUrl,
     popoverText, openHelp, signIn, signInWithToken, expectRefusals, resetPage, step,
   };

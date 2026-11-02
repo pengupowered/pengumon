@@ -5,11 +5,12 @@ from pengumon.db.clients import ClientQueries
 from pengumon.db.core import RepositoryCore
 from pengumon.db.devices import DeviceQueries
 from pengumon.db.incidents import IncidentQueries
+from pengumon.db.path import PathQueries
 from pengumon.db.probes import ProbeQueries
 from pengumon.db.targets import TargetQueries
 
 
 class DatabaseRepository(
-    ClientQueries, DeviceQueries, IncidentQueries, TargetQueries, ProbeQueries, RepositoryCore
+    ClientQueries, DeviceQueries, IncidentQueries, PathQueries, TargetQueries, ProbeQueries, RepositoryCore
 ):
     """Every method callers use is defined in one of the mixins; the shared connections and caches are RepositoryCore's."""

@@ -18,6 +18,15 @@ and `scripts/deploy.sh` waits up to 5 minutes (polling `/api/health`). The datab
 ~200 MB. It runs in a transaction, so a crash half-way simply repeats it on the next start. Back up the data
 volume before the first upgrade: going back to 0.1.x afterwards needs that backup.
 
+**The probe path (schema v13).** `path_targets(id, position, config, deleted_at, updated)` holds the targets the
+dashboard edits (one row per hop that is or was on the path; `config` is the target as JSON, so a new target field needs
+no migration). A hop removed in the path editor keeps its row with `deleted_at` set: it is not probed, and its samples
+and rollups stay but are left out of every per-target answer (history, report, uptime, dossier, loss grid) until
+`DELETE /api/path/history/{id}` deletes them. `meta` holds the path's `path_revision` (every applied edit adds one; an
+edit from an older revision is refused) and `path_initialised`, set by the one-time import of config.yaml's targets and
+the old `custom_targets` (kept, no longer written) so that import never runs twice. The import runs at start
+(`engine/path.py`), not in the migration, because it needs the config.
+
 **Device readings (schema v9).** Readings are stored per device id and kind of reading; no table names a vendor:
 
 * `device_samples(device_id, ts, status, error_kind, error_message, ...)` - one row per poll of a device, `WITHOUT

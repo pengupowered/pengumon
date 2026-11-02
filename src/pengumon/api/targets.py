@@ -1,11 +1,14 @@
-"""GET /api/targets, POST /api/targets and DELETE /api/targets/{id}: the probe targets and their statistics."""
+"""GET /api/targets, POST /api/targets and DELETE /api/targets/{id}: the probe targets and their statistics.
+
+POST and DELETE edit the stored probe path (engine/path.py) one hop at a time, for the add-target dialog and the
+trace dialog's Monitor button; the path editor (api/path.py) edits the whole path."""
 
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from pengumon.api.common import StateDep
-from pengumon.db.targets import MAX_CUSTOM_TARGETS
+from pengumon.engine.path import PathError, path_manager
 from pengumon.models.probes import TargetConfig, TargetStats
 from pengumon.security import rate_limit
 
@@ -22,43 +25,38 @@ async def get_targets(state: StateDep):
 
 @router.post("/targets", response_model=TargetConfig, dependencies=[Depends(rate_limit("targets", 20, 60))])
 async def add_target(target: TargetConfig, state: StateDep):
-    """Adds a custom target to the probe list. It is stored in the database, so it survives restarts."""
-    if not state.config or not state.prober or not state.repository:
+    """Adds a target at the end of the probe path. It is stored in the database and probed from the next round."""
+    manager = path_manager(state)
+    if manager is None:
         raise HTTPException(status_code=503, detail="Engine not ready")
 
-    # Check if ID exists
-    for t in state.config.targets:
-        if t.id == target.id:
-            raise HTTPException(status_code=400, detail="Target ID already exists")
+    def append(hops: List[TargetConfig]) -> List[TargetConfig]:
+        if any(t.id == target.id for t in hops):
+            raise PathError("Target ID already exists")
+        return [*hops, target]
 
-    if not await state.repository.add_custom_target(target):
-        if await state.repository.count_custom_targets() >= MAX_CUSTOM_TARGETS:
-            raise HTTPException(status_code=400, detail=f"At most {MAX_CUSTOM_TARGETS} custom targets are allowed")
-        raise HTTPException(status_code=400, detail="Target ID already exists")
-
-    state.config.targets.append(target)
-    state.prober.register_target(target)
+    try:
+        await manager.edit(append)
+    except PathError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
     return target
 
 
-@router.delete("/targets/{target_id}")
+@router.delete("/targets/{target_id}", dependencies=[Depends(rate_limit("targets", 20, 60))])
 async def delete_target(target_id: str, state: StateDep):
-    """Removes a custom target (and forgets it across restarts).
-
-    Targets from config.yaml are refused with 400: they are the configured hop layout the classifier relies
-    on, and the file would bring them back at the next start anyway. Set `enabled: false` there instead.
-    """
-    if not state.config or not state.prober or not state.repository:
+    """Removes a target from the probe path: it is no longer probed, and its history is kept but hidden (the path
+    editor can delete it)."""
+    manager = path_manager(state)
+    if manager is None:
         raise HTTPException(status_code=503, detail="Engine not ready")
 
-    if not await state.repository.delete_custom_target(target_id):
-        if any(t.id == target_id for t in state.config.targets):
-            raise HTTPException(
-                status_code=400,
-                detail="Targets defined in config.yaml cannot be deleted here; set enabled: false in the file",
-            )
-        raise HTTPException(status_code=404, detail="Unknown target")
+    def remove(hops: List[TargetConfig]) -> List[TargetConfig]:
+        if not any(t.id == target_id for t in hops):
+            raise LookupError(target_id)
+        return [t for t in hops if t.id != target_id]
 
-    state.config.targets[:] = [t for t in state.config.targets if t.id != target_id]  # in place: the classifier shares the list
-    state.prober.stats.pop(target_id, None)
+    try:
+        await manager.edit(remove)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Unknown target") from None
     return {"message": f"Target {target_id} removed"}

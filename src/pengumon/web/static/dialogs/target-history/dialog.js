@@ -12,7 +12,7 @@ import { registerActions } from '../../js/dispatch.js';
 import { badge, closeModal, escapeHtml, getTargetInfo, icon, openModal } from '../../js/util.js';
 import { token } from '../../js/chart-theme.js';
 import { bus } from '../../js/bus.js';
-import { IGNORES_PING, IGNORES_PING_STRIP, IGNORES_PING_WHY, ignoringPing, median as trueMedian, pathNodes } from '../../js/path.js';
+import { median as trueMedian, pathNodes, quietTargets } from '../../js/path.js';
 
 const RANGES = [[300, 'Live', 2], [900, '15 m', 10], [3600, '1 h', 30], [86400, '24 h', 600], [604800, '7 d', 3600]]; // seconds, label, bucket seconds
 const LIVE = 300;
@@ -189,16 +189,17 @@ function stripLabel(t, name) {
   return `${name}: ${bad} outage blocks, ${warn} degraded blocks, ${avail} available over 24 hours`;
 }
 
-// Where a hop that ignores ping would have its strip (path.js): the words Path health gives it, no blocks.
-const quietStrip = (name) => `<div class="strip-quiet" role="img" title="${escapeHtml(IGNORES_PING_WHY)}" aria-label="${escapeHtml(`${name}: ${IGNORES_PING_STRIP}`)}">${escapeHtml(IGNORES_PING_STRIP)}</div>`;
-const liveQuiet = () => ignoringPing(bus.last('targets') || []);
+// Where a hop that ignores ping, or an IPv6 target this host cannot probe, would have its strip (path.js quietTargets):
+// the words Path health gives it (`q`), no blocks.
+const quietStrip = (name, q) => `<div class="strip-quiet" role="img" title="${escapeHtml(q.why)}" aria-label="${escapeHtml(`${name}: ${q.strip}`)}">${escapeHtml(q.strip)}</div>`;
+const liveQuiet = () => quietTargets(bus.last('targets') || []);
 
 // The 24 h strip of this target and the figures that come with it: its latest block's status and availability.
 function renderUptime(data, id, name, quiet) {
   const box = document.getElementById('targetHistStrip');
   const t = data && data.targets.find((x) => x.target_id === id);
   if (quiet) {
-    box.innerHTML = `${quietStrip(name)}${data ? stripAxis(data) : ''}`;
+    box.innerHTML = `${quietStrip(name, quiet)}${data ? stripAxis(data) : ''}`;
     return null;
   }
   if (!t) {
@@ -215,7 +216,7 @@ function renderGroupUptime(data, members, quiet) {
   const rows = members.map((m) => {
     const t = data && data.targets.find((x) => x.target_id === m.id);
     const name = `<span class="tgt-sn" title="${escapeHtml(m.name)}">${escapeHtml(m.short)}</span>`;
-    if (quiet.has(m.id)) return `${name}${quietStrip(m.short)}<span class="num" title="${escapeHtml(`${IGNORES_PING}: not counted`)}">–</span>`;
+    if (quiet.has(m.id)) return `${name}${quietStrip(m.short, quiet.get(m.id))}<span class="num" title="${escapeHtml(`${quiet.get(m.id).word}: not counted`)}">–</span>`;
     if (!t) return `${name}<div class="tgt-none">no uptime record yet</div><span class="num">–</span>`;
     return `${name}<div class="strip" style="--n:${t.cells.length}" role="img" aria-label="${escapeHtml(stripLabel(t, m.short))}">${stripCells(data, t, m.short)}</div>`
       + `<span class="num">${num(t.availability_pct) ? `${t.availability_pct.toFixed(2)}%` : '–'}</span>`;
@@ -300,15 +301,15 @@ async function showOne(mine, id, rows, c, { end, bucket, uptime }) {
   const peaks = rows.map((r) => (hasBand ? at(r, c.p90) : r[c.lat])).filter(num);
   const [up, list] = await Promise.all([uptime, targets]);
   if (mine !== seq) return;
-  const quiet = liveQuiet().has(id);
+  const quiet = liveQuiet().get(id) || null; // its neutral words, or null
   const strip = renderUptime(up, id, info.name, quiet);
   const mine1 = Array.isArray(list) ? list.find((x) => (x.target_id || x.id) === id) : null;
   document.getElementById('targetHistMeta').textContent = mine1 ? `${CATEGORY[mine1.category] || mine1.category} · ${mine1.address}` : '';
   setStats([
-    quiet ? `<span title="${escapeHtml(IGNORES_PING_WHY)}">${badge('unknown', IGNORES_PING)}</span>` : stateBadge(strip ? strip.cells[strip.cells.length - 1] : null),
+    quiet ? `<span title="${escapeHtml(quiet.why)}">${badge('unknown', quiet.word)}</span>` : stateBadge(strip ? strip.cells[strip.cells.length - 1] : null),
     unit(median(rows.map((r) => r[c.lat])), 'ms'),
     unit(peaks.length ? Math.max(...peaks) : null, 'ms'),
-    quiet ? '–' : unit(lossOf(rows, c), '%', 2), // a hop that ignores ping: its loss counts nowhere, as on the path
+    quiet ? '–' : unit(lossOf(rows, c), '%', 2), // a neutral target: its loss counts nowhere, as on the path
     strip && num(strip.availability_pct) ? unit(strip.availability_pct, '%', 2) : '–'
   ]);
 }

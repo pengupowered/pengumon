@@ -22,7 +22,8 @@ makes one, and the `WHEEL_STAGE=wheel-prebuilt` build argument puts it in the im
   `podman diff` shows nothing written anywhere else;
 - `/api/health` reports the version in `src/pengumon/__init__.py`; `pengumon version` and `pengumon paths` show it and
   `/app/config.yaml`, `/app/data`, `/app/data/pengumon.db` and `0.0.0.0`;
-- an ICMP probe to 127.0.0.1 works from inside, and the app's own prober reports healthy;
+- an ICMP probe to 127.0.0.1 works from inside (the app's backend, on the raw socket), `pengumon doctor` exits 0, no
+  `ping` or `traceroute` program is installed, and the app's own prober reports healthy;
 - a versioned static asset (`/static/v/<hash>/...`) is served;
 - unless `--no-e2e`: the browser end to end check, `tests/ui/container-e2e.mjs`, run in `localhost/ui-test-runner:1` on the
   same network: the dashboard loads without page or console errors, the live indicator and the path chain go live, and a
@@ -33,13 +34,28 @@ the deployment does (`net.ipv4.ping_group_range`).
 
 ## CI jobs (`.github/workflows/ci.yml`)
 
-`unit` and `ui` run the two scripts above. `package` builds the wheel and sdist once, in the Dockerfile's build stage
-(the hash-locked build backend, `pip wheel --no-deps --no-build-isolation`), lists their contents in the job summary,
-checks the wheel has the dashboard files and no tests or config, and uploads them as the artifact `dist`.
-`container` (amd64 on `ubuntu-24.04`, arm64 on `ubuntu-24.04-arm`, no emulation) downloads `dist` and runs
-`scripts/test-container.sh --prebuilt`; the browser check runs on amd64 only for now (the runner image has not been
-seen building on the arm64 runner). `native-linux` installs the locked requirements and the wheel into a venv, starts
-`pengumon run` on 127.0.0.1 away from the checkout, and checks `/api/health` and the dashboard page.
+`unit` and `ui` run the two scripts above. `runner-image` builds the browser runner image once per change of its
+files and saves it in the Actions cache; `ui` and `container` restore it (only that job saves, so two jobs never race
+for one cache key). `package` builds the wheel and sdist once, in the Dockerfile's build stage (the hash-locked build
+backend, `pip wheel --no-deps --no-build-isolation`), lists their contents in the job summary, checks the wheel has the
+dashboard files and no tests or config, and uploads them as the artifact `dist`. `container` (amd64 on
+`ubuntu-24.04`, arm64 on `ubuntu-24.04-arm`, no emulation) downloads `dist` and runs
+`scripts/test-container.sh --prebuilt` on both; the browser end-to-end check runs on amd64 only.
+
+`native` runs on `ubuntu-24.04`, `ubuntu-24.04-arm`, a macOS runner and `windows-latest`, with no container: the unit
+suite from the hash-locked `requirements-dev.txt` (`PENGUMON_REQUIRE_ICMP=1`, so the tests that probe 127.0.0.1 for
+real fail instead of skipping when the OS's ICMP backend can't open), then the CI wheel in a fresh venv:
+`pengumon doctor`, `pengumon run` away from the checkout, `/api/health`, `/api/info`'s probe backend and the dashboard
+page. Linux needs the `ping_group_range` sysctl first; macOS and Windows need nothing. Tests that cannot apply to an
+OS skip there with the reason (`tests/platform_helpers.py`: permission bits, `time.tzset`, FIFOs, SIGTERM, the
+maintainer's bash scripts). `netns-trace` runs `scripts/netns-trace.sh` with `sudo` (see [probing.md](probing.md)).
+`internet-trace` traces 1.1.1.1 from Linux, macOS and Windows runners and reports what answered as a notice; it never
+fails (hosted runners may drop ICMP; in the runs so far the Linux and Windows runners answered nothing past the host).
+
+Every pytest run writes JUnit XML, and `scripts/junit-annotations.py` turns the failures into error annotations (10
+per step, GitHub's limit; three steps in `native`), which the REST API serves without signing in:
+`/repos/<owner>/<repo>/check-runs/<job id>/annotations`. A run is meant to end with no warning annotations.
+Pushing a branch named `ci/<topic>` runs the whole workflow before a merge.
 
 ## Dashboard browser tests
 
@@ -80,7 +96,9 @@ installed Chrome) and optionally `PENGUMON_BROWSER_ARGS`, and run `pytest tests/
   image and hashed into the asset version; a test file there would change the cache key and be served. A test
   (`test_frontend.py`) fails if a test-like file appears under `static/` and checks that such paths answer 404.
 - Order: `core`, then the panels in page order (`[data-panel]` of the page, which is `panel.json` order), then the dialogs
-  alphabetically, then `runsLast` files (`add-target`: its first step adds a real target, a sixth hop row).
+  alphabetically, then `runsLast` files (`add-target`: its first step adds a real target, a sixth hop row; `path-editor`:
+  its first step applies an edited path). `stubFetch({"METHOD /path": {status, body}})` reloads the page with those calls
+  answered by the page itself from its first script on (an API another branch adds; the first-run state); `null` clears.
 - Each file after the first starts from a reset page (desktop size, system theme, nothing stored, fresh load), so it relies
   only on what its own earlier steps did. Where a step needs something done by a user (the `clients` feature needs the
   router's password stored) it does it itself (`signIn`). A failed step ends its file, not the run; `fatal` ends the run.

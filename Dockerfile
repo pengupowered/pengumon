@@ -35,11 +35,10 @@ FROM ${WHEEL_STAGE} AS wheel
 FROM ${PYTHON_IMAGE} AS runtime
 WORKDIR /app
 
-# Security updates of the base image, then system dependencies for network probing & raw sockets
+# Security updates of the base image, then setcap (below) and curl (health checks). No ping or traceroute: the app
+# sends ICMP itself (pengumon.engine.icmp_linux), traceroute included.
 RUN apt-get update && apt-get -y --no-install-recommends upgrade \
     && apt-get install -y --no-install-recommends \
-    iputils-ping \
-    traceroute \
     libcap2-bin \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -47,16 +46,20 @@ RUN apt-get update && apt-get -y --no-install-recommends upgrade \
 # Every package is installed from a hash-locked file (see README, "Dependencies"), then the wheel itself.
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary :all: -r requirements.txt
-RUN --mount=type=bind,from=wheel,source=/,target=/wheel \
-    pip install --no-cache-dir --no-deps /wheel/pengumon-*.whl \
+# COPY, not a bind mount: a COPY layer's cache key is the wheel's content, while a RUN --mount=type=bind layer is
+# cached on the command text alone, so Podman could reuse a layer holding another tree's wheel.
+COPY --from=wheel / /tmp/wheel/
+RUN pip install --no-cache-dir --no-deps /tmp/wheel/pengumon-*.whl \
+    && rm -rf /tmp/wheel \
     && pip uninstall -y setuptools \
     && python -m compileall -q "$(python -c 'import pengumon, os; print(os.path.dirname(pengumon.__file__))')"
 
 # The image carries only the example config; compose mounts your own config.yaml over it (nothing private is baked in).
 COPY config.example.yaml ./config.yaml
 
-# The raw ICMP socket needs CAP_NET_RAW; granted as a file capability on the interpreter so the
-# app can run unprivileged. No fallback: a failing setcap must break the build.
+# The raw ICMP socket needs CAP_NET_RAW; granted as a file capability on the interpreter so the app can run
+# unprivileged. Without it (a runtime that drops NET_RAW) the backend uses a ping socket, which needs the container's
+# net.ipv4.ping_group_range to cover gid 0 (Podman's default). No fallback: a failing setcap must break the build.
 RUN setcap cap_net_raw+ep /usr/local/bin/python3.12 && getcap /usr/local/bin/python3.12 | grep -q cap_net_raw
 
 # SQLite database and router secrets live here (mount a named volume).

@@ -3,13 +3,14 @@
 // history; every block lists the incidents of its time in the Incidents panel (showIncidentWindow, panels/incidents),
 // which says so when there are none. Refreshed every five minutes. Rows are named as Path health names them (Router, Line, ISP hop N, Internet
 // <address>, DNS lookup N), with the configured name beside it. A hop that ignores ping (no reply while a later hop answers:
-// path.js ignoringPing, from the live `targets` topic) gets no blocks, only the words Path health gives it: its strip
-// would be one long outage that is none, and it neither counts as an outage nor opens incidents.
+// path.js quietTargets, from the live `targets` topic) gets no blocks, only the words Path health gives it: its strip
+// would be one long outage that is none, and it neither counts as an outage nor opens incidents. So does an IPv6 target
+// while this host has no IPv6 (its own words: "IPv6 unavailable on this host").
 
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';
 import { escapeHtml, getTargetInfo, percentText, targetList } from '../../js/util.js';
-import { IGNORES_PING, IGNORES_PING_STRIP, IGNORES_PING_WHY, ignoringPing, quietKey, shortLabels } from '../../js/path.js';
+import { quietKey, quietTargets, shortLabels } from '../../js/path.js';
 
 const CELL = { ok: '', degraded: 'w', outage: 'c', busy: 'b', no_data: 'n' };
 const WORD = { ok: 'no loss', degraded: 'loss or a dead minute', outage: 'outage', busy: 'busy line (expected)', no_data: 'no data' };
@@ -17,7 +18,7 @@ const META = { '24h': '15-min blocks, path order', '7d': 'daily blocks, 7 days, 
 let win = '24h';
 let seq = 0;
 let shown = null; // the last answer, drawn again when the hops that ignore ping change
-let quiet = new Set();
+let quiet = new Map(); // target id -> its neutral words (path.js quietTargets)
 
 const tz = () => -new Date().getTimezoneOffset(); // minutes east of UTC, as the API takes it
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -51,8 +52,9 @@ export function renderStrips(data) {
     const sub = short === name ? '' : `<small>${escapeHtml(name)}</small>`;
     const head = `<button type="button" class="s-name" data-action="openTargetHistory" data-arg="${escapeHtml(t.target_id)}" title="${escapeHtml(name)}"><span>${escapeHtml(short)}</span>${sub}</button>`;
     if (quiet.has(t.target_id)) {
-      return `${head}<div class="strip-quiet" role="img" title="${escapeHtml(IGNORES_PING_WHY)}" aria-label="${escapeHtml(`${short} (${name}): ${IGNORES_PING_STRIP}`)}">${escapeHtml(IGNORES_PING_STRIP)}</div>`
-        + `<span class="s-pct num" title="${escapeHtml(`${IGNORES_PING}: not counted`)}">–</span>`;
+      const q = quiet.get(t.target_id);
+      return `${head}<div class="strip-quiet" role="img" title="${escapeHtml(q.why)}" aria-label="${escapeHtml(`${short} (${name}): ${q.strip}`)}">${escapeHtml(q.strip)}</div>`
+        + `<span class="s-pct num" title="${escapeHtml(`${q.word}: not counted`)}">–</span>`;
     }
     const cells = t.cells.map((c, i) => {
       const tip = `${escapeHtml(short)} · ${blockLabel(data, i)} · ${WORD[c] || c}`;
@@ -105,7 +107,7 @@ export default {
     load();
     setInterval(load, 300000);
     bus.subscribe('targets', (targets) => {
-      const next = ignoringPing(targets);
+      const next = quietTargets(targets);
       if (quietKey(next) === quietKey(quiet)) return;
       quiet = next;
       if (shown) renderStrips(shown);

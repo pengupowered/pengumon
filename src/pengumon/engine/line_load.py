@@ -32,10 +32,10 @@ async def register(ctx: Context) -> Component:
     wan_history = devices.primary(Capability.WAN_COUNTERS)
     line_load = LineLoad(config.line, rates_source=devices.wan_rates_source(), repository=repository,
                          device_id=wan_history.id if wan_history else None)
-    probe_categories = {t.id: t.category for t in config.targets}
-
     async def probes_lost_packets(start: float, end: float) -> Optional[bool]:
-        """Whether the probes to the gateway and the ISP hops lost any packet in the window; None without a reading."""
+        """Whether the probes to the gateway and the ISP hops lost any packet in the window; None without a reading.
+        The roles are the path's as it is now (config.targets, which a path edit updates)."""
+        probe_categories = {t.id: t.category for t in config.targets}
         stats = [r for r in await repository.get_sample_stats(start, end)
                  if probe_categories.get(r["target_id"]) in ("gateway", "isp")]
         return any(r["sent"] > r["received"] for r in stats) if stats else None

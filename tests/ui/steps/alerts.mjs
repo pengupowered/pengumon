@@ -37,6 +37,36 @@ export const steps = [
     await until(() => !document.getElementById("alertsModal").classList.contains("active"));
   }],
 
+  ["alerts dialog: a slow earlier answer about the server channels never replaces a newer one", async ({ click, eq, page, until }) => {
+    // the first opening's request is answered only after the second one's (a busy server answers out of order)
+    await page.evaluate(() => {
+      const real = window.fetch;
+      window.__realFetch = real;
+      window.__answerFirst = null;
+      let calls = 0;
+      const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      window.fetch = (url, opts) => {
+        if (url !== "/api/notifications") return real(url, opts);
+        calls += 1;
+        if (calls === 1) return new Promise((resolve) => { window.__answerFirst = () => resolve(json({ channels: [] })); });
+        return Promise.resolve(json({ channels: [{ name: "ntfy", kind: "ntfy", format: null, host: "ntfy.example.com" }] }));
+      };
+    });
+    await click("#btnNotify");
+    await until(() => document.getElementById("alertsModal").classList.contains("active") && window.__answerFirst);
+    await page.keyboard.press("Escape");
+    await until(() => !document.getElementById("alertsModal").classList.contains("active"));
+    await click("#btnNotify");
+    await until(() => /Sent by the server/.test(document.getElementById("alChannelsText").textContent));
+    await page.evaluate(() => window.__answerFirst());
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));  // the late answer has arrived and been read
+    eq("still the newer answer", await page.$eval("#alChannelsText", (e) => /Sent by the server/.test(e.textContent)), true);
+    eq("one channel", await page.$$eval("#alChannels li", (l) => l.length), 1);
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await page.keyboard.press("Escape");
+    await until(() => !document.getElementById("alertsModal").classList.contains("active"));
+  }],
+
   ["alerts dialog: server channels (none configured, then ntfy and webhooks) and the test button", async ({ click, eq, ok, page, until }) => {
     await click("#btnNotify");
     await until(() => document.getElementById("alertsModal").classList.contains("active"));
@@ -57,7 +87,13 @@ export const steps = [
       };
     });
     await click("#btnNotify");
-    await page.waitForFunction(() => /Sent by the server/.test(document.getElementById("alChannelsText").textContent), { timeout: 15000, polling: 100 });
+    await page.waitForFunction(() => /Sent by the server/.test(document.getElementById("alChannelsText").textContent), { timeout: 15000, polling: 100 })
+      .catch(async (e) => {  // say what the dialog shows instead (a CI run can only be read through this message)
+        const seen = await page.evaluate(() => ({ text: document.getElementById("alChannelsText").textContent,
+          open: document.getElementById("alertsModal").classList.contains("active"), mocked: window.fetch !== window.__realFetch,
+          items: document.querySelectorAll("#alChannels li").length }));
+        throw new Error(`${e.message}; the dialog shows ${JSON.stringify(seen)}`);
+      });
     eq("two channels", await page.$$eval("#alChannels li", (l) => l.length), 2);
     eq("channels listed as text", await page.$$eval("#alChannels li", (l) => l.map((x) => x.textContent).join("|")), "ntfy ntfy, ntfy.example.com|<b>hook</b> webhook, discord, discord.example.com");
     eq("nothing injected", await page.$$eval("#alChannels b", (b) => b.length), 2);

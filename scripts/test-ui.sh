@@ -5,6 +5,7 @@
 #   scripts/test-ui.sh                   both UI tests
 #   scripts/test-ui.sh -k lint -x        pytest arguments
 #   scripts/test-ui.sh --command <cmd...>  run this command in the container instead of pytest
+# PENGUMON_JUNIT_DIR=<dir> (CI): pytest also writes <dir>/ui.xml (see scripts/test.sh); the one writable mount.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="localhost/pengumon-ui-test:latest"
@@ -12,10 +13,14 @@ BASE="${UI_RUNNER_BASE:-localhost/ui-test-runner:1}"
 RUNNER="${UI_RUNNER_DIR:-}"  # optional: a directory with a run.sh taking <image> <command...>
 
 cmd=(python -m pytest -q -p no:cacheprovider tests/test_ui_smoke.py tests/test_ui_lint.py tests/test_ui_steps.py)
+mounts=()
 if [ "${1:-}" = "--command" ]; then
     shift
     cmd=("$@")
     set --
+elif [ -n "${PENGUMON_JUNIT_DIR:-}" ]; then
+    mounts=(-v "$PENGUMON_JUNIT_DIR:/junit:rw")
+    cmd+=(--junitxml=/junit/ui.xml -o junit_family=xunit1)
 fi
 
 if ! podman image exists "$BASE"; then
@@ -31,7 +36,7 @@ built="$(cat "$iid")"; rm -f "$iid"
 
 # A shared runner script, when UI_RUNNER_DIR names one (several projects keeping the hardening in one place).
 if [ -n "$RUNNER" ] && [ -x "$RUNNER/run.sh" ]; then
-    exec "$RUNNER/run.sh" "$built" "${cmd[@]}" "$@"
+    exec "$RUNNER/run.sh" "$built" "${cmd[@]}" "$@"  # (no JUnit mount through a shared runner)
 fi
 
 # Otherwise the hardening flags inline:
@@ -54,4 +59,5 @@ exec podman run --rm \
     --memory 2g --memory-swap 2g \
     --pids-limit 512 \
     --shm-size 256m \
+    "${mounts[@]}" \
     "$built" "${cmd[@]}" "$@"

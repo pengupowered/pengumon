@@ -7,10 +7,12 @@ import os
 import stat
 
 import pytest
+from pathlib import Path
 
 from pengumon import secrets as secrets_module
 from pengumon.devices.settings import DeviceConfig
 from pengumon.secrets import CredentialSources, Credentials, SecretStore, credential_updates, update_secrets
+from platform_helpers import assert_mode, posix_files
 
 SECRET = "hunter2-very-secret"
 
@@ -23,7 +25,7 @@ def _sources(tmp_path, env=None, store=None, files=None, store_file=None) -> Cre
     secrets_dir = tmp_path / "run-secrets"
     secrets_dir.mkdir(exist_ok=True)
     for name, text in (files or {}).items():
-        (secrets_dir / name).write_text(text)
+        (secrets_dir / name).write_bytes(text.encode())  # as written: no newline translation on Windows
     path = tmp_path / "secrets.json"
     if store is not None:
         path.write_text(json.dumps(store))
@@ -56,7 +58,7 @@ def test_the_secret_file_wins_over_secrets_json_and_loses_one_trailing_newline(t
                        store={"devices": {"wan": {"username": "stored-user", "password": "from-json"}}})
     creds = sources.resolve(_device())
     assert creds.password == "from file "  # inner and trailing spaces are part of the password
-    assert creds.password_source.endswith("run-secrets/pengumon_wan_password")
+    assert creds.password_source.endswith(str(Path("run-secrets") / "pengumon_wan_password"))
     assert (creds.username, creds.username_source) == ("stored-user", f"{tmp_path / 'secrets.json'} devices.wan.username")
     assert creds.describe() == (f"password from {creds.password_source}, "
                                 f"username from {tmp_path / 'secrets.json'} devices.wan.username")
@@ -110,6 +112,7 @@ def test_an_unparsable_secrets_file_is_reported_without_its_content(tmp_path, ca
     assert "not valid JSON" in caplog.text and SECRET not in caplog.text
 
 
+@posix_files
 def test_a_secrets_file_readable_by_others_is_reported(tmp_path, caplog):
     path = tmp_path / "secrets.json"
     path.write_text(json.dumps({"devices": {"wan": {"password": SECRET}}}))
@@ -118,6 +121,37 @@ def test_a_secrets_file_readable_by_others_is_reported(tmp_path, caplog):
         creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device())
     assert creds.password == SECRET
     assert "readable by other users (mode 0644)" in caplog.text and SECRET not in caplog.text
+
+
+def test_on_windows_a_secrets_file_mode_is_not_reported(tmp_path, caplog, monkeypatch):
+    """Windows has no permission bits (every file reads as 0666), so the warning would fire on every start there."""
+    path = tmp_path / "secrets.json"
+    path.write_text(json.dumps({"devices": {"wan": {"password": SECRET}}}))
+    os.chmod(path, 0o644)
+    monkeypatch.setattr(secrets_module.sys, "platform", "win32")
+    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"):
+        creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device())
+    assert creds.password == SECRET and "readable by other users" not in caplog.text
+
+
+def test_secret_files_are_opened_without_newline_translation(tmp_path, monkeypatch):
+    """os.open is text mode on Windows unless O_BINARY is given (CRLF translation, ^Z ends the file): the secret file
+    read and the secrets.json write both ask for it. O_BINARY is 0x8000 on Windows and absent elsewhere; a stand-in
+    bit shows here that it is passed."""
+    o_binary = 0x40000000  # no Linux open flag uses it
+    real_open = os.open
+    seen = {}
+
+    def recording_open(path, flags, *args):
+        seen[Path(path).name] = bool(flags & o_binary)
+        return real_open(path, flags & ~o_binary, *args)
+
+    monkeypatch.setattr(secrets_module.os, "O_BINARY", o_binary, raising=False)
+    monkeypatch.setattr(secrets_module.os, "open", recording_open)
+    sources = _sources(tmp_path, files={"pengumon_wan_password": "pw\r\n"})
+    assert sources.resolve(_device()).password == "pw"
+    secrets_module.write_secrets({"devices": {}}, tmp_path / "written.json")
+    assert seen == {"pengumon_wan_password": True, "written.json.tmp": True}
 
 
 def test_non_string_values_are_ignored(tmp_path):
@@ -184,17 +218,17 @@ def test_a_secret_file_loses_exactly_one_trailing_newline(tmp_path, caplog, cont
 
 @pytest.mark.parametrize("make, problem", [
     (lambda p: p.mkdir(), "is not a regular file"),
-    (lambda p: os.mkfifo(p), "is not a regular file"),
+    pytest.param(lambda p: os.mkfifo(p), "is not a regular file", marks=posix_files),
     (lambda p: p.write_bytes(b"x" * 4097), "is larger than 4096 bytes"),
     (lambda p: p.write_bytes(b"\xff\xfe pw"), "is not UTF-8 text"),
-    (lambda p: p.write_text("\r\n"), "is empty"),
+    (lambda p: p.write_bytes(b"\r\n"), "is empty"),  # bytes: write_text would make it \r\r\n on Windows
 ], ids=["directory", "fifo", "oversized", "binary", "only-a-newline"])
 def test_a_secret_file_that_is_not_a_small_text_file_is_skipped_by_path(tmp_path, caplog, make, problem):
     creds, warnings = _from_file(tmp_path, make, caplog)  # a FIFO must not block: it is never opened
     assert creds.password is None
     assert warnings == [f"Secret file {problem}; trying the next credential source"]
     (record,) = caplog.records
-    assert record.pengumon_context["path"].endswith("run/pengumon_wan_password")
+    assert record.pengumon_context["path"].endswith(str(Path("run") / "pengumon_wan_password"))
 
 
 def test_a_secret_file_is_read_once(tmp_path):
@@ -221,7 +255,7 @@ def test_the_store_reads_once_and_writes_through(tmp_path):
     assert store.data()["devices"] == {"wan": {"username": "u", "password": "p"}}
     on_disk = json.loads(path.read_text())
     assert on_disk["devices"] == {"wan": {"username": "u", "password": "p"}}
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert_mode(path, 0o600)
     assert store.label("devices.wan.password") == f"{path} devices.wan.password"
 
 
@@ -279,7 +313,7 @@ def test_the_flat_keys_move_under_the_devices_on_first_read(tmp_path, caplog):
     expected = {"devices": {"modem": {"username": "cusadmin", "password": "modem-" + SECRET},
                             "router": {"username": "admin", "password": "router-" + SECRET}}}
     assert json.loads(path.read_text()) == expected == store.data()
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert_mode(path, 0o600)
     assert not list(tmp_path.glob("*.tmp"))
     assert (modem.username, modem.password) == ("cusadmin", "modem-" + SECRET)
     assert (router.username, router.password) == ("admin", "router-" + SECRET)

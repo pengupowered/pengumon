@@ -21,6 +21,7 @@ from pengumon.observability.telemetry import exclude_from_telemetry
 from pengumon.secrets import CredentialSources
 
 from device_helpers import build_modem, build_router, router_config
+from platform_helpers import assert_mode
 
 SECRET = "pw-never-shown"
 TOKEN = "tok-123"
@@ -159,7 +160,7 @@ async def test_device_credentials_are_stored_under_the_device_and_tested(app_sta
     assert "new-pw" not in res.text
     path = secrets_module.SECRETS_PATH
     assert json.loads(path.read_text()) == {"devices": {"wifi": {"username": "root", "password": "new-pw"}}}
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert_mode(path, 0o600)
     wifi = app_state.devices.get("wifi")
     assert wifi.driver._username == "root" and wifi.driver._password == "new-pw"
     assert wifi.credentials_source == f"{path} (set in the dashboard)"

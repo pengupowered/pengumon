@@ -43,55 +43,65 @@ provider a report instead of a hunch.
 
 ## Install
 
-Pengumon runs on a Linux host with Docker or Podman (x86-64, or arm64 such as a Raspberry Pi). It uses host
-networking so the probes measure the host's own path. The image is published, so nothing is built:
+Pengumon runs natively on Windows, macOS and Linux, or in a container. One command per system; each link goes to that
+system's section in [docs/install.md](docs/install.md), with what it needs, what it sets up and how to remove it.
+
+| System | Command | Details |
+|---|---|---|
+| **Windows** 10/11 (no administrator rights) | `irm https://github.com/pengupowered/pengumon/releases/latest/download/install.ps1 \| iex` in PowerShell | [Windows](docs/install.md#windows) |
+| **macOS** (Apple silicon or Intel) | `curl -fsSL https://github.com/pengupowered/pengumon/releases/latest/download/install.sh \| sh` | [macOS](docs/install.md#macos) |
+| **Linux** (systemd, x86-64 or arm64) | the same `install.sh` line | [Linux](docs/install.md#linux) |
+| **Raspberry Pi** (64-bit OS only) | the same `install.sh` line | [Raspberry Pi](docs/install.md#raspberry-pi) |
+| **Container** (Docker or Podman on Linux) | `docker compose up -d` with the published image | [Container](docs/install.md#container) |
+
+The scripts download the release, check every file against its hash, set up Pengumon's own Python, start it in the
+background so it survives reboots, and open `http://127.0.0.1:8000` (this computer only until you allow more, with an
+access token). On Linux and macOS the script asks for sudo once, says why, and has a `--user` option to avoid it. Run
+the same command again to upgrade (your data is backed up first). Not tested yet on real Windows, macOS or Raspberry Pi
+hardware: see [what has been tested where](docs/install.md#what-has-been-tested-where).
+
+> [!IMPORTANT]
+> Anyone who can reach port 8000 can read the data and change settings until you set `PENGUMON_ACCESS_TOKEN`. The
+> default listens on this computer only. See [docs/security.md](docs/security.md).
+
+**Container**, the short version (Linux host with Docker or Podman, x86-64 or arm64; host networking so the probes
+measure the host's own path):
 
 ```bash
 mkdir pengumon && cd pengumon
 curl -fsSL https://raw.githubusercontent.com/pengupowered/pengumon/main/compose.release.yaml -o compose.yaml
 curl -fsSL https://raw.githubusercontent.com/pengupowered/pengumon/main/config.example.yaml -o config.yaml
-# edit config.yaml: your router, modem and provider hops (see below)
+                                      # no targets in it: Pengumon finds your network path itself
 docker compose up -d                  # or: podman compose up -d
 ```
 
-Then open `http://<host>:8000`. Optional settings (access token, device passwords, ntfy) go in a `.env` file next to
-`compose.yaml`; [`.env.example`](.env.example) lists them. To upgrade, change the version in the `image:` line to the
-newest [release](https://github.com/pengupowered/pengumon/releases) and run `docker compose up -d` again; the data
-lives in the `pengumon_data` volume.
+Open `http://<host>:8000`. Rootless Podman needs unprivileged ping allowed once, and Docker Desktop (macOS, Windows) is
+not supported for this: both are explained in [docs/install.md](docs/install.md#container), as is building from source.
+`pengumon doctor` says whether probing works here and, if not, what fixes it.
 
-**Build from source instead:**
+## First run
 
-```bash
-git clone https://github.com/pengupowered/pengumon.git
-cd pengumon
-cp config.example.yaml config.yaml    # your router, modem and provider hops (see below)
-cp .env.example .env                  # optional: access token, device passwords, ntfy
-docker compose up -d --build          # or: podman-compose up -d --build
-```
+Nothing to configure. When you open the dashboard for the first time, Pengumon traces the path from this computer to the
+internet by itself (it takes a few seconds; nothing about your path leaves your computer at this point) and **Path health**
+shows a banner, "Pengumon found your network path". Press **Review** to see each hop it found, with a role (your
+network, the line, your provider, the internet), how sure it is (Sure, Likely or Unsure) and why, then **Apply**. Until
+you apply, the default targets keep being probed.
 
-> [!TIP]
-> Not sure which hops your traffic takes? Open **Trace** in the header, trace to `1.1.1.1`, and press **Monitor**
-> on each hop, choosing whether it is your router, your line or a provider hop.
-
-> [!IMPORTANT]
-> Anyone who can reach port 8000 can read the data and change settings until you set `PENGUMON_ACCESS_TOKEN` in
-> `.env`. See [docs/security.md](docs/security.md).
-
-The container runs as an unprivileged user with a read-only root filesystem: it writes only to the `pengumon_data`
-volume (`/app/data`) and a `/tmp` tmpfs, both set up in the compose files. The image is built from the same wheel
-that `pip install` uses, and carries no source tree.
-
-Rootless Podman needs unprivileged ping allowed for your user:
-`net.ipv4.ping_group_range = 0 2147483647` (for example in `/etc/sysctl.d/60-unprivileged-ping.conf`).
-
-**Docker Desktop (macOS, Windows):** not tested. Its containers run inside a virtual machine, so host networking
-attaches to that VM and not to your computer, and the probes would measure the VM's path (and whether unprivileged
-ICMP works there is unknown). Run Pengumon on a Linux machine that stays on, such as a Raspberry Pi or a small PC, and
-open its page from your Mac or PC.
+Later, **Path health > Edit** opens the same editor: rename, re-role, reorder, add, remove, or press **Rediscover** to
+trace again and see what changed. Details: [docs/path-editor.md](docs/path-editor.md) and
+[docs/discovery.md](docs/discovery.md), which lists exactly what discovery sends where.
 
 ## Telling it about your network
 
-Each target has a **category** that places it on the path. Any number of each works, and none is required:
+The probe path is edited in the dashboard, not in `config.yaml`: **Path health > Edit** shows the hops as cards in path
+order (see [First run](#first-run) and [docs/path-editor.md](docs/path-editor.md)). **Export** and **Import** move a
+path between installs as YAML.
+
+Upgrading from 0.17 or older: the first start imports config.yaml's `targets:` and the targets added from the dashboard
+into the database once, with their ids, so all history stays attached. From then on config.yaml's `targets:` is ignored
+(the startup log says so); every other section stays in `config.yaml`. A `targets:` list in config.yaml is now just an optional fixed list for the first start only; a fresh install leaves it out and discovers its path.
+
+Each hop has a role (**category**) that places it on the path. Any number of each works, and none is required:
 
 | Category  | Shown as      | Typically                                       |
 |-----------|---------------|-------------------------------------------------|
@@ -101,22 +111,11 @@ Each target has a **category** that places it on the path. Any number of each wo
 | `public`  | Internet      | public resolvers; the figure is their median    |
 | `custom`  | its own name  | anything else worth watching: a NAS, a VPN, a server |
 
-```yaml
-targets:
-  - { id: router, name: "Home router",  category: local,   address: "192.168.1.1" }
-  - { id: modem,  name: "Cable modem",  category: gateway, address: "192.168.100.1" }
-  - { id: isp1,   name: "First ISP hop", category: isp,    address: "198.51.100.1" }
-  - { id: cf,     name: "Cloudflare",   category: public,  address: "1.1.1.1" }
-  - { id: google, name: "Google",       category: public,  address: "8.8.8.8" }
-
-devices:                                # optional: read the modem and router too
-  - { id: modem,  driver: xfinity_xb, url: "http://192.168.100.1" }
-  - { id: router, driver: asuswrt,    url: "http://192.168.1.1" }
-```
-
 The dashboard adapts to the shape of your network. A long path folds its provider hops into one node when space runs
 out. A provider router that ignores ping while traffic passes through it is shown as such, not as down. Custom targets
-are listed under the path. Everything is in [docs/configuration.md](docs/configuration.md).
+are listed under the path. Hops can be IPv4 or IPv6 addresses, or host names probed over either; the IPv6 servers
+discovery finds are their own node, "Internet (IPv6)", and on a host without IPv6 they say "IPv6 unavailable on this
+host" instead of counting as down. Everything is in [docs/configuration.md](docs/configuration.md).
 
 ### Supported devices
 
@@ -169,6 +168,14 @@ the Home Assistant recipe are in [docs/webhooks.md](docs/webhooks.md).
     <td><b>Router.</b> WAN traffic against the line's capacity, CPU and memory, clients by band and per mesh node.</td>
     <td><b>Cable modem.</b> Signal levels against their good ranges, codeword errors and channel lock, with history.</td>
   </tr>
+  <tr>
+    <td><img src="docs/images/first-run.png" alt="Path health on a first run: the banner 'Pengumon found your network path' with a Review button"></td>
+    <td><img src="docs/images/path-editor.png" alt="The path editor with a draft from discovery: each hop with a role, a Sure or Likely badge and the reasons"></td>
+  </tr>
+  <tr>
+    <td><b>First run.</b> Discovery runs by itself and offers the path it found; the defaults are probed until you apply it.</td>
+    <td><b>Path editor.</b> Discovery's draft: every hop with a role, how sure it is and why. Edit, then Apply.</td>
+  </tr>
 </table>
 
 <p align="center">
@@ -183,7 +190,11 @@ the Home Assistant recipe are in [docs/webhooks.md](docs/webhooks.md).
 
 | Page | What is in it |
 |---|---|
-| [Configuration](docs/configuration.md) | Targets, DNS lookups, thresholds, retention, line capacity, the classifier |
+| [Install](docs/install.md) | Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download |
+| [Configuration](docs/configuration.md) | The probe path (targets), DNS lookups, thresholds, retention, line capacity, the classifier |
+| [Probing](docs/probing.md) | Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step |
+| [Path editor](docs/path-editor.md) | Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17 |
+| [Discovery](docs/discovery.md) | Finding the path and who operates each hop: what is sent where, how roles are judged |
 | [Devices](docs/devices.md) | The `devices:` list: drivers, capabilities, TLS, credentials, writing a driver |
 | [Diagnosis](docs/diagnosis.md) | How outages are classified: load-aware rules, incident kinds and causes |
 | [Dashboard](docs/dashboard.md) | The panels, the path chain, layout, themes, the phone view |
@@ -215,9 +226,11 @@ tool, run when it is installed), a rollback image and a database backup before r
 
 ## How accurate is it?
 
-ICMP probes use kernel receive timestamps (`SO_TIMESTAMPNS`, as `ping` does) over one shared raw socket, started
-25 ms apart. Against a continuous `ping` they agree within about 0.2 ms. DNS timings are measured in Python and can
-read a few tenths of a millisecond high.
+Pengumon sends its own ICMP (no `ping` or `traceroute` program). On Linux and macOS the probes use kernel receive
+timestamps (`SO_TIMESTAMPNS` / `SO_TIMESTAMP`, as `ping` does) over one shared socket, started 25 ms apart; against a
+continuous `ping` they agree within about 0.2 ms. Windows reports round trips in whole milliseconds, and the dashboard
+says so. DNS timings are measured in Python and can read a few tenths of a millisecond high. Details per OS:
+[docs/probing.md](docs/probing.md).
 
 ## License
 

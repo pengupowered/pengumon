@@ -108,6 +108,10 @@ fi
 if [ $NO_BUILD = 0 ]; then
     step "Building $IMAGE"
     run podman-compose build || fail "build failed"
+    # A stale build cache must never ship another tree's code: the image's package has to equal src/pengumon here.
+    step "Checking that the image holds this tree's code"
+    run "$ROOT/scripts/image-matches-tree.sh" "$IMAGE" \
+        || fail "the built image does not match this tree (stale build cache?): rebuild with podman build --no-cache"
 fi
 step "Recreating the container"
 run podman-compose down || fail "removing the old container failed"

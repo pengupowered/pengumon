@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from pengumon import paths
 from pengumon.clients.settings import PrivacyConfig
@@ -62,6 +62,13 @@ class AppConfig(BaseModel):
     service_checks: ServiceChecksConfig = Field(default_factory=ServiceChecksConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    _targets_are_defaults: bool = PrivateAttr(default=False)  # load_config filled in default_targets()
+
+    @property
+    def targets_from_file(self) -> bool:
+        """Whether `targets` came from the config (not the defaults). Only read before the stored path replaces
+        them: once the path has been imported or applied it lives in the database (pengumon.engine.path)."""
+        return bool(self.targets) and not self._targets_are_defaults
 
     @model_validator(mode="after")
     def _unique_device_ids(self):
@@ -120,6 +127,7 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
     if not config.targets:
         gateway = get_default_gateway_ip()
         config.targets = default_targets(gateway)
+        config._targets_are_defaults = True
         _log.info("No targets configured; probing the defaults", targets=",".join(t.id for t in config.targets),
                   gateway=gateway)
 

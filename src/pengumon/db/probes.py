@@ -155,7 +155,7 @@ class ProbeQueries:
         async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
         keys = self._target_keys
-        return [
+        return self.shown([
             {
                 "target_id": keys.get(target, str(target)),
                 "timestamp": ts,
@@ -166,7 +166,7 @@ class ProbeQueries:
                 "error": error,
             }
             for target, ts, ok, latency, jitter, error in rows
-        ]
+        ])
 
     async def get_raw_samples(
         self, start_time: float, end_time: float, target_ids: Optional[List[str]] = None
@@ -229,7 +229,7 @@ class ProbeQueries:
             async with db.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
         keys = self._target_keys
-        return [dict(zip(_BUCKET_KEYS, (keys.get(row[0], str(row[0])), *row[1:]))) for row in rows], width
+        return self.shown([dict(zip(_BUCKET_KEYS, (keys.get(row[0], str(row[0])), *row[1:]))) for row in rows]), width
 
     async def probe_loss_stats(self, start_time: float, end_time: float, target_ids: List[str]) -> List[TargetLoss]:
         """Per target of target_ids, over the raw samples with start_time <= ts <= end_time: probes sent and answered,
@@ -276,7 +276,7 @@ class ProbeQueries:
                 (start_time, end_time),
             ) as cursor:
                 rows = await cursor.fetchall()
-        return [
+        return self.shown([
             {
                 "target_id": self._target_keys.get(target, str(target)),
                 "sent": sent,
@@ -287,7 +287,7 @@ class ProbeQueries:
                 "jitter_ms": None if jitter is None else round(jitter, 2),
             }
             for target, sent, received, avg_ms, min_ms, max_ms, jitter in rows
-        ]
+        ])
 
     async def get_rollup_stats(self, start_time: float, end_time: float) -> List[Dict[str, Any]]:
         """get_sample_stats from the per-minute rollups, for windows whose raw samples are past retention. Rollups are
@@ -307,7 +307,7 @@ class ProbeQueries:
                 (int(start_time // 60), int(end_time // 60)),
             ) as cursor:
                 rows = await cursor.fetchall()
-        return [
+        return self.shown([
             {
                 "target_id": self._target_keys.get(target, str(target)),
                 "sent": sent,
@@ -318,7 +318,7 @@ class ProbeQueries:
                 "jitter_ms": None if jitter is None else round(jitter, 2),
             }
             for target, sent, received, avg_ms, min_ms, max_ms, jitter in rows
-        ]
+        ])
 
     async def get_hop_stats(self, start_time: float) -> List[Dict[str, Any]]:
         """Per-target probe totals since start_time, from the per-minute rollups."""
@@ -334,7 +334,7 @@ class ProbeQueries:
                 (int(start_time // 60),),
             ) as cursor:
                 rows = await cursor.fetchall()
-        return [
+        return self.shown([
             {
                 "target_id": self._target_keys.get(target, str(target)),
                 "sent": sent,
@@ -344,7 +344,7 @@ class ProbeQueries:
                 "max_ms": round(max_ms or 0, 2),
             }
             for target, sent, lost, avg_ms, max_ms in rows
-        ]
+        ])
 
     async def get_daily_availability(self, start_time: float, tz_offset_minutes: int = 0) -> List[Dict[str, Any]]:
         """Probes sent and answered per target and calendar day (UTC shifted by tz_offset_minutes), from the per-minute rollups."""
@@ -361,10 +361,10 @@ class ProbeQueries:
                 (f"{int(tz_offset_minutes):+d} minutes", int(start_time // 60)),
             ) as cursor:
                 rows = await cursor.fetchall()
-        return [
+        return self.shown([
             {"target_id": self._target_keys.get(t, str(t)), "day": day, "sent": sent, "ok": ok}
             for t, day, sent, ok in rows
-        ]
+        ])
 
     async def get_hourly_loss(self, start_time: float, tz_offset_minutes: int = 0) -> List[Dict[str, Any]]:
         """Probes sent and lost per hour of the day (0-23, UTC shifted by tz_offset_minutes), all targets together, from the rollups."""

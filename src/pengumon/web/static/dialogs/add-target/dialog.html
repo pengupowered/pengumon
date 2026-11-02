@@ -9,6 +9,11 @@
           <div class="empty st st-crit compact" id="addTargetError" role="alert" hidden></div>
           <div class="field" data-field="name"><label for="targetName">Name</label><input class="input" type="text" id="targetName" required placeholder="Game server (east)" maxlength="100" autocomplete="off" data-input="validateTargetField" data-change="touchTargetField" aria-describedby="targetNameMsg"><span class="hint" id="targetNameMsg">What the dashboard calls it.</span></div>
           <div class="field" data-field="address"><label for="targetAddress">Host or address</label><input class="input mono" type="text" id="targetAddress" required placeholder="203.0.113.10 or example.com" maxlength="255" autocomplete="off" autocapitalize="off" spellcheck="false" data-input="validateTargetField" data-change="touchTargetField" aria-describedby="targetAddressMsg"><span class="hint" id="targetAddressMsg">An IPv4 or IPv6 address, or a host name.</span></div>
+          <div class="field" data-field="family"><label for="targetFamily">For a host name, probe its</label>
+            <select class="input" id="targetFamily">
+              <option value="4" selected>IPv4 address</option>
+              <option value="6">IPv6 address</option>
+            </select><span class="hint">An address is probed as it is. Without IPv6 on this host an IPv6 target shows "IPv6 unavailable on this host", not an outage.</span></div>
           <div class="field" data-field="category"><label for="targetCategory">Where it sits on the path</label>
             <select class="input" id="targetCategory">
               <option value="local">Home network (router, mesh)</option>

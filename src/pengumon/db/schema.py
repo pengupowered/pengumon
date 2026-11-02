@@ -177,6 +177,22 @@ CREATE TABLE IF NOT EXISTS custom_targets (
 );
 """
 
+# --- schema v13: the probe path (targets), owned by the dashboard -------------------------------------------------
+#
+# One row per hop that is or was on the path. `config` is the TargetConfig as JSON (every field, so a new target field
+# needs no migration); `position` orders the path (0 = nearest). A hop removed in the path editor keeps its row with
+# `deleted_at` set: it is no longer probed and its history is kept but hidden, until DELETE /api/path/history/{id}.
+# The path's revision and whether it was ever imported or applied are in `meta` (db/path.py).
+CREATE_PATH_TARGETS_TABLE = """
+CREATE TABLE IF NOT EXISTS path_targets (
+    id TEXT PRIMARY KEY,
+    position INTEGER NOT NULL,
+    config TEXT NOT NULL,
+    deleted_at REAL,
+    updated REAL NOT NULL
+);
+"""
+
 # --- schema v4: one-time jobs and other small key/value state --------------------------------------
 
 CREATE_META_TABLE = """

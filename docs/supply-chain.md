@@ -22,12 +22,19 @@ Python packages are installed from hash-locked files (`requirements.txt` for the
 `pip install --require-hashes --no-deps --only-binary :all:`; the runtime image carries no test
 tooling. The base image is pinned by digest (a multi-architecture index, so the same pin builds the amd64 and arm64 images).
 
+The locks are **universal** (`depguard lock --universal`: `uv pip compile --universal --python-version 3.12`): one file
+for Linux, macOS and Windows, on both x86-64 and arm64, with environment markers for the packages only some systems
+need (for example `colorama` for pytest on Windows) and the hashes of every platform's wheels. The container installs the
+Linux subset of the same file (pip evaluates the markers), the native installers install the subset for their own
+system, and the audit checks every name in the file whichever platform needs it. The header says `platform: universal`.
+
 These lock files are the dependency record: every package, its exact version and its hashes. GitHub reads them
 (with `tests/ui/runner/package-lock.json`) for the repository's dependency graph and Dependabot alerts, and exports an
 SBOM from it (Insights → Dependency graph → Export SBOM). `$DG sbom .` writes a CycloneDX SBOM locally when one is needed.
 
 Runtime privileges: the container runs as uid 10001 with only `cap_net_raw` as a file capability on
-the Python interpreter (needed for ICMP; the build fails if `setcap` fails). The first deploy of the
+the Python interpreter (for the raw ICMP socket; the build fails if `setcap` fails). The image has no `ping` or
+`traceroute` package: the app sends ICMP itself. The first deploy of the
 non-root image chowns the `pengumon_data` volume to 10001:0.
 
 ## Browser test tooling (npm)
@@ -60,7 +67,8 @@ throwaway container (`podman run --rm -v "$PWD/tests/ui/runner:/w" -w /w node:22
 
 1. Edit `requirements.in`, `requirements-dev.in` or `requirements-build.in`.
 2. Lock:
-   `$DG lock .`
+   `$DG lock . --universal`
+   (`--universal` needs a depguard that has it; plain `lock` would write the Linux-only lock again.)
 3. Read the printed diff: `+ added`, `- removed`, `~ changed`, flags `NEW (unapproved)`, `age Nd`,
    `COOLDOWN`. A new package that you expect is accepted with `--approve-new` (it is then added to
    `.depguard-approved.txt`). The same diff is visible with `git diff` on `requirements*.txt`.

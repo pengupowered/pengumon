@@ -48,7 +48,7 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 |---|---|---|---|
 | 1 | devices | `devices/component.py` | Building the devices checks that each can run (a missing CA file, say). A device that cannot run stops the start before the database is opened or migrated. |
 | 2 | storage | `db/storage.py` | Opens (migrates) the database and warns about stored history of devices that are not in the config. Every later component may use it, and their `stop` runs before its own, which closes it. |
-| 3 | probing | `engine/probing.py` | Adds the custom targets stored in earlier runs, then builds the prober. Line load and the classifier need the complete target list. |
+| 3 | probing | `engine/probing.py` | Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one. |
 | 4 | retention | `db/retention.py` | The start-up cleanup, before the load backfills read the stored history. |
 | 5 | line_load | `engine/line_load.py` | Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check. |
 | 6 | notify | `notify.py` | ntfy and webhooks (`webhook.py`), for the classifier and the service checks. |
@@ -56,6 +56,7 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 | 8 | services | `services/component.py` | Optional: host service checks. |
 | 9 | clients | `clients/component.py` | Optional: the client list. |
 | 10 | live | `live/component.py` | The `/ws` route and the broadcaster task. |
+| 11 | discovery | `engine/discovery/component.py` | Optional: network discovery on request. Last, so its `stop` (a run still going is cancelled) comes first. |
 
 The repository object exists before any component. The lifespan builds it from `config.database`
 (`storage.repository_for`); building it opens nothing. So the devices can be handed it before the storage
@@ -68,7 +69,7 @@ everything that runs, in the order it runs.
 
 - A **required** component's failure in `register` or `start` stops the start, with its own message. That covers
   the devices, the database, the prober and the classifier: the app is no use without them.
-- An **optional** component (`OPTIONAL = True`: services, clients) is contained by the frame. The error is logged
+- An **optional** component (`OPTIONAL = True`: services, clients, discovery) is contained by the frame. The error is logged
   ("services.component could not register: ...; running without it") and the app starts without that feature.
   One whose `start` failed is still stopped, so whatever it opened gets closed.
 - Inside a required component, a step the app can do without is contained by that component. line_load catches a
@@ -81,6 +82,7 @@ everything that runs, in the order it runs.
 1. Every task the components spawned is cancelled, and the frame waits for all of them. No component's stop runs
    while a probe round, a device poll or a service check is still running.
 2. Each component's `stop` runs in reverse list order. A stop that fails is logged and the others still run.
+   - discovery cancels a run still going (it writes nothing).
    - The live, clients, line_load, retention and probing components have nothing to stop. Their tasks have ended.
    - services resolves its open incidents and closes its HTTP clients.
    - classifier ends its path traces (they write to the repository) and resolves the incident still open.

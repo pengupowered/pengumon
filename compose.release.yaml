@@ -1,7 +1,8 @@
 # Install without building: runs the published image. With Docker or Podman:
 #   curl -fsSL https://raw.githubusercontent.com/pengupowered/pengumon/main/compose.release.yaml -o compose.yaml
 #   curl -fsSL https://raw.githubusercontent.com/pengupowered/pengumon/main/config.example.yaml -o config.yaml
-#   (edit config.yaml: your router, modem and provider hops)
+#   (the example has no targets: the network path is discovered and edited in the dashboard; device drivers,
+#    service checks and thresholds go in config.yaml. A targets: list there is a fixed list for the first start only)
 #   docker compose up -d          # or: podman compose up -d
 # Settings (access token, ntfy, device passwords) come from a .env file next to this one, if there is one (see
 # .env.example in the repository). Empty values count as unset. Open http://<host>:8000 afterwards.
@@ -20,7 +21,7 @@
 # To upgrade, change the tag below to the new version and run `docker compose up -d` again.
 services:
   pengumon:
-    image: ghcr.io/pengupowered/pengumon:0.16.0
+    image: ghcr.io/pengupowered/pengumon:0.19.0
     container_name: pengumon
     restart: always
     network_mode: host

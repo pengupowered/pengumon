@@ -73,7 +73,7 @@ export async function runTracerouteModal(ev) {
     const [res] = await Promise.all([fetch('/api/mtr/trace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_host: host })
+      body: JSON.stringify({ target_host: host, family: Number(($('traceFamily') || {}).value || 4) })
     }), loadMonitored()]);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

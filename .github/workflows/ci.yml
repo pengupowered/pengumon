@@ -1,12 +1,19 @@
 # Unit tests and the browser (UI) tests, run the same way as locally: scripts/test.sh and scripts/test-ui.sh, which use
 # Podman (preinstalled on GitHub's ubuntu runners). Then the package: the wheel and sdist are built once ("package"),
-# and that same wheel is what the container image (amd64 and arm64) and a plain Python install on Linux are tested with.
-# Also called by release.yml before an image is published; the wheel it publishes is this run's artifact "dist".
+# and that same wheel is what the container image (amd64 and arm64) and the native installs (Linux x64 and arm64,
+# macOS, Windows) are tested with. Also called by release.yml before an image is published; the wheel it publishes is
+# this run's artifact "dist".
+#
+# Every test failure is also an error annotation (scripts/junit-annotations.py), readable without signing in through
+# the REST API: /repos/<owner>/<repo>/check-runs/<job id>/annotations. The run is meant to end with no warning
+# annotations at all; the only notices are the internet-trace results.
+#
+# Actions are pinned by commit, each a release at least 14 days old whose action.yml runs on node24.
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "ci/**"]
   pull_request:
   workflow_call:
 
@@ -23,40 +30,75 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Allow unprivileged ICMP (the probe tests open real ping sockets)
         run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
       - name: Run the unit tests
-        run: scripts/test.sh -p no:warnings
+        run: |
+          mkdir -m 777 "$RUNNER_TEMP/junit"
+          PENGUMON_JUNIT_DIR="$RUNNER_TEMP/junit" scripts/test.sh -p no:warnings
+      - name: Failed tests as annotations
+        if: always()
+        run: |
+          python3 scripts/junit-annotations.py --last --title-prefix "unit: " "$RUNNER_TEMP/junit/unit.xml"
 
-  ui:
-    name: Browser tests
+  # The browser runner image (Chromium, Node, puppeteer-core, ESLint), built once per change of its own files and kept
+  # in the Actions cache under the hash of those files (hashFiles works only inside steps, so each step names the key).
+  # Only this job saves it (two jobs saving one key collide); the jobs that need it restore it after this one has run.
+  runner-image:
+    name: Browser runner image
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The runner image (Chromium, Node, puppeteer-core, ESLint) is slow to build and only changes with its own files,
-      # so it is kept as a saved image keyed on their hash.
-      - name: Restore the browser runner image
-        id: runner-cache
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+      - name: Is it cached already?
+        id: lookup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ui-test-runner.tar
           key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
-      - name: Load the cached runner image
-        if: steps.runner-cache.outputs.cache-hit == 'true'
-        run: podman load -i "$RUNNER_TEMP/ui-test-runner.tar"
+          lookup-only: true
       - name: Build the runner image
-        if: steps.runner-cache.outputs.cache-hit != 'true'
+        if: steps.lookup.outputs.cache-hit != 'true'
         run: |
           tests/ui/runner/build.sh
           podman save -o "$RUNNER_TEMP/ui-test-runner.tar" localhost/ui-test-runner:1
+      - name: Save it
+        if: steps.lookup.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ui-test-runner.tar
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+
+  ui:
+    name: Browser tests
+    needs: runner-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore the browser runner image
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ui-test-runner.tar
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+          fail-on-cache-miss: true
+      - name: Load it
+        run: podman load -i "$RUNNER_TEMP/ui-test-runner.tar"
       - name: Run the browser tests
-        run: scripts/test-ui.sh -p no:warnings
+        run: |
+          mkdir -m 777 "$RUNNER_TEMP/junit"
+          PENGUMON_JUNIT_DIR="$RUNNER_TEMP/junit" scripts/test-ui.sh -p no:warnings
+      - name: Failed tests as annotations
+        if: always()
+        run: |
+          python3 scripts/junit-annotations.py --last --title-prefix "ui: " "$RUNNER_TEMP/junit/ui.xml"
 
   # The wheel and the sdist, built once, in the Dockerfile's build stage: the hash-locked build backend, no build
   # isolation, no download. The same command as a local `podman build`; everything below installs this wheel.
@@ -65,7 +107,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build the wheel and the sdist
@@ -89,103 +131,282 @@ jobs:
           grep -q '^pengumon/web/static/' "$RUNNER_TEMP/wheel.txt"
           grep -q '^pengumon/web/templates/' "$RUNNER_TEMP/wheel.txt"
           if grep -E '(^|/)(tests?|config\.ya?ml)(/|$)' "$RUNNER_TEMP/wheel.txt"; then echo "test or config files in the wheel" >&2; exit 1; fi
-      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
           if-no-files-found: error
 
-  # The image built from that wheel and tested as it is run (read-only root, uid 10001, data volume), on a native
-  # runner for each architecture (no QEMU). The browser check needs the runner image, built here for amd64 only: the
-  # arm64 runner has not been seen building it yet (Debian's chromium and the pinned node image do have arm64 builds),
-  # so turn "e2e" on for arm64 once it does.
+  # The image built from that wheel and tested as it is run (read-only root, uid 10001, data volume, ICMP on the raw
+  # socket, `pengumon doctor`), on a native runner for each architecture (no QEMU). The browser end-to-end check needs
+  # the runner image, which is built for amd64 only, so arm64 runs every check but that one.
   container:
     name: Image (${{ matrix.arch }})
-    needs: package
+    needs: [package, runner-image]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-24.04, arch: amd64, args: ""}
-          - {os: ubuntu-24.04-arm, arch: arm64, args: "--no-e2e"}
+          - {os: ubuntu-24.04, arch: amd64, e2e: true}
+          - {os: ubuntu-24.04-arm, arch: arm64, e2e: false}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
       - name: Allow unprivileged ICMP
         run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
       - name: Restore the browser runner image
-        if: matrix.args == ''
-        id: runner-cache
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        if: matrix.e2e
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ui-test-runner.tar
           key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
-      - name: Load the cached runner image
-        if: matrix.args == '' && steps.runner-cache.outputs.cache-hit == 'true'
+          fail-on-cache-miss: true
+      - name: Load it
+        if: matrix.e2e
         run: podman load -i "$RUNNER_TEMP/ui-test-runner.tar"
-      - name: Build the runner image
-        if: matrix.args == '' && steps.runner-cache.outputs.cache-hit != 'true'
-        run: |
-          tests/ui/runner/build.sh
-          podman save -o "$RUNNER_TEMP/ui-test-runner.tar" localhost/ui-test-runner:1
       - name: Build the image from the wheel and test it
-        run: scripts/test-container.sh --prebuilt ${{ matrix.args }}
+        run: scripts/test-container.sh --prebuilt ${{ matrix.e2e && ' ' || '--no-e2e' }}
 
-  # A plain Python install, as a user without a container does it: the locked dependencies, then the wheel.
-  native-linux:
-    name: Native install (Linux)
+  # The wheel on each OS without a container, as a user installs it: the unit suite natively (the OS's own ICMP
+  # backend for real: PENGUMON_REQUIRE_ICMP turns "ICMP unavailable" from a skip into a failure), then the CI wheel
+  # in a fresh venv with the locked runtime dependencies: `pengumon doctor`, and `pengumon run` until /api/health
+  # answers. Linux needs the ping_group_range sysctl; macOS and Windows need nothing.
+  native:
+    name: Native (${{ matrix.os }})
     needs: package
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      PENGUMON_REQUIRE_ICMP: "1"
+      PYTHONUTF8: "1"
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Allow unprivileged ICMP
+      - name: Allow unprivileged ICMP (Linux)
+        if: runner.os == 'Linux'
         run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
-      - name: Install the locked dependencies and the wheel
+      - name: Install the locked test dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/test-venv"
+          bin="$RUNNER_TEMP/test-venv/$([ "$RUNNER_OS" = Windows ] && echo Scripts || echo bin)"
+          echo "TEST_PY=$bin/python" >> "$GITHUB_ENV"
+          "$bin/python" -m pip install --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r requirements-dev.txt
+          "$bin/python" -m pip install --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r requirements-build.txt
+      - name: Run the unit tests
+        run: '"$TEST_PY" -m pytest -q -p no:cacheprovider -p no:warnings -rs --junitxml="$RUNNER_TEMP/unit.xml" -o junit_family=xunit1'
+      # GitHub keeps 10 error annotations per step: three steps for the first 29, the last naming the rest
+      - name: Failed tests as annotations (1-10)
+        if: always()
+        run: |
+          python scripts/junit-annotations.py --title-prefix "native ${{ matrix.os }}: " "$RUNNER_TEMP/unit.xml"
+      - name: Failed tests as annotations (11-20)
+        if: always()
+        run: |
+          python scripts/junit-annotations.py --start 10 --title-prefix "native ${{ matrix.os }}: " "$RUNNER_TEMP/unit.xml"
+      - name: Failed tests as annotations (21-29 and the rest)
+        if: always()
+        run: |
+          python scripts/junit-annotations.py --start 20 --last --title-prefix "native ${{ matrix.os }}: " "$RUNNER_TEMP/unit.xml"
+      - name: Install the wheel with the locked runtime dependencies
         run: |
           python -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --require-hashes --no-deps --only-binary :all: -r requirements.txt
-          "$RUNNER_TEMP/venv/bin/pip" install --no-deps dist/pengumon-*.whl
+          bin="$RUNNER_TEMP/venv/$([ "$RUNNER_OS" = Windows ] && echo Scripts || echo bin)"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/python" -m pip install --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r requirements.txt
+          "$bin/python" -m pip install --disable-pip-version-check --no-deps dist/pengumon-*.whl
+      - name: pengumon doctor
+        working-directory: ${{ runner.temp }}
+        run: pengumon doctor
       - name: Run pengumon and check it
+        working-directory: ${{ runner.temp }}
         run: |
           set -eu
-          export PATH="$RUNNER_TEMP/venv/bin:$PATH"
           export PENGUMON_DATA="$RUNNER_TEMP/pengumon-data"
-          cat > "$RUNNER_TEMP/config.yaml" <<'YAML'
+          cat > config.yaml <<'YAML'
           prober: {interval_seconds: 1.0}
           targets:
             - {id: t_local, name: "Local", category: local, address: "127.0.0.1", enabled: true}
             - {id: t_public, name: "Public", category: public, address: "127.0.0.1", enabled: true}
           YAML
           export PENGUMON_CONFIG="$RUNNER_TEMP/config.yaml"
-          cd "$RUNNER_TEMP"   # not the checkout: the installed package must work without the source tree
+          # not the checkout: the installed package must work without the source tree
           pengumon version
           pengumon paths
-          pengumon run > "$RUNNER_TEMP/pengumon.log" 2>&1 &
+          pengumon run > pengumon.log 2>&1 &
           pid=$!
-          trap 'kill $pid 2>/dev/null || true; cat "$RUNNER_TEMP/pengumon.log" | tail -n 20' EXIT
+          trap 'kill $pid 2>/dev/null || true; tail -n 20 pengumon.log' EXIT
           for _ in $(seq 1 60); do
-            curl -sf -m 2 http://127.0.0.1:8000/api/health > "$RUNNER_TEMP/health.json" && break
+            curl -sf -m 2 http://127.0.0.1:8000/api/health > health.json && break
             sleep 1
           done
-          cat "$RUNNER_TEMP/health.json"; echo
-          grep -q "\"version\":\"$(pengumon version | awk '{print $NF}')\"" "$RUNNER_TEMP/health.json"
-          curl -sf -m 5 http://127.0.0.1:8000/ | tee "$RUNNER_TEMP/index.html" | grep -q '/static/v/'
-          asset="$(grep -o '/static/v/[0-9a-f]*/[^"]*\.js' "$RUNNER_TEMP/index.html" | head -n1)"
+          cat health.json; echo
+          grep -q "\"version\":\"$(pengumon version | awk '{print $NF}' | tr -d '\r')\"" health.json
+          curl -sf -m 5 http://127.0.0.1:8000/api/info | python -c "import json, sys; p = json.load(sys.stdin)['probe']; print(p); sys.exit(0 if p['backend'] else 1)"
+          curl -sf -m 5 http://127.0.0.1:8000/ > index.html
+          grep -q '/static/v/' index.html
+          asset="$(grep -o '/static/v/[0-9a-f]*/[^"]*\.js' index.html | head -n1)"
           curl -sf -m 5 -o /dev/null "http://127.0.0.1:8000$asset"
+
+  # What a release attaches, assembled once from the wheel and sdist above (scripts/release-assets.sh): the wheel, the
+  # sdist, the universal lock, the two install scripts and SHA256SUMS. The install jobs install from exactly these
+  # files, and the release workflow attaches them.
+  release-assets:
+    name: Release files
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Assemble them
+        run: scripts/release-assets.sh dist release-assets
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+
+  # The install scripts as a user runs them, from the release files (--from / -From: no download of pengumon, but the
+  # real uv and Python downloads): install, check the service runs (system unit on Linux with sudo, LaunchDaemon on
+  # macOS with sudo, logon task on Windows) and answers on 127.0.0.1, run the installer again (the upgrade path: backup,
+  # remove the service, reinstall), then uninstall. scripts/ci-install-check.sh has the checks; a failure becomes one
+  # error annotation with the service state and its log.
+  install:
+    name: Install (${{ matrix.os }})
+    needs: release-assets
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release-assets
+      - name: Install (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: sh release-assets/install.sh --from release-assets --yes --no-browser
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\release-assets\install.ps1 -From release-assets -NoBrowser
+      - name: Check the service
+        run: scripts/ci-install-check.sh installed release-assets
+      - name: Upgrade (the installer again)
+        if: runner.os != 'Windows'
+        run: sh release-assets/install.sh --from release-assets --yes --no-browser
+      - name: Upgrade (the installer again, Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\release-assets\install.ps1 -From release-assets -NoBrowser
+      - name: Check the upgrade
+        run: scripts/ci-install-check.sh upgraded release-assets
+      - name: Uninstall
+        if: runner.os != 'Windows'
+        run: sh release-assets/install.sh --uninstall --yes
+      - name: Uninstall (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\release-assets\install.ps1 -Uninstall
+      - name: Check it is gone
+        run: scripts/ci-install-check.sh removed
+      - name: Service state and log as an annotation
+        if: failure()
+        run: scripts/ci-install-check.sh diagnose
+
+  # Traceroute for real on Linux: a routed network of network namespaces (client, two routers, target), the TTL
+  # probes and a whole trace over IPv4 and IPv6 (real ICMPv6 Time Exceeded) on the raw socket (root) and the ping
+  # socket (uid 65534). scripts/netns-trace.sh.
+  netns-trace:
+    name: Traceroute through network namespaces (IPv4 and IPv6)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the locked runtime dependencies (where uid 65534 can read them)
+        run: |
+          python -m venv /tmp/pengumon-venv
+          /tmp/pengumon-venv/bin/pip install --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r requirements.txt
+          chmod -R a+rX /tmp/pengumon-venv
+      - name: Trace r1, r2 and the target
+        run: sudo PYTHON=/tmp/pengumon-venv/bin/python scripts/netns-trace.sh
+
+  # What a trace to the internet looks like from a hosted runner. Runners may drop ICMP or the Time Exceeded answers,
+  # so this never fails: it reports how many hops answered as a notice.
+  internet-trace:
+    name: Internet trace (${{ matrix.os }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Allow unprivileged ICMP (Linux)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+      - name: Install the wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          bin="$RUNNER_TEMP/venv/$([ "$RUNNER_OS" = Windows ] && echo Scripts || echo bin)"
+          echo "TRACE_PY=$bin/python" >> "$GITHUB_ENV"
+          "$bin/python" -m pip install --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r requirements.txt
+          "$bin/python" -m pip install --disable-pip-version-check --no-deps dist/pengumon-*.whl
+      - name: Trace 1.1.1.1
+        working-directory: ${{ runner.temp }}
+        run: '"$TRACE_PY" "$GITHUB_WORKSPACE/scripts/ci-internet-trace.py" "${{ matrix.os }}"'

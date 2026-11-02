@@ -53,25 +53,38 @@ the path now: 10.9 ms, the median of the servers' last 60 probes", from the same
 node), and every figure in the dialog says the window it covers ("Median, last 5 min"). With more than five nodes (four in a medium card) the links and nodes get tighter, and in a
 medium-width card (about 1024 px) the node icons go and the latency pills move under the gaps. When even that leaves a
 node too little room (a long traceroute's worth of ISP hops), the ISP hops fold into one node: the worst hop sets its
-status and the last hop that answers its latency; Hop details still lists each one. In a narrow card (container query,
-860 px) the chain turns vertical and shows every hop.
+status and the last hop that answers its latency; Hop details still lists each one. ISP hops the owner grouped in the
+path editor ("one node with the hop before", the targets' `group`) are one node the same way. In a narrow card
+(container query, 860 px) the chain turns vertical and shows every hop.
+
+**Edit** in the card's header opens the path editor (`dialogs/path-editor`): the hops as cards, a draft that goes live
+only on Apply (configuration.md, "The probe path"). While no path was ever applied (a fresh install probing the default
+targets) the card starts discovery by itself and shows a banner, "Pengumon found your network path · Review", that
+opens the editor with discovery's draft. After Apply the page reloads, so every panel draws the new path.
 
 A hop that never answers ping while a later hop does is up (the probes pass through it; many provider routers ignore
 ping): it reads "Ignores ping" in grey, its loss counts nowhere, and the next link measures from the last hop that
 answered. The server decides it, once (`engine/path_rules.py`, from every target's status after each probe round), and
 flags the target with `ignores_ping` in the live message and `/api/targets`; the page only reads the flag
-(`static/js/path.js` `ignoringPing`). Every view follows it: Hop details says "no ping", Uptime and the target history give
+(`static/js/path.js` `ignoringPing`, `quietTargets`). Every view follows it: Hop details says "no ping", Uptime and the target history give
 it no outage blocks and no availability (its blocks open no incidents), the report's Every hop table lists it as
 "Ignores ping", "When it breaks" (`/api/report/loss-grid`) leaves its probes out, the dossier never names it as the
 failing hop, and an incident does not list it among its affected targets. The flag never decides whether an incident
 opens. It describes the hop as it is now, so the longer views apply the current verdict to their whole window. Custom targets are chips under the chain ("Also watched"); with no path target at all the chain says so.
+
+An IPv6 target while this host has no IPv6 (no route, or none in the operating system) is shown the same neutral way
+with its own words: "IPv6 unavailable on this host" on its node ("Not probed", "not probed · no IPv6 here"), "no IPv6"
+and "not probed" in Hop details, and that line where its Uptime strip and history strip would be. The prober decides it
+(`engine/prober.py`, checked every five minutes) and flags the target with `ipv6_unavailable`; it records no samples
+then, counts in no figure and opens nothing, and a redundant group (the public servers) is judged by the members it
+does probe. The page reads both flags through `static/js/path.js` `quietTargets` (target id to its words).
 
 The same short labels name a target everywhere else (`static/js/path.js` `shortLabels`): Router, Line, ISP hop N,
 Internet (with its address when there are several public servers), DNS lookup N, a custom target by its name; the
 configured name is the secondary text.
 
 **Latency** draws three path series by default: Router (worst local target), Line (worst gateway target) and Internet
-(median of the public targets; DNS lookups stand in when there is none). The legend names each series' targets, the
+(median of the public servers of the IPv4 group; DNS lookups stand in when there is none). When discovery or the path editor put IPv6 servers in their own group (`internet_v6`), they are a fourth line, "Internet (IPv6)", as Path health shows them as their own node. The legend names each series' targets, the
 tooltip gives every member's own value, and a note says what the view leaves out. **Each target** draws one thin line
 per pinged target (ISP hops included, DNS lookups not: they time a lookup, not a round trip) in the colours Hop details
 uses (a target's configured `color`, else the next of eight validated series colours in path order, then the first one no other target of its category has, so the members of one group always differ; grey past eight in one category); the choice is kept per browser. Under the chart a thin loss lane shows the worst target's loss and names it in
@@ -120,7 +133,8 @@ Wider than 720 px there is no bar and every shown panel appears.
 - Owned by a panel (extra `*.html` in its folder): **Local network** (SVG topology, filter chips, clients table) and
   **Router history** (router), **Channels** with a per-channel history (line, DOCSIS only), **Inspector** (incidents).
 - Standalone (`static/dialogs/<id>/`): **add-target**, **alerts**, **device-setup** (credentials and a test poll for a
-  device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **target-history**, **trace**.
+  device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **path-editor** (the probe path:
+  Path health's Edit, first-run review, Rediscover, Export / Import), **target-history**, **trace**.
 
 Dialogs are `div.modal` toggled by `.active` (`openModal` in `util.js`); on a phone they open as a bottom sheet. Their
 help texts and labels live in their own folder.

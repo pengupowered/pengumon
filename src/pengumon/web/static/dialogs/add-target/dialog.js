@@ -3,10 +3,9 @@
 // (a taken id, the limit of custom targets, a host it refuses) is shown the same way.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, icon, initTargets } from '../../js/util.js';
+import { closeModal, escapeHtml, hostProblem, icon, initTargets } from '../../js/util.js';
 
 const ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-const HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\.?$/;
 const FIELDS = ['name', 'address', 'id'];
 const INPUT = { name: 'targetName', address: 'targetAddress', id: 'targetId' };
 const HELP = {
@@ -27,11 +26,7 @@ export function problem(field, v) {
     if (!v) return 'An id is needed.';
     return ID_RE.test(v) ? '' : 'Use 1 to 64 letters, digits, hyphens or underscores.';
   }
-  if (!v) return 'Enter a host name or an IP address.';
-  if (/\s/.test(v) || v.startsWith('-')) return 'A host has no spaces and does not start with a dash.';
-  if (v.includes(':')) return /^[0-9A-Fa-f:.]+$/.test(v) && (v.match(/:/g) || []).length >= 2 ? '' : 'That is not a valid IPv6 address.';
-  if (/^[0-9.]+$/.test(v)) return v.split('.').length === 4 && v.split('.').every((p) => p !== '' && Number(p) <= 255 && String(Number(p)) === p) ? '' : 'That is not a valid IPv4 address.';
-  return HOST_RE.test(v) && v.length <= 255 ? '' : 'That is not a valid host name.';
+  return hostProblem(v);
 }
 
 function show(field, message) {
@@ -116,7 +111,7 @@ export async function handleAddTarget(e) {
     const res = await fetch('/api/targets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: value('id'), name: value('name'), address: value('address'), category: $('targetCategory').value, type: 'icmp', enabled: true })
+      body: JSON.stringify({ id: value('id'), name: value('name'), address: value('address'), category: $('targetCategory').value, family: Number($('targetFamily').value), type: 'icmp', enabled: true })
     });
     if (res.ok) {
       await initTargets(); // the new name and colour for the matrix and the charts

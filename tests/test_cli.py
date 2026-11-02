@@ -1,4 +1,4 @@
-"""The `pengumon` command: version, paths, backup (and that no command means run)."""
+"""The `pengumon` command: version, paths, backup, doctor (and that no command means run)."""
 
 import os
 import sqlite3
@@ -7,6 +7,7 @@ import stat
 import pytest
 
 from pengumon import __version__, cli
+from platform_helpers import assert_mode
 
 
 @pytest.fixture
@@ -90,8 +91,8 @@ def test_backup_copies_database_secrets_and_sessions_while_the_app_has_it_open(d
     assert copy.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     copy.close()
     for name in os.listdir(folder):
-        assert stat.S_IMODE(os.stat(os.path.join(folder, name)).st_mode) == 0o600
-    assert stat.S_IMODE(os.stat(folder).st_mode) == 0o700
+        assert_mode(os.path.join(folder, name), 0o600)
+    assert_mode(folder, 0o700)
     live.commit()
     live.close()
 
@@ -116,6 +117,18 @@ def test_backup_uses_the_configured_legacy_database_path(data, tmp_path, monkeyp
     assert sqlite3.connect(os.path.join(folder, "pengumon.db")).execute("SELECT COUNT(*) FROM t").fetchone() == (3,)
 
 
+@pytest.mark.skipif(not hasattr(os, "symlink") or os.name == "nt", reason="needs symbolic links")
+@pytest.mark.parametrize("name", ["secrets.json", "sessions.json"])
+def test_backup_refuses_a_symlinked_secrets_or_sessions_file(data, tmp_path, name):
+    _make_db(data / "pengumon.db").close()
+    elsewhere = tmp_path / "other-secret.txt"
+    elsewhere.write_text("not pengumon's to copy")
+    (data / name).symlink_to(elsewhere)
+    with pytest.raises(SystemExit, match="symbolic link"):
+        cli.main(["backup", "--to", str(tmp_path / "out")])
+    assert not any((tmp_path / "out").rglob("*"))  # the half-made folder is removed, nothing was copied
+
+
 def test_backup_without_a_database_fails_and_leaves_nothing(data, tmp_path):
     with pytest.raises(SystemExit, match="no database"):
         cli.main(["backup", "--to", str(tmp_path / "out")])
@@ -127,3 +140,158 @@ def test_backup_does_not_create_the_database(data):
     with pytest.raises(SystemExit):
         cli.main(["backup"])
     assert not (data / "pengumon.db").exists()  # mode=ro: a typo'd path is not turned into an empty database
+
+
+# ---- pengumon doctor ----------------------------------------------------------------------------------------------
+
+def _doctor_with(monkeypatch, backend=None, error=None, route_table=None, tmp_path=None, ipv6_route=None,
+                 ipv6_table=None):
+    from pengumon.engine import icmp_select, netinfo
+
+    monkeypatch.setattr(netinfo, "ipv6_route_check", lambda: ipv6_route)  # None: a route; else why not
+    if tmp_path is not None:
+        table = tmp_path / "ipv6_route"
+        if ipv6_table is not None:
+            table.write_text(ipv6_table)
+        monkeypatch.setattr(netinfo, "PROC_NET_IPV6_ROUTE", table)
+
+    def opener():
+        if error:
+            raise error
+        return backend
+
+    monkeypatch.setattr(icmp_select, "open_backend", opener)
+    if tmp_path is not None:
+        route = tmp_path / "route"
+        if route_table is not None:
+            route.write_text(route_table)
+        monkeypatch.setattr(netinfo, "PROC_NET_ROUTE", route)
+
+
+ROUTE = ("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+         "eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\n")  # default via 192.168.1.1
+
+
+def test_doctor_when_probing_works(data, monkeypatch, tmp_path, capsys):
+    from icmp_fakes import FakeBackend, FakePath
+
+    backend = FakeBackend(path=FakePath(["192.168.1.1"]))
+    _doctor_with(monkeypatch, backend, route_table=ROUTE, tmp_path=tmp_path)
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "ICMP backend    fake (1 µs resolution)" in out
+    assert "ping 127.0.0.1  echo reply from 127.0.0.1 in 2.000 ms" in out
+    assert "TTL=1 probe     time exceeded from 192.168.1.1 in 1.000 ms" in out
+    assert f"gateway         192.168.1.1 (from {tmp_path / 'route'})" in out
+    assert f"data directory  {data}" in out and "listen address  127.0.0.1:8000" in out
+    assert out.rstrip().endswith("probing works")
+    assert ("127.0.0.1", 64, 1.0) in backend.sent and ("1.1.1.1", 1, 1.0) in backend.sent and backend.closed
+
+
+def test_doctor_without_a_route_table_uses_the_first_router(data, monkeypatch, tmp_path, capsys):
+    from icmp_fakes import FakeBackend, FakePath
+
+    _doctor_with(monkeypatch, FakeBackend(path=FakePath(["10.1.2.3"])), tmp_path=tmp_path)
+    assert cli.main(["doctor"]) == 0
+    assert "gateway         10.1.2.3 (the first router, from a TTL=1 probe)" in capsys.readouterr().out
+
+
+def test_doctor_when_ttl_probes_get_no_answer(data, monkeypatch, tmp_path, capsys):
+    from icmp_fakes import FakeBackend, FakePath
+
+    _doctor_with(monkeypatch, FakeBackend(path=FakePath([None])), tmp_path=tmp_path)
+    monkeypatch.setattr(cli, "_doctor_probes", _quick_probes)
+    assert cli.main(["doctor"]) == 0  # loopback works: probing works, traceroute just sees nothing here
+    out = capsys.readouterr().out
+    assert "TTL=1 probe     no answer within 1 s (TTL probes need a router that answers" in out
+    assert "gateway         unknown" in out
+
+
+def _quick_probes(backend):
+    import asyncio
+
+    async def one(address, ttl=64):
+        try:
+            return await backend.probe(address, timeout=0.05, ttl=ttl)
+        except OSError as exc:  # as cli._doctor_probes reports a send failure
+            return exc
+
+    async def both():
+        return [await one("127.0.0.1"), await one("1.1.1.1", 1), await one("::1")]
+
+    return asyncio.run(both())
+
+
+def test_doctor_when_loopback_does_not_answer(data, monkeypatch, tmp_path, capsys):
+    from icmp_fakes import FakeBackend
+    from pengumon.engine.icmp_base import ProbeResult
+
+    _doctor_with(monkeypatch, FakeBackend(lambda address, ttl: ProbeResult("timeout")), tmp_path=tmp_path)
+    monkeypatch.setattr(cli, "_doctor_probes", _quick_probes)
+    assert cli.main(["doctor"]) == 1
+    captured = capsys.readouterr()
+    assert "ping 127.0.0.1  no answer within 1 s" in captured.out
+    assert "probing does not work" in captured.err
+
+
+def test_doctor_without_icmp_prints_the_fix(data, monkeypatch, tmp_path, capsys):
+    from pengumon.engine.icmp_base import IcmpUnavailable
+    from pengumon.engine.icmp_linux import SYSCTL_FIX
+
+    _doctor_with(monkeypatch, error=IcmpUnavailable("cannot open an ICMP socket: ping socket: Permission denied",
+                                                   SYSCTL_FIX), tmp_path=tmp_path)
+    assert cli.main(["doctor"]) == 1
+    captured = capsys.readouterr()
+    assert "ICMP backend    none: cannot open an ICMP socket: ping socket: Permission denied" in captured.out
+    assert f"fix             {SYSCTL_FIX}" in captured.out
+    assert f"data directory  {data}" in captured.out
+    assert "probing does not work" in captured.err
+
+
+def test_doctor_send_failure_is_reported(data, monkeypatch, tmp_path, capsys):
+    from icmp_fakes import FakeBackend
+
+    _doctor_with(monkeypatch, FakeBackend(lambda address, ttl: OSError("Network is unreachable")), tmp_path=tmp_path)
+    assert cli.main(["doctor"]) == 1
+    assert "ping 127.0.0.1  send failed: Network is unreachable" in capsys.readouterr().out
+
+
+# an IPv6 default route via a link-local router on eth0, metric 1024 (/proc/net/ipv6_route's layout)
+IPV6_ROUTE = ("00000000000000000000000000000000 00 00000000000000000000000000000000 00 "
+              "fe800000000000000000000000000001 00000400 00000001 00000000 00000003     eth0\n")
+
+
+def test_doctor_reports_ipv6(data, monkeypatch, tmp_path, capsys):
+    from icmp_fakes import FakeBackend, FakePath
+
+    backend = FakeBackend(path=FakePath(["192.168.1.1"]))
+    _doctor_with(monkeypatch, backend, route_table=ROUTE, tmp_path=tmp_path, ipv6_table=IPV6_ROUTE)
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "IPv6            available (a route to 2606:4700:4700::1111)" in out
+    assert "IPv6 backend    fake" in out
+    assert "ping ::1        echo reply from ::1 in 2.000 ms" in out
+    assert "IPv6 router     fe80::1%eth0" in out
+    assert ("::1", 64, 1.0) in backend.sent
+
+
+def test_doctor_without_ipv6_still_passes(data, monkeypatch, tmp_path, capsys):
+    """IPv6 is reported, never required: a host without it probes IPv4 fine."""
+    import errno
+
+    from icmp_fakes import FakeBackend
+    from pengumon.engine.icmp_base import ProbeResult
+
+    def answer(address, ttl):
+        if ":" in address:
+            return OSError(errno.EAFNOSUPPORT, "this host has no IPv6")
+        return ProbeResult("reply", address, 1.0)
+
+    _doctor_with(monkeypatch, FakeBackend(answer), tmp_path=tmp_path, ipv6_route="Network is unreachable")
+    monkeypatch.setattr(cli, "_doctor_probes", _quick_probes)
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert 'IPv6            no route to the internet (Network is unreachable): IPv6 targets show "IPv6 unavailable on this host"' in out
+    assert "IPv6 backend    none" in out
+    assert "ping ::1        send failed: " in out and "this host has no IPv6" in out
+    assert "IPv6 router     none" in out

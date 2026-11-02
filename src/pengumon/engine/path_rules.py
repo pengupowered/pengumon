@@ -6,6 +6,8 @@ stage pass through it, so it is up and only ignores (or rate-limits) ping, as ma
 the "when it breaks" grid, the dossier's failing-hop finding and an incident's affected targets. A later stage: a later
 ISP hop for an ISP hop, else any later category (two local or gateway targets need not be in line, so they never vouch
 for each other). DNS lookups and custom targets are no stage of the path. "No reply" is the prober's status "down".
+An IPv6 target this host cannot probe now (TargetStats.ipv6_unavailable: no IPv6 here) is no stage either: it has no
+fresh verdict to give or to vouch with.
 
 The rule judges the targets as they are now (their last ten probes); views over a longer time apply the current
 verdict to all of it. It never decides whether an incident opens: the classifier's verdicts do not read it.
@@ -19,7 +21,7 @@ PATH_RANK = {"local": 0, "gateway": 1, "isp": 2, "public": 3}
 def ignoring_ping(targets: Iterable) -> Set[str]:
     """The ids of the targets that ignore ping, from targets in path order with target_id, category, status and
     enabled (the prober's TargetStats)."""
-    path = [t for t in targets if t.enabled and t.category in PATH_RANK]
+    path = [t for t in targets if t.enabled and t.category in PATH_RANK and not getattr(t, "ipv6_unavailable", False)]
     out = set()
     for i, t in enumerate(path):
         if t.status != "down":

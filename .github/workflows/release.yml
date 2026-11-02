@@ -2,7 +2,9 @@
 # built from that wheel). The image is then built from that same wheel on a native runner for each architecture (amd64,
 # arm64 for a Raspberry Pi; no QEMU), the two are joined into one multi-architecture image
 # ghcr.io/pengupowered/pengumon:X.Y.Z (and latest), and a GitHub release is created from CHANGELOG.md with the wheel and
-# the sdist attached. See docs/releasing.md.
+# the sdist, the universal lock, the install scripts and SHA256SUMS attached. Build provenance attestations are made for
+# those files and for the image. Last, after a manual approval (the GitHub environment "pypi"), the same wheel and sdist
+# go to PyPI by trusted publishing. See docs/releasing.md.
 name: Release
 
 on:
@@ -35,7 +37,7 @@ jobs:
     env:
       IMAGE: ghcr.io/pengupowered/pengumon
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Check the tag against the package version
@@ -50,19 +52,19 @@ jobs:
           scripts/changelog-section.sh "$version" > /dev/null
           echo "version=$version" >> "$GITHUB_OUTPUT"
       # The wheel the tests ran against (artifact of the called ci.yml run), not a rebuild.
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist
       - name: Check the wheel is this version
         run: ls dist/pengumon-${{ steps.version.outputs.version }}-*.whl dist/pengumon-${{ steps.version.outputs.version }}.tar.gz
-      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
-      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           build-args: WHEEL_STAGE=wheel-prebuilt
@@ -88,42 +90,107 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.join.outputs.digest }}
     env:
       IMAGE: ghcr.io/pengupowered/pengumon
     steps:
-      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
-      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Join the two images under X.Y.Z and latest
+        id: join
         run: |
           version="${GITHUB_REF_NAME#v}"
           docker buildx imagetools create -t "$IMAGE:$version" -t "$IMAGE:latest" "$IMAGE:$version-amd64" "$IMAGE:$version-arm64"
           docker buildx imagetools inspect "$IMAGE:$version"
+          echo "digest=$(docker buildx imagetools inspect "$IMAGE:$version" --format '{{.Manifest.Digest}}')" >> "$GITHUB_OUTPUT"
+
+  # Signed statements (Sigstore, through GitHub) of where the files and the image were built; anyone can check one with
+  # `gh attestation verify <file> --repo pengupowered/pengumon`. These two jobs are the ones besides PyPI that
+  # need id-token: it is how the signing identity is proven.
+  attest-image:
+    name: Image provenance
+    needs: manifest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/pengupowered/pengumon
+          subject-digest: ${{ needs.manifest.outputs.digest }}
+          push-to-registry: true
+
+  attest-files:
+    name: File provenance
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release-assets
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/*
 
   release:
     name: GitHub release
-    needs: manifest
+    needs: [manifest, attest-image, attest-files]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      # The files the install jobs of ci.yml installed from: wheel, sdist, lock, install scripts, SHA256SUMS.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: dist
-          path: dist
+          name: release-assets
+          path: release-assets
       - name: Take this version's notes from CHANGELOG.md
         run: scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
-      - name: Create the release, with the wheel and the sdist attached
+      - name: Create the release, with the release files attached
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          (cd dist && sha256sum pengumon-* > SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Pengumon ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" dist/pengumon-* dist/SHA256SUMS
+          (cd release-assets && sha256sum --check SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Pengumon ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" release-assets/*
+
+  # Last, because a version on PyPI cannot be taken back. The job waits for approval in the GitHub environment "pypi"
+  # (Settings, Environments), and PyPI trusts this workflow and this environment (a trusted publisher; no token is
+  # stored anywhere). It publishes the wheel and sdist of the tested run, with PyPI's own attestations.
+  pypi:
+    name: PyPI
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pengumon/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist

@@ -27,7 +27,7 @@ def tls_verify(tls) -> Verify:
         try:
             return ssl.create_default_context(cafile=tls.ca_file)
         except (OSError, ssl.SSLError) as e:
-            raise ValueError(f"tls.ca_file {tls.ca_file!r} cannot be used: {type(e).__name__}: {e}") from None
+            raise ValueError(f"tls.ca_file '{tls.ca_file}' cannot be used: {type(e).__name__}: {e}") from None
     return bool(tls.verify)
 
 

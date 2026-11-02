@@ -11,6 +11,7 @@
 // elsewhere, Escape or a choice closes it. The phone header's "more" menu is a copy of the header's tool buttons.
 
 import { registerActions } from './dispatch.js';
+import { state } from './state.js';
 import { applyChartTheme, token } from './chart-theme.js';
 
 const THEME_KEY = 'pengumon.theme';
@@ -73,6 +74,9 @@ function fetchNetworkInfo() {
         pill.hidden = false;
       }
       showSignOut(info.session);
+      // for any module that needs it (one request per page load): state.networkInfo, then a `networkinfo` event
+      state.networkInfo = info;
+      document.dispatchEvent(new CustomEvent('networkinfo', { detail: info }));
     })
     .catch(console.error);
 }

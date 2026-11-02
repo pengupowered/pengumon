@@ -21,6 +21,7 @@ from pengumon.reports.dossier import build_dossier
 from pengumon.reports.reliability import build_report
 
 from golden_files import check_golden
+from platform_helpers import skip_without_tzset
 
 NOW = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
 
@@ -340,6 +341,7 @@ async def build_golden() -> dict:
 
 @pytest.fixture
 def utc_clock(monkeypatch):
+    skip_without_tzset()
     monkeypatch.setenv("TZ", "UTC")
     time.tzset()
     yield

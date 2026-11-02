@@ -1,6 +1,6 @@
 # Linux host deployment (rootless Podman with podman-compose, or Docker):
 #   podman-compose up -d --build
-# First: cp config.example.yaml config.yaml (git-ignored; your addresses go there).
+# First: cp config.example.yaml config.yaml (git-ignored; settings go there; the network path is discovered, not listed).
 # Settings come from .env next to this file (git-ignored; see .env.example). Empty values count as unset.
 #
 # Host networking, so probes and traceroute measure this machine's own path with no proxy in between.

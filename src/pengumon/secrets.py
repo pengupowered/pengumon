@@ -17,6 +17,7 @@ Passwords are never logged or returned: only the name of the source that supplie
 import json
 import os
 import stat
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple, Union
@@ -246,7 +247,8 @@ def _read_secret_file(path: Path, device_id: str) -> Optional[Tuple[str, str]]:
         return None
     try:
         # O_NONBLOCK: if the file was swapped for a FIFO since the stat, opening it must not hang the start.
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
+        # O_BINARY (Windows): no newline translation, so the file is read as written.
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "rb") as f:
             if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
                 skip("is not a regular file")
@@ -298,7 +300,8 @@ def _read_store(path: Path) -> Dict:
         _log.warning("Credentials file is not a JSON object; credentials stored there are not used", path=str(path))
         return {}
     try:
-        mode = stat.S_IMODE(path.stat().st_mode)
+        # Windows has no permission bits (st_mode is 0o666 or 0o444); the profile's ACL protects the file there
+        mode = stat.S_IMODE(path.stat().st_mode) if sys.platform != "win32" else 0
     except OSError:
         mode = 0
     if mode & 0o077:
@@ -339,7 +342,7 @@ def write_secrets(data: dict, path: Optional[Path] = None) -> None:
     path = Path(path) if path else SECRETS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as sf:
             json.dump(data, sf, indent=2)

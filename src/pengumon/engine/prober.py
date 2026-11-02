@@ -1,12 +1,10 @@
 """Concurrent network probers for ICMP ping and DNS resolution."""
 
 import asyncio
-import ipaddress
 import logging
-import platform
 import time
 import socket
-from typing import List, Dict, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 try:
@@ -18,18 +16,22 @@ except ImportError:
 
 from pengumon.models.probes import TargetConfig, ProbeSample, TargetStats
 from pengumon.engine.prober_settings import DnsProbeConfig, HopStatusConfig
-from pengumon.engine.icmp import KernelTimestampPinger
+from pengumon.engine.icmp_base import IcmpBackend, IcmpUnavailable
+from pengumon.engine.icmp_packet import ip_literal
+from pengumon.engine.icmp_select import resolve_address, shared_backend
+from pengumon.engine.netinfo import Ipv6Availability, is_no_ipv6_error, needs_route_check
 from pengumon.engine.path_rules import ignoring_ping
 
 
 logger = logging.getLogger("pengumon.prober")
 
 
-def _is_ipv4(address: str) -> bool:
+def _literal_version(address: str) -> Optional[int]:
+    """4 or 6 for an IP literal, None for a host name."""
     try:
-        return isinstance(ipaddress.ip_address(address), ipaddress.IPv4Address)
+        return ip_literal(address)[1]
     except ValueError:
-        return False
+        return None
 
 
 class NetworkProber:
@@ -41,6 +43,8 @@ class NetworkProber:
         history_window: int = 60,
         stagger_seconds: float = 0.025,
         status_thresholds: Optional[HopStatusConfig] = None,
+        backend: Optional[IcmpBackend] = None,
+        ipv6: Optional[Ipv6Availability] = None,
     ):
         self.ping_timeout = ping_timeout
         self.status_thresholds = status_thresholds or HopStatusConfig()
@@ -49,20 +53,24 @@ class NetworkProber:
         self.stats: Dict[str, TargetStats] = {}
         self.last_samples: Dict[str, ProbeSample] = {}
         self.last_round_ts: Optional[float] = None  # wall clock time the last probe round finished (health check)
-        self._is_windows = platform.system().lower() == "windows"
-        self._kernel_pinger: Optional[KernelTimestampPinger] = None
-        self._kernel_pinger_failed = False
+        self._backend: Optional[IcmpBackend] = backend  # None: the app's shared one (icmp_select)
+        self.ipv6 = ipv6 or Ipv6Availability()  # whether IPv6 targets can be probed from this host now
+        # The owner's "ignores ping" answer per target id (TargetConfig.ignores_ping), for those that have one
+        self._ignores_ping_set: Dict[str, bool] = {}
+        self._families: Dict[str, int] = {}  # each ICMP target's family, to tell an edited hop from the same one
 
-    def _get_kernel_pinger(self) -> Optional[KernelTimestampPinger]:
-        """Kernel-timestamped ICMP (Linux, raw or ping socket); None means use icmplib instead."""
-        if self._kernel_pinger is None and not self._kernel_pinger_failed:
-            try:
-                self._kernel_pinger = KernelTimestampPinger()
-                logger.info(f"ICMP probes use kernel receive timestamps (SO_TIMESTAMPNS, {self._kernel_pinger.kind} socket).")
-            except OSError as e:
-                self._kernel_pinger_failed = True
-                logger.info(f"Kernel-timestamped ICMP unavailable ({e}); using icmplib.")
-        return self._kernel_pinger
+    def backend(self) -> IcmpBackend:
+        """The ICMP backend probes go through; raises IcmpUnavailable when this host can't send ICMP."""
+        return self._backend if self._backend is not None else shared_backend()
+
+    def probe_method(self) -> Dict[str, Any]:
+        """How probes are sent, for /api/info and pengumon doctor: the backend's name and RTT resolution, or why
+        there is none (and the fix)."""
+        try:
+            backend = self.backend()
+        except IcmpUnavailable as e:
+            return {"backend": None, "resolution_ms": None, "error": e.reason, "fix": e.fix}
+        return {"backend": backend.name, "resolution_ms": backend.resolution_ms, "error": None, "fix": None}
 
     def register_target(self, target: TargetConfig):
         """Initializes tracking stats for an ICMP target."""
@@ -74,8 +82,41 @@ class NetworkProber:
                 address=target.address,
                 enabled=target.enabled,
                 color=target.color,
+                group=target.group,
                 recent_latencies=[],
             )
+        self._families[target.id] = target.family
+        if target.ignores_ping is None:
+            self._ignores_ping_set.pop(target.id, None)
+        else:
+            self._ignores_ping_set[target.id] = target.ignores_ping
+
+    def set_targets(self, targets: List[TargetConfig], dns_ids: Iterable[str] = ()):
+        """Makes `targets` (in path order) the ICMP targets, without a restart (an applied path edit): a new one
+        starts with empty statistics, a removed one is forgotten, one whose address or family changed starts over, the others
+        keep their statistics and take the new name, role, colour and group. The DNS probes (`dns_ids`) stay, after
+        the ICMP targets. The probe loop sends to the new list from its next round."""
+        old = self.stats
+        keep_dns = {i: old[i] for i in dns_ids if i in old}
+        families = self._families
+        self._families = {}
+        self.stats = {}
+        for t in targets:
+            st = old.get(t.id)
+            same = st is not None and st.address == t.address and families.get(t.id, t.family) == t.family
+            if same and t.id not in keep_dns:
+                st.name, st.category, st.enabled, st.color, st.group = t.name, t.category, t.enabled, t.color, t.group
+                self.stats[t.id] = st
+            else:
+                self.last_samples.pop(t.id, None)
+            self.register_target(t)
+        self.stats.update(keep_dns)
+        live = set(self.stats)
+        for tid in [k for k in self.last_samples if k not in live]:
+            del self.last_samples[tid]
+        for tid in [k for k in self._ignores_ping_set if k not in live]:
+            del self._ignores_ping_set[tid]
+        self.update_path_flags()
 
     def register_dns_target(self, dns_cfg: DnsProbeConfig):
         """Initializes tracking stats for a DNS probe."""
@@ -91,136 +132,60 @@ class NetworkProber:
             )
 
     async def probe_icmp(self, target: TargetConfig) -> Optional[ProbeSample]:
-        """Probes a host via ICMP echo, with fallbacks for socket permissions. None for a disabled target."""
+        """One echo request to the target through the ICMP backend. None for a disabled target, and for an IPv6
+        target while this host has no IPv6 (its stats say ipv6_unavailable: no loss is recorded, it is not an
+        outage). Only an echo reply is a success; a Time Exceeded (a routing loop at TTL 64), an Unreachable or no
+        answer is a loss whose `error` says which."""
         if not target.enabled:
             return None  # nothing is sent and nothing recorded: a fake success would pollute stats and history
 
         ts = time.time()
-        pinger = self._get_kernel_pinger()
-        if pinger and _is_ipv4(target.address):
-            try:
-                rtt = await pinger.ping(target.address, self.ping_timeout)
-            except OSError as e:
-                return ProbeSample(target_id=target.id, timestamp=ts, success=False, latency_ms=None,
-                                   packet_loss_pct=100.0, error=f"ICMP send failed: {e}")
-            if rtt is None:
-                return ProbeSample(target_id=target.id, timestamp=ts, success=False, latency_ms=None,
-                                   packet_loss_pct=100.0, error="Request timed out")
-            return ProbeSample(target_id=target.id, timestamp=ts, success=True, latency_ms=round(rtt, 2),
-                               packet_loss_pct=0.0)
 
-        try:
-            # Try true ICMP raw socket ping first (enabled by NET_RAW capability)
-            from icmplib import async_ping
-            try:
-                res = await async_ping(
-                    target.address,
-                    count=1,
-                    timeout=self.ping_timeout,
-                    privileged=True
-                )
-            except PermissionError:
-                # Fallback to unprivileged if permissions restricted
-                res = await async_ping(
-                    target.address,
-                    count=1,
-                    timeout=self.ping_timeout,
-                    privileged=False
-                )
-
-            if res.is_alive and res.avg_rtt >= 0:
-                latency = round(res.avg_rtt, 2)
-                return ProbeSample(
-                    target_id=target.id,
-                    timestamp=ts,
-                    success=True,
-                    latency_ms=latency,
-                    packet_loss_pct=0.0
-                )
-            elif res.packet_loss > 0 or not res.is_alive:
-                return ProbeSample(
-                    target_id=target.id,
-                    timestamp=ts,
-                    success=False,
-                    latency_ms=None,
-                    packet_loss_pct=100.0,
-                    error="Request timed out"
-                )
-        except Exception:
-            return await self._system_ping_fallback(target, ts)
-
-
-    async def _system_ping_fallback(self, target: TargetConfig, ts: float) -> ProbeSample:
-        """Invokes OS ping command as fallback."""
-        if target.address.startswith("-"):
-            # Never hand an option-like value to ping
+        def lost(error: str) -> ProbeSample:
+            self._flag_ipv6(target, False)
             return ProbeSample(target_id=target.id, timestamp=ts, success=False, latency_ms=None,
-                               packet_loss_pct=100.0, error="invalid address")
+                               packet_loss_pct=100.0, error=error)
+
         try:
-            if self._is_windows:
-                # ping -n 1 -w 1000 <ip>
-                timeout_ms = int(self.ping_timeout * 1000)
-                cmd = ["ping", "-n", "1", "-w", str(timeout_ms), target.address]
-            else:
-                # ping -c 1 -W 1 -- <ip>  ("--" ends option parsing)
-                timeout_sec = int(max(1, self.ping_timeout))
-                cmd = ["ping", "-c", "1", "-W", str(timeout_sec), "--", target.address]
-
-            start_t = time.perf_counter()
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=self.ping_timeout + 0.5)
-            elapsed_ms = round((time.perf_counter() - start_t) * 1000, 2)
-
-            if proc.returncode == 0:
-                # Parse stdout for exact latency if possible
-                out_str = stdout.decode("utf-8", errors="ignore")
-                parsed_ms = self._parse_ping_stdout(out_str) or elapsed_ms
-                return ProbeSample(
-                    target_id=target.id,
-                    timestamp=ts,
-                    success=True,
-                    latency_ms=parsed_ms,
-                    packet_loss_pct=0.0
-                )
-            else:
-                return ProbeSample(
-                    target_id=target.id,
-                    timestamp=ts,
-                    success=False,
-                    latency_ms=None,
-                    packet_loss_pct=100.0,
-                    error="Host unreachable / timed out"
-                )
-        except Exception as e:
-            return ProbeSample(
-                target_id=target.id,
-                timestamp=ts,
-                success=False,
-                latency_ms=None,
-                packet_loss_pct=100.0,
-                error=str(e)
-            )
-
-    def _parse_ping_stdout(self, text: str) -> Optional[float]:
-        """Extracts latency ms from Windows or Linux ping output."""
+            backend = self.backend()
+        except IcmpUnavailable as e:
+            return lost(f"ICMP unavailable: {e.reason}")
+        # IPv6 at all? Asked before a name is looked up: an AAAA record is no use without a route
+        literal = _literal_version(target.address)
+        if (literal or target.family) == 6 and needs_route_check(target.address) and not self.ipv6.available():
+            return self._flag_ipv6(target, True)
         try:
-            import re
-            # Match time=1.46 ms or time<1ms or time=12ms or time=0.892 ms
-            m = re.search(r"time[=<]\s*(\d+(?:\.\d+)?)\s*ms", text, re.IGNORECASE)
-            if m:
-                return float(m.group(1))
-            # Match Linux rtt min/avg/max/mdev = 1.462/2.798/6.123/1.927 ms
-            m = re.search(r"rtt [^=]+=\s*[\d.]+/([\d.]+)/", text, re.IGNORECASE)
-            if m:
-                return float(m.group(1))
-        except Exception:
-            pass
+            address, version = await resolve_address(target.address, self.ping_timeout, target.family)
+        except ValueError as e:
+            return lost(str(e))
+        except OSError as e:
+            return lost(f"Name lookup failed: {e}")
+        if version == 6 and literal is None and needs_route_check(address) and not self.ipv6.available():
+            return self._flag_ipv6(target, True)
+        try:
+            result = await backend.probe(address, timeout=self.ping_timeout)
+        except OSError as e:
+            if version == 6 and is_no_ipv6_error(e):
+                self.ipv6.no_route(e)
+                return self._flag_ipv6(target, True)
+            return lost(f"ICMP send failed: {e}")
+        self._flag_ipv6(target, False)
+        if result.kind == "reply" and result.rtt_ms is not None:
+            return ProbeSample(target_id=target.id, timestamp=ts, success=True, latency_ms=round(result.rtt_ms, 2),
+                               packet_loss_pct=0.0)
+        if result.kind == "ttl_exceeded":
+            return lost(f"TTL exceeded in transit at {result.responder or 'an unknown router'} (routing loop?)")
+        if result.kind == "unreachable":
+            return lost(f"Destination unreachable (reported by {result.responder or 'an unknown router'})")
+        return lost("Request timed out")
+
+    def _flag_ipv6(self, target: TargetConfig, unavailable: bool) -> None:
+        """Marks the target's stats as an IPv6 target this host cannot probe now (or no longer). Returns None: no
+        sample."""
+        stat = self.stats.get(target.id)
+        if stat is not None:
+            stat.ipv6_unavailable = unavailable
         return None
-
 
     async def probe_dns(self, dns_cfg: DnsProbeConfig) -> Optional[ProbeSample]:
         """Performs an active DNS resolution and measures query latency. None for a disabled probe."""
@@ -339,10 +304,13 @@ class NetworkProber:
         return samples
 
     def update_path_flags(self):
-        """Marks the targets that ignore ping (engine.path_rules), from every target's status after this round."""
+        """Marks the targets that ignore ping (engine.path_rules), from every target's status after this round. The
+        owner's answer (TargetConfig.ignores_ping) wins: True flags the hop whenever it gives no reply, False never."""
         quiet = ignoring_ping(self.stats.values())
         for tid, st in self.stats.items():
-            st.ignores_ping = tid in quiet
+            owner = self._ignores_ping_set.get(tid)
+            st.ignores_ping = (st.status == "down" and st.enabled) if owner is True else (False if owner is False
+                                                                                           else tid in quiet)
 
     def _update_target_stats(self, sample: ProbeSample):
         """Updates WinMTR-style rolling stats for a target."""

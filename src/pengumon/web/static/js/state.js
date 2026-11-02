@@ -9,7 +9,8 @@ export const state = {
   // device roles: a panel names its device, and a single-device view asks devices.js primaryDevice(capability).
   devices: [],
   features: [],
-  ispName: null // line.isp_name from /api/info
+  ispName: null, // line.isp_name from /api/info
+  networkInfo: null // the page's /api/info answer (chrome.js), also announced as a `networkinfo` event on document
 };
 
 export const maxLivePoints = 60;

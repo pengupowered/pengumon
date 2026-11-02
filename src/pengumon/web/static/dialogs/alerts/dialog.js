@@ -26,16 +26,21 @@ export function toggleNotifications() {
 }
 
 // The channels the server sends alerts to (ntfy, webhooks): names, formats and hosts only, never a URL or a secret.
+// Each opening asks again; only the latest answer is shown (an earlier, slower one arriving after it is dropped,
+// which used to leave the dialog showing what the server said before).
+let channelsRequest = 0;
 async function loadServerChannels() {
   const list = document.getElementById('alChannels');
   const text = document.getElementById('alChannelsText');
   const button = document.getElementById('btnServerTest');
   if (!list || !text || !button) return;
+  const request = ++channelsRequest;
   let channels = null;
   try {
     const res = await fetch('/api/notifications');
     if (res.ok) channels = (await res.json()).channels || [];
   } catch (_) { /* shown as "could not be read" below */ }
+  if (request !== channelsRequest) return; // a newer opening asked since
   list.replaceChildren();
   button.hidden = !channels || channels.length === 0;
   document.getElementById('alServerResult').textContent = '';

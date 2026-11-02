@@ -1,5 +1,5 @@
 """SQL only the reports use, on the per-minute rollups. Each function takes the repository and goes through its public
-`flush_samples()`, `read()` and `target_key()`, so the repository itself holds no report-specific query."""
+`flush_samples()`, `read()`, `target_key()` and `shown()` (hops removed from the path are left out), so the repository itself holds no report-specific query."""
 
 from typing import Any, Dict, Iterable, List
 
@@ -23,7 +23,7 @@ async def loss_grid_rows(repository, start_time: float, tz_offset_minutes: int =
             (*(f"{int(tz_offset_minutes):+d} minutes",) * 2, int(start_time // 60)),
         ) as cursor:
             rows = await cursor.fetchall()
-    skip = set(exclude)
+    skip = set(exclude) | set(getattr(repository, "hidden_targets", ()))  # and the hops removed from the path
     cells: Dict[tuple, List[int]] = {}
     for d, h, target, sent, lost in rows:
         if repository.target_key(target) in skip:
@@ -55,5 +55,5 @@ async def block_stats(repository, first_block: int, last_block: int, block_secon
              ((last_block + 1) * b - int(offset_seconds)) // 60),
         ) as cursor:
             rows = await cursor.fetchall()
-    return [{"target_id": repository.target_key(t), "block": blk, "sent": n, "ok": ok, "dead_minutes": dead}
-            for t, blk, n, ok, dead in rows]
+    return repository.shown([{"target_id": repository.target_key(t), "block": blk, "sent": n, "ok": ok, "dead_minutes": dead}
+                             for t, blk, n, ok, dead in rows])

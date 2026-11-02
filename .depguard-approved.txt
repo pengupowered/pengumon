@@ -8,6 +8,7 @@ anyio
 certifi
 charset-normalizer
 click
+colorama
 dnspython
 fastapi
 googleapis-common-protos
@@ -15,7 +16,6 @@ h11
 httpcore
 httptools
 httpx
-icmplib
 idna
 iniconfig
 jinja2

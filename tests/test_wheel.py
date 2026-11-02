@@ -75,7 +75,7 @@ def test_wheel_has_no_tests_configs_or_second_top_level_package(wheel):
 def test_wheel_declares_the_pengumon_command_and_the_dependencies(wheel):
     dist = f"pengumon-{__version__}.dist-info/"
     assert "pengumon = pengumon.cli:main" in wheel.read(dist + "entry_points.txt").decode()
-    meta = wheel.read(dist + "METADATA").decode()
+    meta = wheel.read(dist + "METADATA").decode().replace("\r\n", "\n")  # built on Windows: CRLF line ends
     assert f"\nVersion: {__version__}\n" in meta
     requires = {_names(m) for m in re.findall(r"(?m)^Requires-Dist: (.+)$", meta) if "extra ==" not in m}
     assert {"opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-http", "uvicorn", "websockets"} <= requires

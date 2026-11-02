@@ -173,6 +173,8 @@ def test_dashboard_in_headless_chromium(tmp_path, variant):
                 "PENGUMON_DEVICE_ROUTER2_PASSWORD": "smoke-pw"})
     if variant == "unknownline":
         env["PENGUMON_SMOKE_LINE_TECHNOLOGY"] = "fiber"
+    if variant == "longpath":  # as on Windows: round trips in whole milliseconds (serve.py's stand-in backend)
+        env["PENGUMON_SMOKE_PROBE_RESOLUTION_MS"] = "1.0"
     for name in ("PENGUMON_ACCESS_TOKEN", "PENGUMON_ALLOWED_HOSTS", "PENGUMON_ALLOWED_ORIGINS"):
         env.pop(name, None)
     headers = {}

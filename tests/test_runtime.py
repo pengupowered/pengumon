@@ -1,4 +1,4 @@
-"""Runtime loop: collectors and websocket sends must never hold up probing; disabled and custom targets."""
+"""Runtime loop: collectors and websocket sends must never hold up probing; disabled targets, the targets API."""
 
 import asyncio
 import json
@@ -13,7 +13,7 @@ from pengumon.capabilities import WanCounters
 from pengumon.config import AppConfig
 from pengumon.engine.prober_settings import DnsProbeConfig
 from pengumon.db.repository import DatabaseRepository
-from pengumon.db.targets import MAX_CUSTOM_TARGETS
+from pengumon.engine.path import MAX_PATH_HOPS
 from pengumon.engine.prober import NetworkProber
 from pengumon.engine.loop import probe_background_worker
 from pengumon.main import app
@@ -197,44 +197,16 @@ async def test_disabled_targets_are_not_probed_and_record_nothing():
     assert await prober.probe_dns(dns_off) is None
 
 
-async def test_custom_targets_survive_a_restart_and_deletes_persist(tmp_path):
-    path = str(tmp_path / "p.db")
-    repo = DatabaseRepository(db_path=path)
-    await repo.initialize()
-    a = TargetConfig(id="a", name="A", address="192.0.2.10", category="custom")
-    b = TargetConfig(id="b", name="B", address="192.0.2.11", category="custom", enabled=False)
-    assert await repo.add_custom_target(a) and await repo.add_custom_target(b)
-    assert not await repo.add_custom_target(a)  # duplicate id
-    await repo.close()
-
-    again = DatabaseRepository(db_path=path)
-    await again.initialize()
-    assert [t.model_dump() for t in await again.list_custom_targets()] == [a.model_dump(), b.model_dump()]
-    assert await again.delete_custom_target("a")
-    assert not await again.delete_custom_target("a")
-    await again.close()
-
-    third = DatabaseRepository(db_path=path)
-    await third.initialize()
-    assert [t.id for t in await third.list_custom_targets()] == ["b"]
-
-
-async def test_custom_target_limit(tmp_path):
-    repo = DatabaseRepository(db_path=str(tmp_path / "p.db"))
-    await repo.initialize()
-    for i in range(MAX_CUSTOM_TARGETS):
-        assert await repo.add_custom_target(TargetConfig(id=f"t{i}", name="T", address="192.0.2.1"))
-    assert not await repo.add_custom_target(TargetConfig(id="one_more", name="T", address="192.0.2.1"))
-    assert await repo.count_custom_targets() == MAX_CUSTOM_TARGETS
-
-
-async def test_targets_api_persists_and_enforces_limits(tmp_path, app_state):
+async def test_targets_api_edits_the_stored_path_and_enforces_limits(tmp_path, app_state):
+    """POST and DELETE /api/targets (the add-target dialog, the trace dialog's Monitor) edit the stored probe path
+    one hop at a time; any hop can be removed now, its history kept (hidden)."""
     repo = DatabaseRepository(db_path=str(tmp_path / "p.db"))
     await repo.initialize()
     config = AppConfig(targets=[TargetConfig(id="gw", name="Gateway", address="192.168.100.1", category="gateway")])
     app_state.config = config
     app_state.repository = repo
     app_state.prober = NetworkProber()
+    app_state.prober.register_target(config.targets[0])
 
     def body(tid):
         return {"id": tid, "name": "Custom", "address": "192.0.2.5", "category": "custom"}
@@ -242,22 +214,25 @@ async def test_targets_api_persists_and_enforces_limits(tmp_path, app_state):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         assert (await ac.post("/api/targets", json=body("mine"))).status_code == 200
         assert (await ac.post("/api/targets", json=body("mine"))).status_code == 400  # duplicate
-        assert (await ac.post("/api/targets", json=body("gw"))).status_code == 400  # clashes with config
-        assert [t.id for t in await repo.list_custom_targets()] == ["mine"]
+        assert (await ac.post("/api/targets", json=body("gw"))).status_code == 400  # taken by a hop of the path
+        assert [t.id for t in (await repo.load_path())[1]] == ["gw", "mine"]
         assert "mine" in app_state.prober.stats
 
-        assert (await ac.delete("/api/targets/gw")).status_code == 400  # configured: refused
         assert (await ac.delete("/api/targets/nope")).status_code == 404
         assert (await ac.delete("/api/targets/mine")).status_code == 200
-        assert await repo.list_custom_targets() == []
+        assert [t.id for t in (await repo.load_path())[1]] == ["gw"]
         assert [t.id for t in config.targets] == ["gw"]
         assert "mine" not in app_state.prober.stats
+        assert await repo.removed_path_ids() == {"mine"}
 
         security.reset_rate_limits()  # this test posts more than the 20/min rate limit allows
-        for i in range(MAX_CUSTOM_TARGETS):
+        for i in range(MAX_PATH_HOPS - 1):
+            if i and i % 19 == 0:
+                security.reset_rate_limits()
             assert (await ac.post("/api/targets", json=body(f"c{i}"))).status_code == 200
         security.reset_rate_limits()
-        assert (await ac.post("/api/targets", json=body("extra"))).status_code == 400
+        refused = await ac.post("/api/targets", json=body("extra"))
+        assert refused.status_code == 400 and str(MAX_PATH_HOPS) in refused.json()["detail"]
 
 
 def _router_transport(counter):

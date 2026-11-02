@@ -9,9 +9,10 @@
 #
 # Checks: uid 10001; root filesystem read-only (/app not writable, /app/data and /tmp are); /api/health reports the
 # version in src/pengumon/__init__.py; `pengumon version` and `pengumon paths` show the image's paths and address;
-# an ICMP probe to 127.0.0.1 works; then the browser end to end check (tests/ui/container-e2e.mjs). Everything it
-# creates (image if it built one, container, network, volume, temp files) is removed at the end. It never touches
-# localhost/pengumon:latest or a container named pengumon.
+# an ICMP probe to 127.0.0.1 and an ICMPv6 one to ::1 work; `pengumon doctor` exits 0 on the raw socket; no ping/traceroute is installed;
+# then the browser end to end check (tests/ui/container-e2e.mjs). Everything it creates (image if it built one,
+# container, network, volume, temp files) is removed at the end. It never touches localhost/pengumon:latest or a
+# container named pengumon.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CT="${CONTAINER:-podman}"
@@ -24,7 +25,7 @@ while [ $# -gt 0 ]; do
         --image) IMAGE="$2"; shift ;;
         --prebuilt) BUILD_ARGS=(--build-arg WHEEL_STAGE=wheel-prebuilt) ;;
         --no-e2e) E2E=0 ;;
-        -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        -h|--help) sed -n '2,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -38,7 +39,7 @@ bad() { printf '\033[31m  FAIL  %s\033[0m\n' "$*"; FAILED=$((FAILED + 1)); }
 check() { local what="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$what"; else bad "$what"; fi; }
 
 cleanup() {
-    "$CT" rm -f "$ID" >/dev/null 2>&1
+    "$CT" rm -f "$ID" "$ID-fresh" >/dev/null 2>&1
     "$CT" network rm "$ID" >/dev/null 2>&1
     "$CT" volume rm -f "$ID" >/dev/null 2>&1
     [ $BUILT = 1 ] && "$CT" rmi -f "$IMAGE" >/dev/null 2>&1
@@ -99,14 +100,39 @@ for want in /app/config.yaml /app/data /app/data/pengumon.db 0.0.0.0; do
     case "$p" in *"$want"*) pass "pengumon paths shows $want" ;; *) bad "pengumon paths shows $want" ;; esac
 done
 check "the data volume holds the database the app created" ex test -s /app/data/pengumon.db
-check "an ICMP probe to 127.0.0.1 works (icmplib, as the prober does)" \
-    ex python -c "import sys; from icmplib import ping; sys.exit(0 if ping('127.0.0.1', count=1, timeout=2, privileged=False).is_alive else 1)"
+check "an ICMP probe to 127.0.0.1 works (the app's backend, as the prober uses it)" \
+    ex python -c "import asyncio, sys; from pengumon.engine.icmp_select import open_backend; b = open_backend(); r = asyncio.run(b.probe('127.0.0.1', timeout=2)); print(b.name, r); sys.exit(0 if r.kind == 'reply' else 1)"
+check "an ICMPv6 probe to ::1 works on the raw socket (the IPv6 half of the app's backend)" \
+    ex python -c "import asyncio, sys; from pengumon.engine.icmp_select import open_backend; b = open_backend(); r = asyncio.run(b.probe('::1', timeout=2)); print(b.ipv6_name, r); sys.exit(0 if r.kind == 'reply' and b.ipv6_name == 'linux-raw' else 1)"
+doctor="$(ex pengumon doctor 2>&1)"; doctor_rc=$?
+if [ $doctor_rc = 0 ]; then pass "pengumon doctor exits 0"; else bad "pengumon doctor exits 0 (got $doctor_rc): $doctor"; fi
+case "$doctor" in *"linux-raw"*) pass "the image uses the raw socket (CAP_NET_RAW on the interpreter)" ;;
+    *) bad "the image uses the raw socket (doctor: $doctor)" ;; esac
+if [ "$BUILT" = 1 ]; then
+    check "the image holds this tree's code (no stale build cache)" env CONTAINER_CLI="$CT" "$ROOT/scripts/image-matches-tree.sh" "$IMAGE"
+fi
+check "no ping or traceroute program in the image" bash -c \
+    "! $CT exec $ID sh -c 'command -v ping || command -v traceroute || command -v tracepath'"
 check "the app's own prober sees its targets alive" bash -c \
     "$CT exec $ID curl -s -m 3 http://127.0.0.1:8000/api/health | grep -q '\"status\":\"ok\"'"
 check "a versioned static asset is served (/static/v/<hash>/)" bash -c \
     "h=\$($CT exec $ID curl -s -m 3 http://127.0.0.1:8000/ | grep -o '/static/v/[0-9a-f]*/' | head -1); [ -n \"\$h\" ] && $CT exec $ID curl -sf -m 3 -o /dev/null \"http://127.0.0.1:8000\${h}js/util.js\""
 stray="$("$CT" diff "$ID" | grep -Ev '^. /(etc|tmp|app/data)(/|$)|^. /app$')"
 if [ -z "$stray" ]; then pass "nothing was written outside /app/data and /tmp"; else bad "files written outside /app/data and /tmp: $stray"; fi
+
+# A fresh install with the config the image ships (config.example.yaml) or an empty one has no path of its own:
+# revision 0, so the dashboard's first run discovers it.
+step "Fresh container, no config mounted (the image's own config.yaml): first run"
+ID2="$ID-fresh"
+"$CT" run -d --name "$ID2" --cap-add NET_RAW --read-only --tmpfs /tmp "$IMAGE" >/dev/null || bad "could not start the fresh container"
+rev=""
+for _ in $(seq 1 60); do
+    rev="$("$CT" exec "$ID2" curl -s -m 2 http://127.0.0.1:8000/api/path 2>/dev/null | sed -n 's/.*"revision": *\([0-9]*\).*/\1/p')"
+    [ -n "$rev" ] && break
+    sleep 1
+done
+if [ "$rev" = 0 ]; then pass "a fresh container is at path revision 0 (first run)"; else bad "a fresh container is at path revision 0 (got: '${rev}')"; fi
+"$CT" rm -f "$ID2" >/dev/null 2>&1
 
 if [ $E2E = 1 ]; then
     step "Browser end to end ($RUNNER -> http://pengumon-under-test:8000)"
