@@ -35,8 +35,35 @@ TMP="$(mktemp -d)"
 FAILED=0
 step() { printf '\033[36m==> %s\033[0m\n' "$*"; }
 pass() { printf '  ok    %s\n' "$*"; }
-bad() { printf '\033[31m  FAIL  %s\033[0m\n' "$*"; FAILED=$((FAILED + 1)); }
-check() { local what="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$what"; else bad "$what"; fi; }
+# annotate TITLE TEXT: in GitHub Actions, a failure annotation (the job log is not readable without a login, annotations
+# are). The message is the last lines of TEXT, newlines as %0A, at most 1000 characters; its first line is the error.
+annotate() {
+    [ "${GITHUB_ACTIONS:-}" = true ] || return 0
+    local title="$1" text="$2" msg
+    msg="$(printf "%s\n" "$text" | sed "s/\x1b\[[0-9;]*m//g" | grep -v "^[[:space:]]*\$" | tail -n 8)"
+    [ -n "$msg" ] || msg="(no output)"
+    while [ "${#msg}" -gt 700 ] && [[ "$msg" == *$'\n'* ]]; do msg="${msg#*$'\n'}"; done   # drop the oldest lines first
+    [ "${#msg}" -le 700 ] || msg="${msg: -700}"
+    # an "ERROR: ..." line (the e2e script prints one) goes first, so the first line is the actual error
+    local err; err="$(printf "%s\n" "$text" | sed -n "s/^ERROR: //p" | head -n 1)"
+    err="${err:0:290}"
+    [ -z "$err" ] || msg="$err"$'\n'"$msg"
+    msg="${msg//'%'/%25}"; msg="${msg//$'\r'/%0D}"; msg="${msg//$'\n'/%0A}"; msg="${msg:0:1000}"
+    title="${title//[:,]/ }"
+    printf '::error title=%s::%s\n' "$title" "$msg"
+}
+# bad WHAT [DETAIL]: DETAIL (default WHAT) is what the annotation says; put the actual error first.
+bad() { printf '\033[31m  FAIL  %s\033[0m\n' "$1"; FAILED=$((FAILED + 1)); annotate "$1" "${2:-$1}"; }
+check() {
+    local what="$1" out rc; shift
+    out="$("$@" 2>&1)"; rc=$?
+    if [ $rc = 0 ]; then pass "$what"; else bad "$what" "${out:-command exited $rc: $*}"; fi
+}
+# wait_for SECONDS COMMAND...: run COMMAND every half second until it succeeds or the time is up.
+wait_for() {
+    local end=$((SECONDS + $1)); shift
+    until "$@" >/dev/null 2>&1; do [ $SECONDS -lt $end ] || return 1; sleep 0.5; done
+}
 
 cleanup() {
     "$CT" rm -f "$ID" "$ID-fresh" >/dev/null 2>&1
@@ -78,13 +105,16 @@ ex() { "$CT" exec "$ID" "$@"; }
 
 step "Waiting for /api/health"
 health=""
-for _ in $(seq 1 60); do
-    health="$(ex curl -s -m 2 http://127.0.0.1:8000/api/health || true)"
-    case "$health" in *'"ok"'*) break ;; esac
-    "$CT" container exists "$ID" && [ "$("$CT" inspect -f '{{.State.Running}}' "$ID")" = true ] || break
-    sleep 1
+healthy() { health="$(ex curl -s -m 2 http://127.0.0.1:8000/api/health || true)"; case "$health" in *'"ok"'*) return 0 ;; esac; return 1; }
+end=$((SECONDS + 60))
+until healthy; do
+    [ "$("$CT" inspect -f '{{.State.Running}}' "$ID" 2>/dev/null)" = true ] || break   # it died: stop waiting
+    [ $SECONDS -lt $end ] || break
+    sleep 0.5
 done
 echo "  health: $health"
+healthy || bad "the app answers /api/health within 60 s" \
+    "no \"ok\" from /api/health (last: ${health:-nothing}); container log: $("$CT" logs --tail 8 "$ID" 2>&1 | grep -v uvicorn.access)"
 
 step "Checks"
 [ "$(ex id -u)" = 10001 ] && pass "runs as uid 10001" || bad "runs as uid 10001 (got $(ex id -u 2>&1))"
@@ -113,7 +143,7 @@ if [ "$BUILT" = 1 ]; then
 fi
 check "no ping or traceroute program in the image" bash -c \
     "! $CT exec $ID sh -c 'command -v ping || command -v traceroute || command -v tracepath'"
-check "the app's own prober sees its targets alive" bash -c \
+check "the app's own prober sees its targets alive" wait_for 30 bash -c \
     "$CT exec $ID curl -s -m 3 http://127.0.0.1:8000/api/health | grep -q '\"status\":\"ok\"'"
 check "a versioned static asset is served (/static/v/<hash>/)" bash -c \
     "h=\$($CT exec $ID curl -s -m 3 http://127.0.0.1:8000/ | grep -o '/static/v/[0-9a-f]*/' | head -1); [ -n \"\$h\" ] && $CT exec $ID curl -sf -m 3 -o /dev/null \"http://127.0.0.1:8000\${h}js/util.js\""
@@ -139,14 +169,21 @@ if [ $E2E = 1 ]; then
     if ! "$CT" image exists "$RUNNER"; then
         bad "browser check: image $RUNNER is missing (tests/ui/runner/build.sh builds it; --no-e2e skips the check)"
     else
-        "$CT" run --rm --network "$ID" --cap-drop=ALL --security-opt no-new-privileges --read-only \
+        # The runner starts only now: the app is healthy and every other container is attached. The script itself then waits
+        # for the runner's own network to settle before it starts Chromium (see container-e2e.mjs).
+        e2e_out="$("$CT" run --rm --network "$ID" --cap-drop=ALL --security-opt no-new-privileges --read-only \
             --tmpfs /tmp:rw,size=512m,nosuid,nodev --memory 2g --pids-limit 512 --shm-size 256m \
-            -v "$ROOT/tests/ui:/e2e:ro" -e PENGUMON_BROWSER_ARGS="--no-sandbox" "$RUNNER" \
-            node /e2e/container-e2e.mjs http://pengumon-under-test:8000 && pass "browser end to end" || bad "browser end to end"
+            -v "$ROOT/tests/ui:/e2e:ro" -e PENGUMON_BROWSER_ARGS="--no-sandbox" -e GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" "$RUNNER" \
+            node /e2e/container-e2e.mjs http://pengumon-under-test:8000 2>&1)"; e2e_rc=$?
+        printf '%s\n' "$e2e_out"
+        if [ $e2e_rc = 0 ]; then pass "browser end to end"; else bad "browser end to end" "${e2e_out:-exit code $e2e_rc, no output}"; fi
     fi
 fi
-
-echo
 if [ $FAILED = 0 ]; then printf '\033[32mAll container checks passed.\033[0m\n'; else
-    printf '\033[31m%d check(s) failed.\033[0m\n--- container log (tail) ---\n' "$FAILED"; "$CT" logs --tail 30 "$ID" 2>&1 | grep -v "uvicorn.access"; fi
+    printf '\033[31m%d check(s) failed.\033[0m\n--- container log (tail) ---\n' "$FAILED"
+    logtail="$("$CT" logs --tail 30 "$ID" 2>&1 | grep -v "uvicorn.access")"
+    printf '%s\n' "$logtail"
+    # one warning annotation with the app's log, next to the error annotations of the failed checks
+    annotate "container log (tail)" "$logtail" | sed 's/^::error /::warning /'
+fi
 exit $((FAILED > 0))

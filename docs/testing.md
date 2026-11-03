@@ -28,6 +28,11 @@ makes one, and the `WHEEL_STAGE=wheel-prebuilt` build argument puts it in the im
 - unless `--no-e2e`: the browser end to end check, `tests/ui/container-e2e.mjs`, run in `localhost/ui-test-runner:1` on the
   same network: the dashboard loads without page or console errors, the live indicator and the path chain go live, and a
   file under its versioned URL loads. It is small on purpose; the full suite below runs against a seeded app, not the image.
+  Chromium aborts requests with `net::ERR_NETWORK_CHANGED` when its network namespace changes, so the script waits until
+  the runner's network has been quiet for 1.5 s and the app answers before it starts Chromium, and retries once (with a
+  notice) on exactly that error. Waits in the script are on conditions with timeouts, not fixed sleeps. With
+  `GITHUB_ACTIONS=true` every failed check also prints a `::error title=<check>::` annotation (the job log is not readable
+  without a login, annotations are).
 
 It removes the container, network, volume and (if it built one) the image. It needs unprivileged ping for your user, as
 the deployment does (`net.ipv4.ping_group_range`).

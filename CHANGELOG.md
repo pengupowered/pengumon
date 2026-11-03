@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-03
+
+### Fixed
+- The release could not publish: the job that signs the image's provenance into the registry had no registry login.
+  0.20.0 has no published release; 0.20.1 is the first one with the image, the install files and the PyPI package.
+- The container test reports every failing check readably on GitHub, waits for the container network to settle
+  before starting the browser, and waits on conditions instead of fixed times.
+
 ## [0.20.0] - 2026-11-02
 
 ### Added
@@ -206,7 +214,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/pengupowered/pengumon/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/pengupowered/pengumon/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pengupowered/pengumon/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/pengupowered/pengumon/compare/v0.18.0...v0.18.1

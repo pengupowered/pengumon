@@ -367,3 +367,19 @@ def test_deploy_and_the_container_test_check_the_image_holds_this_trees_code():
     container_test = (ROOT / "scripts" / "test-container.sh").read_text(encoding="utf-8")
     assert "scripts/image-matches-tree.sh" in deploy and "fail " in deploy.split("image-matches-tree.sh", 1)[1][:200]
     assert "scripts/image-matches-tree.sh" in container_test
+
+
+def test_every_release_job_that_writes_to_the_registry_logs_in_first():
+    # v0.20.0's release failed at "Image provenance": push-to-registry needs credentials for ghcr.io in that job too.
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))["jobs"]
+    for name, job in jobs.items():
+        steps = job.get("steps", [])
+        text = yaml.safe_dump(steps)
+        writes = "push-to-registry: true" in text or "push: true" in text or "imagetools create" in text
+        if not writes:
+            continue
+        uses = [s.get("uses", "") for s in steps]
+        login = next((i for i, u in enumerate(uses) if u.startswith("docker/login-action@")), None)
+        first_write = next(i for i, s in enumerate(steps)
+                           if any(k in yaml.safe_dump(s) for k in ("push-to-registry: true", "push: true", "imagetools create")))
+        assert login is not None and login < first_write, f"job {name} writes to the registry without logging in first"
