@@ -1,8 +1,10 @@
 # Unit tests and the browser (UI) tests, run the same way as locally: scripts/test.sh and scripts/test-ui.sh, which use
 # Podman (preinstalled on GitHub's ubuntu runners). Then the package: the wheel and sdist are built once ("package"),
 # and that same wheel is what the container image (amd64 and arm64) and the native installs (Linux x64 and arm64,
-# macOS, Windows) are tested with. Also called by release.yml before an image is published; the wheel it publishes is
-# this run's artifact "dist".
+# macOS, Windows) are tested with. It runs on a ci/<name> branch (the release candidate is pushed there first) and on pull
+# requests, not on main: the release commit is fast-forwarded onto main afterwards and is not tested again. release.yml
+# finds this run (scripts/find-tested-run.sh) and publishes its artifacts "dist" and "release-assets", so they are kept
+# for 30 days.
 #
 # Every test failure is also an error annotation (scripts/junit-annotations.py), readable without signing in through
 # the REST API: /repos/<owner>/<repo>/check-runs/<job id>/annotations. The run is meant to end with no warning
@@ -13,9 +15,8 @@ name: CI
 
 on:
   push:
-    branches: [main, "ci/**"]
+    branches: ["ci/**"]
   pull_request:
-  workflow_call:
 
 permissions:
   contents: read
@@ -136,6 +137,7 @@ jobs:
           name: dist
           path: dist/
           if-no-files-found: error
+          retention-days: 30
 
   # The image built from that wheel and tested as it is run (read-only root, uid 10001, data volume, ICMP on the raw
   # socket, `pengumon doctor`), on a native runner for each architecture (no QEMU). The browser end-to-end check needs
@@ -292,6 +294,7 @@ jobs:
           name: release-assets
           path: release-assets/
           if-no-files-found: error
+          retention-days: 30
 
   # The install scripts as a user runs them, from the release files (--from / -From: no download of pengumon, but the
   # real uv and Python downloads): install, check the service runs (system unit on Linux with sudo, LaunchDaemon on

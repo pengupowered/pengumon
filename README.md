@@ -1,12 +1,13 @@
 <p align="center">
-  <img src="docs/images/logo.png" width="112" height="112" alt="">
+  <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/logo.png" width="112" height="112" alt="">
 </p>
 
 <h1 align="center">Pengumon</h1>
 
 <p align="center">
-  <a href="https://github.com/pengupowered/pengumon/actions/workflows/ci.yml"><img src="https://github.com/pengupowered/pengumon/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <a href="https://pypi.org/project/pengumon/"><img src="https://img.shields.io/pypi/v/pengumon" alt="PyPI version"></a>
+  <a href="https://github.com/pengupowered/pengumon/actions/workflows/release.yml"><img src="https://github.com/pengupowered/pengumon/actions/workflows/release.yml/badge.svg" alt="Release workflow status"></a>
+  <a href="https://github.com/pengupowered/pengumon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -15,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/overview-dark.png" alt="The Pengumon dashboard: path health from this host through the router, modem and three provider hops to the internet, a 24-hour latency chart and the cable modem's signal" width="100%">
+  <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/overview-dark.png" alt="The Pengumon dashboard: path health from this host through the router, modem and three provider hops to the internet, a 24-hour latency chart and the cable modem's signal" width="100%">
 </p>
 
 ## Why
@@ -38,22 +39,22 @@ provider a report instead of a hunch.
 - **Your modem and router.** DOCSIS channel levels and codeword errors; router CPU, memory, WAN traffic, connected
   clients and mesh nodes. Drivers are pluggable.
 - **Your own apps too.** HTTP health checks for self-hosted services, with incidents and alerts by [ntfy](https://ntfy.sh) or webhook.
-- **Small and private.** One container and one SQLite file. Nothing leaves your network unless you turn on
+- **Small and private.** One process (installed natively or in a container) and one SQLite file. Nothing leaves your network unless you turn on
   notifications or the optional OpenTelemetry export. Works on a phone.
 
 ## Install
 
 Pengumon runs natively on Windows, macOS and Linux, or in a container. One command per system; each link goes to that
-system's section in [docs/install.md](docs/install.md), with what it needs, what it sets up and how to remove it.
+system's section in [docs/install.md](https://github.com/pengupowered/pengumon/blob/main/docs/install.md), with what it needs, what it sets up and how to remove it.
 
-**Windows** 10/11 (no administrator rights), in PowerShell ([details](docs/install.md#windows)):
+**Windows** 10/11 (no administrator rights), in PowerShell ([details](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#windows)):
 
 ```powershell
 irm https://github.com/pengupowered/pengumon/releases/latest/download/install.ps1 | iex
 ```
 
-**macOS** (Apple silicon or Intel) ([details](docs/install.md#macos)), **Linux** (systemd, x86-64 or arm64)
-([details](docs/install.md#linux)) and **Raspberry Pi** (64-bit OS only) ([details](docs/install.md#raspberry-pi)) use the
+**macOS** (Apple silicon or Intel) ([details](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#macos)), **Linux** (systemd, x86-64 or arm64)
+([details](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#linux)) and **Raspberry Pi** (64-bit OS only) ([details](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#raspberry-pi)) use the
 same line:
 
 ```bash
@@ -61,17 +62,18 @@ curl -fsSL https://github.com/pengupowered/pengumon/releases/latest/download/ins
 ```
 
 **Container** (Docker or Podman on Linux): `docker compose up -d` with the published image, as below
-([details](docs/install.md#container)).
+([details](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#container)).
 
 The scripts download the release, check every file against its hash, set up Pengumon's own Python, start it in the
 background so it survives reboots, and open `http://127.0.0.1:8000` (this computer only until you allow more, with an
 access token). On Linux and macOS the script asks for sudo once, says why, and has a `--user` option to avoid it. Run
 the same command again to upgrade (your data is backed up first). Not tested yet on real Windows, macOS or Raspberry Pi
-hardware: see [what has been tested where](docs/install.md#what-has-been-tested-where).
+hardware: see [what has been tested where](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#what-has-been-tested-where).
 
-> [!IMPORTANT]
-> Anyone who can reach port 8000 can read the data and change settings until you set `PENGUMON_ACCESS_TOKEN`. The
-> default listens on this computer only. See [docs/security.md](docs/security.md).
+Already use uv? `uv tool install pengumon`: no dependency hash check and no background service; see [the uv section](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#quick-way-uv-tool-install).
+
+> **Important:** Anyone who can reach port 8000 can read the data and change settings until you set `PENGUMON_ACCESS_TOKEN`. The
+> default listens on this computer only. See [docs/security.md](https://github.com/pengupowered/pengumon/blob/main/docs/security.md).
 
 **Container**, the short version (Linux host with Docker or Podman, x86-64 or arm64; host networking so the probes
 measure the host's own path):
@@ -85,7 +87,7 @@ docker compose up -d                  # or: podman compose up -d
 ```
 
 Open `http://<host>:8000`. Rootless Podman needs unprivileged ping allowed once, and Docker Desktop (macOS, Windows) is
-not supported for this: both are explained in [docs/install.md](docs/install.md#container), as is building from source.
+not supported for this: both are explained in [docs/install.md](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#container), as is building from source.
 `pengumon doctor` says whether probing works here and, if not, what fixes it.
 
 ## First run
@@ -97,13 +99,13 @@ network, the line, your provider, the internet), how sure it is (Sure, Likely or
 you apply, the default targets keep being probed.
 
 Later, **Path health > Edit** opens the same editor: rename, re-role, reorder, add, remove, or press **Rediscover** to
-trace again and see what changed. Details: [docs/path-editor.md](docs/path-editor.md) and
-[docs/discovery.md](docs/discovery.md), which lists exactly what discovery sends where.
+trace again and see what changed. Details: [docs/path-editor.md](https://github.com/pengupowered/pengumon/blob/main/docs/path-editor.md) and
+[docs/discovery.md](https://github.com/pengupowered/pengumon/blob/main/docs/discovery.md), which lists exactly what discovery sends where.
 
 ## Telling it about your network
 
 The probe path is edited in the dashboard, not in `config.yaml`: **Path health > Edit** shows the hops as cards in path
-order (see [First run](#first-run) and [docs/path-editor.md](docs/path-editor.md)). **Export** and **Import** move a
+order (see [First run](#first-run) and [docs/path-editor.md](https://github.com/pengupowered/pengumon/blob/main/docs/path-editor.md)). **Export** and **Import** move a
 path between installs as YAML.
 
 Upgrading from 0.17 or older: the first start imports config.yaml's `targets:` and the targets added from the dashboard
@@ -122,7 +124,7 @@ The dashboard adapts to the shape of your network. A long path folds its provide
 out. A provider router that ignores ping while traffic passes through it is shown as such, not as down. Custom targets
 are listed under the path. Hops can be IPv4 or IPv6 addresses, or host names probed over either; the IPv6 servers
 discovery finds are their own node, "Internet (IPv6)", and on a host without IPv6 they say "IPv6 unavailable on this
-host" instead of counting as down. Everything is in [docs/configuration.md](docs/configuration.md).
+host" instead of counting as down. Everything is in [docs/configuration.md](https://github.com/pengupowered/pengumon/blob/main/docs/configuration.md).
 
 ### Supported devices
 
@@ -135,7 +137,7 @@ host" instead of counting as down. Everything is in [docs/configuration.md](docs
   and model.
 
 Probing works with any equipment; devices are an optional extra. Setting up each one, and adding a driver, is
-described in [docs/devices.md](docs/devices.md).
+described in [docs/devices.md](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md).
 
 ## Alerts
 
@@ -155,62 +157,62 @@ notifications:
 ```
 
 The **Alerts** dialog lists the configured channels and has a **Send test** button. The payload, the three formats and
-the Home Assistant recipe are in [docs/webhooks.md](docs/webhooks.md).
+the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md).
 
 ## A closer look
 
-<img src="docs/images/inspector.png" alt="The incident inspector: when it started, where loss first appeared, per-hop lanes before, during and after, and the modem's reading" width="640">
+<img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/inspector.png" alt="The incident inspector: when it started, where loss first appeared, per-hop lanes before, during and after, and the modem's reading" width="640">
 
 **Incident inspector.** Where loss first appeared, every hop before, during and after, the modem's signal and the line load.
 
-<img src="docs/images/drilldown.png" alt="Loss by hour of the week; one evening hour selected, and the incident list filtered to that hour" width="640">
+<img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/drilldown.png" alt="Loss by hour of the week; one evening hour selected, and the incident list filtered to that hour" width="640">
 
 **When it breaks.** Loss by hour of the week; click an hour to see its incidents.
 
-<img src="docs/images/router.png" alt="The router card: WAN traffic against the line capacity, CPU and memory, clients by band and the mesh nodes" width="640">
+<img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/router.png" alt="The router card: WAN traffic against the line capacity, CPU and memory, clients by band and the mesh nodes" width="640">
 
 **Router.** WAN traffic against the line's capacity, CPU and memory, clients by band and per mesh node.
 
-<img src="docs/images/modem.png" alt="The cable modem card: downstream power, SNR and upstream power against their good ranges, codeword errors and channel lock" width="640">
+<img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/modem.png" alt="The cable modem card: downstream power, SNR and upstream power against their good ranges, codeword errors and channel lock" width="640">
 
 **Cable modem.** Signal levels against their good ranges, codeword errors and channel lock, with history.
 
-<img src="docs/images/first-run.png" alt="Path health on a first run: the banner 'Pengumon found your network path' with a Review button" width="640">
+<img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/first-run.png" alt="Path health on a first run: the banner 'Pengumon found your network path' with a Review button" width="640">
 
 **First run.** Discovery runs by itself and offers the path it found; the defaults are probed until you apply it.
 
-<img src="docs/images/path-editor.png" alt="The path editor with a draft from discovery: each hop with a role, a Sure or Likely badge and the reasons" width="640">
+<img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/path-editor.png" alt="The path editor with a draft from discovery: each hop with a role, a Sure or Likely badge and the reasons" width="640">
 
 **Path editor.** Discovery's draft: every hop with a role, how sure it is and why. Edit, then Apply.
 
 <p align="center">
-  <img src="docs/images/phone-live.png" width="180" alt="The dashboard on a phone: path health as a vertical chain">
+  <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/phone-live.png" width="180" alt="The dashboard on a phone: path health as a vertical chain">
   &nbsp;&nbsp;
-  <img src="docs/images/phone-incidents.png" width="180" alt="The incidents tab on a phone">
+  <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/phone-incidents.png" width="180" alt="The incidents tab on a phone">
   &nbsp;&nbsp;
-  <img src="docs/images/overview-light.png" width="300" alt="The dashboard in the light theme">
+  <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/overview-light.png" width="300" alt="The dashboard in the light theme">
 </p>
 
 ## Documentation
 
-- [Install](docs/install.md): Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download
-- [Configuration](docs/configuration.md): The probe path (targets), DNS lookups, thresholds, retention, line capacity, the classifier
-- [Probing](docs/probing.md): Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step
-- [Path editor](docs/path-editor.md): Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17
-- [Discovery](docs/discovery.md): Finding the path and who operates each hop: what is sent where, how roles are judged
-- [Devices](docs/devices.md): The `devices:` list: drivers, capabilities, TLS, credentials, writing a driver
-- [Diagnosis](docs/diagnosis.md): How outages are classified: load-aware rules, incident kinds and causes
-- [Dashboard](docs/dashboard.md): The panels, the path chain, layout, themes, the phone view
-- [Clients](docs/clients.md): Connected clients and mesh nodes, privacy settings, what is stored
-- [Services](docs/services.md): Health checks for your own apps and their notifications
-- [Webhooks](docs/webhooks.md): Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets
-- [Telemetry](docs/telemetry.md): What is stored and sent, logging, OpenTelemetry, ntfy
-- [Security](docs/security.md): Access token, request guard, environment variables
-- [Storage](docs/storage.md): Database layout, migrations, upgrade notes
-- [API](docs/api.md): Data and operations endpoints
-- [Architecture](docs/architecture.md): Components, start-up order, the live message
-- [Testing](docs/testing.md): Unit tests, browser tests and lint
-- [Supply chain](docs/supply-chain.md): Dependency policy, hash-locked requirements, vendored code
+- [Install](https://github.com/pengupowered/pengumon/blob/main/docs/install.md): Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download
+- [Configuration](https://github.com/pengupowered/pengumon/blob/main/docs/configuration.md): The probe path (targets), DNS lookups, thresholds, retention, line capacity, the classifier
+- [Probing](https://github.com/pengupowered/pengumon/blob/main/docs/probing.md): Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step
+- [Path editor](https://github.com/pengupowered/pengumon/blob/main/docs/path-editor.md): Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17
+- [Discovery](https://github.com/pengupowered/pengumon/blob/main/docs/discovery.md): Finding the path and who operates each hop: what is sent where, how roles are judged
+- [Devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md): The `devices:` list: drivers, capabilities, TLS, credentials, writing a driver
+- [Diagnosis](https://github.com/pengupowered/pengumon/blob/main/docs/diagnosis.md): How outages are classified: load-aware rules, incident kinds and causes
+- [Dashboard](https://github.com/pengupowered/pengumon/blob/main/docs/dashboard.md): The panels, the path chain, layout, themes, the phone view
+- [Clients](https://github.com/pengupowered/pengumon/blob/main/docs/clients.md): Connected clients and mesh nodes, privacy settings, what is stored
+- [Services](https://github.com/pengupowered/pengumon/blob/main/docs/services.md): Health checks for your own apps and their notifications
+- [Webhooks](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md): Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets
+- [Telemetry](https://github.com/pengupowered/pengumon/blob/main/docs/telemetry.md): What is stored and sent, logging, OpenTelemetry, ntfy
+- [Security](https://github.com/pengupowered/pengumon/blob/main/docs/security.md): Access token, request guard, environment variables
+- [Storage](https://github.com/pengupowered/pengumon/blob/main/docs/storage.md): Database layout, migrations, upgrade notes
+- [API](https://github.com/pengupowered/pengumon/blob/main/docs/api.md): Data and operations endpoints
+- [Architecture](https://github.com/pengupowered/pengumon/blob/main/docs/architecture.md): Components, start-up order, the live message
+- [Testing](https://github.com/pengupowered/pengumon/blob/main/docs/testing.md): Unit tests, browser tests and lint
+- [Supply chain](https://github.com/pengupowered/pengumon/blob/main/docs/supply-chain.md): Dependency policy, hash-locked requirements, vendored code
 
 ## Development
 
@@ -225,7 +227,7 @@ scripts/test-ui.sh                 # browser tests in headless Chromium, no netw
 
 Dependencies are hash-locked (`requirements*.txt`, generated from the `.in` files) and installed with
 `--require-hashes`. `scripts/deploy.sh` is the maintainer's deploy: it adds a dependency audit (the separate `depguard`
-tool, run when it is installed), a rollback image and a database backup before rebuilding. `docker compose` is all you need to run Pengumon. Releases are cut as described in [docs/releasing.md](docs/releasing.md).
+tool, run when it is installed), a rollback image and a database backup before rebuilding. `docker compose` is all you need to run Pengumon. Releases are cut as described in [docs/releasing.md](https://github.com/pengupowered/pengumon/blob/main/docs/releasing.md).
 
 ## How accurate is it?
 
@@ -233,8 +235,8 @@ Pengumon sends its own ICMP (no `ping` or `traceroute` program). On Linux and ma
 timestamps (`SO_TIMESTAMPNS` / `SO_TIMESTAMP`, as `ping` does) over one shared socket, started 25 ms apart; against a
 continuous `ping` they agree within about 0.2 ms. Windows reports round trips in whole milliseconds, and the dashboard
 says so. DNS timings are measured in Python and can read a few tenths of a millisecond high. Details per OS:
-[docs/probing.md](docs/probing.md).
+[docs/probing.md](https://github.com/pengupowered/pengumon/blob/main/docs/probing.md).
 
 ## License
 
-[MIT](LICENSE). Chart.js, bundled in `src/pengumon/web/static/vendor/`, is also MIT-licensed.
+[MIT](https://github.com/pengupowered/pengumon/blob/main/LICENSE). Chart.js, bundled in `src/pengumon/web/static/vendor/`, is also MIT-licensed.

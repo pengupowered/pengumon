@@ -27,7 +27,7 @@ export const steps = [
   ["time ranges switch the main chart", async ({ click, eq, page, until, waitText }) => {
     for (const [arg, label] of [["3600", "last 1 h · avg per 10 s"], ["900", "last 15 min · avg per 2 s"]]) {
       await click(`#timeRangeButtons button[data-arg="${arg}"]`);
-      await waitText("#chartModeLabel", new RegExp(`^${label.replace(/[()]/g, "\\$&")}$`));
+      await waitText("#chartModeLabel", new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
       await until((i) => Chart.getChart(document.getElementById(i)).data.datasets.length >= 3, "latencyChart");
       eq("active button", await page.$eval("#timeRangeButtons button.active", (b) => b.dataset.arg), arg);
     }

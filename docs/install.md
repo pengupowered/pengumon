@@ -282,5 +282,7 @@ at an `http://` address. The attestation above (optional, and it needs the GitHu
 If you already have [uv](https://docs.astral.sh/uv/), `uv tool install pengumon` installs the same wheel from PyPI
 into its own environment and puts `pengumon` on your PATH. It does **not** check dependency hashes (use the install
 script for that), and it does not set up the service: run `pengumon service install --user`, or start it with
-`pengumon run`. `uv tool install --exclude-newer "7 days ago" pengumon` keeps the 7-day cooldown on new releases that
-this project applies to its own dependencies.
+`pengumon run`. To keep the 7-day cooldown on new releases that this project applies to its own dependencies, use
+`uv tool install --exclude-newer "7 days" --exclude-newer-package "pengumon=0 days" pengumon`: "7 days" holds back
+dependencies, and Pengumon itself gets no delay (a plain `--exclude-newer "7 days ago"` would hide Pengumon's own new
+release for a week). PyPI releases need the owner's approval, so PyPI can lag a GitHub release by a few minutes.

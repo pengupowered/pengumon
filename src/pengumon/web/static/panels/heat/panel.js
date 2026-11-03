@@ -54,8 +54,10 @@ export function renderHeat(grid) {
   const text = insight(grid);
   const p = document.getElementById('heatInsight');
   p.hidden = false;
-  p.querySelector('span').innerHTML = text;
-  el.setAttribute('aria-label', `Packet loss by day and hour, last ${grid.days.length} days. ${text.replace(/<[^>]+>/g, '')}`);
+  const span = p.querySelector('span');
+  span.innerHTML = text;
+  // the plain text the browser made of it (not a tag-stripping regex)
+  el.setAttribute('aria-label', `Packet loss by day and hour, last ${grid.days.length} days. ${span.textContent}`);
   document.getElementById('heatHint').hidden = !el.querySelector('.cell');
 }
 

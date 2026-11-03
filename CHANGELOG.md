@@ -5,6 +5,22 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-11-03
+
+### Fixed
+- The README is the project description on PyPI, where relative images and links were broken and the GitHub alert
+  showed as text: every image and link is now absolute, and a test keeps it that way.
+- docs/install.md: the `uv tool install --exclude-newer "7 days ago"` example hid Pengumon's own new release for a week;
+  it now keeps the 7-day cooldown for dependencies only.
+- Code scanning findings: the UPnP search during discovery listens only on the LAN address it sends from (not on
+  every interface); the loss-by-hour panel takes its plain text from the page instead of a tag-stripping regex; two
+  tests made stricter.
+
+### Changed
+- The README says `uv tool install pengumon` works, and shows a PyPI version badge and the Release workflow status
+  (the CI workflow no longer runs on `main`).
+- Releases: the Release workflow publishes the files that the CI run already tested, without running the tests again.
+
 ## [0.20.1] - 2026-11-03
 
 ### Fixed
@@ -214,7 +230,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.20.2...HEAD
+[0.20.2]: https://github.com/pengupowered/pengumon/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/pengupowered/pengumon/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/pengupowered/pengumon/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pengupowered/pengumon/compare/v0.18.1...v0.19.0

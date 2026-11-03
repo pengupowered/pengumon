@@ -128,6 +128,19 @@ class _Collector(asyncio.DatagramProtocol):
             self.answers.append((addr[0], data[:DATAGRAM_MAX + 1]))
 
 
+def lan_source_address() -> Optional[str]:
+    """The address this host would send the SSDP multicast from (connect() on a UDP socket sends nothing), or None."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(SSDP_GROUP)
+        address = probe.getsockname()[0]
+        return None if address in ("0.0.0.0", "") else address
+    except OSError:
+        return None
+    finally:
+        probe.close()
+
+
 async def ssdp_search(wait: float = SEARCH_WAIT_S) -> List[Tuple[str, bytes]]:
     """The answers to an IGD search on this host's LAN (IPv4 multicast)."""
     loop = asyncio.get_running_loop()
@@ -135,7 +148,12 @@ async def ssdp_search(wait: float = SEARCH_WAIT_S) -> List[Tuple[str, bytes]]:
     try:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
         sock.setblocking(False)
-        sock.bind(("0.0.0.0", 0))
+        # Only the LAN interface the search goes out on listens for the answers (for the few seconds of the search),
+        # not every interface: on a host that also has a public interface nothing listens there.
+        source = lan_source_address()
+        if source:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(source))
+        sock.bind((source or "0.0.0.0", 0))
         transport, collector = await loop.create_datagram_endpoint(_Collector, sock=sock)
     except OSError:
         sock.close()

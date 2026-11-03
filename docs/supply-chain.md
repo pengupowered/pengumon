@@ -154,7 +154,7 @@ lock or audit, nor by GitHub's dependency graph. Check its releases and advisori
 ## Published images
 
 Tagged releases are built by `.github/workflows/release.yml` and pushed to `ghcr.io/pengupowered/pengumon` for amd64
-and arm64, after the tests pass. The workflows use `GITHUB_TOKEN` only (no other secrets), start from
+and arm64, after the commit's own CI run has passed (the release finds it and publishes its artifacts). The workflows use `GITHUB_TOKEN` only (no other secrets), start from
 `permissions: contents: read` and grant `packages: write` and `contents: write` to the one job each that needs them.
 Third-party actions are pinned to full commit SHAs, with the version in a comment; update them by looking the new tag
 up (`git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>`) and replacing the SHA. The wheel and sdist

@@ -93,10 +93,20 @@ def test_workflows_pin_actions_to_commit_shas_and_default_to_read_only(name):
             assert job["uses"].startswith("./.github/workflows/")
 
 
-def test_ci_runs_on_push_and_pull_request_and_can_be_called():
+def test_ci_runs_on_ci_branches_and_pull_requests_only_so_a_release_commit_is_tested_once():
+    """The release commit is tested on its ci/<name> branch, then fast-forwarded to main: no second run on main, and
+    release.yml does not call ci.yml (it finds the run that already passed)."""
     triggers = _load(WORKFLOWS / "ci.yml")["on"]
-    assert {"push", "pull_request", "workflow_call"} <= set(triggers)
-    assert triggers["push"]["branches"] == ["main", "ci/**"]  # ci/<topic>: a run of a branch before it is merged
+    assert set(triggers) == {"push", "pull_request"}  # no workflow_call, no schedule
+    assert triggers["push"]["branches"] == ["ci/**"]  # not main, not tags
+
+
+def test_ci_keeps_the_artifacts_a_release_downloads_long_enough():
+    jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
+    uploads = {s["with"]["name"]: s["with"] for s in _steps({"jobs": jobs}) if str(s.get("uses", "")).startswith("actions/upload-artifact@")}
+    assert set(uploads) == {"dist", "release-assets"}
+    for name, w in uploads.items():
+        assert w["retention-days"] >= 30, name
 
 
 @pytest.mark.parametrize("name", ["ci.yml", "release.yml"])
@@ -137,17 +147,53 @@ def test_one_job_saves_the_browser_runner_image_and_the_others_restore_it():
                 assert "runner-image" in job["needs"], name
 
 
-def test_release_runs_the_tests_first_and_only_publishes_with_the_permissions_it_needs():
+def test_release_does_not_run_the_tests_but_starts_by_finding_the_ci_run_of_this_commit():
+    workflow = _load(WORKFLOWS / "release.yml")
+    jobs = workflow["jobs"]
+    assert list(jobs)[0] == "tested" and jobs["tested"]["name"] == "Tested commit"
+    assert jobs["tested"].get("needs") is None  # the first job
+    assert jobs["tested"]["permissions"] == {"contents": "read", "actions": "read"}
+    assert jobs["tested"]["outputs"] == {"run-id": "${{ steps.ci.outputs.run-id }}"}
+    find = next(s for s in jobs["tested"]["steps"] if s.get("id") == "ci")
+    assert "scripts/find-tested-run.sh" in find["run"] and '"$GITHUB_SHA"' in find["run"]
+    # no test job, no call of ci.yml
+    assert not any("uses" in job for job in jobs.values())
+    assert "ci.yml" not in yaml.safe_dump({n: j for n, j in jobs.items()})
+    assert "scripts/test" not in (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+
+
+def test_find_tested_run_asks_for_the_successful_push_run_of_ci_yml_for_exactly_this_commit():
+    text = (ROOT / "scripts" / "find-tested-run.sh").read_text(encoding="utf-8")
+    assert "actions/runs?head_sha=$sha&status=success&event=push" in text
+    assert ".github/workflows/ci.yml" in text and '.event == "push"' in text and '.head_sha == "' in text
+    assert "no successful CI run for $sha: push it to a ci/ branch first" in text and "exit 1" in text
+
+
+def test_release_downloads_every_artifact_from_the_tested_ci_run_instead_of_rebuilding():
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    downloads = {n: [s for s in j["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact@")]
+                 for n, j in jobs.items()}
+    assert {n for n, d in downloads.items() if d} == {"image", "attest-files", "release", "pypi"}
+    for name, steps in downloads.items():
+        for step in steps:
+            assert step["with"]["run-id"] == "${{ needs.tested.outputs.run-id }}", name
+            assert step["with"]["github-token"] == "${{ secrets.GITHUB_TOKEN }}", name
+            assert "tested" in jobs[name]["needs"] or jobs[name]["needs"] == "tested", name
+            assert jobs[name]["permissions"]["actions"] == "read", name  # reading another run's artifacts
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    assert "upload-artifact" not in text and "podman build" not in text  # no rebuild of the wheel or the files
+
+
+def test_release_runs_in_order_and_only_publishes_with_the_permissions_it_needs():
     workflow = _load(WORKFLOWS / "release.yml")
     assert workflow["on"]["push"]["tags"] == ["v[0-9]+.[0-9]+.[0-9]+"]
     jobs = workflow["jobs"]
-    assert jobs["test"]["uses"] == "./.github/workflows/ci.yml"
-    assert jobs["image"]["needs"] == "test"
-    assert jobs["image"]["permissions"] == {"contents": "read", "packages": "write"}
+    assert jobs["image"]["needs"] == "tested"
+    assert jobs["image"]["permissions"] == {"contents": "read", "packages": "write", "actions": "read"}
     assert jobs["manifest"]["needs"] == "image"
     assert jobs["manifest"]["permissions"] == {"contents": "read", "packages": "write"}
-    assert jobs["release"]["needs"] == ["manifest", "attest-image", "attest-files"]
-    assert jobs["release"]["permissions"] == {"contents": "write"}
+    assert jobs["release"]["needs"] == ["tested", "manifest", "attest-image", "attest-files"]
+    assert jobs["release"]["permissions"] == {"contents": "write", "actions": "read"}
 
 
 def test_only_the_publishing_and_attesting_jobs_may_ask_for_an_identity_token():
@@ -155,8 +201,10 @@ def test_only_the_publishing_and_attesting_jobs_may_ask_for_an_identity_token():
     jobs = _load(WORKFLOWS / "release.yml")["jobs"]
     holders = {name for name, job in jobs.items() if (job.get("permissions") or {}).get("id-token") == "write"}
     assert holders == {"pypi", "attest-image", "attest-files"}
-    assert jobs["pypi"]["permissions"] == {"id-token": "write"}  # nothing else: not even the repository contents
-    assert jobs["attest-files"]["permissions"] == {"contents": "read", "id-token": "write", "attestations": "write"}
+    # nothing else but reading the tested run's artifacts: not even the repository contents
+    assert jobs["pypi"]["permissions"] == {"id-token": "write", "actions": "read"}
+    assert jobs["attest-files"]["permissions"] == {
+        "contents": "read", "actions": "read", "id-token": "write", "attestations": "write"}
     assert jobs["attest-image"]["permissions"] == {
         "contents": "read", "packages": "write", "id-token": "write", "attestations": "write"}
     assert "id-token" not in (_load(WORKFLOWS / "release.yml")["permissions"])
@@ -167,12 +215,13 @@ def test_pypi_publishing_waits_for_approval_comes_last_and_publishes_the_tested_
     jobs = _load(WORKFLOWS / "release.yml")["jobs"]
     pypi = jobs["pypi"]
     assert pypi["environment"]["name"] == "pypi"  # the GitHub environment with the required reviewer
-    assert pypi["needs"] == "release"  # a version on PyPI cannot be withdrawn, so everything else came first
+    assert pypi["needs"] == ["tested", "release"]  # release last of the others: a version on PyPI cannot be withdrawn, so everything else came first
     names = [s["with"]["name"] for s in pypi["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact@")]
     assert names == ["dist"]  # the wheel and sdist of the tested run, not the install scripts or the lock
     publish = next(s for s in pypi["steps"] if str(s.get("uses", "")).startswith("pypa/gh-action-pypi-publish@"))
     assert publish["with"] == {"packages-dir": "dist"}  # no password or token anywhere: trusted publishing
-    assert "secrets." not in str(pypi)
+    assert "secrets." not in str(publish)
+    assert str(pypi).count("secrets.") == str(pypi).count("secrets.GITHUB_TOKEN")  # only the token that reads the artifacts
     assert not any(job.get("environment") for name, job in jobs.items() if name != "pypi")
 
 

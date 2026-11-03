@@ -2,6 +2,7 @@
 the trace merge and divergence point, the web-page check (fingerprints, redirects, size caps) and UPnP (SSDP answers,
 descriptions, SOAP, hostile XML)."""
 
+import socket
 import asyncio
 
 import httpx
@@ -487,3 +488,29 @@ def test_the_msearch_asks_for_an_internet_gateway():
     text = upnp.msearch(upnp.IGD_TYPES[0]).decode()
     assert text.startswith("M-SEARCH * HTTP/1.1\r\n") and "ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1" in text
     assert 'MAN: "ssdp:discover"' in text and text.endswith("\r\n\r\n")
+
+
+async def test_the_ssdp_search_listens_only_on_the_lan_interface_it_sends_from(monkeypatch):
+    # CodeQL "binding a socket to all network interfaces": the answers are awaited on the address the multicast goes
+    # out from, not on 0.0.0.0 (on a host with a public interface nothing should listen there).
+    from pengumon.engine.discovery import upnp
+    bound = []
+
+    class Recording(socket.socket):
+        def bind(self, address):
+            bound.append(address)
+            return super().bind(("127.0.0.1", 0))
+
+        def sendto(self, data, address):
+            return len(data)
+
+    monkeypatch.setattr(upnp, "lan_source_address", lambda: "127.0.0.1")
+    monkeypatch.setattr(upnp.socket, "socket", Recording)
+    await upnp.ssdp_search(wait=0.05)
+    assert bound and bound[0][0] == "127.0.0.1"
+
+
+def test_the_lan_source_address_is_a_real_address_or_none():
+    from pengumon.engine.discovery import upnp
+    address = upnp.lan_source_address()
+    assert address is None or (address != "0.0.0.0" and socket.inet_aton(address))

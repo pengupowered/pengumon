@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 from types import SimpleNamespace
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from opentelemetry.sdk._logs import LoggerProvider
@@ -220,7 +220,7 @@ def test_links_go_to_the_dashboard_the_logs_and_the_traces():
         logs, traces = _pane(links["Logs"]), _pane(links["Traces"])
         assert logs["datasource"] == "loki" and logs["queries"][0]["expr"] == '{service_name="pengumon"}'
         assert traces["datasource"] == "tempo" and traces["queries"][0]["query"] == '{resource.service.name="pengumon"}'
-        assert all(u.startswith("https://grafana.lan:3000/") for u in links.values())
+        assert all(urlsplit(u)[:2] == ("https", "grafana.lan:3000") for u in links.values())
     finally:
         grafana.configure({})
 

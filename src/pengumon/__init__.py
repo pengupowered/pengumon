@@ -1,3 +1,3 @@
 """Pengumon: Network Diagnostics & Outage Root-Cause Analyzer."""
 
-__version__ = "0.20.1"
+__version__ = "0.20.2"

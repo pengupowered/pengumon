@@ -1,8 +1,13 @@
 # Releasing
 
-A release is a signed tag `vX.Y.Z` pushed to GitHub. The tag starts `.github/workflows/release.yml`, which runs the
-tests (`ci.yml`, which also builds the wheel and sdist once, tests the image built from that wheel, assembles the release
-files, and installs them with the install scripts on Linux, macOS and Windows), then:
+A release commit is tested once. It is pushed to a `ci/<name>` branch first, where `ci.yml` tests it (and builds the
+wheel and sdist once, tests the image built from that wheel, assembles the release files, and installs them with the
+install scripts on Linux, macOS and Windows). When that run is green, the same commit is fast-forwarded onto `main` and
+tagged `vX.Y.Z`; `main` does not run CI again. The signed tag starts `.github/workflows/release.yml`, which does not run
+the tests: its first job, "Tested commit", looks up the successful push run of `ci.yml` for exactly the tagged commit
+(`scripts/find-tested-run.sh`) and fails with "no successful CI run for <sha>: push it to a ci/ branch first" if there is
+none. Every later job downloads that run's artifacts (`dist`, `release-assets`) instead of rebuilding them, so the
+release publishes the very files that were tested. Then:
 
 1. builds the image from that same wheel on a native runner for `linux/amd64` and `linux/arm64` (no QEMU) and joins the
    two into one multi-architecture image at `ghcr.io/pengupowered/pengumon` as `X.Y.Z` and `latest` (the per-architecture
@@ -15,6 +20,8 @@ files, and installs them with the install scripts on Linux, macOS and Windows), 
 4. last, after you approve it, publishes the wheel and sdist to PyPI.
 
 Only the PyPI job and the two attestation jobs have `id-token: write`, and only the release job has `contents: write`.
+The jobs that download from the CI run also have `actions: read` (needed to read another run's artifacts). The CI
+artifacts are kept for 30 days, so a tag must follow the green `ci/` run within that time.
 
 ## One-time setup (before the first tag)
 
@@ -28,15 +35,19 @@ PyPI uses trusted publishing: no token or password exists anywhere. The steps ar
 
 ## Cut a release
 
-1. On a feature branch or on `main`, with the tests passing (`scripts/test.sh`, `scripts/test-ui.sh`).
+1. On a feature branch, with the tests passing locally (`scripts/test.sh`, `scripts/test-ui.sh`).
 2. Bump the version in one place, `__version__` in `src/pengumon/__init__.py` (pyproject.toml reads it). Also change the
    image tag in `compose.release.yaml` (`tests/test_distribution.py` checks it).
 3. In `CHANGELOG.md`, move what is under `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section, leave
    `[Unreleased]` empty, and update the two compare links at the bottom. Describe changes for people who run
    Pengumon, in plain words. `scripts/changelog-section.sh X.Y.Z` prints what the release notes will be.
-4. Commit (`chore: release X.Y.Z`), then tag it, signed: `git tag -s vX.Y.Z -m "Pengumon X.Y.Z"`.
-5. Push the commit and the tag to GitHub: `git push github main vX.Y.Z`.
-6. Watch the Release workflow in the Actions tab. When the `PyPI` job asks for approval, check that the release page
+4. Commit (`chore: release X.Y.Z`, signed) as a single release commit.
+5. Push that commit to a candidate branch: `git push github HEAD:refs/heads/ci/release-X.Y.Z`. Wait for the CI run of
+   that branch to turn green (Actions tab). Fix and push a new commit if it fails.
+6. Fast-forward `main` to the same commit and tag it, signed: `git tag -s vX.Y.Z -m "Pengumon X.Y.Z"`, then
+   `git push github HEAD:refs/heads/main vX.Y.Z`. The commit must be exactly the one that was tested: a rebase, a
+   squash or an amended commit has a new hash and the Release workflow stops at "Tested commit".
+7. Watch the Release workflow in the Actions tab. When the `PyPI` job asks for approval, check that the release page
    shows the notes and the six files and that `docker pull ghcr.io/pengupowered/pengumon:X.Y.Z` works, then approve.
    Afterwards `uv tool install pengumon` and the install script's `--version X.Y.Z` should both find it.
 
@@ -55,5 +66,7 @@ settings, Danger Zone, Change visibility) make it public once, or `docker compos
 - `latest` moves with every release. The compose file pins an exact version so upgrades are deliberate.
 - A version on PyPI cannot be changed or withdrawn, only yanked, which is why that job is last. If it fails after the
   approval, re-run the job; PyPI refuses a file it already has, so nothing is published twice.
+- A pull request is tested by its own CI run, but that run is not the release's: only a push run on a `ci/` branch of the
+  tagged commit counts.
 - A failed release workflow can be re-run from the Actions tab; pushing the same image tags again overwrites them.
   The GitHub release step fails if the release already exists; delete that release and re-run the job.

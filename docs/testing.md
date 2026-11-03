@@ -7,8 +7,10 @@ pytest tests/ -v
 Or in a container with nothing installed locally (Podman, `Dockerfile.test`): `scripts/test.sh` (extra arguments go to
 pytest).
 
-On GitHub, `.github/workflows/ci.yml` runs both `scripts/test.sh` and `scripts/test-ui.sh` on every push to `main` and
-every pull request, and `release.yml` runs it again before a release image is published (`docs/releasing.md`).
+On GitHub, `.github/workflows/ci.yml` runs both `scripts/test.sh` and `scripts/test-ui.sh` on every pull request and on
+every push to a `ci/<name>` branch, not on `main`. A release commit is pushed to a `ci/` branch, tested there once, and
+then fast-forwarded to `main` and tagged; `release.yml` does not test again but finds that CI run and publishes the files
+it built (`docs/releasing.md`). The artifacts `dist` and `release-assets` are kept for 30 days for that.
 
 ## The container image
 
