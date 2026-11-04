@@ -3,8 +3,11 @@
 // off screen closes it. The markup carries a key and nothing else; the texts come from the panels (registerHelp).
 
 import { registerActions } from './dispatch.js';
+import { settingsValues } from './settings-values.js';
 
 // The texts, by key; each panel adds its own (registerHelp in its folder's help.js), so a panel's help lives with it.
+// A text is a string, or a function of the settings values (js/settings-values.js) for a text that quotes a threshold:
+// it is called each time the text is shown, so it always says what the settings say.
 export const HELP = {};
 
 export function registerHelp(texts) {
@@ -57,7 +60,8 @@ export function toggleHelp(button) {
     closeHelp();
     return;
   }
-  const text = HELP[button.dataset.help];
+  const entry = HELP[button.dataset.help];
+  const text = typeof entry === 'function' ? entry(settingsValues()) : entry;
   if (!text) return;
   closeHelp();
   const pop = ensurePopover();

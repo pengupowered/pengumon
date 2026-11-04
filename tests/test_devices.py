@@ -680,3 +680,10 @@ async def test_summarizing_does_not_change_the_readings_channels():
     assert snap.channels[0].uncorrectables_recent == 30
     assert [c.uncorrectables_recent for c in second.channels] == [0, 0]  # the reading stays as it was read
     assert all(a is not b for a, b in zip(snap.channels, second.channels))
+
+
+async def test_the_wait_survives_thousands_of_failures_in_a_row(telemetry):
+    device = _device(FakeDriver(), min_interval_seconds=5.0)  # the interval is a float, as DeviceConfig gives
+    for failures in (1023, 1024, 100_000):  # 10 s * 2 ** 1024 overflows a float
+        device._failures = failures
+        assert device._wait() == 3600.0

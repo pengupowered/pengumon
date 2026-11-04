@@ -139,6 +139,9 @@ async def test_the_worker_publishes_devices_line_and_the_incidents_version(tmp_p
     class Prober:
         stats = {}
 
+        def probing_problem(self):
+            return None
+
         async def execute_probe_round(self, targets, dns_probes):
             return []
 
@@ -160,6 +163,43 @@ async def test_the_worker_publishes_devices_line_and_the_incidents_version(tmp_p
     await repo.close()
 
 
+async def test_the_worker_does_not_classify_while_no_pings_can_be_sent(tmp_path):
+    repo = DatabaseRepository(db_path=str(tmp_path / "n.db"))
+    await repo.initialize()
+    published = []
+
+    class Spy:
+        active_connections = [object()]
+
+        def publish(self, msg):
+            published.append(msg)
+
+    class Prober:
+        stats = {}
+
+        def probing_problem(self):
+            return ("no ICMP", "echo fix")
+
+        async def execute_probe_round(self, targets, dns_probes):
+            return []
+
+    class Classifier:
+        async def evaluate(self, samples, stats):
+            raise AssertionError("a verdict about the network, with nothing measured")
+
+        async def not_probing(self, reason, fix):
+            return SystemDiagnosis(status="unknown", title=reason, description=fix)
+
+    cfg = AppConfig()
+    cfg.prober.interval_seconds = 0.05
+    task = asyncio.create_task(probe_background_worker(cfg, Prober(), Classifier(), repo, ws=Spy()))
+    await asyncio.sleep(0.2)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert published and published[0].diagnosis.status == "unknown" and published[0].diagnosis.title == "no ICMP"
+    await repo.close()
+
+
 def test_a_live_part_must_name_a_field_the_round_leaves_to_the_components():
     import pytest
     from pengumon.components import LivePart
@@ -171,7 +211,8 @@ def test_a_live_part_must_name_a_field_the_round_leaves_to_the_components():
 
 def test_the_live_message_and_the_router_snapshot_have_only_the_canonical_fields():
     from pengumon.live.message import LiveStreamMessage
-    assert set(LiveStreamMessage.model_fields) == {"timestamp", "diagnosis", "targets", "devices", "line", "incidents_version"}
+    assert set(LiveStreamMessage.model_fields) == {"timestamp", "diagnosis", "targets", "devices", "line", "incidents_version",
+                                                    "settings_revision"}
     router = set(RouterMetricsSnapshot.model_fields)
     assert {"wan_rx_rate_mbps", "wan_tx_rate_mbps", "client_count"} <= router
     assert not {"wan_rx_mbps", "wan_tx_mbps", "active_clients_count"} & router

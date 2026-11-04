@@ -66,7 +66,7 @@ export const steps = [
     await until(() => !document.getElementById("targetHistModal").classList.contains("active"));
   }],
 
-  ["the Internet node opens its three servers together: All draws a line each and the median, the switcher shows one alone as a single target; keyboard and phone width", async ({ click, eq, ok, page, shots, text, until, waitCount, noSideScroll }) => {
+  ["the Internet node opens its three servers together: All draws a line each and the median, the switcher shows one alone as a single target; keyboard and phone width", async ({ click, eq, layoutSettled, ok, page, shots, text, until, waitCount, noSideScroll }) => {
     await waitCount("#pathChain .node[data-node]", 6);
     await click('#pathChain .node[data-node^="Internet"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
@@ -95,7 +95,7 @@ export const steps = [
     eq("All is pressed", await page.$eval('#targetHistSwitch button[data-arg="all"]', (b) => b.getAttribute("aria-pressed")), "true");
     await shots("internet-history");
     await page.setViewport({ width: 390, height: 844 });
-    await new Promise((r) => setTimeout(r, 400));
+    await layoutSettled();
     ok("no sideways scroll at 390 px", await noSideScroll("targetHistModal"));
     await page.setViewport({ width: 1400, height: 1000 });
     // a member alone, chosen with the keyboard: exactly the single-target view

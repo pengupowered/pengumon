@@ -42,21 +42,21 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 
 ## The order, and why
 
-- **1. devices** (`devices/component.py`). Building the devices checks that each can run (a missing CA file, say). A device that cannot run stops the start before the database is opened or migrated.
-- **2. storage** (`db/storage.py`). Opens (migrates) the database and warns about stored history of devices that are not in the config. Every later component may use it, and their `stop` runs before its own, which closes it.
-- **3. probing** (`engine/probing.py`). Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one.
-- **4. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history.
-- **5. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
-- **6. notify** (`notify.py`). ntfy and webhooks (`webhook.py`), for the classifier and the service checks.
-- **7. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
-- **8. services** (`services/component.py`). Optional: host service checks.
-- **9. clients** (`clients/component.py`). Optional: the client list.
-- **10. live** (`live/component.py`). The `/ws` route and the broadcaster task.
-- **11. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Last, so its `stop` (a run still going is cancelled) comes first.
+- **1. storage** (`db/storage.py`). Opens (migrates) the database. The settings live in it, every later component may use it, and their `stop` runs before its own, which closes it.
+- **2. settings** (`settings/component.py`). The settings store: the one-time import of config.yaml on the first start, then the stored settings (the environment overrides on top) copied into the live config, so every later component is built from them. Creates the one `SecretStore`, puts the hub on `ctx.settings` (components subscribe their appliers for live changes there) and sets the repository's retention days before the start-up cleanup.
+- **3. devices** (`devices/component.py`). Built from the stored devices. A device that cannot run (a missing CA file, say) is logged and left out; the start goes on. Warns about stored history of devices that are not in the settings.
+- **4. probing** (`engine/probing.py`). Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one.
+- **5. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history.
+- **6. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
+- **7. notify** (`notify.py`). ntfy and webhooks (`webhook.py`), for the classifier and the service checks.
+- **8. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
+- **9. services** (`services/component.py`). Optional: host service checks.
+- **10. clients** (`clients/component.py`). Optional: the client list.
+- **11. live** (`live/component.py`). The `/ws` route and the broadcaster task.
+- **12. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Last, so its `stop` (a run still going is cancelled) comes first.
 
 The repository object exists before any component. The lifespan builds it from `config.database`
-(`storage.repository_for`); building it opens nothing. So the devices can be handed it before the storage
-component opens it.
+(`storage.repository_for`, the bootstrap `db_path`); building it opens nothing.
 
 The order is explicit, never discovered: start-up has real dependencies, and depguard and a reader should see
 everything that runs, in the order it runs.

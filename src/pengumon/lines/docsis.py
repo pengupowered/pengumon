@@ -1,8 +1,8 @@
 """DOCSIS access lines (cable): how a set of channels is summarised and judged, for every DOCSIS modem driver.
 
-Thresholds are the commonly quoted cable-industry limits: upstream power above 49 dBmV (51 critical) or below
-38 dBmV (35 critical), downstream SNR below 33 dB (30 critical), downstream power beyond ±8 dBmV. They are one set,
-used for the snapshot status, the grades the dashboard colours by, the channel table and the dossier's list of
+Thresholds (LEVELS, configurable on the Settings page) default to the commonly quoted cable-industry limits: upstream
+power above 49 dBmV (51 critical) or below 38 dBmV (35 critical), downstream SNR below 33 dB (30 critical),
+downstream power beyond ±8 dBmV. They are one set, used for the snapshot status, the grades the dashboard colours by, the channel table and the dossier's list of
 degraded channels (an older dashboard and the dossier used 48 and ±7 dBmV for some of these; the status and the
 snapshot averages always used 49 and ±8, and those won). Uncorrectable codewords count from the modem's boot, so
 health rests on the errors *between* polls, not on the total.
@@ -20,65 +20,72 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from pengumon.db.samples import LineSample
 from pengumon.grades import CRITICAL, GOOD, WARN, Range, known_grades
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
+from pengumon.lines.levels import LineSignalConfig
 
 logger = logging.getLogger("pengumon.lines")
 
 TECHNOLOGY = "docsis"
 
-US_POWER_CRITICAL_DBMV = 51.0
-US_POWER_WARNING_DBMV = 49.0
-DS_SNR_CRITICAL_DB = 30.0
-DS_SNR_WARNING_DB = 33.0
-DS_POWER_WARNING_ABS_DBMV = 8.0
-US_POWER_LOW_WARNING_DBMV = 38.0  # below this the upstream is weak (the status does not look at this side)
-US_POWER_LOW_CRITICAL_DBMV = 35.0
-RECENT_UNCORRECTABLES_CRITICAL = 500  # new uncorrectable codewords per minute, whatever the poll interval
-
+# The levels a DOCSIS line is judged by: the Settings page's "Your line" section (pengumon.lines.levels, the
+# defaults and their reasoning are there). One object for the whole process, read at call time by everything below;
+# `use_levels` copies the configured ones into it in place (at the start and after each save), so a holder of
+# LEVELS sees a change at once.
+#
 # How new uncorrectable codewords are judged. An uncorrectable codeword is a frame lost after error correction; a few
 # are normal on a cable plant, and what matters is how many there are against the traffic and whether they persist:
 #  - with the modem's error-free codeword counts, the ratio uncorrectable / all codewords of the interval:
-#    warn from 1e-6 (about one lost codeword in a million: a stream starts to stutter when it persists), critical
-#    from 1e-4 (a hundred times that: lost packets are certain);
-#  - without them, the rate per minute (the interval can be 10 s or 30 min): warn from 60 a minute or when the
-#    previous read had new errors too, critical above RECENT_UNCORRECTABLES_CRITICAL a minute;
+#    warn from uncorrectable_ratio_warning (1e-6: about one lost codeword in a million, a stream starts to stutter
+#    when it persists), critical from uncorrectable_ratio_critical (1e-4: lost packets are certain);
+#  - without them, the rate per minute (the interval can be 10 s or 30 min): warn from
+#    uncorrectable_warning_per_minute (60) or when the previous read had new errors too, critical above
+#    uncorrectable_critical_per_minute (500);
 # anything below is a short burst: graded good, with a note, and shown to the person as information.
-UNCORRECTABLE_RATIO_WARNING = 1e-6
-UNCORRECTABLE_RATIO_CRITICAL = 1e-4
-UNCORRECTABLE_WARNING_PER_MINUTE = 60.0
+LEVELS = LineSignalConfig()
 
-# The good zone of each metric on the scale a gauge draws, and where it turns critical (see pengumon.grades).
-RANGES = {
-    "ds_power": Range("dBmV", -15.0, 15.0, good_low=-DS_POWER_WARNING_ABS_DBMV, good_high=DS_POWER_WARNING_ABS_DBMV),
-    "ds_snr": Range("dB", 20.0, 50.0, good_low=DS_SNR_WARNING_DB, critical_low=DS_SNR_CRITICAL_DB),
-    "us_power": Range("dBmV", 30.0, 56.0, good_low=US_POWER_LOW_WARNING_DBMV, good_high=US_POWER_WARNING_DBMV,
-                      critical_low=US_POWER_LOW_CRITICAL_DBMV, critical_high=US_POWER_CRITICAL_DBMV),
-    # new uncorrectable codewords since the previous poll: none is good, a few warn, a burst is critical
-    # new uncorrectable codewords per minute (the grade itself also weighs the ratio and recurrence: judge_errors)
-    "uncorrectables": Range("codewords/min", 0.0, 1000.0, good_high=UNCORRECTABLE_WARNING_PER_MINUTE,
-                            critical_high=float(RECENT_UNCORRECTABLES_CRITICAL)),
-}
+
+def use_levels(levels: LineSignalConfig) -> None:
+    """Makes `levels` the ones in force: copied into LEVELS field by field, in one synchronous step."""
+    for name in type(LEVELS).model_fields:
+        setattr(LEVELS, name, getattr(levels, name))
+
+
+def ranges() -> Dict[str, Range]:
+    """The good zone of each metric on the scale a gauge draws, and where it turns critical (see pengumon.grades),
+    at the levels in force."""
+    lv = LEVELS
+    return {
+        "ds_power": Range("dBmV", -15.0, 15.0, good_low=-lv.ds_power_warning_abs_dbmv,
+                          good_high=lv.ds_power_warning_abs_dbmv),
+        "ds_snr": Range("dB", 20.0, 50.0, good_low=lv.ds_snr_warning_db, critical_low=lv.ds_snr_critical_db),
+        "us_power": Range("dBmV", 30.0, 56.0, good_low=lv.us_power_low_warning_dbmv, good_high=lv.us_power_warning_dbmv,
+                          critical_low=lv.us_power_low_critical_dbmv, critical_high=lv.us_power_critical_dbmv),
+        # new uncorrectable codewords per minute (the grade itself also weighs the ratio and recurrence: judge_errors)
+        "uncorrectables": Range("codewords/min", 0.0, 1000.0, good_high=lv.uncorrectable_warning_per_minute,
+                                critical_high=float(lv.uncorrectable_critical_per_minute)),
+    }
 
 
 def judge_errors(recent: int, interval_seconds: Optional[float], ratio: Optional[float],
                  recurring: bool) -> Tuple[str, Optional[str]]:
     """(grade, note) for `recent` new uncorrectable codewords in `interval_seconds`. See the thresholds above."""
+    lv = LEVELS
     if recent <= 0:
         return GOOD, None
     minutes = max(interval_seconds or 60.0, 1.0) / 60.0
     rate = recent / minutes
     if ratio is not None:
         detail = f"{recent:,} uncorrectable codewords in {minutes:.0f} min, {ratio:.1e} of all codewords"
-        if ratio >= UNCORRECTABLE_RATIO_CRITICAL:
+        if ratio >= lv.uncorrectable_ratio_critical:
             return CRITICAL, detail
-        if ratio >= UNCORRECTABLE_RATIO_WARNING:
+        if ratio >= lv.uncorrectable_ratio_warning:
             return WARN, detail
-        return GOOD, f"{detail}: below the {UNCORRECTABLE_RATIO_WARNING:.0e} that matters"
+        return GOOD, f"{detail}: below the {lv.uncorrectable_ratio_warning:.0e} that matters"
     detail = f"{recent:,} uncorrectable codewords in {minutes:.0f} min ({rate:.0f} a minute)"
-    if rate > RECENT_UNCORRECTABLES_CRITICAL:
+    if rate > lv.uncorrectable_critical_per_minute:
         return CRITICAL, detail
     if recurring:
         return WARN, f"{detail}, and new ones in the previous read as well"
-    if rate >= UNCORRECTABLE_WARNING_PER_MINUTE:
+    if rate >= lv.uncorrectable_warning_per_minute:
         return WARN, detail
     return GOOD, f"{detail}: a short burst, not repeated"
 
@@ -89,18 +96,19 @@ def grade_snapshot(snapshot: DocsisSignalSnapshot) -> DocsisSignalSnapshot:
     if snapshot.status in NO_READING_STATUSES:
         snapshot.grades = {}
         return snapshot
+    graded = ranges()
     snapshot.grades = known_grades(
-        ds_power=RANGES["ds_power"].grade(snapshot.downstream_power_avg),
-        ds_snr=RANGES["ds_snr"].grade(snapshot.downstream_snr_avg),
-        us_power=RANGES["us_power"].grade(snapshot.upstream_power_avg),
+        ds_power=graded["ds_power"].grade(snapshot.downstream_power_avg),
+        ds_snr=graded["ds_snr"].grade(snapshot.downstream_snr_avg),
+        us_power=graded["us_power"].grade(snapshot.upstream_power_avg),
         uncorrectables=judge_errors(snapshot.uncorrectables_recent, snapshot.uncorrectables_interval_seconds,
                                     snapshot.uncorrectables_ratio, snapshot.errors_recurring)[0],
     )
     for channel in snapshot.channels:
-        power = RANGES["ds_power" if channel.direction == "downstream" else "us_power"]
+        power = graded["ds_power" if channel.direction == "downstream" else "us_power"]
         channel.grades = known_grades(
             power=power.grade(channel.power_dbmv),
-            snr=RANGES["ds_snr"].grade(channel.snr_db),
+            snr=graded["ds_snr"].grade(channel.snr_db),
             uncorrectables=snapshot.grades["uncorrectables"] if channel.uncorrectables_recent > 0 else GOOD,
         )
     return snapshot
@@ -118,11 +126,12 @@ def summarize(channels: Sequence[DocsisChannel], ts: float) -> DocsisSignalSnaps
     us_power_avg = round(sum(c.power_dbmv for c in us_channels) / len(us_channels), 2) if us_channels else None
     uncorrectables = sum(c.uncorrectables or 0 for c in ds_channels)
 
+    lv = LEVELS
     status = "healthy"
-    if (us_power_avg and us_power_avg > US_POWER_CRITICAL_DBMV) or (ds_snr_avg and ds_snr_avg < DS_SNR_CRITICAL_DB):
+    if (us_power_avg and us_power_avg > lv.us_power_critical_dbmv) or (ds_snr_avg and ds_snr_avg < lv.ds_snr_critical_db):
         status = "critical"
-    elif ((us_power_avg and us_power_avg > US_POWER_WARNING_DBMV) or (ds_snr_avg and ds_snr_avg < DS_SNR_WARNING_DB)
-          or (ds_power_avg and abs(ds_power_avg) > DS_POWER_WARNING_ABS_DBMV)):
+    elif ((us_power_avg and us_power_avg > lv.us_power_warning_dbmv) or (ds_snr_avg and ds_snr_avg < lv.ds_snr_warning_db)
+          or (ds_power_avg and abs(ds_power_avg) > lv.ds_power_warning_abs_dbmv)):
         status = "warning"
 
     return grade_snapshot(DocsisSignalSnapshot(
@@ -219,13 +228,14 @@ class DocsisErrorTracker:
 # --- dossier: which channels are outside typical levels, and why ------------------------------------------
 
 def is_degraded(c) -> bool:
-    """A channel outside the levels typically quoted for a healthy line (listed in the dossier)."""
+    """A channel outside the warning levels in force (listed in the dossier)."""
+    lv = LEVELS
     return bool(
         (c.uncorrectables and c.uncorrectables > 100)
-        or (c.snr_db is not None and c.snr_db < DS_SNR_WARNING_DB)
-        or (c.direction == "downstream" and abs(c.power_dbmv) > DS_POWER_WARNING_ABS_DBMV)
-        or (c.direction == "upstream" and (c.power_dbmv > US_POWER_WARNING_DBMV
-                                           or c.power_dbmv < US_POWER_LOW_WARNING_DBMV))
+        or (c.snr_db is not None and c.snr_db < lv.ds_snr_warning_db)
+        or (c.direction == "downstream" and abs(c.power_dbmv) > lv.ds_power_warning_abs_dbmv)
+        or (c.direction == "upstream" and (c.power_dbmv > lv.us_power_warning_dbmv
+                                           or c.power_dbmv < lv.us_power_low_warning_dbmv))
     )
 
 
@@ -241,13 +251,14 @@ def uncorrectable_increase(snapshots) -> int:
 
 def channel_finding(c) -> str:
     """Why a degraded channel is listed (the first matching reason wins)."""
+    lv = LEVELS
     if c.uncorrectables and c.uncorrectables > 500:
         return "High uncorrectable count"
-    if c.snr_db is not None and c.snr_db < DS_SNR_WARNING_DB:
+    if c.snr_db is not None and c.snr_db < lv.ds_snr_warning_db:
         return "Low SNR"
-    if c.direction == "upstream" and c.power_dbmv > US_POWER_WARNING_DBMV:
+    if c.direction == "upstream" and c.power_dbmv > lv.us_power_warning_dbmv:
         return "High upstream power"
-    if c.direction == "upstream" and c.power_dbmv < US_POWER_LOW_WARNING_DBMV:
+    if c.direction == "upstream" and c.power_dbmv < lv.us_power_low_warning_dbmv:
         return "Low upstream power"
     if c.uncorrectables and c.uncorrectables > 100:
         return "Uncorrectables present"

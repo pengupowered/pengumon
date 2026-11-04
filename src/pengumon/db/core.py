@@ -2,6 +2,7 @@
 the repository builds on. Holds the state the other mixins share (`_db`, the target maps, the incident cache)."""
 
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -12,7 +13,8 @@ from pengumon import paths
 from pengumon._vendor.homeguard.db import Database
 from pengumon.models.probes import ProbeSample
 from pengumon.db.migrations import backfill_incident_kinds, migrate
-from pengumon.observability.telemetry import tracer
+from pengumon.observability import StateLog, get_logger
+from pengumon.observability.telemetry import db_retention_duration, db_retention_rows, db_vacuum_pages, tracer
 
 logger = logging.getLogger("pengumon.db")
 
@@ -40,6 +42,8 @@ class RepositoryCore:
         self.sample_flush_seconds = sample_flush_seconds
         self._sample_buffer: List[ProbeSample] = []
         self._last_flush = time.monotonic()
+        self._flush_state = StateLog(get_logger("pengumon.db"), "Writing probe samples")
+        self._dropping = False
         # Two connections for the process lifetime: write() for everything that changes data (one transaction at
         # a time) and read() for queries (read-only, whole results). synchronous=NORMAL is crash-safe in WAL
         # (a power cut can lose the last moments of telemetry, never corrupt the file) and avoids an fsync per commit.
@@ -64,11 +68,29 @@ class RepositoryCore:
         return [r for r in rows if r["target_id"] not in hidden] if hidden else rows
 
     @property
+    def sample_buffer_size(self) -> int:
+        """Probe samples waiting for the next commit (the telemetry gauge reads it)."""
+        return len(self._sample_buffer)
+
+    def file_sizes(self) -> Dict[str, int]:
+        """Bytes of the database file and of its write-ahead log (0 while there is none: it is checkpointed away)."""
+        sizes = {}
+        for name, path in (("main", self.db_path), ("wal", f"{self.db_path}-wal")):
+            try:
+                sizes[name] = os.stat(path).st_size
+            except OSError:
+                sizes[name] = 0
+        return sizes
+
+    @property
     def incidents_version(self) -> int:
         return self._incidents_version
 
     async def close(self):
-        await self.flush_samples()
+        try:
+            await self.flush_samples()
+        except Exception:
+            pass  # logged; the samples of a failing database are lost either way
         await self._db.close()
         self._migrated = False
 
@@ -153,6 +175,11 @@ class RepositoryCore:
             span.set_attributes({f"db.removed.{table}": n for table, n in removed.items()})
         return removed
 
+    @staticmethod
+    async def _free_pages(db: aiosqlite.Connection) -> int:
+        async with db.execute("PRAGMA freelist_count") as cursor:
+            return (await cursor.fetchone())[0]
+
     async def _prune(self, retention_days: int, rollup_retention_days: int) -> Dict[str, int]:
         await self.flush_samples()  # so buffered samples are pruned by the same rule
         started = time.monotonic()
@@ -171,9 +198,17 @@ class RepositoryCore:
                 cursor = await db.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff_ts,))
                 removed[table] = cursor.rowcount
             await db.commit()
+            freed = await self._free_pages(db)
             # Each step of the pragma frees pages, so it has to be stepped to the end.
             async with db.execute("PRAGMA incremental_vacuum") as cursor:
                 await cursor.fetchall()
+            freed -= await self._free_pages(db)
+        for table, n in removed.items():
+            if n:
+                db_retention_rows.add(n, {"table": table})
+        if freed > 0:
+            db_vacuum_pages.add(freed)
+        db_retention_duration.record(time.monotonic() - started)
         logger.info(
             f"Retention ({retention_days} days raw, {rollup_retention_days} days rollups): removed "
             + ", ".join(f"{n:,} {t}" for t, n in removed.items() if n)

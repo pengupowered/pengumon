@@ -7,10 +7,11 @@ dashboard is expected under the uid "pengumon".
 
 import json
 import re
-from typing import Dict, List, Mapping
+from typing import Dict, List, Mapping, Optional
 from urllib.parse import quote
 
 from pengumon.observability.export import SERVICE_NAME
+from pengumon.settings.env import env_value
 
 ENV = "PENGUMON_GRAFANA_URL"
 DASHBOARD_UID = "pengumon"
@@ -40,12 +41,25 @@ def telemetry_links(grafana: str) -> List[Dict[str, str]]:
     ]
 
 
+def check_url(value: str, what: str = ENV) -> str:
+    """`value` stripped, without a trailing "/", when it is a plain http(s) base URL (or empty). Raises ValueError,
+    without repeating the value, otherwise."""
+    grafana = (value or "").strip().rstrip("/")
+    if grafana and not _URL_RE.fullmatch(grafana):
+        raise ValueError(f"{what} must be a plain http(s) base URL such as https://grafana.lan:3000")
+    return grafana
+
+
 def configure(environ: Mapping[str, str]) -> List[Dict[str, str]]:
     """Reads PENGUMON_GRAFANA_URL and keeps the links for `links()`. Raises ValueError for a URL that is not a plain
-    http(s) base URL."""
-    grafana = (environ.get(ENV) or "").strip().rstrip("/")
-    if grafana and not _URL_RE.fullmatch(grafana):
-        raise ValueError(f"{ENV} must be a plain http(s) base URL such as https://grafana.lan:3000")
+    http(s) base URL. (The settings component then configures the effective display.grafana_url, configure_url.)"""
+    return configure_url(env_value(ENV, environ))
+
+
+def configure_url(url: Optional[str]) -> List[Dict[str, str]]:
+    """Keeps the links of Grafana base URL `url` (None or empty: no links). Raises ValueError for one that is not a
+    plain http(s) base URL; the links are then left as they were."""
+    grafana = check_url(url or "")
     _links[:] = telemetry_links(grafana)
     return list(_links)
 

@@ -3,7 +3,7 @@
 // so.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, icon, initTargets } from '../../js/util.js';
+import { escapeHtml, icon, initTargets, keepKeyboard } from '../../js/util.js';
 
 const PRIVATE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|127\.|f[cd]|fe80)/i;
 let hops = [];
@@ -122,21 +122,4 @@ registerActions('submit', {
 registerActions('click', {
   monitorHop: (el) => monitorHop(el)
 });
-
-// Keyboard: focus moves into the dialog when it opens, Tab stays inside it and Escape closes it.
-export function keepKeyboard(modal, firstFocus) {
-  new MutationObserver(() => {
-    if (modal.classList.contains('active') && !modal.contains(document.activeElement)) (modal.querySelector(firstFocus) || modal.querySelector('.m-close')).focus();
-  }).observe(modal, { attributes: true, attributeFilter: ['class'] });
-  modal.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !ev.defaultPrevented) { closeModal(modal.id); return; }
-    if (ev.key !== 'Tab') return;
-    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
-    if (!items.length) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
-    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
-  });
-}
 keepKeyboard($('tracerouteModal'), '#traceTargetInput');

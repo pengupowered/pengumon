@@ -5,6 +5,112 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-03
+
+### Added
+- **Settings page** (header > Settings, or `#settings`). One page for what used to live in config.yaml: outage rules,
+  alerts, your line, devices and host app checks, probing, retention, privacy, discovery and display, with an
+  Advanced area for the hop colours and the log levels. Every row shows its value, its default, what it changes and
+  "Reset to default"; nothing changes until **Save**, and Cancel throws the draft away. A value set by an environment
+  variable says "From environment" and can't be edited there. Every number has a range, and a value out of range is
+  refused with a plain message.
+- **Changes apply at once**, without a restart: the outage rules, alerts, the line levels, the router levels, the
+  probe timeouts, the DNS lookups, retention, log levels, the Grafana link, host app checks, webhooks and devices. If
+  a part can't take a change, the page says it applies at the next start.
+- **Your config.yaml is imported once**, value for value, at the first start of this version. After that the file is
+  only read for the listen address, the port, the database path and the probe interval, and the startup log says
+  when the file and the dashboard disagree. `pengumon settings check-import` is a dry run of that import on copies
+  of the database and secrets.json (it prints names and counts, never values).
+- **Preview the outage rules before saving**: "With these rules the last 7 days would have had 4 incidents instead
+  of 9 (and 2 alerts instead of 6)". Pengumon replays the stored 1-second samples through the real classifier in a
+  separate low-priority process (a week takes about 15 seconds; it stops after a minute), and lists the incidents that
+  would open or no longer open. Old incidents are never relabelled: new rules apply from the moment you save.
+- **New alert rules**: send only critical incidents (a warning that becomes critical is sent then), wait N minutes
+  before alerting (an outage shorter than that sends nothing), and quiet hours, with "still send critical". What
+  quiet hours held back and is still going on is sent when they end, as "Ongoing since 03:12". The repeat window
+  (5 minutes) is a setting too. Time zone under Display.
+- **Lists on the page**: devices, host app checks, webhooks and DNS lookups each have an editor. A saved device's id
+  is fixed, because its history and sign-in are kept under it; removing a device unlinks its path hops.
+- **Secrets are write-only**: the ntfy address and token, webhook URLs and header values can be replaced or removed
+  but never read back, and they are never exported.
+- **Versions**: every Save is kept (the last 50) with a one-line summary; load an old one and save it to go back.
+  **Export / Import** moves settings between installs as YAML, without secrets. Export needs the access token; it
+  shows the YAML with **Copy** and a download link (Chrome blocks or warns about a download over plain HTTP).
+- **New settings**: recovery confirmed after N seconds (3 by default, as before), a latency level for the ISP hops,
+  the loss levels for degraded and down (15 % and 40 %, as before), the DNS loss level and cooldown, the line and
+  router levels, the uptime and report levels, the daily route-check time, and the default range of the latency chart.
+- **Help texts quote the values in use**, so a changed level shows in the panel's "i" text.
+- **Path editor: "Warn above N ms"** per hop (under More), for a far-away server that is always slow. It changes
+  that hop's colour only; the incident rules are unchanged.
+- **View only**: without the token the Settings page opens read-only.
+- **Telemetry for Pengumon's own health**, as metrics, logs and traces over OpenTelemetry (docs/telemetry.md):
+  memory, CPU, threads, open files, asyncio tasks and event-loop lag; the work of each probe round by step; the
+  unsaved-sample buffer, samples dropped, failed writes, database and WAL size, retention; dashboard clients, message
+  size, slow clients dropped, history answer sizes, answers cut by a cap, rate-limit refusals; device polls the gate
+  held back, backoff, rebuilds; background tasks that stopped; discovery runs, route checks and route changes, with a
+  trace per run; alerts by channel and outcome (sent, failed, held for quiet hours, dropped, suppressed), the held
+  queue and delivery time; settings saves and live-apply failures; preview runs. Labels are ids from your settings,
+  never addresses or names. The cost is a few microseconds per probe round.
+- **A Grafana dashboard in the repo**, `docs/grafana/pengumon.json`, with a row for each of those and a Service
+  selector, so a second instance never mixes in.
+
+
+### Fixed
+Found by testing every feature since 0.15 as a user would (plain HTTP from another machine, a phone, a week of real
+data), before this release:
+- **Messages in view.** Notes in Settings and the path editor (a failed Import or Apply, a loaded version, a conflict)
+  were shown at the top of a scrolled dialog, out of sight; Versions and Export too. They come into view now.
+- **Over plain HTTP** (`http://<host>:8000` from another machine): Copy works everywhere (the browser's clipboard API
+  exists only on HTTPS or the same machine), Export shows the file with Copy (Chrome blocks such downloads as
+  "insecure"), and the Alerts dialog says that browser notifications need HTTPS and points to ntfy or webhooks.
+- **Drafts are not lost:** Cancel, Escape, Back and reload ask before throwing away changes in Settings and the path
+  editor.
+- A new webhook could not be saved from the page; the incident list skipped two incidents between pages; the count
+  showed "38+" instead of the real total; four dialogs ignored Escape and the keyboard; "Show in latency chart" did
+  nothing on a phone; availability left out an incident still going on.
+- **Pings not allowed** (a fresh install without the permission): Pengumon says "Not probing" and how to fix it, in
+  the page, `/api/health` and `pengumon service status`, instead of reporting a false router outage.
+- **Install:** re-running the install script to upgrade keeps the service's listen address and port; `pengumon paths`
+  and `backup` take `--system` for a system install; removing a uv install first no longer leaves a service that keeps
+  failing; uninstall removes the access-token file; the install prints the address other devices use.
+- **Wording:** settings live on the Settings page, not in config.yaml, in the docs and the page; alerts and test
+  results use plain words instead of codes ("could not connect", the incident's title). Webhook JSON is unchanged.
+- **Grafana:** the dashboard in `docs/grafana/` works on a stock Prometheus (no feature flag needed).
+- **Windows:** time zones (quiet hours, the daily route check) work there too: Pengumon installs Python's `tzdata`
+  package on Windows, which has no time-zone database of its own.
+- **For developers:** the browser tests reach the app by a non-local name, as people do (so a secure-context-only API
+  fails there too), and a short Firefox pass runs beside Chromium.
+### Changed
+- The notifier, the host app checker and the background route check always run, so a channel, a check or the
+  route check switched on from the page starts without a restart.
+- A device that can't start (a bad address, a missing CA file) is reported on the page instead of stopping the start.
+- **Lighter dashboard.** The flowing path wires and the pulsing status dot are animated in a way the browser runs
+  apart from the page (transform and opacity), which cut the open dashboard's main-thread time by about 85 %.
+  Colours and time labels are no longer recomputed for every message. A hidden tab keeps only the newest message
+  and catches up when shown, so a dashboard left in a background tab costs almost nothing. Dialogs load when first
+  opened, and the incident list loads 50 at a time (older ones when a view needs them): the first load is about
+  20 % smaller.
+- **Steadier server.**
+  - If the database can't be written (a full disk), unsaved samples are capped at about 14 minutes instead of
+    growing without end, and the dashboard keeps updating.
+  - A device that fails for weeks keeps retrying at its longest backoff; before, after about 43 days of failures its
+    polling stopped until a restart.
+  - Saving a device's settings during one of its polls no longer causes a second poll right after: the minimum gap
+    between polls carries over.
+  - Discovery and the daily route check send a configured device nothing: its driver alone talks to it.
+  - A time in the hour skipped in spring (daily route check, quiet hours) now comes when the clock passes it, not an
+    hour early.
+  - History answers are capped at 50,000 rows and 60 requests a minute; a device's raw history at its newest 48 h.
+  - Shutting down with the telemetry collector unreachable takes at most 3 s more, within podman's stop grace.
+- The header's "Copy the LAN address" works over plain HTTP too (the browser's clipboard API exists only on HTTPS
+  or localhost; it failed silently from other machines).
+- **For developers.**
+  - The unit tests run in parallel (pytest-xdist) in about 35 s instead of 96, and the browser tests in about 90 s
+    instead of 320.
+  - A test that hangs ends the run after 60 s with every thread's stack.
+  - The test containers have a memory cap and a time limit that holds even when the script is killed, and they no
+    longer leave an old image, volume or network behind on every run (docs/testing.md, "Limits").
+
 ## [0.20.2] - 2026-11-03
 
 ### Fixed

@@ -12,7 +12,7 @@ export const steps = [
     await page.screenshot({ path: path.join(outDir, "dossier.png") });
     await click("#btnCopyDossier");
     await waitText("#btnCopyDossier", /Copied/);
-    eq("clipboard", await page.evaluate(() => navigator.clipboard.readText()), await text("#dossierOutput"));
+    eq("clipboard", await page.evaluate(() => window.__clip()), await text("#dossierOutput"));
     const file = path.join(outDir, "example_isp_outage_dossier_72h.md");
     fs.rmSync(file, { force: true });
     await click("[data-action=downloadDossierMarkdown]");
@@ -21,7 +21,7 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=dossierModal]");
   }],
 
-  ["dossier: the report as a document, the Markdown view, copy and download unchanged, dark and light", async ({ click, count, dialogShot, eq, modalOpen, ok, page, setTheme, shown, text, until }) => {
+  ["dossier: the report as a document, the Markdown view, copy and download unchanged, dark and light", async ({ click, count, dialogShot, eq, modalOpen, ok, page, setTheme, shown, tabStaysIn, text, until }) => {
     await setTheme("dark");
     await click("[data-action=openDossierModal]");
     await until(() => document.querySelectorAll("#dossierDoc h4").length >= 4);
@@ -40,9 +40,11 @@ export const steps = [
     eq("document hidden", await shown("#dossierDoc"), false);
     ok("it is the copied text", /^# /.test(await text("#dossierOutput")));
     await click("#btnCopyDossier");
-    eq("copy works from the Markdown view", await page.evaluate(() => navigator.clipboard.readText()), await text("#dossierOutput"));
+    eq("copy works from the Markdown view", await page.evaluate(() => window.__clip()), await text("#dossierOutput"));
     await click('#dossierViews button[data-arg="doc"]');
     eq("back to the document", await shown("#dossierDoc"), true);
+    await tabStaysIn("dossierModal");
+    await page.click("#dossierModal .modal-t");
     await page.keyboard.press("Escape");
     eq("escape closes it", await modalOpen("dossierModal"), false);
     await setTheme(null);

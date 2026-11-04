@@ -13,6 +13,7 @@ from dataclasses import dataclass, fields
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pengumon.devices.snapshots import RouterMetricsSnapshot
+from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.incidents.loss import LEAD_SECONDS, TAIL_SECONDS
 from pengumon.incidents.model import Incident
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
@@ -24,7 +25,7 @@ CALC_MIN_SECONDS = 20.0
 CALC_TAIL_SECONDS = TAIL_SECONDS
 SNAPSHOT_PADDING_SECONDS = 120.0
 GATEWAY_LOSS_PCT = 50.0
-LOCAL_LOSS_PCT = 15.0
+_DEFAULT_RULES = ClassifierConfig()  # the outage rules when the caller gives none
 SNAPSHOT_REACH_SECONDS = 900.0  # a snapshot this far outside the window still describes it (one modem poll interval)
 NO_SNR = 99.0  # sentinel while no downstream channel reported a SNR
 
@@ -195,7 +196,8 @@ def _unreachable(snapshot: DocsisSignalSnapshot) -> bool:
 
 
 def docsis_correlation(incident: Incident, hops: List[HopImpact], snapshots: List[DocsisSignalSnapshot],
-                       nearest: Optional[DocsisSignalSnapshot], minute_hops: bool = False) -> DocsisCorrelation:
+                       nearest: Optional[DocsisSignalSnapshot], minute_hops: bool = False,
+                       local_loss_pct: Optional[float] = None) -> DocsisCorrelation:
     """Whether the modem's RF side explains the incident, and whether the gateway itself was unreachable. The gateway
     counts as unreachable only on evidence (an error snapshot, or gateway probe loss with a clean router, or the
     classifier's own gateway_down verdict when only minute rollups remain); with none, the status is "unknown".
@@ -203,7 +205,11 @@ def docsis_correlation(incident: Incident, hops: List[HopImpact], snapshots: Lis
     outside the window (shown for context, but only in-window snapshots are evidence or give the status).
     `minute_hops`: the hops were aggregated from per-minute rollups, which dilute a short drop over the whole
     minute (20 s of total loss reads 33%), so their loss figures are not compared with the gateway threshold;
-    the classifier's own verdict from the raw data (kind "gateway_down") is the evidence instead."""
+    the classifier's own verdict from the raw data (kind "gateway_down") is the evidence instead.
+    `local_loss_pct`: the router loss from which the router itself is lossy, so gateway loss is no evidence against
+    the gateway (the classifier's degraded level; None: its default)."""
+    if local_loss_pct is None:
+        local_loss_pct = _DEFAULT_RULES.degraded_loss_pct
     active_errors_in_window = 0
     worst_channel = None
     lowest_snr = NO_SNR
@@ -245,7 +251,7 @@ def docsis_correlation(incident: Incident, hops: List[HopImpact], snapshots: Lis
     elif minute_hops and incident.kind == "gateway_down":
         gateway_unreachable = True
     elif not minute_hops and gateway_impact and gateway_impact.loss_pct >= GATEWAY_LOSS_PCT:
-        if not router_impact or router_impact.loss_pct < LOCAL_LOSS_PCT:
+        if not router_impact or router_impact.loss_pct < local_loss_pct:
             gateway_unreachable = True
 
     return DocsisCorrelation(
@@ -274,11 +280,12 @@ async def _episode_stats(repository, calc_start: float, calc_end: float, window_
 
 async def inspect_incident(repository, targets: Sequence, incident: Incident,
                            snapshot_reach_seconds: float = SNAPSHOT_REACH_SECONDS, *, line=None,
-                           router=None) -> IncidentInspection:
+                           router=None, classifier: Optional[ClassifierConfig] = None) -> IncidentInspection:
     """Everything stored about the minutes around one incident. `targets` is the canonical target order
     (ICMP targets, then DNS probes). `snapshot_reach_seconds` (the modem poll interval) is how far outside the window
     a modem snapshot may lie and still be shown for the incident. `line` is the line device's DocsisHistory and
-    `router` the WAN device's RouterHistory; without one, that part of the inspection has no snapshots."""
+    `router` the WAN device's RouterHistory; without one, that part of the inspection has no snapshots.
+    `classifier`: the outage rules in force (their degraded loss level judges the router); None: the defaults."""
     # Time window: 45 seconds before start to 45 seconds after end
     end_time = incident.end_time or (incident.start_time + (incident.duration_seconds or 10.0))
     window_start = incident.start_time - WINDOW_PADDING_SECONDS
@@ -330,7 +337,8 @@ async def inspect_incident(repository, targets: Sequence, incident: Incident,
             )
             nearest_snapshot = min(reach, key=lambda s: abs(s.timestamp - incident.start_time)) if reach else None
 
-    correlation = docsis_correlation(incident, hops, docsis_snapshots, nearest_snapshot, minute_hops=minute_hops)
+    correlation = docsis_correlation(incident, hops, docsis_snapshots, nearest_snapshot, minute_hops=minute_hops,
+                                     local_loss_pct=(classifier or _DEFAULT_RULES).degraded_loss_pct)
 
     router_snapshots: List[RouterMetricsSnapshot] = []
     if router is not None:

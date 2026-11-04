@@ -32,8 +32,10 @@ _RATE = rate_limit("clients", 30, 60)  # the open modal asks once a minute; one 
 MAX_HISTORY_POINTS = 300
 DEFAULT_HISTORY_SECONDS = 24 * 3600
 _KEY_SALT = secrets.token_bytes(16)  # row keys are opaque and change on restart: a MAC cannot be recovered from one
-HINT = ("Names, IP and MAC addresses are hidden. Set an access token (PENGUMON_ACCESS_TOKEN) or "
-        "privacy.client_details: full in config.yaml to see them.")
+HINT = ("Names, IP and MAC addresses are hidden because no access token is set. Set one (PENGUMON_ACCESS_TOKEN) and "
+        "sign in, or choose \"full\" for Connected clients' names and addresses under Settings > Privacy.")
+MASKED_HINT = ("Names, IP and MAC addresses are hidden by a setting. To see them, change Connected clients' names and "
+               "addresses under Settings > Privacy.")
 VIEWER_HINT = "Names, IP and MAC addresses are hidden. Sign in with the access token to see them."
 
 
@@ -57,7 +59,9 @@ def privacy_hint(request: Request, state: AppState, mode: str) -> Optional[str]:
     if mode != "masked":
         return None
     configured = state.config.privacy.client_details if state.config is not None else "token"
-    return VIEWER_HINT if configured == "token" and _token_set(request) and not can_edit(request) else HINT
+    if configured == "masked":
+        return MASKED_HINT
+    return VIEWER_HINT if _token_set(request) and not can_edit(request) else HINT
 
 
 # A Wi-Fi signal in dBm as a word, the number of bars (of 4) and a grade: the thresholds UniFi uses.

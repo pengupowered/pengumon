@@ -4,7 +4,7 @@ Only pydantic and pengumon.models.hosts are imported at module level. The driver
 validators: the drivers import this package (devices), so a module-level import would be a cycle.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
@@ -128,3 +128,19 @@ class DeviceConfig(BaseModel):
     @property
     def credential_env_name(self) -> str:
         return credential_env_name(self.id)
+
+
+def unique_device_ids(configs: Iterable[DeviceConfig]) -> None:
+    """Raises ValueError when two devices share an id, or share the credential variables
+    PENGUMON_DEVICE_<ID>_* (ids differing only in case or '-' versus '_'). One check for the config file, the
+    settings page and the live apply."""
+    seen_ids: Dict[str, str] = {}
+    seen_env: Dict[str, str] = {}
+    for device in configs:
+        if device.id in seen_ids:
+            raise ValueError(f"devices: id {device.id!r} is used twice; every device needs its own id")
+        env = device.credential_env_name
+        if env in seen_env:
+            raise ValueError(f"devices: ids {seen_env[env]!r} and {device.id!r} share the credential variables "
+                             f"PENGUMON_DEVICE_{env}_*; rename one")
+        seen_ids[device.id] = seen_env[env] = device.id

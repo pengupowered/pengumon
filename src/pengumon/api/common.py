@@ -1,12 +1,13 @@
 """What the route modules share: the app-state dependency, the plain-JSON response and the device lookup."""
 
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Optional
 
 from fastapi import Depends, HTTPException, Response
 
 from pengumon.api.state import AppState, get_state
 from pengumon.devices.device import Device
+from pengumon.observability.telemetry import api_answer_capped, api_answer_rows, api_answer_size
 
 StateDep = Annotated[AppState, Depends(get_state)]
 
@@ -28,3 +29,15 @@ def device_or_404(state: AppState, device_id: str) -> Device:
     if device is None:
         raise HTTPException(status_code=404, detail="Unknown device")
     return device
+
+
+def record_answer(endpoint: str, rows: int, size: Optional[int] = None) -> None:
+    """A history answer's rows and (when it is built here) body bytes, for the telemetry."""
+    attributes = {"endpoint": endpoint}
+    api_answer_rows.record(rows, attributes)
+    if size is not None:
+        api_answer_size.record(size, attributes)
+
+
+def record_capped(endpoint: str, cap: str) -> None:
+    api_answer_capped.add(1, {"endpoint": endpoint, "cap": cap})

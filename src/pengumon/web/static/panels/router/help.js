@@ -1,27 +1,31 @@
-// Help texts of this panel and its dialogs (help.js shows them in the popover). Numbers quoted here come from the
-// code that applies them (devices/monitors.py, engine/load.py; the client table) and change with it.
+// Help texts of this panel and its dialogs (help.js shows them in the popover). Numbers quoted here are read from the
+// settings (js/settings-values.js: router_levels.*, classifier.busy_load_pct, database.retention_days), so they say what
+// the page uses now.
 
 import { registerHelp } from '../../js/help.js';
+import { val } from '../../js/settings-values.js';
 
 registerHelp({
   'line.capacity': 'The line speed that load is measured against. It is the figure you set in config (line.down_mbps and '
     + 'line.up_mbps, "configured"), or when unset it is learned: the 99.9th percentile of the router\'s WAN rates over '
     + 'the last 7 days, with a floor of 10 Mbps, and only once 6 hours of samples exist ("learned"). Thin dashed lines on '
     + 'the router history WAN chart show it. A learned value is too low on a line that never gets fully used.',
-  'router.cpu': 'How busy the router\'s processor was, in percent, averaged over its cores. The router only gives '
+  'router.cpu': (v) => 'How busy the router\'s processor was, in percent, averaged over its cores. The router only gives '
     + 'counters that count up since its boot, so pengumon works the percentage out from the difference '
-    + 'between two readings. The first reading after a start has none. Above 90% it is graded warning: a '
+    + 'between two readings. The first reading after a start has none. Above ' + val(v, 'router_levels.cpu_warning_pct', 90) + '% it is graded warning: a '
     + 'router that busy adds delay for the whole network.',
-  'router.mem': 'How much of the router\'s memory is in use. Above 85% it is graded warning and above 95% critical, '
+  'router.mem': (v) => 'How much of the router\'s memory is in use. Above ' + val(v, 'router_levels.mem_warning_pct', 85) + '% it is graded warning and above '
+    + val(v, 'router_levels.mem_critical_pct', 95) + '% critical, '
     + 'where crashes become likely. A figure that creeps up over days suggests a leak; a reboot clears it.',
-  'router.wan': 'Current traffic through the router\'s internet port, in Mbit/s, for download and upload, worked out '
+  'router.wan': (v) => 'Current traffic through the router\'s internet port, in Mbit/s, for download and upload, worked out '
     + 'from two readings of the router\'s byte counters, so it is an average over the polling interval '
     + 'rather than an instant. The bar is the share of the line capacity: from the busy load '
-    + '(busy_load_pct, 60% by default) it is graded warning, from 95% critical. Near capacity, expect '
+    + '(' + val(v, 'classifier.busy_load_pct', 60) + '% in Settings) it is graded warning, from '
+    + val(v, 'router_levels.wan_critical_pct', 95) + '% critical. Near capacity, expect '
     + 'higher ping times.',
   'router.clients': 'The number of devices the router currently counts as connected, wired and Wi-Fi. Where the router '
     + 'can list them, this opens the Clients list.',
-  'router.history': 'CPU and memory, WAN rates and the number of clients over 1 hour to 7 days, from the router readings '
+  'router.history': (v) => 'CPU and memory, WAN rates and the number of clients over 1 hour to ' + val(v, 'database.retention_days', 7) + ' days (how long readings are kept), from the router readings '
     + 'saved every 10 s. Longer ranges are averaged into buckets (solid lines are the average, dashed '
     + 'lines the peak). Use it to see whether a slowdown lined up with a busy line or a loaded router.',
   'clients.band': 'How the device is connected: wired, or Wi-Fi on the 2.4, 5 or 6 GHz band. 2.4 GHz reaches farther but '

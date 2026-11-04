@@ -39,10 +39,14 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
 
     rows = await repository.get_incidents_since(start_time)
     incidents, excluded = _split_incidents(rows)
+
+    def lasted(r):  # an incident still open has no duration yet: it has lasted until now
+        return r["duration_seconds"] if r["duration_seconds"] is not None else max(0.0, now - r.get("start_time", now))
+
     causes: Dict[str, List[float]] = defaultdict(lambda: [0, 0.0])
     for r in incidents:
         causes[current_cause(r["cause_code"])][0] += 1
-        causes[current_cause(r["cause_code"])][1] += (r["duration_seconds"] or 0) / 60.0
+        causes[current_cause(r["cause_code"])][1] += lasted(r) / 60.0
     by_cause = [
         {"cause_code": c, "count": n, "minutes": round(m, 1)}
         for c, (n, m) in sorted(causes.items(), key=lambda kv: (-kv[1][0], kv[0]))
@@ -62,7 +66,7 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
         "availability": {"days": day_list, "hops": hops},
         "incidents": {
             "count": len(incidents),
-            "minutes": round(sum(r["duration_seconds"] or 0 for r in incidents) / 60.0, 1),
+            "minutes": round(sum(lasted(r) for r in incidents) / 60.0, 1),
             "by_cause": by_cause,
             "excluded_expected": excluded,
         },

@@ -17,8 +17,9 @@ const topo = (page) => page.evaluate(() => {
 });
 
 export const steps = [
-  ["two routers: one card each, with their own name, readings, history and setup", async ({ ROUTER, click, eq, ok, openLayout, outDir, page, path, text, until, waitCount, waitText }) => {
+  ["two routers: one card each, with their own name, readings, history and setup", async ({ ROUTER, click, dialogKeys, eq, ok, openLayout, outDir, page, path, text, until, waitCount, waitText }) => {
     await waitCount("[data-panel=router] .panel", 2);
+    await dialogKeys("[data-panel=router] .panel[data-device=router2] [data-action=openRouterHistory]", "routerHistModal");
     const titles = await page.$$eval("[data-panel=router] .panel .panel-t", (els) => els.map((e) => e.textContent).join("|"));
     eq("router cards in config order", titles, "Example Router|Second AP");
     const second = "[data-panel=router] .panel[data-device=router2]";
@@ -70,7 +71,7 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=routerHistModal]");
   }],
 
-  ["clients modal: summary, table, link speed label, offline toggle, node filter, sorting, chart", async ({ ROUTER, chartLabels, click, count, eq, ok, outDir, page, path, signIn, text, until, waitCount }) => {
+  ["clients modal: summary, table, link speed label, offline toggle, node filter, sorting, chart", async ({ ROUTER, chartLabels, click, count, dialogKeys, eq, ok, outDir, page, path, signIn, text, until, waitCount }) => {
       await signIn(ROUTER); // the clients feature needs the router's password stored: do what a person does (this file does not rely on another file having done it)
     // the stored password makes the `clients` feature available; a reload picks that up
     await page.reload({ waitUntil: "load" });
@@ -82,6 +83,7 @@ export const steps = [
     eq("node status and backhaul on the card", await page.$$eval(`${ROUTER} [data-f=nodes] li`, (els) => els.map((e) => `${e.querySelector(".n-id span").textContent}|${e.querySelector(".n-st").textContent}|${e.classList.contains("st-warn")}`).join(" ; ")), "1 wired||false ; 5 GHz, -54 dBm||false ; mesh node|Offline|true");
     ok("the band bar has the wired and Wi-Fi parts", (await page.$$eval(`${ROUTER} [data-f=bands] i`, (els) => els.length)) >= 2);
     eq("no client-list request for the card", await page.evaluate(() => performance.getEntriesByType("resource").filter((e) => new URL(e.name).pathname.endsWith("/clients")).length), 0);
+    await dialogKeys(`${ROUTER} [data-f=count]`, "networkModal");
     await click(`${ROUTER} [data-f=count]`);
     await until(() => document.getElementById("networkModal").classList.contains("active"));
     await waitCount("#clientsBody tr", 3); // three online clients; the offline one is hidden by default

@@ -15,6 +15,8 @@ from typing import Awaitable, Callable, Dict, List, Optional
 from pengumon.capabilities import (
     Capability, ClientsReading, DriverError, LineReading, MeshReading, PollResult, SystemReading, WanCounters,
 )
+from pengumon.devices.levels import RouterLevelsConfig
+from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.devices.samples import device_sample, mesh_counts
 from pengumon.devices.wan import Rate, WanRates
 from pengumon.grades import GOOD, WARN, Range, known_grades
@@ -25,20 +27,27 @@ from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.lines.docsis_model import DocsisSignalSnapshot
 from pengumon.observability import StateLog, get_logger
 
-ROUTER_CPU_WARNING_PCT = 90.0
-ROUTER_MEM_WARNING_PCT = 85.0
-ROUTER_MEM_CRITICAL_PCT = 95.0  # out-of-memory risk
-WAN_LOAD_CRITICAL_PCT = 95.0  # a line this full is saturated
+# The router levels in force (the Settings page's router_levels: section, pengumon.devices.levels): one object for
+# the whole process, read at every grading; `use_levels` copies the configured ones into it in place.
+LEVELS = RouterLevelsConfig()
+DEFAULT_BUSY_LOAD_PCT = ClassifierConfig.model_fields["busy_load_pct"].default  # until watch_load says otherwise
 
 
-def router_ranges(busy_load_pct: float) -> Dict[str, Range]:
-    """The good zone of each router metric. CPU is warn above ROUTER_CPU_WARNING_PCT (as the snapshot status always
-    was; the dashboard used to colour at 50 and 80 %), and the WAN load, in % of the line capacity, is warn from the
-    classifier's busy_load_pct (the load at which delay stops counting as a fault) and critical when saturated."""
-    wan = Range("%", 0.0, 100.0, good_high=busy_load_pct, critical_high=WAN_LOAD_CRITICAL_PCT)
+def use_levels(levels: RouterLevelsConfig) -> None:
+    """Makes `levels` the ones in force: copied into LEVELS field by field, in one synchronous step."""
+    for name in type(LEVELS).model_fields:
+        setattr(LEVELS, name, getattr(levels, name))
+
+
+def router_ranges(levels: RouterLevelsConfig, busy_load_pct: float) -> Dict[str, Range]:
+    """The good zone of each router metric. CPU is warn above cpu_warning_pct (as the snapshot status always was;
+    the dashboard used to colour at 50 and 80 %), and the WAN load, in % of the line capacity, is warn from the
+    classifier's busy_load_pct (the load at which delay stops counting as a fault) and critical when saturated
+    (wan_critical_pct)."""
+    wan = Range("%", 0.0, 100.0, good_high=busy_load_pct, critical_high=levels.wan_critical_pct)
     return {
-        "cpu": Range("%", 0.0, 100.0, good_high=ROUTER_CPU_WARNING_PCT),
-        "mem": Range("%", 0.0, 100.0, good_high=ROUTER_MEM_WARNING_PCT, critical_high=ROUTER_MEM_CRITICAL_PCT),
+        "cpu": Range("%", 0.0, 100.0, good_high=levels.cpu_warning_pct),
+        "mem": Range("%", 0.0, 100.0, good_high=levels.mem_warning_pct, critical_high=levels.mem_critical_pct),
         "wan_rx": wan,
         "wan_tx": wan,
     }
@@ -185,17 +194,19 @@ class RouterMonitor:
         self._store_mesh = _Store("mesh client counts", getattr(repository, "insert_mesh_counts", None),
                                   lambda device_id, counts: counts, device_id)
         self._load = None  # the LineLoad whose capacity the WAN rates are graded against (see watch_load)
-        self._ranges = router_ranges(60.0)
+        self._busy: Callable[[], float] = lambda: DEFAULT_BUSY_LOAD_PCT
 
-    def watch_load(self, line_load, busy_load_pct: float) -> None:
+    def watch_load(self, line_load, busy_load_pct: Callable[[], float]) -> None:
         """Grades the WAN rates as a share of the line capacity `line_load` knows (learned or configured, so it can
-        change between polls) against the classifier's busy threshold."""
+        change between polls) against the classifier's busy threshold, which `busy_load_pct()` gives at each poll
+        (a setting that can change while the app runs)."""
         self._load = line_load
-        self._ranges = router_ranges(busy_load_pct)
+        self._busy = busy_load_pct
 
     @property
     def ranges(self) -> Dict[str, Range]:
-        return self._ranges
+        """The ranges in force now (router levels and busy threshold as they are at this moment)."""
+        return router_ranges(LEVELS, self._busy())
 
     def recent_rates(self) -> List[Rate]:
         return self.wan.recent_rates()
@@ -241,8 +252,9 @@ class RouterMonitor:
         if clients is not None:
             self.latest_clients, self.clients_at = clients, ts
             self.latest_mesh = mesh if isinstance(mesh, MeshReading) else None
-        grades = known_grades(cpu=self._ranges["cpu"].grade(system.cpu_pct), mem=self._ranges["mem"].grade(system.mem_pct),
-                              wan_rx=self._ranges["wan_rx"].grade(rx_pct), wan_tx=self._ranges["wan_tx"].grade(tx_pct))
+        graded = self.ranges
+        grades = known_grades(cpu=graded["cpu"].grade(system.cpu_pct), mem=graded["mem"].grade(system.mem_pct),
+                              wan_rx=graded["wan_rx"].grade(rx_pct), wan_tx=graded["wan_tx"].grade(tx_pct))
         # A mesh node the router reports offline is a fault of the network, shown as the card's warning (the last mesh
         # reading stands between client-list reads). The grade is only there for a mesh whose state is known.
         if isinstance(self.latest_mesh, MeshReading) and any(n.online is not None for n in self.latest_mesh.nodes):

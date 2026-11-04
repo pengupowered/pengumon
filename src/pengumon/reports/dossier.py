@@ -10,11 +10,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from pengumon.lines import docsis
 from pengumon.lines.docsis import channel_finding, is_degraded as _is_degraded, uncorrectable_increase as _uncorrectable_increase
 from pengumon.incidents.taxonomy import current_cause
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.reports.common import (
-    LOSS_MATERIAL_PCT, _canonical_order, _hop_label, _split_incidents, _targets, find_primary_failing_hop,
+    _canonical_order, _hop_label, _split_incidents, _targets, find_primary_failing_hop, material_loss_points,
 )
 
 
@@ -32,7 +33,7 @@ class DossierFacts:
     by_cause: List[Tuple[str, int, float]]     # (cause, count, minutes), in render order (most frequent first)
     hop_stats: List[Dict[str, Any]]            # canonical order
     primary: Optional[Dict[str, Any]]          # first hop with elevated loss
-    later_lossy: List[Dict[str, Any]]          # hops after `primary` that also lose >= LOSS_MATERIAL_PCT
+    later_lossy: List[Dict[str, Any]]          # hops after `primary` that also lose >= material_loss_points
     labels: Dict[str, str]                     # target id -> "Name (address)"
     names: Dict[str, str]
     max_lan_loss: Optional[float]              # worst loss over local and gateway hops that sent probes
@@ -45,14 +46,16 @@ class DossierFacts:
     local_name: str
     gw_name: str
     ignoring: frozenset = frozenset()          # hops that ignore ping (engine.path_rules): listed, never counted
+    material: float = material_loss_points(None)  # percentage points that make a hop's loss material (reports:)
 
 
-def hop_note(h: Dict[str, Any], primary: Optional[Dict[str, Any]], ignoring=frozenset()) -> str:
+def hop_note(h: Dict[str, Any], primary: Optional[Dict[str, Any]], ignoring=frozenset(),
+             material: float = material_loss_points(None)) -> str:
     if h["target_id"] in ignoring:
         return "Ignores ping (later hops answer, so traffic passes); not counted"
     if primary and h["target_id"] == primary["target_id"]:
         return "First hop with elevated loss"
-    if h["loss_pct"] >= LOSS_MATERIAL_PCT:
+    if h["loss_pct"] >= material:
         return "Elevated loss"
     return "No material loss"
 
@@ -67,14 +70,18 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     rows = await repository.get_incidents_since(start_time)
     incidents, excluded = _split_incidents(rows)
     total_incidents = len(incidents)
-    total_dur_sec = sum(r["duration_seconds"] or 0 for r in incidents)
+
+    def lasted(r):  # an incident still open has no duration yet: it has lasted until now
+        return r["duration_seconds"] if r["duration_seconds"] is not None else max(0.0, now - r.get("start_time", now))
+
+    total_dur_sec = sum(lasted(r) for r in incidents)
     total_dur_min = round(total_dur_sec / 60.0, 1)
     busy_pct = getattr(getattr(config, "classifier", None), "busy_load_pct", 60.0)
     under_load = sum(1 for r in incidents if (r.get("load_pct") or 0) >= busy_pct)
     by_cause: Dict[str, List[float]] = defaultdict(lambda: [0, 0.0])
     for r in incidents:
         by_cause[current_cause(r["cause_code"])][0] += 1
-        by_cause[current_cause(r["cause_code"])][1] += (r["duration_seconds"] or 0) / 60.0
+        by_cause[current_cause(r["cause_code"])][1] += lasted(r) / 60.0
     causes = [(c, n, m) for c, (n, m) in sorted(by_cause.items(), key=lambda kv: -kv[1][0])]
 
     cfg_targets = _targets(config)
@@ -85,11 +92,12 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
 
     hop_stats = await repository.get_hop_stats(start_time)
     hop_stats.sort(key=lambda h: order.index(h["target_id"]) if h["target_id"] in order else 999)
-    primary = find_primary_failing_hop(hop_stats, ignoring)
+    material = material_loss_points(config)
+    primary = find_primary_failing_hop(hop_stats, ignoring, material)
     later_lossy = []
     if primary:
         later_lossy = [h for h in hop_stats[hop_stats.index(primary) + 1:]
-                       if h["sent"] and h["loss_pct"] >= LOSS_MATERIAL_PCT and h["target_id"] not in ignoring]
+                       if h["sent"] and h["loss_pct"] >= material and h["target_id"] not in ignoring]
     labels = {h["target_id"]: _hop_label(h["target_id"], names, addresses) for h in hop_stats}
 
     local_hops = [h for h in hop_stats if categories.get(h["target_id"]) in ("local", "gateway") and h["sent"]
@@ -126,6 +134,7 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         by_cause=causes,
         hop_stats=hop_stats,
         ignoring=ignoring,
+        material=material,
         primary=primary,
         later_lossy=later_lossy,
         labels=labels,
@@ -158,7 +167,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
         L.append("**Local hardware:** no local or gateway probes in this window")
     else:
         L.append(f"**Local hardware:** {max_lan_loss}% worst loss across local and gateway hops "
-                 f"({'below' if max_lan_loss < LOSS_MATERIAL_PCT else 'at or above'} the {LOSS_MATERIAL_PCT}% "
+                 f"({'below' if max_lan_loss < f.material else 'at or above'} the {f.material}% "
                  f"threshold)")
 
     L += ["", "## 1. Summary",
@@ -176,7 +185,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
                  f"({primary['loss_pct']}% loss).")
     else:
         L.append("- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by "
-                 f"{LOSS_MATERIAL_PCT} points or more.")
+                 f"{f.material} points or more.")
 
     L += ["", "## 2. Loss per hop",
           f"Probes are ICMP/DNS requests sent about once per second per target; the table counts every probe "
@@ -187,10 +196,10 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     for h in f.hop_stats:
         tid = h["target_id"]
         L.append(f"| `{tid}` | {f.names.get(tid, tid)} | {h['sent']} | {h['lost']} | {h['loss_pct']}% | "
-                 f"{h['avg_ms']} ms | {h['max_ms']} ms | {hop_note(h, primary, f.ignoring)} |")
+                 f"{h['avg_ms']} ms | {h['max_ms']} ms | {hop_note(h, primary, f.ignoring, f.material)} |")
     if primary:
         if f.later_lossy:
-            L += ["", f"Loss of {LOSS_MATERIAL_PCT} points or more is also present at later hops "
+            L += ["", f"Loss of {f.material} points or more is also present at later hops "
                       f"({', '.join(h['target_id'] for h in f.later_lossy)}), so it continues past that point."]
         else:
             L += ["", f"Later hops show no comparable loss. Loss at a single intermediate hop can also be "
@@ -202,10 +211,12 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     elif docsis_snapshot.status == "error":
         L.append("- The modem could not be read at the last poll.")
     else:
-        s = docsis_snapshot
-        L += [f"- Downstream average power: {s.downstream_power_avg} dBmV (typical range -7 to +7)",
-              f"- Downstream average SNR: {s.downstream_snr_avg} dB (typically above 33)",
-              f"- Upstream average power: {s.upstream_power_avg} dBmV (typically 38 to 48)",
+        s, lv = docsis_snapshot, docsis.LEVELS  # "typical": the warning levels in force (lines/docsis.py)
+        L += [f"- Downstream average power: {s.downstream_power_avg} dBmV (typical range "
+              f"-{lv.ds_power_warning_abs_dbmv:g} to +{lv.ds_power_warning_abs_dbmv:g})",
+              f"- Downstream average SNR: {s.downstream_snr_avg} dB (typically above {lv.ds_snr_warning_db:g})",
+              f"- Upstream average power: {s.upstream_power_avg} dBmV (typically {lv.us_power_low_warning_dbmv:g} "
+              f"to {lv.us_power_warning_dbmv:g})",
               f"- Uncorrectable codewords since modem boot: {s.uncorrectables_total:,}"]
         if f.has_window_snaps:
             L.append(f"- New uncorrectable codewords recorded in the window: {unc_increase:,}")

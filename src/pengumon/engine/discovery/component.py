@@ -5,8 +5,10 @@ route-change checks (drift.py).
 path (engine/path.py) and the hops removed from it; the configured devices' hosts get one front-page request each. A
 run the owner starts begins when the path editor asks for one. With `discovery.background` on (the default) it also
 makes the DriftChecker: started with the app, it checks the route once a day, and the classifier's "incident ended"
-callback asks it for a check soon after an incident (the notifier's callback is kept and runs first). At shutdown a
-run still going is stopped. Optional: a failure here costs discovery, never the start.
+callback asks it for a check soon after an incident (the notifier's callback is kept and runs first). The checker is
+always made and reads those settings live, so switching background checks or the ASN lookup on the Settings page, or
+changing the daily time or the time zone, applies at once (the settings hub calls its `wake`). At shutdown a run still
+going is stopped. Optional: a failure here costs discovery, never the start.
 """
 
 import asyncio
@@ -107,14 +109,21 @@ async def register(ctx: Context) -> Component:
 
     settings = getattr(ctx.config, "discovery", None)
     drift = None
-    if settings is not None and settings.background and state.repository is not None:
+    if settings is not None and state.repository is not None:
+        general = getattr(ctx.config, "general", None)
         drift = DriftChecker(run=lambda options: run(options, lambda text: None), paths=lambda: drift_paths(state),
                              repository=state.repository, jobs=jobs,
                              notify=ctx.notifier.notify_path_changed if ctx.notifier is not None else None,
-                             asn_lookup=settings.asn_lookup)
+                             settings=settings, timezone=lambda: general.timezone if general is not None else "UTC")
         state.drift = drift
         if state.classifier is not None:
             chain_incident_ended(state.classifier, drift.incident_ended)
+        hub = getattr(ctx, "settings", None)  # the settings hub (W1)
+        if hub is not None:
+            @hub.on(keys=["discovery.background", "discovery.asn_lookup", "discovery.daily_check_time",
+                          "general.timezone"], name="discovery.drift")
+            def _drift(change) -> None:
+                drift.wake()
 
     async def start() -> None:
         if drift is not None:

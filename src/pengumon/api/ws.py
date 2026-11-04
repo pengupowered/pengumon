@@ -1,13 +1,16 @@
 """WebSocket manager for streaming real-time network telemetry to web GUI."""
 
 import asyncio
-import logging
+import time
 from typing import List, Optional
 from fastapi import WebSocket
 
 from pengumon.live.message import LiveStreamMessage
+from pengumon.observability import get_logger
+from pengumon.observability.telemetry import ws_clients_dropped, ws_message_size, ws_send_duration
 
-logger = logging.getLogger("pengumon.ws")
+logger = get_logger("pengumon.ws")
+_SENT, _FAILED = {"outcome": "sent"}, {"outcome": "failed"}
 
 # A browser that stops reading (suspended tab, dead Wi-Fi) fills its socket buffer and `send` then waits
 # for it. The client is dropped after this long rather than holding up everyone else.
@@ -34,12 +37,12 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        logger.debug(f"Client connected. Active clients: {len(self.active_connections)}")
+        logger.debug("Client connected", clients=len(self.active_connections))
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-            logger.debug(f"Client disconnected. Active clients: {len(self.active_connections)}")
+            logger.debug("Client disconnected", clients=len(self.active_connections))
 
     def publish(self, message: LiveStreamMessage) -> None:
         """Hands the newest message to the broadcaster task; never waits, replaces an unsent one."""
@@ -62,14 +65,20 @@ class ConnectionManager:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("Broadcast failed")
+                logger.error("Broadcast failed", exc_info=True)
 
-    async def _send(self, connection: WebSocket, text: str) -> bool:
+    async def _send(self, connection: WebSocket, text: str) -> Optional[str]:
+        """Sends to one client. None when it went out, else why not: "timeout" (the client does not read) or "error"."""
+        started = time.perf_counter()
+        reason: Optional[str] = None
         try:
             await asyncio.wait_for(connection.send_text(text), self.send_timeout)
-            return True
-        except Exception:  # timeout, closed socket, anything else: the client is gone or hopeless
-            return False
+        except asyncio.TimeoutError:
+            reason = "timeout"
+        except Exception:  # a closed socket, anything else: the client is gone or hopeless
+            reason = "error"
+        ws_send_duration.record(time.perf_counter() - started, _SENT if reason is None else _FAILED)
+        return reason
 
     async def broadcast(self, message: LiveStreamMessage):
         """Pushes real-time diagnostic telemetry to all connected browsers, concurrently. A client that
@@ -79,8 +88,11 @@ class ConnectionManager:
             return
 
         text = message.model_dump_json()
-        for connection, ok in zip(connections, await asyncio.gather(*(self._send(c, text) for c in connections))):
-            if not ok:
+        ws_message_size.record(len(text.encode("utf-8")))
+        for connection, reason in zip(connections, await asyncio.gather(*(self._send(c, text) for c in connections))):
+            if reason is not None:
+                ws_clients_dropped.add(1, {"reason": reason})
+                logger.info("Dashboard client dropped: its send failed", reason=reason, clients=len(connections) - 1)
                 self.disconnect(connection)
                 # Frees the socket. It may hang as well, so do not wait for it here.
                 closer = asyncio.create_task(self._close(connection))

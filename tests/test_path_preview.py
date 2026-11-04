@@ -24,6 +24,9 @@ ISP = TargetConfig(id="isp_1", name="Provider hop 1", address="198.51.100.9", ca
 PUB = TargetConfig(id="pub", name="Public", address="203.0.113.53", category="public")
 
 ROUNDS = 4
+# Long enough that the tests below end the preview themselves, short enough (15 s at 0.01 s a round) that a test which
+# fails before it does stops probing on its own, instead of at the hang guard.
+LONG_PREVIEW = 1500
 
 
 def _hop(t: TargetConfig, position: int, **extra) -> dict:
@@ -118,7 +121,7 @@ def test_an_ipv6_hop_this_host_cannot_reach_is_not_a_loss():
 
 async def test_a_clients_new_preview_stops_its_previous_one_and_at_most_two_run_at_once(preview_app):
     state, _ = preview_app
-    state.path.previews.seconds = 100000
+    state.path.previews.seconds = LONG_PREVIEW
     draft = {"hops": [_hop(ISP, 0)]}
     async with _client("192.0.2.10") as a, _client("192.0.2.11") as b, _client("192.0.2.12") as c:
         first = (await a.post("/api/path/preview", json=draft)).json()["id"]
@@ -134,7 +137,7 @@ async def test_a_clients_new_preview_stops_its_previous_one_and_at_most_two_run_
 
 async def test_delete_stops_a_preview_early_and_an_unknown_one_is_404(preview_app):
     state, backend = preview_app
-    state.path.previews.seconds = 100000
+    state.path.previews.seconds = LONG_PREVIEW
     async with _client() as ac:
         preview_id = (await ac.post("/api/path/preview", json={"hops": [_hop(ISP, 0)]})).json()["id"]
         await asyncio.sleep(0.05)
@@ -150,7 +153,7 @@ async def test_delete_stops_a_preview_early_and_an_unknown_one_is_404(preview_ap
 
 async def test_shutdown_stops_running_previews(preview_app):
     state, backend = preview_app
-    state.path.previews.seconds = 100000
+    state.path.previews.seconds = LONG_PREVIEW
     async with _client() as ac:
         await ac.post("/api/path/preview", json={"hops": [_hop(ISP, 0)]})
     await asyncio.sleep(0.02)

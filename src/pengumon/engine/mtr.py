@@ -10,6 +10,7 @@ hop limit in place of the TTL: an IPv6 address is traced over ICMPv6, and a host
 
 import asyncio
 import logging
+import time
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +20,7 @@ from pengumon.engine.discovery.addresses import CGNAT, LINK_LOCAL, LOOPBACK, PRI
 from pengumon.engine.icmp_base import IcmpBackend, ProbeResult
 from pengumon.engine.icmp_packet import address_key
 from pengumon.engine.icmp_select import resolve_address, shared_backend
+from pengumon.observability.telemetry import traceroute_duration, traceroute_hops
 
 logger = logging.getLogger("pengumon.mtr")
 
@@ -134,11 +136,17 @@ class MtrEngine:
 
     async def _one_at_a_time(self, backend: IcmpBackend, address: str) -> List[TracerouteHop]:
         async with _trace_lock():
+            started = time.perf_counter()  # (not the wait for another trace's turn)
             results = await self._probe_all(backend, address)
-        return [
+            took = time.perf_counter() - started
+        hops = [
             TracerouteHop(hop_number=hop_no, ip=ip, rtt_ms=rtt, label=self._label_hop(hop_no, ip))
             for hop_no, ip, rtt in summarize_hops(results, address)
         ]
+        attributes = {"family": "6" if ":" in address else "4"}
+        traceroute_duration.record(took, attributes)
+        traceroute_hops.record(len(hops), attributes)
+        return hops
 
     async def _probe_all(self, backend: IcmpBackend, address: str) -> List[List[ProbeResult]]:
         async def one(delay: float, ttl: int) -> ProbeResult:

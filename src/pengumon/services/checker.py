@@ -17,7 +17,7 @@ import socket
 import ssl
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 import httpx
@@ -151,10 +151,38 @@ class ServiceChecker:
         self._client_factory = client_factory
         self._clients: Dict[str, httpx.AsyncClient] = {}
         self.status: Dict[str, ServiceStatus] = {}
+        self._applied = self._snapshot()
 
     @property
     def services(self):
         return [s for s in self.config.services if s.enabled]
+
+    def _snapshot(self) -> Dict[str, dict]:
+        return {s.id: s.model_dump() for s in self.config.services if s.enabled}
+
+    # What a client is built from: a change to any of these needs a new client and a fresh status.
+    _CHECK_FIELDS = ("url", "ca_file", "timeout_seconds")
+
+    async def set_services(self) -> List[str]:
+        """The service list in the config (which is edited in place) changed: forget what no longer applies. A
+        service that was removed or disabled, or whose address, CA file or timeout changed, loses its client, its
+        status and its open incident (resolved now), so the next check starts it afresh; the others keep their
+        history. Returns the ids that were reset, so the caller can drop their waiting messages."""
+        now, previous, current = self.clock(), self._applied, self._snapshot()
+        reset = [sid for sid, old in previous.items()
+                 if sid not in current or any(old[f] != current[sid][f] for f in self._CHECK_FIELDS)]
+        for sid in reset:
+            client = self._clients.pop(sid, None)
+            if client is not None:
+                await client.aclose()
+            st = self.status.pop(sid, None)
+            if st is not None and st.incident_id is not None:
+                await self.repository.resolve_incident(st.incident_id, now)
+        for sid in list(self.status):
+            if sid not in current:
+                self.status.pop(sid)  # a service that was already disabled: its status is stale too
+        self._applied = current
+        return reset
 
     def state_of(self, service_id: str) -> str:
         """up, degraded (failing, below the incident threshold), down or unknown (not checked yet)."""

@@ -14,7 +14,7 @@
 
 import { applyTabs } from './tabs.js';
 import { registerActions } from './dispatch.js';
-import { icon, openModal } from './util.js';
+import { icon, keepKeyboard, openModal } from './util.js';
 import { showMenu, closeMenus, toast } from './chrome.js';
 
 const STORAGE_KEY = 'pengumon.layout.v1';
@@ -123,6 +123,12 @@ function save() {
   renderList();
 }
 
+// The order and hidden panels this browser shows now (a copy), for Settings > Display's "Use this browser's layout for
+// everyone", which writes them into dashboard.order and dashboard.hidden.
+export function browserLayout() {
+  return { order: [...layout.order], hidden: [...layout.hidden] };
+}
+
 // Re-packs after a panel added or removed cards (a device panel that changes its size, for example).
 export function relayout() {
   pack();
@@ -174,7 +180,16 @@ function renderList() {
   if (!list) return;
   const map = byId();
   const usable = usableOrder();
+  // the rows are rebuilt (also by a change made in another tab): the control with focus keeps it
+  const had = list.contains(document.activeElement) ? document.activeElement : null;
+  const key = had ? { arg: had.dataset.arg, arg2: had.dataset.arg2, action: had.dataset.action || had.dataset.change } : null;
   list.replaceChildren(...usable.map((id, at) => rowFor(map.get(id), at, usable)));
+  if (key) {
+    const same = [...list.querySelectorAll('[data-arg]')].filter((e) => e.dataset.arg === key.arg && (e.dataset.action || e.dataset.change) === key.action && e.dataset.arg2 === key.arg2);
+    const target = same.find((e) => !e.disabled) || [...list.querySelectorAll('[data-arg]')].find((e) => e.dataset.arg === key.arg && !e.disabled);
+    if (target) target.focus();
+    else if (document.getElementById('layoutModal').classList.contains('active')) document.querySelector('#layoutModal .m-close').focus();
+  }
   const missing = layout.order.filter((id) => map.has(id) && !map.get(id).available).map((id) => map.get(id));
   const other = document.getElementById('layoutUnavailable');
   document.getElementById('layoutUnavailableTitle').hidden = !missing.length;
@@ -271,7 +286,7 @@ function addMenuButton(card, panel) {
 }
 
 registerActions('click', {
-  openLayoutDialog: () => { closeMenus(); renderList(); openModal('layoutModal'); },
+  openLayoutDialog: () => { closeMenus(); renderList(); keepKeyboard(document.getElementById('layoutModal')); openModal('layoutModal'); },
   movePanel: (el) => movePanel(el.dataset.arg, el.dataset.arg2),
   resetLayout: () => { resetLayout(); toast('Layout reset to the default'); },
   panelMenu: (el) => panelMenu(el),
@@ -312,4 +327,11 @@ export function mountLayout(panels, ctx) {
   defaults = combine(ids, server, null);
   layout = combine(ids, server, readStored());
   apply();
+  // another tab of this browser changed the layout (or reset it): follow it, so two tabs do not disagree until a reload
+  window.addEventListener('storage', (ev) => {
+    if (ev.key !== STORAGE_KEY && ev.key !== null) return;
+    layout = combine(ids, server, readStored());
+    apply();
+    renderList();
+  });
 }

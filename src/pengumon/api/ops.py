@@ -63,14 +63,20 @@ async def run_traceroute(state: StateDep, req: TracerouteRequest = Body(...)):
 
 @router.get("/health")
 async def get_health(response: Response, state: StateDep):
-    """Liveness for the container HEALTHCHECK: 200 while the probe loop keeps finishing rounds."""
+    """Liveness for the container HEALTHCHECK: 200 while the probe loop keeps finishing rounds. `probing` is "ok" or
+    "unavailable" (this host cannot send pings: then `probing_problem` says why and `probing_fix` is the one step)."""
     last = getattr(state.prober, "last_round_ts", None) if state.prober else None
     if last is None:
         reason = "no probe round has finished yet"
     elif time.time() - last >= HEALTH_MAX_ROUND_AGE:
         reason = f"last probe round finished {time.time() - last:.0f} s ago"
     else:
-        return {"status": "ok", "version": __version__}
+        # Still 200 (the process is alive; a restart would not help), but it says when no pings can be sent
+        problem = state.prober.probing_problem()
+        if problem is None:
+            return {"status": "ok", "version": __version__, "probing": "ok"}
+        return {"status": "ok", "version": __version__, "probing": "unavailable",
+                "probing_problem": problem[0], "probing_fix": problem[1]}
     response.status_code = 503
     return {"status": "unhealthy", "reason": reason, "version": __version__}
 

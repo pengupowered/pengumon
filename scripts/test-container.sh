@@ -66,13 +66,34 @@ wait_for() {
 }
 
 cleanup() {
-    "$CT" rm -f "$ID" "$ID-fresh" >/dev/null 2>&1
+    # One at a time: podman 4.9's `rm -f A B` removes nothing when B is already gone (and still exits 0), which left
+    # the container, so its network stayed too. -v: the fresh container's anonymous /app/data volume goes with it.
+    "$CT" rm -f -v "$ID" >/dev/null 2>&1
+    "$CT" rm -f -v "$ID-fresh" >/dev/null 2>&1
     "$CT" network rm "$ID" >/dev/null 2>&1
     "$CT" volume rm -f "$ID" >/dev/null 2>&1
     [ $BUILT = 1 ] && "$CT" rmi -f "$IMAGE" >/dev/null 2>&1
     rm -rf "$TMP"
 }
 trap cleanup EXIT
+# A run that was killed outright (SIGKILL: the trap above never runs) leaves its network and volume. Their names
+# carry the run's process id, so remove those of runs whose process is gone; a run still going is never touched.
+sweep_stale() {
+    local name pid
+    for name in $( { "$CT" ps -a --format '{{.Names}}'; "$CT" network ls --format '{{.Name}}'; \
+                     "$CT" volume ls --format '{{.Name}}'; } 2>/dev/null | grep -E '^pgctest-[0-9]+(-fresh)?$' | sort -u); do
+        pid="${name#pgctest-}"; pid="${pid%-fresh}"
+        kill -0 "$pid" 2>/dev/null && continue
+        "$CT" rm -f -v "$name" >/dev/null 2>&1
+        "$CT" network rm "$name" >/dev/null 2>&1
+        "$CT" volume rm -f "$name" >/dev/null 2>&1
+    done
+}
+sweep_stale
+# A backstop for a killed run: the trap above never runs on SIGKILL, and a killed `podman run` leaves its container
+# running. podman then stops each container itself after this long (PENGUMON_TEST_TIMEOUT, default 900 s).
+backstop=()
+[ "$(basename "$CT")" = podman ] && backstop=(--timeout "${PENGUMON_TEST_TIMEOUT:-900}")
 
 VERSION="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$ROOT/src/pengumon/__init__.py")"
 [ -n "$VERSION" ] || { echo "no __version__ in src/pengumon/__init__.py" >&2; exit 2; }
@@ -98,7 +119,7 @@ step "Starting $IMAGE (read-only root, tmpfs /tmp, fresh data volume)"
 "$CT" network create "$ID" >/dev/null || exit 1
 "$CT" volume create "$ID" >/dev/null || exit 1
 # Same flags as the compose files, except the network (a private one, so the browser container can reach it by name).
-"$CT" run -d --name "$ID" --network "$ID" --network-alias pengumon-under-test --cap-add NET_RAW \
+"$CT" run -d "${backstop[@]}" --name "$ID" --network "$ID" --network-alias pengumon-under-test --cap-add NET_RAW \
     --read-only --tmpfs /tmp -v "$ID:/app/data" -v "$TMP/config.yaml:/app/config.yaml:ro" "$IMAGE" >/dev/null \
     || { echo "could not start the container" >&2; exit 1; }
 ex() { "$CT" exec "$ID" "$@"; }
@@ -154,7 +175,7 @@ if [ -z "$stray" ]; then pass "nothing was written outside /app/data and /tmp"; 
 # revision 0, so the dashboard's first run discovers it.
 step "Fresh container, no config mounted (the image's own config.yaml): first run"
 ID2="$ID-fresh"
-"$CT" run -d --name "$ID2" --cap-add NET_RAW --read-only --tmpfs /tmp "$IMAGE" >/dev/null || bad "could not start the fresh container"
+"$CT" run -d "${backstop[@]}" --name "$ID2" --cap-add NET_RAW --read-only --tmpfs /tmp "$IMAGE" >/dev/null || bad "could not start the fresh container"
 rev=""
 for _ in $(seq 1 60); do
     rev="$("$CT" exec "$ID2" curl -s -m 2 http://127.0.0.1:8000/api/path 2>/dev/null | sed -n 's/.*"revision": *\([0-9]*\).*/\1/p')"
@@ -162,7 +183,7 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 if [ "$rev" = 0 ]; then pass "a fresh container is at path revision 0 (first run)"; else bad "a fresh container is at path revision 0 (got: '${rev}')"; fi
-"$CT" rm -f "$ID2" >/dev/null 2>&1
+"$CT" rm -f -v "$ID2" >/dev/null 2>&1
 
 if [ $E2E = 1 ]; then
     step "Browser end to end ($RUNNER -> http://pengumon-under-test:8000)"
@@ -171,7 +192,7 @@ if [ $E2E = 1 ]; then
     else
         # The runner starts only now: the app is healthy and every other container is attached. The script itself then waits
         # for the runner's own network to settle before it starts Chromium (see container-e2e.mjs).
-        e2e_out="$("$CT" run --rm --network "$ID" --cap-drop=ALL --security-opt no-new-privileges --read-only \
+        e2e_out="$("$CT" run --rm "${backstop[@]}" --network "$ID" --cap-drop=ALL --security-opt no-new-privileges --read-only \
             --tmpfs /tmp:rw,size=512m,nosuid,nodev --memory 2g --pids-limit 512 --shm-size 256m \
             -v "$ROOT/tests/ui:/e2e:ro" -e PENGUMON_BROWSER_ARGS="--no-sandbox" -e GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" "$RUNNER" \
             node /e2e/container-e2e.mjs http://pengumon-under-test:8000 2>&1)"; e2e_rc=$?

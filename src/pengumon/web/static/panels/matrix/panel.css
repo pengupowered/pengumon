@@ -1,5 +1,8 @@
 /* Panel matrix: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
 /* ---------- Hop details ---------- */
+/* a name without a space (a 191-letter host name is valid) wraps in a narrow card instead of widening the page; the wide
+   layout below cuts it with an ellipsis, and the whole name is the tooltip (sub's title) */
+.hops td.lead { min-width: 0; overflow-wrap: anywhere; }
 .range { position: relative; display: inline-block; width: min(260px, 60%); height: 8px; border-radius: 4px; background: var(--surface-3); vertical-align: middle; margin-right: 10px; }
 .range i { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .range b { position: absolute; top: -3px; width: 3px; height: 14px; margin-left: -1.5px; background: var(--ink-1); border-radius: 2px; }

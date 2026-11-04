@@ -2,7 +2,7 @@
 // downloaded. Opened from the header, the incident log and the reliability summary.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, getTargetInfo, openModal } from '../../js/util.js';
+import { copyText, escapeHtml, getTargetInfo, keepKeyboard, openModal } from '../../js/util.js';
 import { renderMarkdown } from './markdown.js';
 
 // The ISP's name from config (line.isp_name); the dossier title and download name follow it.
@@ -96,14 +96,13 @@ export function setDossierView(view) {
 
 export function copyDossierToClipboard() {
   if (!latestDossierMarkdown) return;
-  navigator.clipboard.writeText(latestDossierMarkdown).then(() => {
+  copyText(latestDossierMarkdown).then((copied) => {
+    if (!copied) { prompt('Copy Dossier Markdown:', latestDossierMarkdown); return; }
     const label = document.querySelector('#btnCopyDossier span');
     if (label) {
       label.textContent = 'Copied';
       setTimeout(() => { label.textContent = 'Copy as Markdown'; }, 2000);
     }
-  }).catch(() => {
-    prompt('Copy Dossier Markdown:', latestDossierMarkdown);
   });
 }
 
@@ -122,12 +121,8 @@ export function downloadDossierMarkdown() {
   URL.revokeObjectURL(url);
 }
 
-// Escape closes the dossier (it may sit on top of the incident inspector, which stays open beneath it).
-document.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Escape' || !document.getElementById('dossierModal').classList.contains('active')) return;
-  ev.preventDefault(); // the inspector beneath reads this: one Escape closes one dialog
-  closeModal('dossierModal');
-});
+// Escape and Tab (the dossier may sit on top of the incident inspector, which stays open beneath it).
+keepKeyboard(document.getElementById('dossierModal'));
 
 registerActions('click', {
   openDossierModal: () => openDossierModal(),

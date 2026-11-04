@@ -71,6 +71,16 @@ def test_install_sh_uses_the_directories_and_the_fix_that_the_service_command_do
     assert f'SYSCTL_FIX="{icmp_linux.SYSCTL_FIX}"' in SH
 
 
+def test_an_upgrade_stops_the_service_so_its_listen_address_survives_and_uninstall_removes_the_token_file():
+    # `service uninstall` would delete the unit that `service install` reads --host and --port from
+    upgrade = SH.split("# ---- upgrade: back up, stop", 1)[1].split("# ---- install", 1)[0]
+    assert "stop_service" in upgrade and "service uninstall" not in upgrade
+    upgrade_ps1 = PS1.split("# ---- upgrade: back up, stop", 1)[1].split("# ---- install", 1)[0]
+    assert "schtasks /End" in upgrade_ps1 and "service uninstall" not in upgrade_ps1
+    uninstall = SH.split("# ---- uninstall", 1)[1].split("# ---- tools", 1)[0]
+    assert "pengumon.service.d" in uninstall  # the drop-in folder that holds PENGUMON_ACCESS_TOKEN
+
+
 def test_the_locks_are_universal():
     for name in ("requirements.txt", "requirements-dev.txt", "requirements-build.txt"):
         header = (ROOT / name).read_text(encoding="utf-8").split("aiosqlite", 1)[0]

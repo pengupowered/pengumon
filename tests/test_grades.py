@@ -7,6 +7,7 @@ import pytest
 
 from pengumon.capabilities import Capability, LineReading, PollResult, SystemReading, WanCounters
 from pengumon.devices.registry import DeviceRegistry
+from pengumon.devices.levels import RouterLevelsConfig
 from pengumon.devices.monitors import router_ranges
 from pengumon.grades import CRITICAL, GOOD, WARN, Range, known_grades, worst
 from pengumon.lines import docsis
@@ -223,7 +224,7 @@ async def test_wan_rates_are_graded_as_a_share_of_the_line_capacity():
     load = SimpleNamespace(down_mbps=1000.0, up_mbps=40.0)
     ticks = iter(range(1000, 1100, 10))
     monitor = build_router().monitor
-    monitor.watch_load(load, 60.0)
+    monitor.watch_load(load, lambda: 60.0)
     await monitor.on_result(next(ticks), router_result(rx_bytes=0, tx_bytes=0))
     # 10 s later: download 300 Mbps (30 %) and upload 30 Mbps (75 %)
     snapshot = await monitor.on_result(next(ticks), router_result(rx_bytes=375_000_000, tx_bytes=37_500_000))
@@ -238,7 +239,7 @@ async def test_wan_rates_are_graded_as_a_share_of_the_line_capacity():
 
 async def test_without_a_known_capacity_the_wan_rates_have_no_percentage_or_grade():
     monitor = build_router().monitor
-    monitor.watch_load(SimpleNamespace(down_mbps=None, up_mbps=None), 60.0)
+    monitor.watch_load(SimpleNamespace(down_mbps=None, up_mbps=None), lambda: 60.0)
     await monitor.on_result(1000.0, router_result())
     snapshot = await monitor.on_result(1010.0, router_result(rx_bytes=10_000_000, tx_bytes=10_000_000))
     assert snapshot.wan_rx_rate_mbps is not None and snapshot.wan_rx_load_pct is None and snapshot.wan_tx_load_pct is None
@@ -246,7 +247,7 @@ async def test_without_a_known_capacity_the_wan_rates_have_no_percentage_or_grad
 
 
 def test_the_wan_range_follows_the_busy_threshold():
-    r = router_ranges(75.0)["wan_rx"]
+    r = router_ranges(RouterLevelsConfig(), 75.0)["wan_rx"]
     assert [r.grade(v) for v in (75.0, 75.1, 95.0, 95.1)] == [GOOD, WARN, WARN, CRITICAL]
 
 

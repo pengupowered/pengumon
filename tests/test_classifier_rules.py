@@ -83,7 +83,7 @@ def test_diagnose_kinds(spec, kind, status, severity, cause, title):
 
 def test_busy_and_deprioritised_kinds_come_from_the_adjustments():
     base = verdict_for(public=(0.0, 90.0, None))
-    busy = apply_load(base, rm(public=(0.0, 90.0, None)), reading(70.0), 60.0, False)
+    busy = apply_load(base, rm(public=(0.0, 90.0, None)), reading(70.0), CONFIG, False)
     assert (busy.kind, busy.status, busy.severity, busy.cause) == ("busy_latency", "busy", "info", "load_induced_latency")
     assert busy.title == "Line Busy: Delay From Heavy Load"
     assert not busy.is_fault
@@ -91,10 +91,10 @@ def test_busy_and_deprioritised_kinds_come_from_the_adjustments():
     m = rm(isp=20.0)
     isp = diagnose(m, CONFIG, TS, LONG_AGO)
     assert isp.kind == "isp_loss"
-    busy_isp = apply_load(isp, m, reading(70.0), 60.0, m.is_loss_or_outage(isp.status))
+    busy_isp = apply_load(isp, m, reading(70.0), CONFIG, m.is_loss_or_outage(isp.status, CONFIG))
     assert (busy_isp.kind, busy_isp.status, busy_isp.title) == ("busy_isp_hops", "busy", "Line Busy: ISP Hops Deprioritise Ping")
 
-    hop = apply_hop_deprioritisation(isp, m)
+    hop = apply_hop_deprioritisation(isp, m, CONFIG)
     assert (hop.kind, hop.status, hop.severity, hop.cause, hop.title) == (
         "hop_deprioritised", "healthy", "info", "nominal", "ISP Hop Deprioritises Ping")
 
@@ -225,14 +225,14 @@ def test_upstream_latency_description_uses_the_larger_of_isp_and_public():
 def test_apply_load_threshold():
     m = rm(public=(0.0, 90.0, None))
     base = diagnose(m, CONFIG, TS, LONG_AGO)
-    assert apply_load(base, m, reading(59.9), 60.0, False) is base
-    assert apply_load(base, m, reading(60.0), 60.0, False).kind == "busy_latency"
+    assert apply_load(base, m, reading(59.9), CONFIG, False) is base
+    assert apply_load(base, m, reading(60.0), CONFIG, False).kind == "busy_latency"
 
 
 def test_busy_texts_embed_the_base_title_and_keep_affected():
     m = rm(public=(0.0, 90.0, None))
     base = diagnose(m, CONFIG, TS, LONG_AGO)
-    busy = apply_load(base, m, reading(80.0), 60.0, False)
+    busy = apply_load(base, m, reading(80.0), CONFIG, False)
     assert busy.description.startswith(f"{base.title} while the line is busy (")
     assert busy.affected == base.affected
 
@@ -240,21 +240,21 @@ def test_busy_texts_embed_the_base_title_and_keep_affected():
 def test_loss_only_at_the_isp_hops_while_busy_is_busy_isp_hops():
     m = rm(isp=20.0)
     base = diagnose(m, CONFIG, TS, LONG_AGO)
-    busy = apply_load(base, m, reading(70.0), 60.0, m.is_loss_or_outage(base.status))
+    busy = apply_load(base, m, reading(70.0), CONFIG, m.is_loss_or_outage(base.status, CONFIG))
     assert busy.kind == "busy_isp_hops" and busy.affected == base.affected
 
 
 def test_other_loss_while_busy_stays_a_fault_with_a_suffix():
     m = rm(local=20.0)
     base = diagnose(m, CONFIG, TS, LONG_AGO)
-    loaded = apply_load(base, m, reading(70.0), 60.0, m.is_loss_or_outage(base.status))
+    loaded = apply_load(base, m, reading(70.0), CONFIG, m.is_loss_or_outage(base.status, CONFIG))
     assert loaded.kind == "local_loss" and loaded.status == "degraded" and loaded.title == base.title
     assert loaded.description.startswith(base.description + " During heavy load (70%): download ")
     assert loaded.description.endswith(".")
 
     m = rm(isp=20.0, public=20.0)  # loss beyond the ISP hops: not isp_loss_only
     base = diagnose(m, CONFIG, TS, LONG_AGO)
-    assert apply_load(base, m, reading(70.0), 60.0, True).kind == "isp_loss"
+    assert apply_load(base, m, reading(70.0), CONFIG, True).kind == "isp_loss"
 
 
 # --- apply_hop_deprioritisation -----------------------------------------------------------------------------
@@ -267,20 +267,20 @@ def isp_verdict(m):
 
 def test_hop_rule_boundaries():
     m = rm(isp=40.0, public=15.0)
-    assert apply_hop_deprioritisation(isp_verdict(m), m).kind == "isp_outage"      # public loss 15.0: kept
+    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "isp_outage"      # public loss 15.0: kept
     m = rm(isp=20.0, public=10.0)
-    assert apply_hop_deprioritisation(isp_verdict(m), m).kind == "isp_loss"        # exactly isp / 2: kept
+    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "isp_loss"        # exactly isp / 2: kept
     m = rm(isp=20.0, public=9.9)
-    assert apply_hop_deprioritisation(isp_verdict(m), m).kind == "hop_deprioritised"
+    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "hop_deprioritised"
     m = rm(isp=20.0, dns=25.0)
-    assert apply_hop_deprioritisation(isp_verdict(m), m).kind == "isp_loss"        # dns loss 25.0: kept
+    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "isp_loss"        # dns loss 25.0: kept
     m = rm(isp=20.0, dns=24.9)
-    assert apply_hop_deprioritisation(isp_verdict(m), m).kind == "hop_deprioritised"
+    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "hop_deprioritised"
 
 
 def test_hop_rule_result_is_healthy_with_no_affected_targets():
     m = rm(isp=20.0)
-    out = apply_hop_deprioritisation(isp_verdict(m), m)
+    out = apply_hop_deprioritisation(isp_verdict(m), m, CONFIG)
     assert (out.status, out.cause, out.severity, out.affected) == ("healthy", "nominal", "info", ())
     assert "20.0% of recent probes to the ISP hops were lost, against 0.0% to the public targets" in out.description
 
@@ -296,20 +296,102 @@ def _two_isp_hops(first_window, second_window):
 
 def test_hop_rule_names_the_hop_that_lost_the_most():
     m = _two_isp_hops([1.0, None, 1.0], [None, None, 1.0])
-    out = apply_hop_deprioritisation(isp_verdict(m), m)
+    out = apply_hop_deprioritisation(isp_verdict(m), m, CONFIG)
     assert "Hub2 drops some ping replies" in out.description
 
 
 def test_hop_rule_ties_go_to_the_first_hop_in_stats_order():
     m = _two_isp_hops([None, 1.0], [None, 1.0])
-    assert "Hub drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m).description
+    assert "Hub drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).description
 
 
 def test_hop_rule_only_counts_the_last_ten_probes_when_naming_the_hop():
     m = _two_isp_hops([None] * 5 + [1.0] * 10, [None, 1.0, 1.0] + [1.0] * 7)
-    assert "Hub2 drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m).description
+    assert "Hub2 drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).description
 
 
 def test_hop_rule_falls_back_to_a_generic_name_when_no_hop_lost():
     m = _two_isp_hops([1.0, 1.0], [1.0])
-    assert "An ISP hop drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m).description
+    assert "An ISP hop drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).description
+
+
+# --- the levels come from the config ---------------------------------------------------------------------------
+
+CUSTOM = ClassifierConfig(degraded_loss_pct=20.0, down_loss_pct=50.0, dns_degraded_loss_pct=35.0,
+                          dns_cooldown_seconds=60.0, isp_latency_spike_threshold_ms=120.0)
+
+
+def custom_verdict(ts=TS, last_upstream=LONG_AGO, absent=(), **spec):
+    return diagnose(rm(absent=absent, **spec), CUSTOM, ts, last_upstream)
+
+
+@pytest.mark.parametrize("spec,kind", [
+    ({"local": 19.9}, "nominal"), ({"local": 20.0}, "local_loss"), ({"local": 49.9}, "local_loss"),
+    ({"local": 50.0}, "local_down"),
+    ({"gateway": 19.9}, "nominal"), ({"gateway": 20.0}, "gateway_loss"), ({"gateway": 49.9}, "gateway_loss"),
+    ({"gateway": 50.0}, "gateway_down"),
+    ({"isp": 19.9}, "nominal"), ({"isp": 20.0}, "isp_loss"), ({"isp": 49.9}, "isp_loss"), ({"isp": 50.0}, "isp_outage"),
+    ({"public": 19.9}, "nominal"), ({"public": 20.0}, "backbone_loss"), ({"public": 50.0}, "isp_outage"),
+    ({"isp": 19.9, "public": 20.0}, "backbone_loss"),
+    ({"dns": 34.9}, "nominal"), ({"dns": 35.0}, "dns_loss"), ({"dns": 49.9}, "dns_loss"), ({"dns": 50.0}, "dns_outage"),
+    # the cross-role guards: local loss under the degraded level lets the gateway and the ISP be judged
+    ({"local": 19.9, "gateway": 50.0}, "gateway_down"),
+    ({"local": 19.9, "isp": 50.0}, "isp_outage"),
+    # no LAN target: loss towards the internet is placed nowhere, at the configured levels
+    ({"absent": ("local", "gateway"), "public": 19.9}, "nominal"),
+    ({"absent": ("local", "gateway"), "public": 20.0}, "internet_loss"),
+    ({"absent": ("local", "gateway"), "isp": 49.9}, "internet_loss"),
+    ({"absent": ("local", "gateway"), "isp": 50.0}, "internet_outage"),
+    # the ISP hops' own latency level (default: the internet's 80 ms)
+    ({"isp": (0.0, 120.0, None)}, "nominal"), ({"isp": (0.0, 120.01, None)}, "upstream_latency"),
+    ({"public": (0.0, 80.01, None)}, "upstream_latency"),
+])
+def test_custom_levels_per_layer(spec, kind):
+    assert custom_verdict(**spec).kind == kind
+
+
+def test_the_isp_latency_level_defaults_to_the_internet_one():
+    assert verdict_for(isp=(0.0, 80.01, None)).kind == "upstream_latency"
+    assert diagnose(rm(isp=(0.0, 100.0, None)), ClassifierConfig(public_latency_spike_threshold_ms=110.0), TS,
+                    LONG_AGO).kind == "nominal"
+
+
+def test_the_dns_cooldown_is_the_configured_one():
+    assert custom_verdict(dns=50.0, ts=160.0, last_upstream=100.0).kind == "nominal"
+    assert custom_verdict(dns=50.0, ts=160.5, last_upstream=100.0).kind == "dns_outage"
+
+
+def test_the_metric_predicates_read_the_levels():
+    assert not rm(local=19.9).is_loss_or_outage("degraded", CUSTOM)
+    assert rm(local=20.0).is_loss_or_outage("degraded", CUSTOM)
+    assert not rm(dns=34.9).is_loss_or_outage("degraded", CUSTOM)
+    assert rm(dns=35.0).is_loss_or_outage("degraded", CUSTOM)
+    for category in ("gateway", "isp", "public"):
+        assert not rm(**{category: 19.9}).is_loss_or_outage("degraded", CUSTOM)
+        assert rm(**{category: 20.0}).is_loss_or_outage("degraded", CUSTOM)
+        assert not rm(**{category: 19.9}).upstream_issue(CUSTOM)
+        assert rm(**{category: 20.0}).upstream_issue(CUSTOM)
+    assert rm(isp=20.0, public=19.9, local=19.9, gateway=19.9, dns=34.9).isp_loss_only(CUSTOM)
+    for spoiler in ({"public": 20.0}, {"local": 20.0}, {"gateway": 20.0}, {"dns": 35.0}):
+        assert not rm(**{"isp": 20.0, **spoiler}).isp_loss_only(CUSTOM)
+    assert not rm(isp=19.9).isp_loss_only(CUSTOM)
+
+
+def test_hop_deprioritisation_reads_the_levels():
+    def isp_loss(**spec):
+        m = rm(**spec)
+        v = diagnose(m, CUSTOM, TS, LONG_AGO)
+        assert v.kind == "isp_loss"
+        return apply_hop_deprioritisation(v, m, CUSTOM).kind
+
+    assert isp_loss(isp=45.0, public=19.9) == "hop_deprioritised"   # default (15 %) would keep it
+    assert isp_loss(isp=45.0, public=20.0) == "isp_loss"
+    assert isp_loss(isp=45.0, public=5.0, dns=34.9) == "hop_deprioritised"  # DNS under its level (default 25 %)
+    assert isp_loss(isp=45.0, public=5.0, dns=35.0) == "isp_loss"
+
+
+def test_busy_isp_hops_reads_the_degraded_level():
+    m = rm(isp=30.0, public=19.9)
+    base = diagnose(m, CUSTOM, TS, LONG_AGO)
+    assert apply_load(base, m, reading(70.0), CUSTOM, True).kind == "busy_isp_hops"
+    assert apply_load(base, m, reading(70.0), ClassifierConfig(), True).kind == "isp_loss"

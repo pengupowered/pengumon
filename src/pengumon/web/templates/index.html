@@ -20,7 +20,7 @@
   <!-- Chart.js, vendored -->
   <script src="/static/v/{{ v.tree }}/vendor/chart.umd.min.js"></script>
 </head>
-<body data-layout='{{ layout|tojson }}' data-modules='{{ ui.modules|tojson }}' data-status="unknown">
+<body data-layout='{{ layout|tojson }}' data-modules='{{ modules|tojson }}' data-settings='{{ (settings_values or {})|tojson }}' data-status="unknown">
   <a class="skip" href="#panels">Skip to panels</a>
   <div class="glow" aria-hidden="true"></div>
 
@@ -45,9 +45,10 @@
         <button type="button" class="btn" id="btnNotify" data-action="toggleNotifications" title="Alerts: off"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span class="lbl">Alerts</span></button>
         <button type="button" class="btn" data-action="openModal" data-arg="addTargetModal" data-needs-edit title="Add target"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Target</span></button>
         <span class="tb-sep" aria-hidden="true"></span>
+        <button type="button" class="btn" id="btnSettings" data-action="openSettings" title="Settings"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg><span class="lbl">Settings</span></button>
         <button type="button" class="btn" data-action="openLayoutDialog" title="Arrange panels"><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="lbl">Layout</span></button>
         <button type="button" class="btn icon" id="btnTheme" data-action="toggleTheme" title="Switch theme" aria-label="Switch theme"><svg class="i" aria-hidden="true"><use href="#i-sun"/></svg></button>
-        {% if grafana_links %}{% include "features/grafana.html" %}{% endif %}
+        {% include "features/grafana.html" %}
         <!-- shown by chrome.js when /api/info says this browser is signed in with the access token (dialogs/sign-out) -->
         <button type="button" class="btn" id="btnSignOut" data-action="openModal" data-arg="signOutModal" data-sign-out hidden title="Sign out"><svg class="i" aria-hidden="true"><use href="#i-logout"/></svg><span class="lbl">Sign out</span></button>
       </nav>

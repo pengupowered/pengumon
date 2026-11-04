@@ -3,6 +3,7 @@
 import os
 import sqlite3
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -41,6 +42,31 @@ def test_paths_shows_values_and_where_they_came_from(data, capsys):
     assert f"{data}   [PENGUMON_DATA]" in out
     assert str(data / "pengumon.db") in out and str(data / "secrets.json") in out
     assert "127.0.0.1   [default]" in out and "8000   [default]" in out
+
+
+def test_paths_system_looks_where_the_system_service_keeps_its_files(data, monkeypatch, capsys):
+    from pengumon import service
+    monkeypatch.setattr(service, "system_kind", lambda platform=None: "linux")
+    monkeypatch.setattr(service, "existing_settings", lambda *a, **k: {"PENGUMON_HOST": "0.0.0.0"})
+    assert cli.main(["paths", "--system"]) == 0
+    out = capsys.readouterr().out
+    data_dir = str(Path("/var/lib/pengumon"))  # the Linux service's place, printed with this platform's separators
+    assert str(Path(data_dir, "config.yaml")) in out and f"{data_dir}   [the system service (--system)]" in out
+    assert "0.0.0.0   [PENGUMON_HOST]" in out
+    monkeypatch.delenv("PENGUMON_HOST")  # _use_system_service set it for this process
+    monkeypatch.delenv("PENGUMON_DATA")
+
+
+def test_a_system_service_without_the_option_points_at_it(tmp_path, monkeypatch, capsys):
+    from pengumon import service
+    monkeypatch.delenv("PENGUMON_DATA", raising=False)
+    monkeypatch.setattr(service, "system_kind", lambda platform=None: "linux")
+    monkeypatch.setattr(service, "installed_scopes", lambda kind, **k: ["system"])
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["backup"])
+    assert "no database" in str(exc.value) and "--system" in str(exc.value)
 
 
 def test_paths_follows_env_and_config(data, tmp_path, capsys, monkeypatch):
@@ -188,6 +214,20 @@ def test_doctor_when_probing_works(data, monkeypatch, tmp_path, capsys):
     assert ("127.0.0.1", 64, 1.0) in backend.sent and ("1.1.1.1", 1, 1.0) in backend.sent and backend.closed
 
 
+def test_doctor_reports_where_the_installed_service_listens(data, monkeypatch, tmp_path, capsys):
+    """install.sh runs doctor after `service install --host 0.0.0.0`: it reports the service's address, not this
+    shell's default."""
+    from icmp_fakes import FakeBackend, FakePath
+
+    _doctor_with(monkeypatch, FakeBackend(path=FakePath(["192.168.1.1"])), route_table=ROUTE, tmp_path=tmp_path)
+    monkeypatch.setattr(cli.service, "system_kind", lambda *a, **k: "systemd")
+    monkeypatch.setattr(cli.service, "installed_scopes", lambda *a, **k: [cli.service.USER])
+    monkeypatch.setattr(cli.service, "existing_settings",
+                        lambda *a, **k: {"PENGUMON_HOST": "0.0.0.0", "PENGUMON_PORT": "9100"})
+    assert cli.main(["doctor"]) == 0
+    assert "listen address  0.0.0.0:9100 (the installed service" in capsys.readouterr().out
+
+
 def test_doctor_without_a_route_table_uses_the_first_router(data, monkeypatch, tmp_path, capsys):
     from icmp_fakes import FakeBackend, FakePath
 
@@ -295,3 +335,20 @@ def test_doctor_without_ipv6_still_passes(data, monkeypatch, tmp_path, capsys):
     assert "IPv6 backend    none" in out
     assert "ping ::1        send failed: " in out and "this host has no IPv6" in out
     assert "IPv6 router     none" in out
+
+
+def test_paths_and_backup_system_without_sudo_say_to_use_sudo(data, monkeypatch, capsys):
+    """A normal user cannot read the service's private folder: a plain sentence and the command, not a traceback."""
+    monkeypatch.setattr(cli.service, "system_kind", lambda platform=None: "linux")
+    monkeypatch.setattr(cli.service, "existing_settings", lambda *a, **k: {})
+
+    def denied(*a, **k):
+        raise PermissionError(13, "Permission denied", "/var/lib/pengumon/config.yaml")
+    monkeypatch.setattr(cli, "_file_settings", denied)
+    for argv in (["paths", "--system"], ["backup", "--system", "--to", "somewhere"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv)
+        message = str(exc.value)
+        assert "belong to its own account: run this with sudo" in message and f"sudo " in message
+        assert " ".join(argv[:2]) in message
+    monkeypatch.delenv("PENGUMON_HOST", raising=False)

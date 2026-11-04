@@ -32,6 +32,9 @@ class FakeProber:
         self.stats = {}
         self.round_times = []
 
+    def probing_problem(self):
+        return None
+
     async def execute_probe_round(self, targets, dns_probes):
         self.round_times.append(time.monotonic())
         return []

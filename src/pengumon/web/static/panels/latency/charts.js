@@ -25,10 +25,18 @@ try { if (localStorage.getItem(VIEW_KEY) === 'targets') lineMode = 'targets'; } 
 
 // The pinged targets in path order (DNS lookups are not round trips and stay out of the chart).
 export const pingTargets = () => targetList().filter((t) => t.enabled !== false && t.category !== 'dns');
+let noPings = false; // the live targets say this host cannot send pings (probing_unavailable)
 let incidents = []; // [{start, end, level, label}] for the shaded windows
 
 const has = (v) => v !== null && v !== undefined;
-const clock = (ts, seconds) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) });
+// One formatter per format, made on first use: with options, every toLocaleTimeString call built a new Intl.DateTimeFormat,
+// and the chart relabels up to 240 points on every message.
+const CLOCK = { hm: null, hms: null };
+const clock = (ts, seconds) => {
+  const k = seconds ? 'hms' : 'hm';
+  CLOCK[k] ||= new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) });
+  return CLOCK[k].format(ts * 1000);
+};
 
 export function resetView() {
   view.times = [];
@@ -193,6 +201,11 @@ function legend() {
     noteText = `Ping round trip to each stage of the path${usesDns ? ' (Internet: DNS lookups, as no public server is pinged)' : ''}.`
       + `${under.length ? ` The ${under.join(' and the ')} ${isp + other > 1 ? 'are' : 'is'} under Each target.` : ''}`;
   }
+  // points but not one reply: the lines are empty because every probe was lost, which the axes alone do not say
+  const replies = [...Object.values(view.series), ...Object.values(view.byTarget)].some((line) => line.some(has));
+  // (while this host cannot send pings nothing is probed: that is not an outage, and the note must not suggest one)
+  if (view.times.length && !replies) noteText = noPings ? 'Not probing: pings are not allowed on this computer, so there is no line to draw.'
+    : 'No replies in this time: every probe was lost or timed out, so there is no line to draw. The lane below marks the lost probes.';
   if (view.wan.some(has)) parts.push(`<span class="lg"><i class="key" style="--c:var(--ink-4);opacity:.5"></i>WAN download${wanAxisShown() ? ' (right axis)' : ''}</span>`);
   parts.push('<span class="lg"><i class="key" style="--c:var(--crit);width:3px;height:11px"></i>Lost probes (lane below)</span>');
   const html = parts.join('');
@@ -334,6 +347,7 @@ export function initCharts() {
 // Live: one point per message from the targets and the WAN rate that ride on it. A target's value is its newest probe
 // (null when that probe got no answer; last_ms keeps the last answer, which would hide a loss).
 export function updateLiveCharts(message) {
+  noPings = (message.targets || []).some((t) => t.enabled !== false && t.probing_unavailable === true);
   if (state.currentMode !== 'live') return;
   const { timestamp, targets } = message;
   const wanDevice = primaryDevice('wan_counters');

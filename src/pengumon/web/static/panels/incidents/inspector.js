@@ -3,7 +3,7 @@
 // the hop figures and the path trace. Every figure and grade is the server's; this file only arranges them.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, getTargetInfo, icon, openModal, setBadge, sortTargetsByCanonical, STATUS, targetList } from '../../js/util.js';
+import { closeModal, escapeHtml, getTargetInfo, icon, keepKeyboard, openModal, setBadge, sortTargetsByCanonical, STATUS, targetList } from '../../js/util.js';
 import { shortLabels } from '../../js/path.js';
 import { bus } from '../../js/bus.js';
 import { primaryDevice } from '../../js/devices.js';
@@ -270,11 +270,8 @@ function showInChart() {
   bus.publish('chart:range', { start: lastWindow.start, end: lastWindow.end }); // the latency panel shows it
 }
 
-// Escape closes the inspector, unless the dossier is open on top of it (that one closes first).
-document.addEventListener('keydown', (ev) => {
-  const active = (id) => document.getElementById(id).classList.contains('active');
-  if (ev.key === 'Escape' && !ev.defaultPrevented && active('incidentInspectorModal') && !active('dossierModal')) closeModal('incidentInspectorModal');
-});
+// Escape and Tab; the dossier on top of the inspector is the topmost dialog and closes first.
+keepKeyboard(document.getElementById('incidentInspectorModal'));
 
 // The actions this module's markup names (see dispatch.js).
 registerActions('click', {

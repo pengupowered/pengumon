@@ -5,7 +5,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { badge, closeModal, escapeHtml, openModal } from '../../js/util.js';
+import { badge, escapeHtml, keepKeyboard, openModal } from '../../js/util.js';
 import { levelOfGrade, rangeOf, worstGrade } from '../../js/grades.js';
 import { DEFAULT_TITLE, errorsText, gaugeMarkup, goodText, spreadOf } from './docsis.js';
 import { barChartMarkup } from './channel-charts.js';
@@ -133,9 +133,7 @@ new ResizeObserver(() => {
   if (lastSnap && isOpen() && w && Math.abs(w - lastWidth) > 8) { lastWidth = w; renderCharts(lastSnap); }
 }).observe(document.getElementById('channelsGauges'));
 
-document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && isOpen()) closeModal('channelsModal');
-});
+keepKeyboard(document.getElementById('channelsModal')); // Escape and Tab
 
 // The actions this module's markup names (see dispatch.js).
 registerActions('click', {

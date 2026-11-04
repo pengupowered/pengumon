@@ -143,12 +143,12 @@ async def test_retry_is_only_one_and_not_for_client_errors(caplog):
         return handler
 
     caplog.set_level(logging.WARNING, logger="pengumon.notify")
-    assert await _sender().send(_client(always(500)), _alert()) == "HTTP 500"
+    assert await _sender().send(_client(always(500)), _alert()) == "the server answered 500"
     assert calls == [500, 500]
     calls.clear()
-    assert await _sender().send(_client(always(404)), _alert()) == "HTTP 404"
+    assert await _sender().send(_client(always(404)), _alert()) == "the server answered 404"
     assert calls == [404]
-    assert "Webhook hook not delivered: HTTP 404" in caplog.text
+    assert "Webhook hook not delivered: the server answered 404" in caplog.text
 
 
 async def test_a_transport_error_is_contained_and_the_log_has_no_url_or_header(caplog):
@@ -157,8 +157,8 @@ async def test_a_transport_error_is_contained_and_the_log_has_no_url_or_header(c
 
     caplog.set_level(logging.DEBUG)
     sender = _sender(headers={"Authorization": "Bearer TOPSECRET"})
-    assert await sender.send(_client(handler), _alert()) == "ConnectError"
-    assert "ConnectError" in caplog.text
+    assert await sender.send(_client(handler), _alert()) == "could not connect"
+    assert "could not connect" in caplog.text
     for secret in ("TOPSECRET", "SEKRET-QUERY", "abc123", "hooks.example.com"):
         assert secret not in caplog.text
 
@@ -218,7 +218,8 @@ async def test_webhook_only_notifier_sends_start_and_resolve_with_the_facts():
     await _drain(n)
     start, end = [json.loads(r.content) for r in requests]
     assert (start["event"], start["severity"], start["incident_id"], start["load_pct"]) == ("incident_started", "critical", 1, 72.0)
-    assert "internet_backbone_transit_loss" in start["message"] and "72%" in start["message"]
+    assert start["cause"] == "internet_backbone_transit_loss"  # the field stays the documented code
+    assert "Cause: ISP Outage" in start["message"] and "internet_backbone_transit_loss" not in start["message"] and "72%" in start["message"]
     assert (end["event"], end["severity"], end["duration_seconds"], end["ended_at"]) == ("incident_resolved", "info", 300.0, "1970-01-01T00:21:40Z")
     assert "5.0 min" in end["message"]
     await n.aclose()
@@ -293,10 +294,10 @@ def _settings(**hook):
 
 
 def test_from_env_builds_channels_and_nothing_without_any():
-    assert Notifier.from_env(NotificationsConfig(), env={}) is None
-    n = Notifier.from_env(_settings(), env={})
+    assert Notifier.from_env(NotificationsConfig(), store=SecretStore(data={}), env={}) is None
+    n = Notifier.from_env(_settings(), store=SecretStore(data={}), env={})
     assert n.url is None and [w.name for w in n.webhooks] == ["ha"]
-    n = Notifier.from_env(_settings(), env={"PENGUMON_NOTIFY_URL": "https://ntfy.sh/t"})
+    n = Notifier.from_env(_settings(), store=SecretStore(data={}), env={"PENGUMON_NOTIFY_URL": "https://ntfy.sh/t"})
     assert n.url == "https://ntfy.sh/t"
     assert n.channels() == [{"name": "ntfy", "kind": "ntfy", "format": None, "host": "ntfy.sh"},
                             {"name": "ha", "kind": "webhook", "format": "json", "host": "hooks.example.com"}]
@@ -339,7 +340,7 @@ async def test_send_test_reports_each_channel():
     n = Notifier("http://ntfy.test/t", client=_client(handler), webhooks=hooks)
     results = await n.send_test()
     assert results == [{"name": "ntfy", "ok": True, "detail": None}, {"name": "good", "ok": True, "detail": None},
-                       {"name": "bad", "ok": False, "detail": "HTTP 404"}]
+                       {"name": "bad", "ok": False, "detail": "the server answered 404"}]
     await n.aclose()
 
 

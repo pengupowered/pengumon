@@ -11,7 +11,8 @@
 #   1. gets the wheel, the lock (every dependency pinned with hashes) and SHA256SUMS from the GitHub release and
 #      checks the wheel and the lock against SHA256SUMS;
 #   2. downloads uv (version and sha256 pinned below, per platform) and checks it;
-#   3. on an upgrade, runs `pengumon backup` and removes the old service;
+#   3. on an upgrade, runs `pengumon backup` and stops the old service (its --host and --port are kept: the new
+#      definition reads them from the one it replaces);
 #   4. installs Python 3.12 (managed by uv, kept inside the app folder) and a virtual environment, then the locked
 #      dependencies with `uv pip install --require-hashes --only-binary :all:`, then the wheel;
 #   5. runs `pengumon service install`, waits until it answers, and opens the browser.
@@ -46,7 +47,7 @@ UNINSTALL=0
 say() { printf '%s\n' "$*"; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^set -eu/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -134,10 +135,18 @@ backup_data() {
     if [ "$SCOPE" != system ]; then "$PENGUMON" backup; return; fi
     if [ "$OS" = Linux ]; then
         command -v systemd-run > /dev/null 2>&1 || { echo "systemd-run is not installed, so the backup cannot be taken safely"; return 1; }
-        $SUDO systemd-run --quiet --wait --pipe --collect \
+        # A named unit, so that when it fails (systemd-run --quiet says nothing about why) its journal can be shown.
+        unit="pengumon-backup-$$"
+        if $SUDO systemd-run --quiet --wait --pipe --collect --unit="$unit" \
             -p DynamicUser=yes -p User=pengumon -p StateDirectory=pengumon -p StateDirectoryMode=0700 \
             -p UMask=0077 -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p NoNewPrivileges=yes \
-            --setenv=PENGUMON_DATA="$DATA" --setenv=PYTHONDONTWRITEBYTECODE=1 "$PENGUMON" backup
+            --setenv=PENGUMON_DATA="$DATA" --setenv=PYTHONDONTWRITEBYTECODE=1 "$PENGUMON" backup; then
+            return 0
+        fi
+        echo "the backup unit $unit.service failed. What systemd logged for it:"
+        $SUDO journalctl -u "$unit.service" -n 15 --no-pager -o cat 2> /dev/null || echo "(no journal available)"
+        echo "To see more: sudo journalctl -u $unit.service"
+        return 1
     else
         if ! dscl . -read /Users/_pengumon UniqueID > /dev/null 2>&1; then
             echo "no database: the service account does not exist yet, so there is no data to back up"
@@ -145,6 +154,27 @@ backup_data() {
         fi
         ( cd / && sudo -u _pengumon env "PENGUMON_DATA=$DATA" PYTHONDONTWRITEBYTECODE=1 "$PENGUMON" backup )
     fi
+}
+
+# Stops the running service without removing its definition: the new version's setup reads the listen address
+# (--host, --port) out of it and puts it into the new definition.
+stop_service() {
+    if [ "$OS" = Linux ]; then
+        if [ "$SCOPE" = system ]; then root systemctl stop pengumon.service > /dev/null 2>&1 || true
+        else systemctl --user stop pengumon.service > /dev/null 2>&1 || true; fi
+    elif [ "$SCOPE" = system ]; then
+        root launchctl bootout system/com.pengupowered.pengumon > /dev/null 2>&1 || true
+    else
+        launchctl bootout "gui/$(id -u)/com.pengupowered.pengumon" > /dev/null 2>&1 || true
+    fi
+}
+
+# What a failed start leaves to look at: where the service writes its log.
+log_hint() {
+    if [ "$OS" != Linux ]; then
+        if [ "$SCOPE" = system ]; then echo "The log is $DATA/pengumon.log"; else echo "The log is $HOME/Library/Logs/Pengumon/pengumon.log"; fi
+    elif [ "$SCOPE" = system ]; then echo "To see why: journalctl -u pengumon.service -e"
+    else echo "To see why: journalctl --user -u pengumon.service -e"; fi
 }
 
 confirm() {  # confirm "question": yes with --yes, else ask on the terminal
@@ -185,6 +215,16 @@ if [ "$UNINSTALL" = 1 ]; then
         fi
         root "$PENGUMON" service uninstall "$SCOPE_FLAG" || true
         root rm -rf "$APP"
+        # The folder of systemd drop-ins ("Opening the dashboard", step 3) holds the access token: it goes with the service.
+        if [ "$OS" = Linux ]; then
+            if [ "$SCOPE" = system ]; then DROPIN="/etc/systemd/system/pengumon.service.d"
+            else DROPIN="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/pengumon.service.d"; fi
+            if [ -d "$DROPIN" ]; then
+                root rm -rf "$DROPIN"
+                if [ "$SCOPE" = system ]; then root systemctl daemon-reload || true; else systemctl --user daemon-reload || true; fi
+                say "Removed $DROPIN (it held the access token)."
+            fi
+        fi
         say "Pengumon is removed. Your data is still in $DATA (delete it yourself if you do not want it)."
     else
         say "Nothing to remove: $PENGUMON does not exist."
@@ -284,10 +324,11 @@ if [ -x "$PENGUMON" ]; then
     else
         case "$out" in
             *"no database"*) say "No database yet, so nothing to back up." ;;
-            *) die "the backup failed, so nothing was changed: $out" ;;
+            *) die "the backup failed, so nothing was changed: ${out:-no reason was given.}
+  To try the backup yourself: $(if [ "$SCOPE" = system ]; then echo "sudo $PENGUMON backup --system --to ~/pengumon-backup"; else echo "$PENGUMON backup"; fi)" ;;
         esac
     fi
-    root "$PENGUMON" service uninstall "$SCOPE_FLAG" > /dev/null 2>&1 || true
+    stop_service
 fi
 
 # ---- install ---------------------------------------------------------------------------------------------------------
@@ -317,11 +358,16 @@ if [ "$SERVICE" = 0 ]; then
     exit 0
 fi
 
+# The service keeps the listen address of the one it replaces (--host, --port) unless --port says otherwise; the port it
+# ended up on is in its last line ("... open http://127.0.0.1:PORT/").
 if [ -n "$PORT" ]; then
-    root "$PENGUMON" service install "$SCOPE_FLAG" --port "$PORT"
+    root "$PENGUMON" service install "$SCOPE_FLAG" --port "$PORT" > "$WORK/service.txt" 2>&1 || { cat "$WORK/service.txt"; exit 1; }
 else
-    root "$PENGUMON" service install "$SCOPE_FLAG"
+    root "$PENGUMON" service install "$SCOPE_FLAG" > "$WORK/service.txt" 2>&1 || { cat "$WORK/service.txt"; exit 1; }
 fi
+cat "$WORK/service.txt"
+kept_port="$(sed -n 's|.*open http://[^/]*:\([0-9][0-9]*\)/.*|\1|p' "$WORK/service.txt" | tail -n 1)"
+[ -z "$kept_port" ] || LISTEN_PORT="$kept_port"
 
 if [ "$OS" = Linux ] && [ "$SCOPE" = user ] && ! "$PENGUMON" doctor > "$WORK/doctor.txt" 2>&1; then
     cat "$WORK/doctor.txt"
@@ -342,6 +388,7 @@ until answers "${URL}api/health"; do
     n=$((n + 1))
     if [ "$n" -ge 60 ]; then
         say "It has not answered after 2 minutes. Check it with: $PENGUMON service status"
+        say "$(log_hint)"
         exit 1
     fi
     sleep 2

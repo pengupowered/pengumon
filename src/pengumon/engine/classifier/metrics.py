@@ -10,10 +10,12 @@ golden and by a randomised equivalence test; do not reorder operations.
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.incidents.model import StatusCode
 from pengumon.models.probes import ProbeSample, TargetStats
 
 WINDOW = 10  # the last 10 probes per target
+AFFECTED_LATENCY_MS = 150  # internal (H9): a sample slower than this makes its target an affected one
 CATEGORIES = ("local", "gateway", "isp", "public", "dns")
 
 
@@ -57,33 +59,35 @@ class RoundMetrics:
     dns: CategoryMetrics
     failed_targets: Tuple[str, ...]
 
-    def is_loss_or_outage(self, status: StatusCode) -> bool:
+    def is_loss_or_outage(self, status: StatusCode, config: ClassifierConfig) -> bool:
         """Packet loss or a hard outage, as opposed to pure latency / jitter."""
+        degraded = config.degraded_loss_pct
         return (
             status == "down"
-            or self.local.loss_pct >= 15.0
-            or self.gateway.loss_pct >= 15.0
-            or self.isp.loss_pct >= 15.0
-            or self.public.loss_pct >= 15.0
-            or self.dns.loss_pct >= 25.0
+            or self.local.loss_pct >= degraded
+            or self.gateway.loss_pct >= degraded
+            or self.isp.loss_pct >= degraded
+            or self.public.loss_pct >= degraded
+            or self.dns.loss_pct >= config.dns_degraded_loss_pct
         )
 
-    @property
-    def isp_loss_only(self) -> bool:
+    def isp_loss_only(self, config: ClassifierConfig) -> bool:
         """Loss only at the ISP hops while the LAN, modem, public internet and DNS answer."""
+        degraded = config.degraded_loss_pct
         return (
-            self.isp.loss_pct >= 15.0 and self.local.loss_pct < 15.0 and self.gateway.loss_pct < 15.0
-            and self.public.loss_pct < 15.0 and self.dns.loss_pct < 25.0
+            self.isp.loss_pct >= degraded and self.local.loss_pct < degraded and self.gateway.loss_pct < degraded
+            and self.public.loss_pct < degraded and self.dns.loss_pct < config.dns_degraded_loss_pct
         )
 
-    def upstream_issue(self, public_latency_threshold_ms: float) -> bool:
+    def upstream_issue(self, config: ClassifierConfig) -> bool:
         """Trouble upstream of the home network (starts the DNS cooldown)."""
+        degraded = config.degraded_loss_pct
         avg = self.public.avg_latency_ms
         return bool(
-            self.gateway.loss_pct >= 15.0
-            or self.isp.loss_pct >= 15.0
-            or self.public.loss_pct >= 15.0
-            or (avg and avg > public_latency_threshold_ms)
+            self.gateway.loss_pct >= degraded
+            or self.isp.loss_pct >= degraded
+            or self.public.loss_pct >= degraded
+            or (avg and avg > config.public_latency_spike_threshold_ms)
         )
 
 
@@ -135,7 +139,7 @@ def round_metrics(stats: Dict[str, TargetStats], samples: List[ProbeSample]) -> 
     for s in samples:
         quiet = stats.get(s.target_id) is not None and stats[s.target_id].ignores_ping
         # a hop that ignores ping (engine.path_rules) is no affected target; no verdict reads this list, only `affected`
-        if not quiet and (not s.success or (s.latency_ms and s.latency_ms > 150)):
+        if not quiet and (not s.success or (s.latency_ms and s.latency_ms > AFFECTED_LATENCY_MS)):
             failed.append(s.target_id)
         st = stats.get(s.target_id)
         if st is not None and st.category in cat_samples:

@@ -20,7 +20,7 @@ export const steps = [
     eq("no link without open_url", await count(`${row("svc_down")} a`), 0);
     ok("check url is text, not a link", /^127\.0\.0\.1:\d+\/api\/health$/.test(await text(`${row("svc_up")} .svc-check-url`)));
     await click(`${row("svc_up")} [data-action=copyServiceUrl]`);
-    ok("clipboard", /^127\.0\.0\.1:\d+\/api\/health$/.test(await page.evaluate(() => navigator.clipboard.readText())));
+    ok("clipboard", /^127\.0\.0\.1:\d+\/api\/health$/.test(await page.evaluate(() => window.__clip())));
     eq("history closed", await count(`${row("svc_down")} .svc-history`), 0);
     await click(`${row("svc_down")} [data-action=toggleServiceHistory]`);
     await waitText(`${row("svc_down")} .svc-history`, /seeded service outage/);

@@ -38,3 +38,11 @@ the down message went out, so a redeploy-length restart stays quiet. `notify: fa
 An HTTPS endpoint is verified against `ca_file` when one is given (the compose file mounts the home CA at
 `/app/certs/home-ca.pem`). The containers have no podman healthchecks of their own: rootless podman runs those as
 systemd timers, which broke whenever the user manager's socket did, and nothing read their status.
+
+## Changing the checks without a restart
+
+The list, `interval_seconds`, `failures_for_incident` and `notify_after_seconds` can be edited on the Settings page
+and apply at once: the interval is read again every round (a shortened one is noticed within two seconds), a service
+added is checked at the next round, and a service removed, disabled, or given another URL, CA file or timeout is
+forgotten (its open incident is resolved and a message about it that was waiting for quiet hours is dropped) and
+starts afresh. Renaming it or changing its notify switch keeps its history.

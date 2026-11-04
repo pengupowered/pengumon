@@ -5,6 +5,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
@@ -34,8 +35,9 @@ def test_nothing_is_exported_without_an_endpoint_or_when_disabled(env):
     tel.shutdown()  # harmless
 
 
-def test_an_endpoint_builds_all_three_exporters_named_pengumon_and_shutdown_is_bounded(monkeypatch):
+def test_an_endpoint_builds_all_three_exporters_named_pengumon(monkeypatch):
     monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "0.2")  # a failed export is not retried for long
     tel = setup_telemetry({"OTEL_EXPORTER_OTLP_ENDPOINT": UNREACHABLE}, set_global=False)
     try:
         assert tel.signals == ["traces", "metrics", "logs"]
@@ -45,10 +47,41 @@ def test_an_endpoint_builds_all_three_exporters_named_pengumon_and_shutdown_is_b
         assert tel.log_handler not in logging.getLogger("uvicorn.access").handlers
         tel.tracer_provider.get_tracer("t").start_span("s").end()
     finally:
-        started = time.monotonic()
         tel.shutdown()
-    assert time.monotonic() - started < 15
     assert all(tel.log_handler not in logging.getLogger(n).handlers for n in export.LOGGERS)
+
+
+def test_shutdown_is_bounded_in_total_even_when_every_exporter_hangs(caplog):
+    release = threading.Event()
+
+    class Hanging:
+        def force_flush(self, timeout_millis):
+            release.wait(30)
+
+        def shutdown(self):
+            release.wait(30)
+
+    tel = export.Telemetry(tracer_provider=Hanging(), meter_provider=Hanging(), logger_provider=Hanging(),
+                           signals=["traces", "metrics", "logs"])
+    started = time.monotonic()
+    try:
+        with caplog.at_level(logging.WARNING, logger="pengumon.telemetry"):
+            tel.shutdown(deadline_seconds=0.3)
+        assert time.monotonic() - started < 2
+        assert "did not finish within 0.3 s" in caplog.text
+    finally:
+        release.set()
+    assert export.SHUTDOWN_DEADLINE_SECONDS <= 3.0  # well inside podman's 10 s grace
+
+
+def test_a_finished_shutdown_says_nothing(caplog):
+    class Quick:
+        def shutdown(self):
+            pass
+
+    with caplog.at_level(logging.WARNING, logger="pengumon.telemetry"):
+        export.Telemetry(tracer_provider=Quick(), signals=["traces"]).shutdown()
+    assert caplog.text == ""
 
 
 def test_one_signal_can_be_exported_alone_and_the_service_name_comes_from_the_environment(monkeypatch):

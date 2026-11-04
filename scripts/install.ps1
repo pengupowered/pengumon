@@ -11,7 +11,7 @@
 #   1. gets the wheel, the lock (every dependency pinned with hashes) and SHA256SUMS from the GitHub release and
 #      checks the wheel and the lock against SHA256SUMS;
 #   2. downloads uv (version and sha256 pinned below, per platform) and checks it;
-#   3. on an upgrade, runs `pengumon backup` and removes the old sign-in task;
+#   3. on an upgrade, runs `pengumon backup` and stops the old sign-in task (its --host and --port are kept);
 #   4. installs Python 3.12 (managed by uv, kept inside the app folder) and a virtual environment, then the locked
 #      dependencies with `uv pip install --require-hashes --only-binary :all:`, then the wheel;
 #   5. runs `pengumon service install` (a Task Scheduler task that starts Pengumon, without a window, when you sign
@@ -152,8 +152,11 @@ try {
         } else {
             Fail "the backup failed, so nothing was changed: $out"
         }
+        # Stop the task but keep its definition: `service install` reads the listen address (--host, --port) out of it
+        # and puts it into the new one. Ending the launcher releases the program's files.
         $ErrorActionPreference = 'Continue'
-        & $Pengumon service uninstall *> $null
+        & schtasks /End /TN Pengumon *> $null
+        & taskkill /F /T /IM pengumonw.exe *> $null
         $ErrorActionPreference = 'Stop'
     }
 
@@ -179,11 +182,14 @@ try {
         Say "No service installed. Start it with: $Pengumon run"
         return
     }
-    if ($Port -gt 0) {
-        Invoke-Native $Pengumon @('service', 'install', '--port', "$Port")
-    } else {
-        Invoke-Native $Pengumon @('service', 'install')
-    }
+    # The task keeps the listen address of the one it replaces (--host, --port) unless -Port says otherwise; the port it
+    # ended up on is in the last line ("... open http://127.0.0.1:PORT/").
+    $InstallArgs = @('service', 'install')
+    if ($Port -gt 0) { $InstallArgs += @('--port', "$Port") }
+    $Shown = (& $Pengumon @InstallArgs | Out-String)
+    if ($LASTEXITCODE -ne 0) { Write-Host $Shown; Fail "$Pengumon $($InstallArgs -join ' ') failed with exit code $LASTEXITCODE" }
+    Write-Host $Shown.TrimEnd()
+    if ($Shown -match 'open http://[^/\s]*:(\d+)/') { $ListenPort = [int]$Matches[1] }
 
     Say "Waiting for Pengumon to answer on port $ListenPort ..."
     $Url = "http://127.0.0.1:$ListenPort/"

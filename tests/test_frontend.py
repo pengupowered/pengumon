@@ -281,15 +281,17 @@ PANEL_HELP = {
 
 
 def _docsis_thresholds():
-    from pengumon.lines import docsis
-    return (docsis.DS_SNR_WARNING_DB, docsis.DS_SNR_CRITICAL_DB, docsis.US_POWER_WARNING_DBMV, docsis.US_POWER_CRITICAL_DBMV,
-            docsis.DS_POWER_WARNING_ABS_DBMV, docsis.US_POWER_LOW_WARNING_DBMV, docsis.US_POWER_LOW_CRITICAL_DBMV,
-            docsis.RECENT_UNCORRECTABLES_CRITICAL, docsis.UNCORRECTABLE_WARNING_PER_MINUTE)
+    from pengumon.lines.levels import LineSignalConfig
+    lv = LineSignalConfig()  # the defaults (the levels are settings now)
+    return (lv.ds_snr_warning_db, lv.ds_snr_critical_db, lv.us_power_warning_dbmv, lv.us_power_critical_dbmv,
+            lv.ds_power_warning_abs_dbmv, lv.us_power_low_warning_dbmv, lv.us_power_low_critical_dbmv,
+            lv.uncorrectable_critical_per_minute, lv.uncorrectable_warning_per_minute)
 
 
 def _router_thresholds():
-    from pengumon.devices.monitors import ROUTER_CPU_WARNING_PCT, ROUTER_MEM_CRITICAL_PCT, ROUTER_MEM_WARNING_PCT, WAN_LOAD_CRITICAL_PCT
-    return (ROUTER_CPU_WARNING_PCT, ROUTER_MEM_WARNING_PCT, ROUTER_MEM_CRITICAL_PCT, WAN_LOAD_CRITICAL_PCT)
+    from pengumon.devices.levels import RouterLevelsConfig
+    lv = RouterLevelsConfig()  # the defaults (the levels are settings now)
+    return (lv.cpu_warning_pct, lv.mem_warning_pct, lv.mem_critical_pct, lv.wan_critical_pct)
 
 
 def _panel_help(panel: str) -> str:
@@ -394,7 +396,10 @@ async def test_the_page_includes_links_and_loads_every_discovered_folder():
                 assert f'href="/static/v/{ASSET_VERSION}/{css}"' in html
         modules = json.loads(unescape(re.search(r"<body\b[^>]*\bdata-modules='([^']*)'", html).group(1)))
         assert modules["panels"] == [p.module for p in ui.panels]
-        assert modules["dialogs"] == [d.module for d in ui.dialogs if d.module] and len(modules["dialogs"]) >= 5
+        lazy = [entry["module"] for entry in modules["lazy"]]  # dialogs loaded the first time something opens them
+        assert sorted(modules["dialogs"] + lazy) == sorted(d.module for d in ui.dialogs if d.module)
+        assert "dialogs/alerts/dialog.js" in modules["dialogs"]  # watches the diagnosis from the start: never lazy
+        assert {"dialogs/settings/dialog.js", "dialogs/path-editor/dialog.js"} <= set(lazy) and len(lazy) >= 5
         for d in ui.dialogs:
             if d.template:
                 dialog_id = re.search(r'<div class="modal" id="(\w+)"', (STATIC / d.template).read_text(encoding="utf-8")).group(1)
@@ -431,7 +436,7 @@ async def test_the_page_carries_the_configured_default_layout_in_a_csp_safe_attr
 # touching them, and the page works (the smoke test's `bare` variant) with no devices at all.
 CORE_MODULES = ["main.js", "live.js", "bus.js", "layout.js", "tabs.js", "dispatch.js", "devices.js", "chrome.js", "session.js"]
 # what the core may import: itself, the shared helpers and the one list of panels
-CORE_IMPORTABLE = {*CORE_MODULES, "util.js", "state.js", "help.js", "chart-theme.js", "panels/index.js"}
+CORE_IMPORTABLE = {*CORE_MODULES, "util.js", "state.js", "help.js", "chart-theme.js", "settings-values.js", "panels/index.js"}
 OPTIONAL_WORDS = re.compile(
     r"docsis|modem|router|mesh|grafana|topology|xfinity|asus|channel|dossier|inspector|incident|report|sparkline|"
     r"\bclients?\b|\bservices?\b|\bdiagnosis\b|\bmatrix\b|\blatency\b|\bline\b", re.IGNORECASE)
@@ -467,10 +472,10 @@ def test_folders_import_only_the_core_the_shared_library_and_their_own_files():
     another panel's or dialog's: removing a folder cannot break another one."""
     for root in (STATIC / "panels", STATIC / "dialogs"):
         for path in root.rglob("*.js"):
-            folder = path.parent.resolve()
+            folder = (root / path.relative_to(root).parts[0]).resolve()  # the panel's or dialog's own folder, subfolders included
             for imported in re.findall(r"(?:from|import) '(\.{1,2}/[\w./-]+\.js)'", path.read_text(encoding="utf-8")):
                 target = (path.parent / imported).resolve()
-                assert target.parent == folder or JS.resolve() in target.parents, f"{path.relative_to(STATIC)} imports {imported}"
+                assert folder in target.parents or JS.resolve() in target.parents, f"{path.relative_to(STATIC)} imports {imported}"
 
 
 def test_registering_an_action_twice_is_refused():
@@ -501,7 +506,9 @@ def test_every_module_is_loaded():
         seen.add(path)
         for imported in re.findall(r"(?:from|import) '(\.{1,2}/[\w./-]+\.js)'", path.read_text(encoding="utf-8")):
             todo.append((path.parent / imported).resolve())
-    assert {p.resolve() for p in all_js()} <= seen
+    # the Settings page's list editors (dialogs/settings/lists/) are imported by its dialog.js; they register no actions
+    lists = {p.resolve() for p in all_js() if "dialogs/settings/lists/" in p.as_posix()}
+    assert {p.resolve() for p in all_js()} - lists <= seen
 
 
 # --- device panels: one card per device, chosen by capability (decomposition step 6) -----------------------------------
@@ -575,3 +582,51 @@ async def test_a_smoke_step_path_is_not_served():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
         for url in ("/static/panels/line/smoke.mjs", f"/static/v/{ASSET_VERSION}/panels/line/smoke.mjs", "/static/dialogs/alerts/smoke.mjs"):
             assert (await client.get(url)).status_code == 404, url
+
+
+# --- dialogs that load when first opened ----------------------------------------------------------------------------
+
+def lazy_dialogs() -> dict[str, dict]:
+    """Dialog folder -> its dialog.json "lazy" entry (what opens it before its module is loaded)."""
+    import json
+    return {p.parent.name: json.loads(p.read_text(encoding="utf-8"))["lazy"] for p in sorted((STATIC / "dialogs").glob("*/dialog.json"))}
+
+
+def test_every_way_into_a_lazy_dialog_is_named_in_its_manifest():
+    """A lazy dialog's module is not there until something loads it (js/panels/index.js: its manifest's click actions, the
+    modals the generic openModal action opens, a location hash). Whatever else opens it would find nothing to run."""
+    lazy = lazy_dialogs()
+    assert len(lazy) >= 5
+    used = used_actions()
+    for name, entry in lazy.items():
+        folder = STATIC / "dialogs" / name
+        own = {p.relative_to(WEB).as_posix() for p in folder.rglob("*") if p.is_file()}
+        registered = set()
+        for path in folder.rglob("*.js"):
+            for kind, body in re.findall(r"registerActions\('(\w+)', \{(.*?)\}\);", path.read_text(encoding="utf-8"), re.DOTALL):
+                if kind == "click":
+                    registered.update(re.findall(r"(?:^|\{)\s*(\w+)\s*:\s*\(", body, re.MULTILINE))
+        modals = set(re.findall(r'<div class="modal" id="(\w+)"', (folder / "dialog.html").read_text(encoding="utf-8"))) if (folder / "dialog.html").is_file() else set()
+        assert set(entry["actions"]) <= registered, f"{name}: dialog.json names actions the dialog does not register"
+        assert set(entry["modals"]) <= modals, f"{name}: dialog.json names modals the dialog does not have"
+        outside = {a for src, kinds in used.items() if src not in own for a in kinds["click"]}
+        needed = registered & outside - {"openModal", "closeModal"}
+        assert needed <= set(entry["actions"]), f"{name}: used outside the dialog but not in dialog.json: {sorted(needed - set(entry['actions']))}"
+        for source in [*html_files(), *js_files()]:
+            if source in own:
+                continue
+            text = (WEB / source).read_text(encoding="utf-8")
+            for modal in modals:
+                if re.search(rf"""(?:open|close)Modal\(\s*["']{modal}["']""", text):
+                    pytest.fail(f"{source} opens {modal} from code: only the openModal action loads a lazy dialog ({name})")
+                if re.search(rf"""data-action=["']openModal["'][^>]*data-arg=["']{modal}["']""", text):
+                    assert modal in entry["modals"], f"{source} opens {modal}, which {name}/dialog.json does not list"
+        code = "\n".join(p.read_text(encoding="utf-8") for p in folder.rglob("*.js"))
+        if re.search(r"location\.hash\s*===", code):
+            assert entry.get("hash"), f"{name} opens from a location hash that dialog.json does not name"
+
+
+def test_the_dispatcher_lets_the_real_handler_replace_a_lazy_stand_in():
+    text = (JS / "dispatch.js").read_text(encoding="utf-8")
+    assert "export function registerLazy" in text and "stubs.has(" in text
+    assert "registerLazy(" in (JS / "panels" / "index.js").read_text(encoding="utf-8")

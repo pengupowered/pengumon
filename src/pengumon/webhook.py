@@ -26,6 +26,19 @@ MAX_REDIRECTS = 3
 RETRY_DELAY_SECONDS = 2.0
 
 
+def failure_words(error: Exception) -> str:
+    """Why a delivery failed, in plain words (the Alerts dialog shows it): no class names, and never the URL, which
+    httpx puts into its messages."""
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    if status:
+        return f"the server answered {status}"
+    if isinstance(error, httpx.TimeoutException):
+        return "timed out"
+    if isinstance(error, httpx.ConnectError):
+        return "could not connect"
+    return "the connection failed"
+
+
 @dataclass
 class Alert:
     """One announcement, with everything any channel shows. `event`: incident_started, incident_resolved,
@@ -139,8 +152,8 @@ class WebhookSender:
 
     @staticmethod
     def _transient(reason: str) -> bool:
-        if reason.startswith("HTTP "):
-            code = int(reason[5:8])
+        if reason.startswith("the server answered "):
+            code = int(reason[20:23])
             return code == 429 or code >= 500
         return not reason.startswith("refused")
 
@@ -159,12 +172,10 @@ class WebhookSender:
             else:
                 return "refused: too many redirects"
             if response.status_code >= 400:
-                return f"HTTP {response.status_code}"
+                return f"the server answered {response.status_code}"
             return None
-        except httpx.TimeoutException:
-            return "timed out"
-        except Exception as e:  # httpx messages can hold the URL, so only the class name is kept
-            return type(e).__name__
+        except Exception as e:  # httpx messages can hold the URL, so only these words are kept
+            return failure_words(e)
 
     def _same_host(self, target: str) -> bool:
         a, b = urlsplit(self.config.url), urlsplit(target)

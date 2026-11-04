@@ -3,7 +3,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';
-import { closeModal, openModal, setBadge } from '../../js/util.js';
+import { keepKeyboard, openModal, setBadge } from '../../js/util.js';
 
 let notificationsEnabled = (localStorage.getItem('pengumon_notify') === 'true');
 let audioAlertsEnabled = (localStorage.getItem('pengumon_sound') === 'true');
@@ -46,7 +46,7 @@ async function loadServerChannels() {
   document.getElementById('alServerResult').textContent = '';
   if (channels === null) { text.textContent = 'The server channels could not be read.'; return; }
   text.textContent = channels.length ? 'Sent by the server, to everyone who listens, whatever this browser is set to.'
-    : 'No ntfy topic or webhook is configured (see the README, Alerts).';
+    : 'No ntfy topic or webhook is set up yet: add one in Settings > Alerts.';
   for (const c of channels) {
     const li = document.createElement('li');
     const name = document.createElement('b');
@@ -65,7 +65,7 @@ async function sendServerTest() {
   try {
     const res = await fetch('/api/notifications/test', { method: 'POST' });
     const body = res.ok ? await res.json() : null;
-    out.textContent = body ? body.channels.map((c) => `${c.name}: ${c.ok ? 'delivered' : `failed (${c.detail || 'unknown'})`}`).join('; ')
+    out.textContent = body ? body.channels.map((c) => `${c.name}: ${c.ok ? 'delivered' : `not delivered, ${c.detail || 'the reason is unknown'}`}`).join('; ')
       : `The test could not be sent (${res.status}).`;
   } catch (_) {
     out.textContent = 'The test could not be sent.';
@@ -100,6 +100,18 @@ function updateAlertModalUI() {
     if (box) box.checked = alertOn(kind);
   });
 
+  // Browsers allow notifications only in a secure context (HTTPS, or localhost): over plain HTTP from another machine
+  // Chrome denies the permission without asking, so say so instead of offering a button that cannot work.
+  const buttons = document.getElementById('notifButtons');
+  const help = document.getElementById('notifHelpText');
+  if (buttons) buttons.hidden = !window.isSecureContext;
+  if (!window.isSecureContext) {
+    if (badge) setBadge(badge, 'warn', 'Needs HTTPS');
+    const pop = document.getElementById('notifSwitch');
+    if (pop) pop.hidden = true;
+    if (help) help.textContent = 'Browser notifications need HTTPS or the same machine (http://localhost). This page is served over plain HTTP, so the browser will not allow them. The sound below works here; to be told on your phone or elsewhere, set up ntfy or a webhook (Settings > Alerts).';
+    return;
+  }
   if (!("Notification" in window)) {
     if (badge) setBadge(badge, 'crit', 'Not available here');
     if (reqBtn) reqBtn.disabled = true;
@@ -325,22 +337,5 @@ registerActions('change', {
 });
 
 updateNotifyButton();
-bus.subscribe('diagnosis', checkNotificationTrigger);
-
-// Keyboard: focus moves into the dialog when it opens, Tab stays inside it and Escape closes it.
-export function keepKeyboard(modal, firstFocus) {
-  new MutationObserver(() => {
-    if (modal.classList.contains('active') && !modal.contains(document.activeElement)) (modal.querySelector(firstFocus) || modal.querySelector('.m-close')).focus();
-  }).observe(modal, { attributes: true, attributeFilter: ['class'] });
-  modal.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !ev.defaultPrevented) { closeModal(modal.id); return; }
-    if (ev.key !== 'Tab') return;
-    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
-    if (!items.length) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
-    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
-  });
-}
+bus.subscribe('diagnosis', checkNotificationTrigger, { every: true }); // an outage is told when nobody looks at the page
 keepKeyboard(document.getElementById('alertsModal'), '.modal-t');

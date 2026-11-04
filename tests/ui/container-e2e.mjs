@@ -55,6 +55,9 @@ async function attempt() {
     page.on("response", (r) => { if (r.url().startsWith(base) && r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url()}`); });
     await page.goto(base + "/", { waitUntil: "load" });
     results.push(`title: ${await page.title()}`);
+    // opened by the container's name over plain HTTP, like a real visit: an insecure context (no Clipboard API, no crypto.subtle)
+    const secure = await page.evaluate(() => window.isSecureContext);
+    if (secure !== false) problems.push(`isSecureContext is ${secure}: the check must open the app by a host name, not localhost`);
 
     // the page's live indicator and the path chain: nodes with a status other than the loading skeleton
     await page.waitForFunction(() => document.querySelector("#wsStatus")?.className === "live live-live", { timeout: 30000 });

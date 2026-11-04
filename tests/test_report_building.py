@@ -69,3 +69,10 @@ async def test_incident_totals_exclude_expected_ones_and_order_causes_by_count_t
     assert inc["count"] == 5 and inc["excluded_expected"] == 1 and inc["minutes"] == 4.0
     assert inc["by_cause"] == [{"cause_code": "a", "count": 2, "minutes": 2.5}, {"cause_code": "b", "count": 2, "minutes": 1.0},
                                {"cause_code": "c", "count": 1, "minutes": 0.5}]
+
+
+async def test_an_open_incident_counts_as_downtime_until_now():
+    rows = [{"cause_code": "unknown_outage", "start_time": NOW - 1800, "duration_seconds": None, "expected": 0, "kind": "gateway_down"},
+            {"cause_code": "unknown_outage", "start_time": NOW - 7200, "duration_seconds": 60, "expected": 0, "kind": "gateway_down"}]
+    incidents = (await build_report(Repo(incidents=rows), None, 7, now=NOW))["incidents"]
+    assert incidents["minutes"] == 31.0 and incidents["by_cause"][0]["minutes"] == 31.0

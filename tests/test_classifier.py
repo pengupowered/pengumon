@@ -257,3 +257,31 @@ async def test_path_trace_task_is_referenced_until_it_finishes(monkeypatch):
     await task
     assert task not in classifier._background
     assert classifier._background == set()
+
+
+@pytest.mark.asyncio
+async def test_no_pings_is_an_unknown_state_that_says_why_and_opens_no_incident(classifier):
+    diagnosis = await classifier.not_probing("cannot open an ICMP socket", "echo fix")
+    assert diagnosis.status == "unknown" and diagnosis.active_incident is None
+    assert "cannot open an ICMP socket" in diagnosis.description and "echo fix" in diagnosis.description
+    assert classifier.last_diagnosis is diagnosis
+
+
+@pytest.mark.asyncio
+async def test_pings_becoming_blocked_ends_an_open_incident_as_measuring_stopped_not_recovered(classifier):
+    resolved = []
+    classifier.on_incident_resolved = resolved.append
+    stats = {c: TargetStats(target_id=c, name=c, category=c, address="192.0.2.1", enabled=True)
+             for c in ("local", "gateway", "public")}
+    samples = [ProbeSample(target_id=c, success=False, latency_ms=None, packet_loss_pct=100.0) for c in stats]
+    for _ in range(2):
+        await classifier.evaluate(samples, stats)
+    incident = classifier.active_incident
+    assert incident is not None and not incident.resolved
+    measured = classifier._last_measured_ts
+
+    diagnosis = await classifier.not_probing("cannot open an ICMP socket", None)
+    assert classifier.active_incident is None and diagnosis.active_incident is None
+    assert incident.resolved and incident.end_time == measured  # ended when probing stopped
+    assert "Measuring stopped" in incident.description and "recovered" in incident.description
+    assert resolved == []  # not announced as a recovery

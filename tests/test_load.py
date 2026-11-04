@@ -332,7 +332,7 @@ async def test_capacity_and_backfill_read_only_their_devices_rates(tmp_path, cap
     assert without.down_mbps is None
     assert [r.getMessage() for r in caplog.records].count(
         "Line capacity: no device reports WAN counters, so it cannot be learned; load-aware classification needs "
-        "line: in config") == 1  # said once, not every hour
+        "the line speeds (Settings, Your line)") == 1  # said once, not every hour
     assert await backfill_incident_load(repo, LineLoad(LINE), 60.0) is None  # postponed, not recorded as done
     assert await repo.get_meta(BACKFILL_META_KEY) is None
 
@@ -346,7 +346,9 @@ async def test_backfill_waits_for_a_known_capacity(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_backfill_reruns_when_the_capacity_changes(tmp_path):
+async def test_backfill_runs_once_even_when_the_capacity_or_the_busy_level_changes(tmp_path):
+    """Outage rules apply from the moment they are set: a later capacity or busy level never re-annotates the
+    incidents recorded under the old one."""
     import json
     from pengumon.engine.load import PING_BACKFILL_META_KEY
 
@@ -370,14 +372,15 @@ async def test_backfill_reruns_when_the_capacity_changes(tmp_path):
 
     assert await backfill_incident_load(repo, LineLoad(LINE, device_id="router"), 60.0) == 2  # 650 of 1000 Mbps = 65%
     assert (await repo.get_incident_by_id(latency)).expected is True
-    assert await backfill_incident_load(repo, LineLoad(LINE, device_id="router"), 60.0) is None  # same capacity: done
+    assert await backfill_incident_load(repo, LineLoad(LINE, device_id="router"), 60.0) is None  # done
 
     bigger = LineConfig(down_mbps=1100, up_mbps=40)
-    assert await backfill_incident_load(repo, LineLoad(bigger, device_id="router"), 60.0) == 2  # 650 of 1100 = 59%
+    assert await backfill_incident_load(repo, LineLoad(bigger, device_id="router"), 60.0) is None  # 59% now: kept
+    assert await backfill_incident_load(repo, LineLoad(LINE, device_id="router"), 70.0) is None  # busy 70: kept
     got = await repo.get_incident_by_id(latency)
-    assert (round(got.load_pct), got.expected) == (59, False)
-    assert (await repo.get_incident_by_id(ping_marked)).expected is True  # the hop-rule verdict stays
-    assert await backfill_incident_load(repo, LineLoad(bigger, device_id="router"), 60.0) is None
+    assert (round(got.load_pct), got.expected) == (65, True)
+    assert (await repo.get_incident_by_id(ping_marked)).expected is True
+    assert json.loads(await repo.get_meta(BACKFILL_META_KEY))["busy_load_pct"] == 60.0  # what the one run used
 
 
 @pytest.mark.asyncio

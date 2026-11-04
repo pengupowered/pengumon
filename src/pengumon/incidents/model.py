@@ -10,7 +10,8 @@ from pengumon.models.probes import PathTraceHop
 
 
 SeverityType = Literal["info", "warning", "critical"]
-StatusCode = Literal["healthy", "busy", "degraded", "down"]  # busy: delay explained by heavy line load
+# busy: delay explained by heavy line load; unknown: nothing is measured (this host cannot send pings)
+StatusCode = Literal["healthy", "busy", "degraded", "down", "unknown"]
 
 # A line cannot carry much more than its capacity, so a load beyond this is a bad reading (a router counter that jumped
 # when the line dropped), not traffic: engine.load leaves such samples out, and an incident recorded with one before

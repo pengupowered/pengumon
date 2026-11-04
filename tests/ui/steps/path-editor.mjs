@@ -80,7 +80,11 @@ export const steps = [
     eq("the prefixes dropped", await page.$$eval("#pathEditorHops .pe-name", (els) => els.map((e) => e.value).slice(0, 2).join("|")), "Local Router (LAN)|ISP Modem / Gateway");
     eq("the offer is gone", await text("#pathEditorClean"), "");
     eq("nothing applied", (await livePath(page)).hops[0].name, "Hop 1: Local Router (LAN)");
+    await page.type("#pathAddAddress", "127.0.0.1"); // an address a hop already has: the hint names that hop
+    await page.keyboard.press("Enter");
+    ok("the duplicate hint names the other hop", /^Added, but \S.* already has this address\./.test(await text("#pathAddMsg")));
     await click("[data-action=cancelPathEditor]");
+    await click("#pathEditorNote [data-action=discardPathEditor]");
   }],
 
   ["path editor: the live path as cards; rename, remove with undo, add at a position, reorder, merge in the chain, test, apply goes live", async ({ click, count, eq, modalOpen, ok, page, shots, text, until, waitText }) => {
@@ -259,7 +263,8 @@ export const steps = [
     ok("a hop probed live keeps its live figures", / loss \(last minute\)$/.test(await text('#pathEditorHops [data-live="local_router"]')));
     const id = await page.evaluate(() => window.__calls.find(([k]) => k.startsWith("GET /api/path/preview/"))[0].split("/").pop());
     // closing the editor stops it
-    await click("[data-action=cancelPathEditor]");
+    await click("[data-action=cancelPathEditor]"); // the draft has an added hop: Cancel asks first
+    await click("#pathEditorNote [data-action=discardPathEditor]");
     await until((p) => window.__calls.some(([k]) => k === `DELETE /api/path/preview/${p}`), id);
     eq("stopped on the server", await page.evaluate(async (p) => (await (await window.__realFetch(`/api/path/preview/${p}`)).json()).state, id), "done");
     eq("nothing applied", (await livePath(page)).hops.some((h) => h.id === a), false);
@@ -280,9 +285,23 @@ export const steps = [
 
   ["path editor: an earlier path loads as a draft to restore; nothing is applied until Apply", async ({ click, eq, ok, page, text, until, waitText }) => {
     const path = await livePath(page);
+    // Export shows the YAML with Copy and a download link, not a bare download: Chrome blocks a file downloaded over plain HTTP
+    await openEditor({ click, until });
+    ok("Export is a button", await page.$eval("#pathExport", (e) => e.tagName === "BUTTON"));
+    await click("#pathExport");
+    await until(() => document.getElementById("pathExportText")?.value.startsWith("#"));
+    eq("the download link", await page.$eval("#pathExportView a[download]", (e) => e.getAttribute("href")), "/api/path/export");
+    ok("the plain-HTTP note", /served over plain HTTP/.test(await text("#pathExportView")));
+    await click("[data-action=pathExportCopy]");
+    await waitText("#pathExportNote", /^Copied\.$/);
+    eq("what was copied", await page.evaluate(() => window.__clip()), await page.$eval("#pathExportText", (e) => e.value));
+    await click("#pathExport");
+    ok("Export closes again", await page.$eval("#pathExportView", (e) => e.hidden));
+    await click("[data-action=cancelPathEditor]");
     const versions = await page.evaluate(async () => (await (await fetch("/api/path/versions")).json()));
     eq("every Apply kept, newest first", versions[0].revision, path.revision);
     const previous = await page.evaluate(async (r) => (await (await fetch(`/api/path/versions/${r}`)).json()), versions[1].revision);
+    await page.evaluate(() => history.pushState({ here: 1 }, ""));
     await openEditor({ click, until });
     await until(() => !document.getElementById("pathVersions").hidden);
     ok("the earlier ones listed with what changed, the current one not", (await text("#pathVersionList")).includes(`Revision ${versions[1].revision}`)
@@ -293,10 +312,19 @@ export const steps = [
     const gone = path.hops.filter((h) => !previous.hops.some((p) => p.id === h.id)).map((h) => h.id).sort().join();
     eq("the others removed when applied, with an undo", (await page.$$eval("#pathEditorRemoved [data-removed]", (els) => els.map((e) => e.dataset.removed))).sort().join(), gone);
     eq("nothing applied", (await livePath(page)).revision, path.revision);
+    // a loaded version is not what is applied: Cancel asks, and so do Back and a reload
     await click("[data-action=cancelPathEditor]");
+    ok("Cancel asks and the editor stays open", await page.$eval("[data-action=discardPathEditor]", () => document.getElementById("pathEditorModal").classList.contains("active")));
+    await page.evaluate(() => history.back());
+    await until(() => /not applied/.test(document.getElementById("pathEditorNote").textContent) && history.state && history.state.pathEditor && !history.state.here);
+    ok("Back kept the draft", await page.evaluate(() => document.getElementById("pathEditorModal").classList.contains("active")));
+    ok("a reload would ask", await page.evaluate(() => { const ev = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(ev); return ev.defaultPrevented; }));
+    await click("[data-action=discardPathEditor]");
+    await until(() => !document.getElementById("pathEditorModal").classList.contains("active"));
+    await until(() => history.state && history.state.here); // back on the entry the editor was opened from: no dead Back press is left
   }],
 
-  ["path editor: a stale revision says so and applies nothing; Load the current path starts over", async ({ click, eq, page, until, waitText }) => {
+  ["path editor: a stale revision says so and applies nothing; Load the current path starts over", async ({ click, eq, ok, page, until, waitText }) => {
     const before = await livePath(page);
     await openEditor({ click, until });
     await page.$eval("#pathEditorHops .pe-hop:first-child .pe-name", (i) => { i.value = "Not applied"; i.dispatchEvent(new Event("input", { bubbles: true })); });
@@ -305,8 +333,14 @@ export const steps = [
       window.fetch = (url, opts) => (opts && opts.method === "PUT" && String(url).endsWith("/api/path")
         ? Promise.resolve(new Response(JSON.stringify({ detail: "changed", revision: 99 }), { status: 409 })) : window.__realFetch(url, opts));
     });
+    await page.$eval("#pathEditorModal .modal-b", (b) => { b.scrollTop = b.scrollHeight; }); // scrolled down, as in real use
     await click("#btnApplyPath");
     await waitText("#pathEditorNote", /changed elsewhere/);
+    ok("the message is in view where the owner is looking", await page.evaluate(() => {
+      const n = document.getElementById("pathEditorNote").getBoundingClientRect();
+      const b = document.querySelector("#pathEditorModal .modal-b").getBoundingClientRect();
+      return n.top >= b.top - 1 && n.bottom <= b.bottom + 1;
+    }));
     await realFetch(page);
     eq("still open", await page.$eval("#pathEditorModal", (m) => m.classList.contains("active")), true);
     eq("nothing applied", JSON.stringify(await livePath(page)), JSON.stringify(before));
@@ -316,20 +350,29 @@ export const steps = [
     await page.focus("#pathEditorHops .pe-name");
     await page.keyboard.press("Escape");
     await until(() => !document.getElementById("pathEditorModal").classList.contains("active"));
+    // an edited draft is not thrown away by Esc: it asks first
+    await openEditor({ click, until });
+    await page.focus("#pathEditorHops .pe-name");
+    await page.keyboard.type("x");
+    await page.keyboard.press("Escape");
+    await waitText("#pathEditorNote", /not applied/);
+    eq("still open", await page.$eval("#pathEditorModal", (m) => m.classList.contains("active")), true);
+    await click("#pathEditorNote [data-action=discardPathEditor]");
+    await until(() => !document.getElementById("pathEditorModal").classList.contains("active"));
   }],
 
   ["path editor: Rediscover shows the real draft with confidence, reasons, a suggested driver, the IPv6 group and the difference; Connect opens device setup", async ({ click, count, eq, ok, page, shots, text, until, waitText }) => {
     const before = await livePath(page);
     await openEditor({ click, until });
-    eq("the ASN lookup is ticked by default", await page.$eval("#pathDiscAsn", (c) => c.checked), true);
+    eq("the ASN lookup is off, as Settings has it by default", await page.$eval("#pathDiscAsn", (c) => c.checked), false);
     ok("with its disclosure", /Team Cymru/.test(await text(".pe-disclose")));
     await answerFetch(page, {});
     await click("#btnRediscover");
     await waitText("#pathEditorNote", /Discovery found \d+ hops/);
-    eq("the options sent", await page.evaluate(() => window.__calls.find(([k]) => k === "POST /api/discovery")[1]), JSON.stringify({ asn_lookup: true, snmp: false }));
+    eq("the options sent", await page.evaluate(() => window.__calls.find(([k]) => k === "POST /api/discovery")[1]), JSON.stringify({ asn_lookup: false, snmp: false }));
     await realFetch(page);
     const found = Number((await text("#pathEditorNote")).match(/Discovery found (\d+) hops/)[1]);
-    eq("a card per hop", await count("#pathEditorHops .pe-hop"), found);
+    eq("a card per hop found (not the live hops kept as not found)", await count("#pathEditorHops .pe-hop:not(.gone)"), found);
     ok("the difference: the router, two provider hops and six servers are new; the live hops it did not see are marked", /9 new, \d+ not found/.test(await text("#pathEditorNote")));
     ok("the notes", /IPv6 trace got no answer/.test(await text("#pathEditorNote")));
     const router = '#pathEditorHops [data-hop="hop_192_168_1_1"]';
@@ -351,6 +394,7 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=deviceSetupModal]");
     eq("linked to the device", await text(`${router} .pe-dev-name`), "ASUS router · Example Router");
     await click("[data-action=cancelPathEditor]");
+    await click("[data-action=discardPathEditor]"); // a Rediscover draft is not what is applied: Cancel asks first
     eq("nothing applied", (await livePath(page)).revision, before.revision);
   }],
 
@@ -409,6 +453,7 @@ export const steps = [
     await waitText("#pathEditorNote", /Discovery found 2 hops/);
     eq("the draft's new hop", await text('#pathEditorHops [data-hop="hop_198_51_100_5"] .chip.st-good'), "New");
     await click("[data-action=cancelPathEditor]");
+    await click("[data-action=discardPathEditor]"); // the route check's draft is not what is applied: Cancel asks
     await click("#pathBanner [data-action=dismissPathDrift]");
     await until(() => document.getElementById("pathBanner").hidden);
     ok("dismissed on the server", await page.evaluate(() => window.__stubbed.some(([k]) => k === "POST /api/path/drift/dismiss")));
@@ -453,7 +498,38 @@ export const steps = [
     ok("a draft", /draft from discovery/.test(await text("#pathEditorMeta")));
     ok("judged without the operator lookup", /ASN lookup was off/.test(await text("#pathEditorNote")));
     await click("[data-action=cancelPathEditor]");
+    await click("[data-action=discardPathEditor]"); // a first-run draft is not applied yet: Cancel asks
     await stubFetch(null);
     await until(() => document.getElementById("pathBanner").hidden);
+  }],
+
+  ["path editor: More > Warn above is empty with the role's level as its placeholder; a value is applied (colour only) and survives a reload", async ({ click, eq, ok, page, text, until }) => {
+    await openEditor({ click, until });
+    const hop = await page.$eval("#pathEditorHops .pe-hop", (e) => e.dataset.hop);
+    const card = `#pathEditorHops [data-hop="${hop}"]`;
+    const field = `${card} [data-field=warn_latency_ms]`;
+    ok("More is closed while nothing is set", await page.$eval(`${card} .pe-more`, (d) => !d.open));
+    await click(`${card} .pe-more summary`);
+    eq("empty by default", await page.$eval(field, (i) => i.value), "");
+    ok("the placeholder is the role's level", /^role level: \d+(\.\d+)? ms$/.test(await page.$eval(field, (i) => i.placeholder)));
+    ok("the fine print says colour only", /Only this hop's colour\. Incidents still use the role's level\./.test(await text(`${card} .pe-warn-fx`)));
+    await page.type(field, "0");
+    ok("a bad value is said at once", /above 0/.test(await text(`${card} .pe-warn-fx`)) && await page.$eval(field, (i) => i.getAttribute("aria-invalid") === "true"));
+    await page.$eval(field, (i) => { i.select(); });
+    await page.keyboard.press("Backspace");
+    await page.type(field, "33");
+    eq("typing keeps the focus", await page.evaluate(() => document.activeElement.dataset.field), "warn_latency_ms");
+    await Promise.all([page.waitForNavigation({ waitUntil: "load" }), click("#btnApplyPath")]);
+    await until(() => document.querySelector("[data-panel=report]")?.dataset.layoutHidden !== undefined);
+    eq("the live hop has it", (await livePath(page)).hops.find((h) => h.id === hop).warn_latency_ms, 33);
+    await openEditor({ click, until });
+    ok("More opens by itself when a value is set", await page.$eval(`${card} .pe-more`, (d) => d.open));
+    eq("the value survived the reload", await page.$eval(field, (i) => i.value), "33");
+    // clear it again: the hop goes back to its role's level
+    await page.$eval(field, (i) => { i.focus(); i.select(); });
+    await page.keyboard.press("Backspace");
+    await Promise.all([page.waitForNavigation({ waitUntil: "load" }), click("#btnApplyPath")]);
+    await until(() => document.querySelector("[data-panel=report]")?.dataset.layoutHidden !== undefined);
+    eq("cleared", (await livePath(page)).hops.find((h) => h.id === hop).warn_latency_ms ?? null, null);
   }],
 ];

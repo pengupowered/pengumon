@@ -10,8 +10,8 @@ changes until you press Apply there. It runs
   below), and the result is offered as "Pengumon found your network path · Review";
 - **when you ask**, with **Rediscover** in the path editor, where the operator lookup is a box that is ticked by
   default;
-- **quietly in the background**, once a day and after an incident ends, to tell you when your provider's route
-  changed (see [Route-change checks](#route-change-checks)).
+- **quietly in the background**, once a day and after an incident ends, to tell you when your network path
+  changed (your own hops, the line or your provider's) (see [Route-change checks](#route-change-checks)).
 
 It makes no assumption about your equipment. An ISP's all-in-one router is one home hop, a router and a modem are
 two, and a mesh satellite adds one more. Carrier-grade NAT may or may not be there.
@@ -71,8 +71,9 @@ gateway addresses below.
   have self-signed ones, and nothing is sent that one would protect.
 - Only the page title, the `Server` header and the driver fingerprint below are kept.
 - At most eight hosts get a page request in one run: the gateway addresses off the path first, then the private hops.
-- A configured device's host (config.yaml `devices:`) gets at most one GET of its front page and nothing else: no
-  HTTPS retry, no redirect, no UPnP, no SNMP, no ping from the gateway check.
+- A configured device's host (a device on the Settings page) gets at most one GET of its front page, and only when it is a
+  private hop of the trace in a run you start. It gets nothing else: no HTTPS retry, no redirect, no UPnP, no SNMP,
+  and nothing from the gateway check or the background route-change checks.
 
 ### Gateways off the traced path
 
@@ -85,7 +86,8 @@ the addresses where such boxes commonly answer:
 - 192.168.100.1 (where DOCSIS cable modems serve their status page)
 
 An address that is a hop of the traced path is skipped, and so is one on this host's own network (the /24 of the
-path's first private hop: a device there sits beside your router, not in front of it). Each other one gets one echo
+path's first private hop: a device there sits beside your router, not in front of it). So is a configured device's
+host: its driver already reads it, at its own pace, and discovery sends it nothing here. Each other one gets one echo
 request and one GET of `/` over HTTP (no HTTPS retry, no redirect). One that answers either is proposed as a
 **Line / gateway** hop right after your network's hops, with the reason "answers on your network but isn't on the
 traced path (a modem in bridge mode, or an ISP gateway)" and the confidence **Likely**. One at 192.168.100.1 is named
@@ -208,7 +210,8 @@ compares what it finds with the applied path.
 
 When:
 
-- once a day, at a minute picked at random when Pengumon starts;
+- once a day, at `discovery.daily_check_time` ("HH:MM" in the `general.timezone` time zone, daylight saving
+  included) or, when that is empty, at a minute picked at random when Pengumon starts;
 - about ten minutes after an incident ends, at most once an hour;
 - only while a path is applied, and only with `discovery.background` on (the default;
   [configuration.md](configuration.md)).
@@ -257,3 +260,7 @@ the latest background check's run, which is kept until the next check (`"backgro
 - `error`: why a failed check failed.
 
 `POST /api/path/drift/dismiss` marks the current changes seen and answers the same body.
+
+The background switches apply without a restart when changed on the Settings page: `discovery.background` turns the
+daily and after-incident checks on or off, `discovery.asn_lookup` is read by the next run, and a new
+`daily_check_time` or time zone makes the daily check work out its next time again.

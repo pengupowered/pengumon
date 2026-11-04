@@ -25,10 +25,13 @@ def _config(text: str) -> AppConfig:
 
 # --- the example config.yaml ---------------------------------------------------------------------------------------
 
-def test_the_example_config_describes_a_modem_and_a_router():
-    """config.example.yaml (the tracked template of config.yaml) lists the devices modem and router, the ids the stored
-    history is kept under (schema v9 migrated it to them)."""
-    config = load_config(str(ROOT / "config.example.yaml"))
+def test_the_example_config_starts_with_no_devices_and_its_commented_example_is_valid():
+    """A new install starts with no devices: the modem and router in config.example.yaml are commented out. With the
+    leading "# " removed from the `devices:` list, they are the ids the stored history is kept under (schema v9)."""
+    text = (ROOT / "config.example.yaml").read_text(encoding="utf-8")
+    assert load_config(str(ROOT / "config.example.yaml")).devices == []
+    block = text[text.index("# devices:"):text.index("  # An OpenWrt")]
+    config = _config("\n".join(line[2:] for line in block.splitlines() if not line.startswith("#   #")))
     modem, router = config.devices
     assert modem.model_dump() == {
         "id": "modem", "driver": "xfinity_xb", "url": "http://192.168.100.1", "enabled": True,

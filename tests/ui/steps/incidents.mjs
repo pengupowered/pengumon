@@ -111,7 +111,7 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
   }],
 
-  ["inspector: verdict, lanes per hop, what happened, synced tracks, evidence, hop figures", async ({ count, dialogShot, eq, hasChart, inspectNamed, modalOpen, ok, page, setTheme, text, until, waitText }) => {
+  ["inspector: verdict, lanes per hop, what happened, synced tracks, evidence, hop figures", async ({ count, dialogShot, eq, hasChart, inspectNamed, modalOpen, ok, page, setTheme, tabStaysIn, text, until, waitText }) => {
     await setTheme("dark");
     await inspectNamed("Short gateway drop");
     await waitText("#inspCauseTitle", /^Short gateway drop$/);
@@ -166,6 +166,8 @@ export const steps = [
     await setTheme("light");
     await dialogShot("inspector-light");
     await setTheme("dark");
+    await tabStaysIn("incidentInspectorModal");
+    await page.click("#incidentInspectorModal .modal-t"); // plain text: focus goes to the body, Escape still closes
     await page.keyboard.press("Escape");
     eq("escape closes it", await modalOpen("incidentInspectorModal"), false);
   }],
@@ -190,22 +192,97 @@ export const steps = [
     await waitText("#inspCauseTitle", /^Short gateway drop$/);
     await click("#incidentInspectorModal [data-action=openDossierModal]");
     await until(() => document.getElementById("dossierModal").classList.contains("active"));
+    await page.click("#dossierModal .modal-t"); // plain text: focus goes to the body, Escape still closes the topmost dialog
     await page.keyboard.press("Escape");
     eq("dossier closed", await modalOpen("dossierModal"), false);
     eq("inspector still open", await modalOpen("incidentInspectorModal"), true);
     await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
   }],
 
-  ["the inspector as a bottom sheet on a phone: it fits the width and scrolls inside", async ({ click, dialogShot, eq, hasChart, inspectNamed, noSideScroll, phone, setTheme, until }) => {
+  ["the inspector as a bottom sheet on a phone: it fits the width and scrolls inside", async ({ click, dialogShot, eq, hasChart, inspectNamed, noSideScroll, page, phone, setTheme, until }) => {
     await phone(async () => {
       await setTheme("dark");
+      await page.evaluate(() => { location.hash = "incidents"; }); // the chart is on the Live tab, out of sight
+      await until(() => document.querySelector("[data-panel=latency]").hidden);
       await inspectNamed("Short gateway drop");
       await until(() => document.querySelectorAll("#inspLanes .strip").length >= 3);
       await hasChart("incidentZoomChart");
       eq("inspector fits", await noSideScroll("incidentInspectorModal"), true);
       await dialogShot("inspector-phone");
-      await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+      // "Show in latency chart" leaves the Incidents tab for the Live tab, where the chart is
+      await click("#btnSnapDashboard");
+      await until(() => !document.querySelector("[data-panel=latency]").hidden && /^incident window /.test(document.getElementById("chartModeLabel").textContent));
       await setTheme(null);
     });
+  }],
+
+  ["the list loads in pages: one small page at start, older ones for the 7-day timeline, a search, the last page and a window older than the page", async ({ click, eq, ok, page, text, until, waitText }) => {
+    await page.reload({ waitUntil: "load" });
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length > 0);
+    const first = await page.evaluate(() => performance.getEntriesByType("resource").map((r) => r.name).filter((n) => /\/api\/incidents\?/.test(n)).map((n) => n.replace(/^.*\/api/, "/api")));
+    eq("the first fetch is a page of 50, not 500", first.join(" "), "/api/incidents?limit=50");
+    // a server with 130 incidents, one every 2 h (84 of them in the 7 days), newest first, honouring limit and offset
+    await page.evaluate(() => {
+      const now = Date.now() / 1000;
+      const all = Array.from({ length: 130 }, (_, i) => ({ id: 9000 + i, kind: "gateway_down", title: i === 120 ? "Old needle" : `Synthetic ${i}`, description: "", severity: "warning", cause_code: "unknown_outage", cause: "isp",
+        start_time: now - 600 - i * 7200, end_time: now - 560 - i * 7200, duration_seconds: 40, expected: i === 3 || i === 7, affected_targets: [] })); // two busy-line ones, so 98 of the first 100 show
+      const real = window.fetch;
+      window.__asked = [];
+      window.__realFetch = real;
+      window.fetch = (url, opts) => {
+        const u = new URL(String(url), location.href);
+        if (u.pathname === "/api/incidents/count") return Promise.resolve(new Response(JSON.stringify({ total: all.length, expected: 2 }), { headers: { "content-type": "application/json" } }));
+        if (u.pathname !== "/api/incidents") return real(url, opts);
+        const limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0);
+        window.__asked.push(`${limit}@${offset}`);
+        return Promise.resolve(new Response(JSON.stringify(all.slice(offset, offset + limit)), { headers: { "content-type": "application/json" } }));
+      };
+    });
+    const asked = () => page.evaluate(() => window.__asked.join(" "));
+    await new Promise((r) => setTimeout(r, 2500)); // the first message has set the version the panel compares with
+    // the server says the list changed: what is loaded so far (one page) is fetched again, then the timeline asks for the week
+    await page.evaluate(() => { window.__smokeMutate = new Function("d", "d.incidents_version = (d.incidents_version || 0) + 1000"); });
+    await until(() => window.__asked.length >= 2);
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    eq("a page of 50 and the next page, which reaches back over the 7 days of the timeline", (await asked()).split(" ").slice(0, 2).join(" "), "50@0 50@50");
+    await waitText("#incidentCountBadge", /^128 recorded events$/); // the server's count (130 less the 2 hidden), not the 98 loaded
+    eq("the footer shows the same total as the badge (not 98+)", await text("#incidentPaginationInfo"), "Showing 1–10 of 128 events");
+    // Next from a last loaded page that is not full: the page fills up, no row is skipped (it showed 91-98, then 101-110)
+    for (let n = 2; n <= 10; n++) {
+      await click("#btnPageNext");
+      await waitText("#incidentPageNum", new RegExp(`^Page ${n} of 10$`));
+    }
+    eq("a short last page", await page.$$eval("#incidentsBody tr.incident-row", (r) => r.length), 8);
+    await click("#btnPageNext");
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 10);
+    await waitText("#incidentPaginationInfo", /^Showing 91–100 of /);
+    await click("#btnPageNext");
+    await waitText("#incidentPaginationInfo", /^Showing 101–110 of /);
+    // the timeline is the 7 calendar days ending tonight at midnight, so how many of the synthetic incidents fall in it
+    // depends on the time of day (about 72 just after midnight, 84 just before): count them the same way (the two
+    // busy-line ones may be hidden)
+    const inWindow = await page.evaluate(() => {
+      const end = new Date(); end.setHours(24, 0, 0, 0);
+      const start = end.getTime() / 1000 - 7 * 86400, now = Date.now() / 1000;
+      return Array.from({ length: 130 }, (_, i) => now - 560 - i * 7200).filter((t) => t >= start).length;
+    });
+    ok(`the timeline has the week's incidents (${inWindow - 2} or more)`, await page.$$eval("#incidentTimeline .tl-bar", (b) => b.length) >= inWindow - 2);
+    // a search looks through everything: 130 loaded, the old one found
+    await page.type("#incidentSearchInput", "needle");
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 1);
+    ok("the old incident is found", /Old needle/.test(await page.$eval("#incidentsBody", (e) => e.textContent)));
+    await waitText("#incidentCountBadge", /^128 recorded events$/);
+    await page.$eval("#incidentSearchInput", (i) => { i.value = ""; i.dispatchEvent(new Event("input", { bubbles: true })); });
+    // Next on the last loaded page loads more; with everything loaded the pager ends
+    await page.select("#incidentPageSizeSelect", "50");
+    await waitText("#incidentPageNum", /^Page 1 of 3$/);
+    await click("#btnPageLast");
+    await waitText("#incidentPageNum", /^Page 3 of 3$/);
+    eq("the last page", await page.$$eval("#incidentsBody tr.incident-row", (r) => r.length), 28);
+    eq("no Next past the end", await page.$eval("#btnPageNext", (b) => b.disabled), true);
+    // put the real server back
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await page.reload({ waitUntil: "load" });
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 10);
   }],
 ];

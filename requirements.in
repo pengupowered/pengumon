@@ -10,3 +10,5 @@ jinja2>=3.1.3
 httpx>=0.27.0
 opentelemetry-sdk>=1.45.1,<2
 opentelemetry-exporter-otlp-proto-http>=1.45.1,<2
+# Windows has no IANA time-zone database of its own: zoneinfo reads this package (quiet hours, the daily check time)
+tzdata>=2024.1; sys_platform == "win32"

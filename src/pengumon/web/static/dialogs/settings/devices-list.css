@@ -1,0 +1,46 @@
+/* The Settings page's devices list editor (lists/devices.js). Tokens only; cards, never tables; no horizontal scroll. */
+.dv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+.dv-card { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); min-width: 0; }
+.dv-card.bad { border-color: color-mix(in srgb, var(--crit) 45%, var(--line)); }
+.dv-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); padding: var(--sp-3) var(--sp-4); min-width: 0; }
+.dv-toggle {
+  flex: 1 1 200px; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); text-align: left; cursor: pointer;
+  border: 0; background: none; padding: 0; font: inherit; color: var(--ink-1); font-weight: var(--fw-semi);
+}
+.dv-toggle svg.i { flex: none; transition: transform var(--t-fast) var(--ease); }
+.dv-card.open .dv-toggle svg.i { transform: rotate(90deg); }
+.dv-title { min-width: 0; overflow-wrap: anywhere; }
+.dv-id { font-weight: var(--fw-regular, 400); font-size: var(--fs-xs); color: var(--ink-3); overflow-wrap: anywhere; }
+.dv-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); min-width: 0; }
+.dv-chips .chip { overflow-wrap: anywhere; }
+.dv-tools { display: flex; gap: var(--sp-1); }
+.dv-down svg.i { transform: rotate(180deg); }
+.dv-fail { display: flex; gap: var(--sp-2); align-items: flex-start; padding: 0 var(--sp-4) var(--sp-3); color: var(--crit); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.dv-fail svg.i { flex: none; margin-top: 2px; }
+.dv-body { border-top: 1px solid var(--line); padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-4); }
+.dv-body[hidden] { display: none; }
+.dv-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--sp-3) var(--sp-4); min-width: 0; }
+.dv-f { min-width: 0; }
+.dv-f .input { width: 100%; min-width: 0; }
+.dv-f .hint { overflow-wrap: anywhere; }
+.dv-err { font-size: var(--fs-xs); color: var(--crit); min-height: 0; overflow-wrap: anywhere; }
+.dv-err:empty { display: none; }
+.dv-f.invalid .input { border-color: var(--crit); }
+.dv-check > label { display: flex; align-items: center; gap: var(--sp-2); }
+.dv-opts { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: var(--r-md); margin: 0; padding: var(--sp-3) var(--sp-4); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--sp-3) var(--sp-4); min-width: 0; }
+.dv-opts legend { font-size: var(--fs-sm); color: var(--ink-2); padding: 0 var(--sp-2); }
+.dv-map { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.dv-map-row { display: flex; gap: var(--sp-2); min-width: 0; }
+.dv-map-row .input { flex: 1 1 0; min-width: 0; }
+.dv-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center; justify-content: space-between; }
+.dv-actions .hint { font-size: var(--fs-xs); color: var(--ink-3); flex: 1 1 200px; }
+.dv-removed { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.dv-removed li { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center; border: 1px dashed color-mix(in srgb, var(--crit) 45%, var(--line)); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-sm); color: var(--ink-2); overflow-wrap: anywhere; }
+.dv-removed li > span { flex: 1 1 240px; min-width: 0; }
+.dv-add { margin-top: var(--sp-3); }
+@media (max-width: 720px) {
+  .dv-head { padding: var(--sp-3); }
+  .dv-body { padding: var(--sp-3); }
+  .dv-actions .btn { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: reduce) { .dv-toggle svg.i { transition: none; } }

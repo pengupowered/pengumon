@@ -21,6 +21,7 @@ from pengumon.lines import docsis
 if TYPE_CHECKING:
     from pengumon.config import AppConfig
     from pengumon.db.repository import DatabaseRepository
+    from pengumon.devices.component import DeviceSupervisor
     from pengumon.devices.registry import DeviceRegistry
     from pengumon.engine.discovery.drift import DriftChecker
     from pengumon.engine.discovery.jobs import DiscoveryJobs
@@ -28,8 +29,10 @@ if TYPE_CHECKING:
     from pengumon.engine.path import PathManager
     from pengumon.engine.prober import NetworkProber
     from pengumon.notify import Notifier
+    from pengumon.settings.preview import PreviewJobs
     from pengumon.services.checker import ServiceChecker
     from pengumon.secrets import CredentialSources, SecretStore
+    from pengumon.settings.manager import SettingsManager
 
 STATE_ATTR = "pengumon"
 
@@ -44,10 +47,13 @@ class AppState:
     devices: Optional["DeviceRegistry"] = None
     service_checker: Optional["ServiceChecker"] = None
     notifier: Optional["Notifier"] = None  # ntfy and the webhooks; None when no channel is configured
+    device_supervisor: Optional["DeviceSupervisor"] = None  # devices/component.py: applies a changed devices list live
     secret_store: Optional["SecretStore"] = None  # data/secrets.json, shared by the credential sources and endpoints
     credentials: Optional["CredentialSources"] = None  # where the devices' credentials came from at startup
     discovery: Optional["DiscoveryJobs"] = None  # the network discovery runs (engine/discovery)
     drift: Optional["DriftChecker"] = None  # the background route-change checks (engine/discovery/drift.py)
+    settings: Optional["SettingsManager"] = None  # the settings store (pengumon.settings.manager)
+    preview: Optional["PreviewJobs"] = None  # the outage-rules preview jobs (settings/preview.py)
 
     def line_history(self) -> Optional[docsis.DocsisHistory]:
         """The stored readings of the device that reports the access line (DeviceRegistry.primary, so a device

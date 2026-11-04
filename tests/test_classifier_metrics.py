@@ -4,6 +4,7 @@ import random
 from typing import Dict, List, Optional
 
 from pengumon.engine.classifier.metrics import CATEGORIES, category_metrics, round_metrics
+from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.models.probes import ProbeSample, TargetStats
 
 
@@ -165,18 +166,20 @@ def test_round_predicates():
                  for c in CATEGORIES}
         return round_metrics(stats, [])
 
-    assert not mk().is_loss_or_outage("degraded")
-    assert mk().is_loss_or_outage("down")
-    assert mk(local=20).is_loss_or_outage("degraded")
-    assert not mk(dns=20).is_loss_or_outage("degraded")
-    assert mk(dns=30).is_loss_or_outage("degraded")
-    assert mk(isp=20).isp_loss_only
-    assert not mk(isp=20, public=20).isp_loss_only
-    assert not mk(isp=10).isp_loss_only
-    assert mk(gateway=20).upstream_issue(120.0)
-    assert not mk(local=40, dns=40).upstream_issue(120.0)
+    c = ClassifierConfig()
+    assert not mk().is_loss_or_outage("degraded", c)
+    assert mk().is_loss_or_outage("down", c)
+    assert mk(local=20).is_loss_or_outage("degraded", c)
+    assert not mk(dns=20).is_loss_or_outage("degraded", c)
+    assert mk(dns=30).is_loss_or_outage("degraded", c)
+    assert mk(isp=20).isp_loss_only(c)
+    assert not mk(isp=20, public=20).isp_loss_only(c)
+    assert not mk(isp=10).isp_loss_only(c)
+    at_120 = ClassifierConfig(public_latency_spike_threshold_ms=120.0)
+    assert mk(gateway=20).upstream_issue(at_120)
+    assert not mk(local=40, dns=40).upstream_issue(at_120)
     slow = round_metrics({"p": stat("p", "public", [130.0])}, [])
-    assert slow.upstream_issue(120.0) and not slow.upstream_issue(130.0)
+    assert slow.upstream_issue(at_120) and not slow.upstream_issue(ClassifierConfig(public_latency_spike_threshold_ms=130.0))
 
 
 def _random_round(rng):

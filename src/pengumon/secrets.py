@@ -16,11 +16,12 @@ Passwords are never logged or returned: only the name of the source that supplie
 
 import json
 import os
+import re
 import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Tuple, Union
+from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 
 from pengumon import paths
 from pengumon.devices.settings import DeviceConfig, credential_env_name
@@ -165,6 +166,33 @@ class SecretStore:
         """A source name for logs: "data/secrets.json devices.router.password"."""
         return f"{self.path} {key}"
 
+    def get(self, path: Tuple[str, ...]) -> Optional[str]:
+        """The text at `path` ("ntfy", "url"), or None when it is missing, empty or not text. Never log it."""
+        node: object = self.data()
+        for part in path:
+            node = node.get(part) if isinstance(node, dict) else None
+        return _text(node)
+
+    def remove(self, path: Tuple[str, ...]) -> None:
+        """Removes the entry at `path` from the file and from what data() returns (`write` can only merge)."""
+        self.change({}, [path])
+
+    def change(self, updates: dict, removals: Sequence[Tuple[str, ...]] = ()) -> None:
+        """Merges `updates` and removes `removals` (paths; a parent left empty goes too) in one atomic write of the
+        file, then updates what data() returns. Nothing is written when neither changes anything."""
+        memory = json.loads(json.dumps(self.data()))  # converted before the change, as in write()
+        _merge(memory, json.loads(json.dumps(updates)))
+        for path in removals:
+            _remove_path(memory, tuple(path))
+        if memory == self.data():
+            return
+        on_disk = _read_store(self.path) if self.path.exists() else {}
+        _merge(on_disk, json.loads(json.dumps(updates)))
+        for path in removals:
+            _remove_path(on_disk, tuple(path))
+        write_secrets(on_disk, self.path)
+        self._data = memory
+
 
 class CredentialSources:
     """The credential sources of one process: the environment, the secrets directory and the SecretStore.
@@ -308,6 +336,74 @@ def _read_store(path: Path) -> Dict:
         _log.warning(f"Credentials file is readable by other users (mode {mode:04o}); pengumon writes it 0600",
                      path=str(path))
     return data
+
+
+# --- the Settings page's secret slots ----------------------------------------------------------------------------------
+#
+# A slot is a named place in secrets.json that the Settings page writes and never reads back (pengumon.settings.registry
+# SECRET_SLOTS): "ntfy.url" and "ntfy.token" (PENGUMON_NOTIFY_URL / _TOKEN win while set), "webhook.<id>.url" (a
+# webhook's address; it can hold a token) and "webhook_header.<name>" (a header secret, the existing webhooks.<name>;
+# PENGUMON_WEBHOOK_SECRET_<NAME> and /run/secrets/pengumon_webhook_<name> win, as resolve_webhook_secret reads them).
+
+SLOT_NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")  # a header secret's name (notify_settings._SECRET_NAME)
+WEBHOOK_SLOT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # a webhook id (notify_settings.WEBHOOK_ID)
+
+
+def slot_path(slot: str) -> Optional[Tuple[str, ...]]:
+    """Where a slot lives in secrets.json, or None for a name that is no slot."""
+    if slot in ("ntfy.url", "ntfy.token"):
+        return tuple(slot.split("."))
+    if slot.startswith("webhook.") and slot.endswith(".url"):
+        webhook = slot[len("webhook."):-len(".url")]
+        return ("webhook_urls", webhook) if WEBHOOK_SLOT_ID.fullmatch(webhook) else None
+    if slot.startswith("webhook_header."):
+        name = slot[len("webhook_header."):]
+        return ("webhooks", name) if SLOT_NAME.fullmatch(name) else None
+    return None
+
+
+def slot_env_var(slot: str) -> Optional[str]:
+    """The variable that wins over a slot while it is set (and refuses a write to it), or None."""
+    from pengumon.settings.env import SECRET_ENV
+    if slot in SECRET_ENV:
+        return SECRET_ENV[slot]
+    if slot.startswith("webhook_header."):
+        return webhook_secret_env_var(slot[len("webhook_header."):])
+    return None
+
+
+def resolve_slot(slot: str, store: "SecretStore", *, env: Optional[Mapping[str, str]] = None,
+                 secrets_dir: Optional[Path] = SECRETS_DIR) -> Tuple[Optional[str], Optional[str]]:
+    """(value, source) of a slot: source "env", "secret_file" or "secrets_file", or (None, None) when no source
+    has it. Never log the value."""
+    from pengumon.settings.env import env_value
+    variable = slot_env_var(slot)
+    if variable is not None:
+        value = env_value(variable, env)
+        if value is not None:
+            return value, "env"
+    if slot.startswith("webhook_header.") and secrets_dir is not None:
+        name = slot[len("webhook_header."):]
+        found = _read_secret_file(secrets_dir / f"pengumon_webhook_{name}", f"webhook:{name}")
+        if found is not None:
+            return found[0], "secret_file"
+    path = slot_path(slot)
+    value = store.get(path) if path is not None else None
+    return (value, "secrets_file") if value is not None else (None, None)
+
+
+def _remove_path(data: dict, path: Tuple[str, ...]) -> None:
+    """Deletes data[path...]; a mapping left empty by it is removed too."""
+    if not path:
+        return
+    parent = data.get(path[0]) if len(path) > 1 else data
+    if len(path) == 1:
+        data.pop(path[0], None)
+        return
+    if isinstance(parent, dict):
+        _remove_path(parent, path[1:])
+        if not parent:
+            data.pop(path[0], None)
 
 
 # --- writing the credentials file -----------------------------------------------------------------------------------

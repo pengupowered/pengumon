@@ -25,10 +25,13 @@ from pengumon.engine.classifier import component as classifier
 from pengumon.engine.discovery import component as discovery
 from pengumon.live import component as live
 from pengumon.observability import apply_config_level, get_logger, grafana, setup_logging
+from pengumon.observability import component as runtime
 from pengumon.observability.export import setup_telemetry
 from pengumon.observability.telemetry import fastapi_telemetry
 from pengumon.security import SESSIONS_PATH, FileSessionStore, SecurityConfig, SecurityMiddleware
 from pengumon.services import component as services
+from pengumon.settings import component as settings
+from pengumon.settings import preview_component as settings_preview
 from pengumon.web import assets, pages
 
 # Logging is set up by main() (observability.setup_logging), not at import, so importing the app in tests or tools
@@ -38,17 +41,20 @@ logger = get_logger("pengumon")
 # Registered and started in this order, stopped in the reverse order (docs/architecture.md says why it is this one).
 # Adding a feature is a module with register(ctx) and one line here.
 COMPONENTS = [
-    devices,        # first: a device config that cannot run stops the start before the database opens
-    storage,        # opens (migrates) the database; closes it after every later component has stopped
+    storage,        # first: opens (migrates) the database; closes it after every later component has stopped
+    settings,       # the settings store: the one-time import of config.yaml, then the stored settings into the config
+    devices,        # built from the stored devices; a device that cannot run is reported, the start goes on
     probing,        # the probe path (stored in the database), the prober; starts the probe loop
     retention,      # the start-up cleanup, before the load backfills read the history
     line_load,      # line capacity, the load backfills, the monitors' load and probe-loss hooks
     notify,         # ntfy, for the classifier and the service checks
     classifier,     # needs the line load and the notifier; its path traces end before the database closes
+    settings_preview,  # the outage-rules preview jobs; a running replay is killed at shutdown
     services,       # optional: host service checks
     clients,        # optional: the client list
     live,           # the websocket broadcaster
     discovery,      # optional: network discovery on request (POST /api/discovery); stops a running one first
+    runtime,        # the event-loop monitor (lag and task count for the telemetry)
 ]
 
 
@@ -57,7 +63,7 @@ async def lifespan(app: FastAPI):
     grafana.configure(os.environ)  # an invalid PENGUMON_GRAFANA_URL stops the start here
     telemetry = setup_telemetry()  # exports only when an OTLP endpoint is set (OTEL_EXPORTER_OTLP_ENDPOINT)
     paths.ensure_data_dir()  # a first start on a fresh system: the database, secrets and sessions live in it
-    config = load_config()
+    config = load_config(lenient_rest=True)  # the bootstrap keys strictly; the settings come from the store
     apply_config_level(config.server.log_level)
     logger.info(f"Loaded config with {len(config.dns_probes)} DNS probes (the probe path is loaded from the database).")
 

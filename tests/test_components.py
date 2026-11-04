@@ -78,11 +78,12 @@ def test_main_imports_only_the_components_and_the_app_frame():
     assert stray == [], f"main.py wires a feature directly: {stray}"
 
 
-def test_the_list_starts_with_the_devices_and_the_storage():
-    """The devices first (a device that cannot run stops the start before the database opens), then the storage,
-    which every later component's stop may still write to."""
+def test_the_list_starts_with_the_storage_the_settings_and_the_devices():
+    """The storage first (the settings live in it, and every later component's stop may still write to it), then
+    the settings (which load the stored settings into the config every later component is built from), then the
+    devices, built from the stored devices."""
     names = [m.__name__.removeprefix("pengumon.") for m in main.COMPONENTS]
-    assert names[:2] == ["devices.component", "db.storage"]
+    assert names[:3] == ["db.storage", "settings.component", "devices.component"]
     assert names.index("engine.line_load") < names.index("engine.classifier.component")
     assert names.index("notify") < min(names.index("engine.classifier.component"), names.index("services.component"))
     assert names.index("db.retention") < names.index("engine.line_load")  # clean up before the backfills read
@@ -268,8 +269,9 @@ async def test_shutdown_order(tmp_path, monkeypatch):
                   'devices:\n  - {id: wifi, driver: asuswrt, url: "http://192.0.2.1", enabled: false}\n'))
     _quiet_workers(monkeypatch)
     async with main.lifespan(main.app):
-        # the wifi device, probe loop, retention, line load, service checks, broadcaster, route-change checks
-        assert len(tasks) == 7
+        # the wifi device, probe loop, retention, line load, service checks, broadcaster, route-change checks, the
+        # event-loop monitor
+        assert len(tasks) == 8
 
     labels = [label for label, _ in events]
     assert all(done for _, done in events), events  # every task had ended
@@ -279,3 +281,23 @@ async def test_shutdown_order(tmp_path, monkeypatch):
     assert labels.index("path traces ended") < labels.index("repository closed")
     assert labels.index("service incidents resolved") < labels.index("repository closed")
     assert labels[-2:] == ["last log line", "telemetry flushed"]
+
+
+async def test_a_spawned_task_that_dies_is_logged_when_it_dies_and_a_cancelled_one_is_not(caplog):
+    from pengumon.components import Context
+
+    async def crash():
+        raise RuntimeError("boom")
+
+    ctx = Context(app=None, config=None, state=None)
+    idle = ctx.spawn(asyncio.sleep(3600))
+    with caplog.at_level(logging.ERROR, logger="pengumon.components"):
+        task = ctx.spawn(crash())
+        await asyncio.wait([task])
+        await asyncio.sleep(0)
+        assert [r for r in caplog.records if "boom" in r.getMessage()]
+        caplog.clear()
+        idle.cancel()
+        await asyncio.gather(idle, return_exceptions=True)
+        await asyncio.sleep(0)
+    assert not caplog.records

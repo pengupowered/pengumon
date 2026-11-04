@@ -24,7 +24,7 @@ devices:
     options:                     # driver-specific, checked at startup
       clientlist_interval_seconds: 60  # asuswrt: the client list (the heaviest answer) is read this often
       # mesh_node_labels:            # asuswrt: name mesh nodes by MAC (or its last six hex digits), see clients.md
-      #   "AA:BB:CC:00:11:22": "Hall"
+      #   "02:00:00:00:11:22": "Hall"
 ```
 
 - `xfinity_xb`
@@ -70,11 +70,11 @@ switched off (`enabled: false`), the first one still shows its stored history an
 from it. The live line load needs an enabled device.
 
 Without a `devices:` list there are no devices (the probes, incidents and reports work without them). The ids are
-the keys of each device's stored history and credentials: the shipped `config.yaml` uses `modem` and `router`, the
+the keys of each device's stored history and credentials: the example `config.yaml` uses `modem` and `router`, the
 ids its history was stored under, so renaming a device starts its history afresh (the old rows are kept until
 retention, and a startup warning names stored ids that are not in the config).
 
-**Credentials** never go in `config.yaml`. For each device, the first of these that has a value wins (username and
+**Credentials** never go in `config.yaml` or the settings. For each device, the first of these that has a value wins (username and
 password separately; `<ID>` is the id in upper case with `-` as `_`):
 
 - Order 1: Password from environment `PENGUMON_DEVICE_<ID>_PASSWORD`. Username from environment `PENGUMON_DEVICE_<ID>_USERNAME`
@@ -87,6 +87,23 @@ A save that a higher-ranked source (the environment or a `/run/secrets` file) wi
 used until then; the answer names that source in `overridden_by` and the log warns. `docker-compose.yml` passes
 `PENGUMON_DEVICE_MODEM_*` and `PENGUMON_DEVICE_ROUTER_*` from `.env` (empty when unset); for another device id, or a
 `/run/secrets` file, add an `environment:` entry or a `secrets:` entry named `pengumon_<id>_password` there.
+
+## Changing devices without a restart
+
+Devices are edited on the Settings page (Devices and services). A save applies live:
+
+- a device whose settings did not change keeps its connection and polling;
+- a changed device is stopped and rebuilt, a removed one is stopped and its connection closed, a new one starts;
+- the line load and the access-line wording follow the new set of devices;
+- path hops linked to a removed device are unlinked in one path version. Its stored readings stay until retention
+  removes them.
+
+A device's id is fixed once saved: its history and sign-in are kept under it. To use another id, remove the device and
+add it again.
+
+A device that cannot run (a CA file that is missing, say) no longer stops the start. It is left out, logged, and its
+card on the Settings page shows why. Passwords are not part of the list: use Set up on the saved device (they stay in
+`data/secrets.json`).
 
 ## OpenWrt
 
@@ -149,8 +166,8 @@ config login
 
 The `file` entries are paths rpcd resolves first: `/proc/net` is a link to `/proc/self/net`, hence `/proc/*/net/arp`.
 The login has no `write` list, so it cannot change anything even through methods that would. To use root instead,
-add the same file: root's `list read '*'` takes in every ACL group, this one included. In `config.yaml`, set
-`username: pengumon` (the driver's default is `root`), and the password like any other device's. Over `https://` the
+add the same file: root's `list read '*'` takes in every ACL group, this one included. On the Settings page, set
+the username to `pengumon` (the driver's default is `root`), and the password like any other device's. Over `https://` the
 router's certificate is checked as for any device (`tls:` above): OpenWrt's own is self-signed, so give its
 certificate as `ca_file` (`/etc/uhttpd.crt`, converted to PEM) or set `verify: false`.
 

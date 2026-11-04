@@ -1,0 +1,8 @@
+{
+  "lazy": {
+    "actions": [
+      "openDossierModal"
+    ],
+    "modals": []
+  }
+}

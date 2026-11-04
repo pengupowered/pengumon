@@ -31,6 +31,7 @@ async function fetchOne(id) {
 }
 
 function poll() {
+  if (document.hidden) return; // nobody looks; the live message's changed readings still arrive (live.js)
   const now = Date.now();
   watched.forEach((w, id) => {
     const every = Math.max(10, w.device.poll_interval_seconds || 30) * 1000;
@@ -44,7 +45,8 @@ function poll() {
 function start(b) {
   if (bus) return;
   bus = b;
-  b.subscribe('devices', (map) => Object.entries(map || {}).forEach(([id, snap]) => live(id, snap)));
+  // every change, also while hidden: a card keeps the readings this page saw (a card's history of them)
+  b.subscribe('devices', (map) => Object.entries(map || {}).forEach(([id, snap]) => live(id, snap)), { every: true });
   setInterval(poll, 5000);
 }
 

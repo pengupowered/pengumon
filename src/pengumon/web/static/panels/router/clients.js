@@ -7,7 +7,7 @@
 // value is shown through textContent. The Wi-Fi link rate is not traffic and is labelled so.
 
 import { registerActions } from '../../js/dispatch.js';
-import { CLIENT_KINDS, openModal, deviceName } from '../../js/util.js';
+import { CLIENT_KINDS, keepKeyboard, openModal, deviceName } from '../../js/util.js';
 import { clientsDevice, setTopologyClients, setTopologyFilter } from './topology.js';
 import { series } from '../../js/chart-theme.js';
 import { levelOfGrade } from '../../js/grades.js';
@@ -67,6 +67,7 @@ export function openNetworkModal(nodeId) {
   document.querySelectorAll('#networkModal .clients-only').forEach((el) => { el.hidden = !lists; });
   document.getElementById('clientsEmpty').hidden = lists;
   document.getElementById('clientsUpdated').textContent = '';
+  keepKeyboard(document.getElementById('networkModal'));
   openModal('networkModal');
   if (nodeId !== undefined) view.filter = nodeId ? { kind: 'node', value: nodeId } : null;
   setTopologyClients(view.data);

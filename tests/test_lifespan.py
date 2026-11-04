@@ -79,7 +79,10 @@ async def test_the_lifespan_installs_the_app_state_and_removes_it_at_shutdown(tm
         assert [d.id for d in state.devices] == ["wifi"]
         assert state.config.devices[0].id == "wifi"
         assert None not in (state.repository, state.prober, state.classifier, state.secret_store, state.credentials)
-        assert state.service_checker is None  # no service_checks configured: the services component is left out
+        assert state.service_checker is not None and state.service_checker.services == []  # always built: services can be added live
+        assert state.notifier is not None and state.notifier.channels() == []  # likewise
+        # an incident that rises to critical reaches the notifier (the critical-only rule announces it then)
+        assert state.classifier.on_incident_escalated == state.notifier.on_incident_escalated
         assert state.credentials.store is state.secret_store
         async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://test") as ac:
             (device,) = (await ac.get("/api/devices")).json()
@@ -88,15 +91,24 @@ async def test_the_lifespan_installs_the_app_state_and_removes_it_at_shutdown(tm
     assert getattr(main.app.state, STATE_ATTR, None) is None
 
 
-async def test_a_device_that_cannot_run_stops_the_start_before_the_database_opens(tmp_path, monkeypatch):
-    from pengumon.devices.registry import DeviceConfigError
+async def test_a_device_that_cannot_run_is_reported_and_the_start_goes_on(tmp_path, monkeypatch, caplog):
+    """The devices are built from the settings store after the database opened: one that cannot run (its CA file is
+    missing) is logged and left out, and the app starts without it."""
+    import logging
+    from pengumon.api.state import STATE_ATTR
 
     monkeypatch.setenv("PENGUMON_CONFIG", _config_file(
-        tmp_path, 'devices:\n  - {id: wifi, driver: asuswrt, url: "https://192.0.2.1", tls: {ca_file: /nope.pem}}\n'))
-    with pytest.raises(DeviceConfigError, match="device wifi: tls.ca_file '/nope.pem' cannot be used"):
+        tmp_path, 'devices:\n  - {id: wifi, driver: asuswrt, url: "https://192.0.2.1", tls: {ca_file: /nope.pem}}\n'
+                  '  - {id: modem, driver: xfinity_xb, url: "http://192.0.2.2", enabled: false}\n'))
+    _workers_idle(monkeypatch)
+    with caplog.at_level(logging.ERROR, logger="pengumon"):
         async with main.lifespan(main.app):
-            pass
-    assert not (tmp_path / "pengumon.db").exists()
+            state = getattr(main.app.state, STATE_ATTR)
+            assert [d.id for d in state.devices] == ["modem"]
+            assert [d.id for d in state.config.devices] == ["wifi", "modem"]  # still the stored list
+            assert "tls.ca_file '/nope.pem' cannot be used" in state.devices.errors["wifi"]
+    assert any("device wifi: tls.ca_file '/nope.pem' cannot be used" in r.getMessage() for r in caplog.records)
+    assert (tmp_path / "pengumon.db").exists()
 
 
 # --- stored history and the configured devices ----------------------------------------------------------------------
@@ -269,3 +281,27 @@ def test_sigterm_shuts_the_server_down_cleanly_within_podman_stops_grace_period(
     assert "Pengumon shut down successfully." in log and "Application shutdown complete" in log
     assert "Traceback" not in log and "[ERROR]" not in log and "[CRITICAL]" not in log, log
     assert log.index("Pengumon shut down successfully.") < log.index("Application shutdown complete")
+
+
+# --- devices through the settings manager (the lifespan sets up logging, so it lives with the lifespan tests) ------------------------------------------------------------------------------------
+
+async def test_the_manager_refuses_a_device_that_cannot_be_built_and_applies_a_good_list(tmp_path, monkeypatch):
+    from pengumon import main
+    from pengumon.api.state import STATE_ATTR
+
+    monkeypatch.setenv("PENGUMON_CONFIG", _config_file(tmp_path, ""))
+    _workers_idle(monkeypatch)
+    async with main.lifespan(main.app):
+        state = getattr(main.app.state, STATE_ATTR)
+        manager = state.settings
+        bad = {"id": "wifi", "driver": "asuswrt", "url": "https://192.0.2.1", "tls": {"verify": True, "ca_file": "/nope.pem"}}
+        checked = await manager.validate({}, {"devices": [bad]})
+        assert [(e["where"]) for e in checked.errors] == ["lists.devices[0]"]
+        assert "tls.ca_file '/nope.pem' cannot be used" in checked.errors[0]["message"]
+        good = {"id": "wifi", "driver": "asuswrt", "url": "http://192.0.2.1", "enabled": False}
+        await manager.apply(manager.revision, {}, {"devices": [good]})
+        assert [d.id for d in state.devices] == ["wifi"]
+        task = state.device_supervisor._tasks["wifi"]
+        await manager.apply(manager.revision, {}, {"devices": [good, {**good, "id": "wifi2", "url": "http://192.0.2.2"}]})
+        assert state.device_supervisor._tasks["wifi"] is task  # unchanged: same task
+        assert [d.id for d in state.devices] == ["wifi", "wifi2"]

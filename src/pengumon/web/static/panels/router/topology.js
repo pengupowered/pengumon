@@ -32,7 +32,6 @@ export function clientsDevice() {
 }
 
 const RANK = { up: 0, degraded: 1, down: 2 };
-const CLASS = { up: 'healthy', degraded: 'degraded', down: 'down' };
 
 const view = {
   clients: null, // the last /clients answer

@@ -117,7 +117,7 @@ Every answer is matched to its request by echo id, sequence and destination (com
 
 ## The default gateway
 
-When `config.yaml` has no targets, Pengumon probes the default gateway and two public resolvers. On Linux the gateway
+When no probe path is stored yet, Pengumon probes the default gateway and two public resolvers. On Linux the gateway
 comes from `/proc/net/route`. Where that file is missing (macOS, Windows), it is the router that answers a TTL=1 probe
 to 1.1.1.1, if that address is private (RFC 1918). The probe gives up after about a second.
 

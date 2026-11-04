@@ -1,6 +1,7 @@
 # Linux host deployment (rootless Podman with podman-compose, or Docker):
 #   podman-compose up -d --build
-# First: cp config.example.yaml config.yaml (git-ignored; settings go there; the network path is discovered, not listed).
+# First: cp config.example.yaml config.yaml (git-ignored). It holds only the listen address, port, database path, probe
+# interval and the one-time first import; all other settings are on the dashboard's Settings page.
 # Settings come from .env next to this file (git-ignored; see .env.example). Empty values count as unset.
 #
 # Host networking, so probes and traceroute measure this machine's own path with no proxy in between.
@@ -46,7 +47,7 @@ services:
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-pengumon}
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-}
       - PENGUMON_GRAFANA_URL=${PENGUMON_GRAFANA_URL:-}
-      # Credentials of the devices in config.yaml (PENGUMON_DEVICE_<ID>_*); unset, the dashboard's are used
+      # Credentials of the devices set up on the Settings page (PENGUMON_DEVICE_<ID>_*); unset, the dashboard's are used
       - PENGUMON_DEVICE_MODEM_USERNAME=${PENGUMON_DEVICE_MODEM_USERNAME:-}
       - PENGUMON_DEVICE_MODEM_PASSWORD=${PENGUMON_DEVICE_MODEM_PASSWORD:-}
       - PENGUMON_DEVICE_ROUTER_USERNAME=${PENGUMON_DEVICE_ROUTER_USERNAME:-}

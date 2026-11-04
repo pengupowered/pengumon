@@ -40,6 +40,7 @@ from pengumon.engine.path_preview import PreviewBusy
 from pengumon.models.hosts import validate_host
 from pengumon.models.probes import TargetConfig
 from pengumon.security import rate_limit
+from pengumon.yamlsafe import IMPORT_MAX_BYTES, IMPORT_MAX_DEPTH, check_yaml_plain, load_plain  # noqa: F401
 
 router = APIRouter(prefix="/api")
 
@@ -282,45 +283,10 @@ async def export_path(state: StateDep):
                     headers={"Content-Disposition": 'attachment; filename="pengumon-path.yaml"'})
 
 
-IMPORT_MAX_BYTES = 256 * 1024
-IMPORT_MAX_DEPTH = 16  # nesting of the YAML document; an export is three deep
-
-
-def check_yaml_plain(text: str) -> None:
-    """Refuses what an export never contains and what can blow up while loading: anchors, aliases and merge keys
-    (a few hundred bytes of nested aliases expand to gigabytes) and deep nesting. Works on the parser's events, so
-    nothing is constructed. Raises ValueError; a YAML syntax error is left to the loader."""
-    depth = 0
-    try:
-        for event in yaml.parse(text, Loader=yaml.SafeLoader):
-            if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
-                raise ValueError("Anchors and aliases (&name, *name) are not allowed in a path file")
-            if isinstance(event, yaml.ScalarEvent) and event.value == "<<" and event.implicit[0]:
-                raise ValueError("Merge keys (<<) are not allowed in a path file")
-            if isinstance(event, (yaml.MappingStartEvent, yaml.SequenceStartEvent)):
-                depth += 1
-                if depth > IMPORT_MAX_DEPTH:
-                    raise ValueError("That file is nested too deeply to be a path")
-            elif isinstance(event, (yaml.MappingEndEvent, yaml.SequenceEndEvent)):
-                depth -= 1
-    except yaml.YAMLError:
-        return  # reported by the loader with its position
-
-
 def read_import(text: str) -> List[TargetConfig]:
     """The hops of an export (or of a config.yaml: its targets: section; a bare list works too), validated like a
     PUT. Raises ValueError with a plain message; a YAML error is reported by position only."""
-    if len(text) > IMPORT_MAX_BYTES:
-        raise ValueError("That file is too big to be a path")
-    check_yaml_plain(text)
-    try:
-        data = yaml.safe_load(text)
-    except RecursionError:
-        raise ValueError("That file is nested too deeply to be a path") from None
-    except yaml.YAMLError as e:
-        mark = getattr(e, "problem_mark", None)
-        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
-        raise ValueError(f"That is not valid YAML{where}: {getattr(e, 'problem', None) or type(e).__name__}") from None
+    data = load_plain(text, "path file")
     if isinstance(data, dict):
         data = data.get("targets")
     if not isinstance(data, list) or not data:

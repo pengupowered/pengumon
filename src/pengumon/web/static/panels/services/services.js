@@ -4,7 +4,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { icon, STATUS } from '../../js/util.js';
+import { copyText, icon, STATUS } from '../../js/util.js';
 
 const POLL_MS = 30000;
 const REDRAW_MS = 5000; // keeps "checked Ns ago" honest between polls
@@ -174,9 +174,7 @@ export function copyServiceUrl(text, button) {
     button.querySelector('use')?.setAttribute('href', '#i-ok');
     setTimeout(() => { button.title = 'Copy the health-check address'; button.querySelector('use')?.setAttribute('href', '#i-copy'); }, 2000);
   };
-  navigator.clipboard.writeText(text).then(() => done('Copied')).catch(() => {
-    prompt('Copy address:', text);
-  });
+  copyText(text).then((copied) => { if (copied) done('Copied'); else prompt('Copy address:', text); });
 }
 
 // Starts only when the host_services feature is available; otherwise nothing is fetched (tabs.js shows or hides the card).

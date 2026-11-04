@@ -102,7 +102,14 @@ def describe_change(old: Sequence[TargetConfig], new: Sequence[TargetConfig],
         if was.category != t.category:
             parts.append(f"{t.name}: role {ROLE_WORDS.get(was.category, was.category)} → "
                          f"{ROLE_WORDS.get(t.category, t.category)}")
-        rest = {"id", "name", "category", "address"}
+        if was.device_id != t.device_id:
+            if t.device_id is None:
+                parts.append(f"unlinked {t.name} from device {was.device_id}")
+            elif was.device_id is None:
+                parts.append(f"linked {t.name} to device {t.device_id}")
+            else:
+                parts.append(f"{t.name}: device {was.device_id} → {t.device_id}")
+        rest = {"id", "name", "category", "address", "device_id"}
         if was.model_dump(exclude=rest) != t.model_dump(exclude=rest):
             other += 1
     common_before = [t.id for t in old if t.id in after_ids]

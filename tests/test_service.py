@@ -339,6 +339,43 @@ def test_install_as_root_installs_the_system_service(as_linux, monkeypatch, tmp_
     assert "http://127.0.0.1:8000/" in capsys.readouterr().out
 
 
+def test_install_again_keeps_the_host_and_port_of_the_installed_service(as_linux, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(service.os, "geteuid", lambda: 0, raising=False)
+    (tmp_path / "pengumon").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(service.sys, "executable", str(tmp_path / "python"))
+    unit = tmp_path / "pengumon.service"
+    monkeypatch.setattr(service, "SYSTEM_UNIT_PATH", unit)
+    unit.write_text(service.render_systemd_system(EXE, {"PENGUMON_HOST": "0.0.0.0", "PENGUMON_PORT": "9100"}))
+    assert service.cmd_install(cli.build_parser().parse_args(["service", "install"]), FakeRun()) == 0
+    text = unit.read_text()
+    assert "PENGUMON_HOST=0.0.0.0" in text and "PENGUMON_PORT=9100" in text
+    assert "Keeping the installed service's listen address" in capsys.readouterr().out
+    assert service.cmd_install(cli.build_parser().parse_args(["service", "install", "--host", "127.0.0.1"]), FakeRun()) == 0
+    text = unit.read_text()  # what is asked for wins; what is not asked for stays
+    assert "PENGUMON_HOST=127.0.0.1" in text and "PENGUMON_PORT=9100" in text
+
+
+def test_the_settings_of_an_installed_service_are_read_from_each_kind_of_definition(tmp_path):
+    user_unit = service.systemd_user_unit_path(tmp_path)
+    user_unit.parent.mkdir(parents=True)
+    user_unit.write_text(service.render_systemd_user(EXE, {"PENGUMON_HOST": "192.0.2.7", "PENGUMON_PORT": "8123"}))
+    assert service.existing_settings("linux", USER, home=tmp_path) == {"PENGUMON_HOST": "192.0.2.7", "PENGUMON_PORT": "8123"}
+    agent = service.launch_agent_path(tmp_path)
+    agent.parent.mkdir(parents=True)
+    agent.write_bytes(plistlib.dumps({"EnvironmentVariables": {"PENGUMON_HOST": "0.0.0.0", "OTHER": "x"}}))
+    assert service.existing_settings("macos", USER, home=tmp_path) == {"PENGUMON_HOST": "0.0.0.0"}
+    xml = service.render_task_xml("C:\\p\\pengumonw.exe", "run --host 0.0.0.0 --port 9100", "me", "C:\\p")
+    got = service.existing_settings("windows", USER, run=FakeRun({("schtasks", "/Query"): (0, xml)}))
+    assert got == {"PENGUMON_HOST": "0.0.0.0", "PENGUMON_PORT": "9100"}
+    assert service.existing_settings("linux", USER, home=tmp_path / "nobody") == {}
+
+
+def test_the_units_start_only_while_the_program_exists():
+    # after `uv tool uninstall` the unit must be skipped, not crash-loop with status=203/EXEC
+    for text in (service.render_systemd_system(EXE), service.render_systemd_user(EXE)):
+        assert _unit(text)["Unit"]["ConditionPathExists"] == [EXE]
+
+
 def test_uninstall_without_a_service_says_so(as_linux, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(service, "SYSTEM_UNIT_PATH", tmp_path / "none.service")
     monkeypatch.setattr(service.Path, "home", classmethod(lambda cls: tmp_path))
@@ -352,15 +389,27 @@ def test_status_exit_codes(as_linux, monkeypatch, tmp_path, capsys):
     args = cli.build_parser().parse_args(["service", "status"])
     assert service.cmd_status(args, FakeRun()) == 3
     (tmp_path / "pengumon.service").write_text("x")
-    monkeypatch.setattr(service, "health", lambda host, port, timeout=3.0: None)
+    monkeypatch.setattr(service, "health_body", lambda host, port, timeout=3.0: None)
     run = FakeRun({("systemctl", "is-active"): (3, "inactive\n")})
     assert service.cmd_status(args, run) == 1
     assert "system service: stopped" in capsys.readouterr().out
-    monkeypatch.setattr(service, "health", lambda host, port, timeout=3.0: "9.9.9")
+    monkeypatch.setattr(service, "health_body", lambda host, port, timeout=3.0: {"status": "ok", "version": "9.9.9"})
     run = FakeRun({("systemctl", "is-active"): (0, "active\n")})
     assert service.cmd_status(args, run) == 0
     out = capsys.readouterr().out
     assert "system service: running" in out and "Pengumon 9.9.9" in out
+    assert "service install" in out and "NOT PROBING" not in out  # 9.9.9 runs, another version is on disk: restart
+
+
+def test_status_says_when_the_service_cannot_send_pings(as_linux, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(service, "SYSTEM_UNIT_PATH", tmp_path / "pengumon.service")
+    (tmp_path / "pengumon.service").write_text("x")
+    body = {"status": "ok", "version": service.__version__, "probing": "unavailable",
+            "probing_problem": "cannot open an ICMP socket", "probing_fix": "echo fix"}
+    monkeypatch.setattr(service, "health_body", lambda host, port, timeout=3.0: body)
+    args = cli.build_parser().parse_args(["service", "status"])
+    assert service.cmd_status(args, FakeRun({("systemctl", "is-active"): (0, "active\n")})) == 0
+    assert "NOT PROBING: cannot open an ICMP socket" in capsys.readouterr().out
 
 
 def test_health_reads_the_version_from_the_health_endpoint():
@@ -496,3 +545,32 @@ def test_the_windows_task_arguments_quote_the_host():
     plain = service.plan_install("windows", service.USER, python=r"C:\v\Scripts\python.exe", host="192.0.2.7", port=9000,
                                  account=r"D\o")
     assert ET.fromstring(plain.files["<task.xml>"]).find("t:Actions/t:Exec/t:Arguments", NS).text == "run --host 192.0.2.7 --port 9000"
+
+
+def _install_on_every_connection(as_linux, monkeypatch, tmp_path, capsys, drop_in=""):
+    monkeypatch.setattr(service.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.delenv("PENGUMON_ACCESS_TOKEN", raising=False)
+    (tmp_path / "pengumon").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(service.sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(service, "SYSTEM_UNIT_PATH", tmp_path / "pengumon.service")
+    if drop_in:
+        (tmp_path / "pengumon.service.d").mkdir()
+        (tmp_path / "pengumon.service.d" / "override.conf").write_text(drop_in)
+    monkeypatch.setattr("socket.gethostname", lambda: "mybox")
+    monkeypatch.setattr("pengumon.engine.netinfo.get_lan_ips", lambda: ["192.0.2.7"])
+    args = cli.build_parser().parse_args(["service", "install", "--host", "0.0.0.0", "--port", "8123"])
+    assert service.cmd_install(args, FakeRun()) == 0
+    return capsys.readouterr().out
+
+
+def test_install_on_every_connection_names_the_address_other_devices_use(as_linux, monkeypatch, tmp_path, capsys):
+    out = _install_on_every_connection(as_linux, monkeypatch, tmp_path, capsys)
+    assert "open http://127.0.0.1:8123/" in out  # this computer
+    assert "http://mybox:8123/" in out and "http://192.0.2.7:8123/" in out  # the others
+    assert "Set an access token first" in out
+
+
+def test_install_on_every_connection_does_not_ask_for_a_token_that_is_set(as_linux, monkeypatch, tmp_path, capsys):
+    out = _install_on_every_connection(as_linux, monkeypatch, tmp_path, capsys,
+                                       drop_in="[Service]\nEnvironment=PENGUMON_ACCESS_TOKEN=x\n")
+    assert "http://mybox:8123/" in out and "Set an access token first" not in out

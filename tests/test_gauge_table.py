@@ -14,6 +14,7 @@ from pengumon.lines.docsis_model import DocsisSignalSnapshot
 from pengumon.observability import export
 from pengumon.observability.export import observe_state
 from pengumon.observability.gauges import GAUGES
+from pengumon.observability.runtime import loop_monitor, process_stats
 
 from device_helpers import build_modem, build_router
 
@@ -41,15 +42,27 @@ def _populate(app_state):
     app_state.devices = DeviceRegistry([modem, router])
     status = SimpleNamespace(ok=True, latency_ms=200.0)
     app_state.service_checker = SimpleNamespace(services=[SimpleNamespace(id="app_a")], status={"app_a": status})
-    app_state.repository = SimpleNamespace(count_network_incidents=_count_incidents)
+    app_state.repository = SimpleNamespace(count_network_incidents=_count_incidents, sample_buffer_size=3,
+                                           file_sizes=lambda: {"main": 4096, "wal": 0})
+    app_state.notifier = SimpleNamespace(pending_count=lambda: 2)
+    loop_monitor.tasks = 12  # (counted by the monitor on the loop)
+
+
+# Process figures some platforms do not give (process_stats: resident memory from /proc, Linux only; open descriptors on
+# Linux and macOS): their gauges are left out there, by design (docs/telemetry.md).
+PLATFORM_GAUGES = {"rss": "pengumon_process_memory_rss_bytes", "fds": "pengumon_process_open_fds"}
 
 
 async def test_every_gauge_of_the_table_appears_in_the_prometheus_text_and_the_otel_observations(app_state):
     _populate(app_state)
     text = await render_metrics(app_state)
     observe_state(app_state)
+    not_here = {PLATFORM_GAUGES[k] for k, v in process_stats().items() if v is None and k in PLATFORM_GAUGES}
     try:
         for gauge in GAUGES:
+            if gauge.prom in not_here:
+                assert f"# TYPE {gauge.prom} gauge\n" not in text, gauge.prom  # left out, not reported as 0
+                continue
             assert f"# TYPE {gauge.prom} gauge\n" in text, gauge.prom
             if gauge.otel is not None:
                 assert export._guard(gauge)(None), gauge.otel

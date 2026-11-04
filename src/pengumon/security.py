@@ -6,6 +6,8 @@ upstream, not here. This module declares what is specific to Pengumon and re-exp
 app imports.
 """
 
+from fastapi import HTTPException, Request
+
 from pengumon import paths
 from pengumon._vendor.homeguard.security import (
     AppProfile,
@@ -17,11 +19,32 @@ from pengumon._vendor.homeguard.security import (
     can_edit,
     host_allowed,
     origin_allowed,
-    rate_limit,
     reset_rate_limits,
     session_status,
 )
 from pengumon._vendor.homeguard.security import SecurityConfig as _BaseConfig
+from pengumon._vendor.homeguard.security import rate_limit as _rate_limit
+from pengumon.observability import get_logger
+from pengumon.observability.telemetry import api_rate_limited
+
+_log = get_logger("pengumon.security")
+
+
+def rate_limit(name: str, calls: int, per_seconds: float):
+    """homeguard's rate limit as a FastAPI dependency, that counts each refusal (by bucket name: never by client)."""
+    inner = _rate_limit(name, calls, per_seconds)
+
+    async def dependency(request: Request):
+        try:
+            await inner(request)
+        except HTTPException as e:
+            if e.status_code == 429:
+                api_rate_limited.add(1, {"bucket": name})
+                _log.debug("Request refused by a rate limit", bucket=name, limit=f"{calls}/{per_seconds:g}s")
+            raise
+
+    return dependency
+
 
 __all__ = ["CSP", "PROFILE", "PUBLIC_PATHS", "SESSION_COOKIE", "SESSIONS_PATH", "VIEWER_POLICY", "FileSessionStore",
            "LoginThrottle", "SecurityConfig", "SecurityMiddleware", "can_edit", "host_allowed", "origin_allowed",
@@ -46,11 +69,11 @@ PUBLIC_PATHS = ("/api/health", "/login", "/favicon.ico")
 # PENGUMON_VIEW_WITHOUT_TOKEN=1 (off by default; only with an access token): someone without the token may see the
 # dashboard (the page, every GET of the API, /metrics and the live socket, which is receive-only for them) but change
 # nothing: every POST/PUT/DELETE/PATCH needs the token, and so do the reads below, which give away more than the
-# dashboard shows (the path as a file to import elsewhere; anything under a device's credentials). Client names, IP and
+# dashboard shows (the path and the settings as files to import elsewhere; anything under a device's credentials). Client names, IP and
 # MAC addresses are masked for viewers in the clients API itself (clients/api.py privacy_mode).
 VIEWER_POLICY = ViewerPolicy(
     allow=("/", "/api/**", "/metrics"),
-    deny=("/api/path/export", "/api/devices/*/credentials", "/api/devices/*/credentials/**"),
+    deny=("/api/path/export", "/api/settings/export", "/api/devices/*/credentials", "/api/devices/*/credentials/**"),
     websockets=("/ws",),
 )
 

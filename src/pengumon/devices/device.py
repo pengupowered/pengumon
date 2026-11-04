@@ -20,11 +20,14 @@ from opentelemetry.trace import Status, StatusCode
 
 from pengumon.capabilities import Capability, Driver, DriverError, PollResult
 from pengumon.observability import StateLog, get_logger
-from pengumon.observability.telemetry import device_poll_duration, device_polls, tracer
+from pengumon.observability.telemetry import (
+    device_gate_handovers, device_poll_duration, device_polls, device_polls_skipped, tracer,
+)
 
 
 # The scheduled loop doubles its wait after each failure up to this, for devices with a minimum interval.
 MAX_BACKOFF_SECONDS = 3600.0
+MAX_BACKOFF_DOUBLINGS = 16  # 2 ** 1024 does not fit a float: past this the cap applies anyway
 # The credentials test may skip the minimum interval, but not be repeated within this many seconds.
 CREDENTIALS_TEST_FLOOR_SECONDS = 60.0
 
@@ -84,6 +87,28 @@ class Device:
         self._lock = asyncio.Lock()
         self._attributes = {"device.id": device_id, "device.driver": driver.name}
 
+    def inherit_gate(self, previous: "Device") -> None:
+        """Takes over when `previous` (the device this one replaces, same id and driver at the same host) last tried
+        to read the device, and its failures in a row. A rebuild during a poll must not start a second one inside
+        min_interval_seconds: the cancelled poll left no stored reading for _restore to find."""
+        self._last_attempt = max(self._last_attempt, previous._last_attempt)
+        self._failures = previous._failures
+        device_gate_handovers.add(1, {"device.id": self.id})
+        self._log.debug("took over the previous device's gate", failures=self._failures)
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self._failures
+
+    @property
+    def backoff_seconds(self) -> float:
+        """How much longer than its interval the schedule waits after a poll now (0 unless failures are backing off a
+        device with a minimum interval)."""
+        return max(0.0, self._wait() - self.interval_seconds)
+
+    def _skipped(self, reason: str) -> None:
+        device_polls_skipped.add(1, {**self._attributes, "reason": reason})
+
     @property
     def latest_snapshot(self):
         return self.monitor.latest_snapshot
@@ -109,7 +134,10 @@ class Device:
         self._log.debug(f"Polling {self.id} every {self.interval_seconds:g} s")  # the startup line says it at INFO
         delay = await self._restore()
         while True:
-            await asyncio.sleep(max(delay, self._gate_remaining()))
+            gate = self._gate_remaining()
+            if gate > delay:
+                self._skipped("gate_wait")
+            await asyncio.sleep(max(delay, gate))
             await self._while_auth_stopped()
             started = time.monotonic()
             try:
@@ -124,6 +152,8 @@ class Device:
                 delay = max(0.1, self.interval_seconds - (self._clock() - self._last_attempt))
 
     async def _while_auth_stopped(self) -> None:
+        if self._auth_stopped:
+            self._skipped("auth_stopped")
         while self._auth_stopped:
             await self._credentials_changed.wait()
             self._credentials_changed.clear()
@@ -142,7 +172,7 @@ class Device:
             return 0.0
         if ts is None:
             return 0.0
-        self._last_attempt = ts
+        self._last_attempt = max(self._last_attempt, ts)  # (an attempt handed over by inherit_gate may be newer)
         wait = max(0.0, self.interval_seconds - (now - ts))
         self._log.info(f"{self.id} was read {now - ts:.0f} s ago; the next poll is in {wait:.0f} s",
                        age_s=round(now - ts), wait_s=round(wait))
@@ -153,7 +183,7 @@ class Device:
         device with a minimum interval. A refused login is not retried at all (see run)."""
         if not self.min_interval_seconds or not self._failures:
             return self.interval_seconds
-        return max(self.interval_seconds, min(MAX_BACKOFF_SECONDS, self.interval_seconds * 2 ** self._failures))
+        return max(self.interval_seconds, min(MAX_BACKOFF_SECONDS, self.interval_seconds * 2 ** min(self._failures, MAX_BACKOFF_DOUBLINGS)))
 
     def _gate_remaining(self) -> float:
         return max(0.0, self.min_interval_seconds - (self._clock() - self._last_attempt))
@@ -196,6 +226,7 @@ class Device:
 
         gate = CREDENTIALS_TEST_FLOOR_SECONDS if bypass_gate else self.min_interval_seconds
         if now - self._last_attempt < gate and self.monitor.latest_snapshot:
+            self._skipped("credentials_floor" if bypass_gate else "min_interval")
             self._log.debug(f"{self.id} was read {now - self._last_attempt:.0f} s ago; serving that reading",
                             min_interval_s=gate)
             return self.monitor.latest_snapshot

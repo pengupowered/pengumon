@@ -434,7 +434,9 @@ async def test_privacy_modes(app_state, monkeypatch, setting, token, applied):
         assert all(needle in text for needle in FULL_ONLY)
         assert {c["label"] for c in body["clients"]} >= {"desk-pc", "Ann's phone"} or "desk-pc" in text
     else:
-        assert "PENGUMON_ACCESS_TOKEN" in body["privacy"]["hint"] and "privacy.client_details" in body["privacy"]["hint"]
+        hint = body["privacy"]["hint"]
+        assert "Settings > Privacy" in hint and "config.yaml" not in hint  # Settings is where it is changed
+        assert ("PENGUMON_ACCESS_TOKEN" in hint) == (setting == "token")  # a token does not help under "masked"
         assert not any(needle in text for needle in FULL_ONLY)
         assert all("ip" not in c and "mac" not in c for c in body["clients"])
         labels = {c["label"] for c in body["clients"]}
@@ -458,7 +460,7 @@ async def test_a_viewer_without_the_token_gets_masked_clients(app_state, monkeyp
     if applied == "masked":
         assert not any(needle in text for needle in FULL_ONLY)
         assert all("ip" not in c and "mac" not in c for c in body["clients"])
-        assert "Sign in" in body["privacy"]["hint"] if setting == "token" else "privacy.client_details" in body["privacy"]["hint"]
+        assert "Sign in" in body["privacy"]["hint"] if setting == "token" else "Settings > Privacy" in body["privacy"]["hint"]
     assert signed_in.json()["privacy"]["applied"] == ("masked" if setting == "masked" else "full")
 
 

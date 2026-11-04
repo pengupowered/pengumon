@@ -124,6 +124,9 @@ export const NO_IPV6_STRIP = `${NO_IPV6} · not probed, not counted`;
 // The words for each kind of neutral target: the state's name, why, the text where its strip would be, and the short
 // line under a path node.
 const IGNORES = { kind: 'ping', word: IGNORES_PING, why: IGNORES_PING_WHY, strip: IGNORES_PING_STRIP, meta: 'ignores ping · traffic passes' };
+export const NO_PINGS_WHY = 'This computer cannot send pings right now, so nothing is measured: the hops are not down, they are not probed. '
+  + 'The status at the top says why and how to fix it.';
+export const NO_PINGS = { kind: 'host', word: 'Not probed', why: NO_PINGS_WHY, strip: 'Not probed · this computer cannot send pings', meta: 'not probed · pings not allowed' };
 const UNPROBED = { kind: 'ipv6', word: NO_IPV6, why: NO_IPV6_WHY, strip: NO_IPV6_STRIP, meta: 'not probed · no IPv6 here' };
 
 // The targets shown neutral instead of up or down: hops that ignore ping, and IPv6 targets this host cannot probe now.
@@ -132,6 +135,7 @@ export function quietTargets(targets) {
   const out = new Map();
   ignoringPing(targets).forEach((id) => out.set(id, IGNORES));
   targets.forEach((t) => { if (t.enabled !== false && t.ipv6_unavailable === true) out.set(t.target_id, UNPROBED); });
+  targets.forEach((t) => { if (t.enabled !== false && t.probing_unavailable === true) out.set(t.target_id, NO_PINGS); });
   return out;
 }
 

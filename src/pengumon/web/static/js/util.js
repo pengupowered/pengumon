@@ -1,6 +1,7 @@
 // Helpers every module uses: the target name/colour table, DOM text and class setters, modals, HTML escaping.
 
 import { registerActions } from './dispatch.js';
+import { token } from './chart-theme.js';
 
 // Target order, names and colours come from /api/targets (the probe path, then the DNS probes; `color` per target).
 // Both are filled by initTargets() before the first render and mutated in place, so importers keep their reference.
@@ -26,9 +27,9 @@ export function getTargetInfo(tid) {
 // the eighth a target takes the first slot no other target of its category has yet, so the members of one group (the
 // public servers of the Internet node, a run of ISP hops, the DNS lookups) still differ from each other; a category
 // with more than eight is drawn in the neutral ink from the ninth on and told apart by its name. Read from the tokens
-// when used, so it follows the theme.
+// when used (cached until the theme changes), so it follows the theme.
 const SLOTS = 8;
-const tokenColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#7d8a9b';
+const tokenColor = (name) => token(name) || '#7d8a9b'; // cached by token(), which forgets its values on a theme change
 
 export async function initTargets() {
   try {
@@ -144,12 +145,72 @@ export function setClass(el, cls) {
   if (el.className !== cls) el.className = cls;
 }
 
+const openers = new Map(); // modal id -> the element that had focus when it opened, which gets it back on close
+
 export function openModal(id) {
-  document.getElementById(id).classList.add('active');
+  const modal = document.getElementById(id);
+  if (!modal.classList.contains('active')) openers.set(id, document.activeElement);
+  modal.classList.add('active');
 }
 
 export function closeModal(id) {
-  document.getElementById(id).classList.remove('active');
+  const modal = document.getElementById(id);
+  modal.classList.remove('active');
+  const back = openers.get(id);
+  openers.delete(id);
+  const lost = !document.activeElement || document.activeElement === document.body || modal.contains(document.activeElement);
+  if (lost && back && back.isConnected && typeof back.focus === 'function') back.focus();
+}
+
+// Keyboard for a dialog: focus moves into it when it opens (to the first match of `firstFocus`, else the close button),
+// Tab stays inside it and Escape closes it. Call it before openModal; calling it again only updates `firstFocus`.
+// One listener on the document serves every dialog, so Escape works wherever focus is (a click on plain text leaves it on
+// the body) and acts on the topmost open dialog only: the one that opened last (a dossier on top of the incident inspector).
+const keyboard = new WeakMap();
+const stack = []; // the registered dialogs that are open, the topmost last
+function topModal() {
+  for (let i = stack.length - 1; i >= 0; i--) if (stack[i].classList.contains('active')) return stack[i];
+  return null;
+}
+let keysBound = false;
+function bindKeys() {
+  if (keysBound) return;
+  keysBound = true;
+  document.addEventListener('keydown', (ev) => {
+    const modal = topModal();
+    if (!modal || ev.defaultPrevented) return;
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      closeModal(modal.id);
+      return;
+    }
+    if (ev.key !== 'Tab') return;
+    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const inside = modal.contains(document.activeElement);
+    if (!inside) { ev.preventDefault(); (ev.shiftKey ? last : first).focus(); }
+    else if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+  });
+}
+export function keepKeyboard(modal, firstFocus) {
+  if (keyboard.has(modal)) { keyboard.get(modal).first = firstFocus; return; }
+  const state = { first: firstFocus };
+  keyboard.set(modal, state);
+  bindKeys();
+  const sync = () => {
+    const at = stack.indexOf(modal);
+    if (modal.classList.contains('active')) {
+      if (at < 0) stack.push(modal);
+      if (!modal.contains(document.activeElement)) {
+        ((state.first && modal.querySelector(state.first)) || modal.querySelector('.m-close')).focus();
+      }
+    } else if (at >= 0) stack.splice(at, 1);
+  };
+  new MutationObserver(sync).observe(modal, { attributes: true, attributeFilter: ['class'] });
+  sync(); // the dialog may be open already
 }
 
 // Why the server would refuse a host (models/hosts.validate_host), in words, or '' when it would take it.
@@ -161,6 +222,48 @@ export function hostProblem(v) {
   if (v.includes(':')) return /^[0-9A-Fa-f:.]+(%[A-Za-z0-9_.-]+)?$/.test(v) && (v.match(/:/g) || []).length >= 2 ? '' : 'That is not a valid IPv6 address.';
   if (/^[0-9.]+$/.test(v)) return v.split('.').length === 4 && v.split('.').every((p) => p !== '' && Number(p) <= 255 && String(Number(p)) === p) ? '' : 'That is not a valid IPv4 address.';
   return HOST_RE.test(v) && v.length <= 255 ? '' : 'That is not a valid host name.';
+}
+
+// Copies `text` to the clipboard; resolves true when it did. The Clipboard API exists only in a secure context (HTTPS or
+// localhost): a page served over plain HTTP on the LAN has no navigator.clipboard, so it copies through a hidden
+// textarea and execCommand instead.
+export async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  const back = document.activeElement;
+  document.body.appendChild(area);
+  area.select();
+  let done = false;
+  try { done = document.execCommand('copy'); } catch { done = false; }
+  area.remove();
+  if (back && typeof back.focus === 'function') back.focus();
+  return done;
+}
+
+// The body of an Export view (Settings, the path editor): the YAML in a textarea, Copy, and a download link. Chrome blocks or
+// warns about a file downloaded over plain HTTP from another machine ("insecure download"), whatever the page does;
+// Copy works on every connection. `prefix` names the ids (<prefix>ExportText, <prefix>ExportNote) and the Copy action
+// (<prefix>ExportCopy), which the dialog registers to call copyExport(prefix).
+export function exportViewHtml({ prefix, intro, text, href, file }) {
+  return `<h3 class="section-t">Export</h3>
+    <p class="fine top">${escapeHtml(intro)}</p>
+    <textarea class="input export-text" id="${prefix}ExportText" rows="12" readonly spellcheck="false" aria-label="Exported YAML">${escapeHtml(text)}</textarea>
+    <p class="export-b"><button type="button" class="btn sm" data-action="${prefix}ExportCopy"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
+      <a class="btn sm" href="${href}" download="${file}"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download file</a>
+      <span class="fine" id="${prefix}ExportNote" role="status"></span></p>
+    ${window.isSecureContext ? '' : '<p class="fine">This page is served over plain HTTP, so Chrome may block the download as insecure. Copy works on every connection.</p>'}`;
+}
+
+export async function copyExport(prefix) {
+  const area = document.getElementById(`${prefix}ExportText`);
+  const copied = await copyText(area.value);
+  document.getElementById(`${prefix}ExportNote`).textContent = copied ? 'Copied.' : 'Select the text and copy it.';
+  if (!copied) area.select();
 }
 
 export function escapeHtml(text) {

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import TypeAdapter
 
-from pengumon.api.common import StateDep, device_or_404
+from pengumon.api.common import StateDep, device_or_404, record_answer, record_capped
 from pengumon.api.state import AppState
 from pengumon.capabilities import Capability
 from pengumon.capabilities.features import feature_status, host_services_status
@@ -33,6 +33,9 @@ _log = get_logger("pengumon.api")
 
 _ROUTER_SNAPSHOTS = TypeAdapter(List[RouterMetricsSnapshot])
 _HISTORY_CAPABILITIES = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM})
+# The longest range the unbucketed history answers: the dashboard asks for at most 24 h (the chart's overlay) and an
+# incident's window; 48 h leaves room for a long incident. A week is 55 000 snapshots, half a second in the repository.
+UNBUCKETED_HISTORY_MAX_SECONDS = 48 * 3600
 _CREDENTIALS_RATE = rate_limit("credentials", 5, 60)  # one bucket for every credentials route
 
 
@@ -70,7 +73,7 @@ def device_ranges(device: Device) -> Dict[str, Dict[str, Any]]:
     """The gauge scale and good zone of each metric the device's snapshot grades (pengumon.grades.Range.as_dict), keyed
     like the snapshot's `grades`. Empty for a device whose readings are not graded."""
     if Capability.ACCESS_LINE in device.driver.offers and getattr(device.driver, "line_technology", None) == docsis.TECHNOLOGY:
-        return {name: r.as_dict() for name, r in docsis.RANGES.items()}
+        return {name: r.as_dict() for name, r in docsis.ranges().items()}
     ranges = getattr(device.monitor, "ranges", None)
     return {name: r.as_dict() for name, r in ranges.items()} if ranges else {}
 
@@ -152,7 +155,8 @@ async def get_device_history(
 ):
     """The device's stored polls for incident zoom inspection (RouterMetricsSnapshot rows, oldest first, padded by
     two minutes each side). 404 for an unknown id, 400 for a device that reports neither WAN counters nor router
-    system figures.
+    system figures. Without bucket_seconds and max_points a range longer than UNBUCKETED_HISTORY_MAX_SECONDS (48 h)
+    is cut to its newest 48 h: every poll is one row (a week is 55 000 of them).
 
     With bucket_seconds and/or max_points the answer is instead bucketed: {"bucket_seconds", "start_time",
     "end_time", "fields", "rows", "capacity"}, rows in field order (avg and max of WAN rx/tx Mbps, CPU %, memory %
@@ -168,11 +172,17 @@ async def get_device_history(
     st = start_time if start_time is not None else (now - 3600)
     et = end_time if end_time is not None else now
     if bucket_seconds is None and max_points is None:
+        if et - st > UNBUCKETED_HISTORY_MAX_SECONDS:
+            record_capped("device_history", "range")
+        st = max(st, et - UNBUCKETED_HISTORY_MAX_SECONDS)  # the newest part of a longer range
         snapshots = await RouterHistory(state.repository, device.id).get_router_snapshots_in_range(st, et)
-        return Response(_ROUTER_SNAPSHOTS.dump_json(snapshots), media_type="application/json")
+        body = _ROUTER_SNAPSHOTS.dump_json(snapshots)
+        record_answer("device_history", len(snapshots), len(body))
+        return Response(body, media_type="application/json")
     st = max(st, now - state.repository.retention_days * 86400)
     width = bucket_width(et - st, bucket_seconds, max_points)
     rows = await bucketed_router_history(state.repository, device.id, st, et, width) if et >= st else []
+    record_answer("device_history_bucketed", len(rows))
     load = getattr(state.classifier, "load", None)
     return {"bucket_seconds": width, "start_time": st, "end_time": et, "fields": list(BUCKET_FIELDS), "rows": rows,
             "capacity": {"down_mbps": getattr(load, "down_mbps", None), "up_mbps": getattr(load, "up_mbps", None)}}

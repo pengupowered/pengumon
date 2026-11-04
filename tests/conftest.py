@@ -22,6 +22,14 @@ async def _close_repositories(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_config_home(monkeypatch):
+    """The service code puts a user's unit under $XDG_CONFIG_HOME when it is set (GitHub's runners and many desktops set
+    it): a test that points the home directory at tmp_path would otherwise read, and write, the real
+    ~/.config/systemd/user/pengumon.service of whoever runs the tests. Tests that want it set it themselves."""
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_rate_limits():
     """Rate-limit buckets are process-wide; tests that make many calls must not trip each other."""
     from pengumon import security

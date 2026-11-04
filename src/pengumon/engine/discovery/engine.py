@@ -9,7 +9,9 @@ Nothing here changes anything: the result is a draft and some notes.
 """
 
 import asyncio
+import contextvars
 import inspect
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Sequence, Tuple
 
@@ -24,6 +26,11 @@ from pengumon.engine.discovery.traces import (
     PUBLIC_SERVERS, PUBLIC_SERVERS_V6, TRACE_MAX_HOPS, TRACE_TIMEOUT_S, MergedPath, PathHop, Trace, merge_paths,
     run_traces,
 )
+from pengumon.observability.telemetry import discovery_duration, discovery_runs, tracer
+
+# Why this run was started, for the telemetry: the route-change checker sets it around its runs (daily, incident,
+# confirm); a run the owner asked for is "manual".
+discovery_trigger: contextvars.ContextVar[str] = contextvars.ContextVar("discovery_trigger", default="manual")
 
 CHECKS_DEADLINE_S = 15.0
 PING_TIMEOUT_S = 1.0
@@ -134,9 +141,12 @@ async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
     for h in path.hops[:first_public]:
         if h.address and address_class(h.address) in (PRIVATE, LINK_LOCAL) and h.address not in private:
             private.append(h.address)
-    off_path = off_path_candidates(path) if options.device_checks or options.off_path_gateways else []
-    private = private[:MAX_DEVICE_HOSTS - len(off_path)]
     limited = {address_key(a) for a in deps.limited_hosts}
+    # A configured device (the modem) is read only by its driver, behind that driver's gate: no page request and no
+    # echo request from here, even when the trace misses it and it looks like an off-path gateway.
+    off_path = ([a for a in off_path_candidates(path) if address_key(a) not in limited]
+                if options.device_checks or options.off_path_gateways else [])
+    private = private[:MAX_DEVICE_HOSTS - len(off_path)]
 
     async def pages(client):
         async def one(address):
@@ -147,7 +157,7 @@ async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
         return {a: p for a, p in await asyncio.gather(*(one(a) for a in private)) if p is not None}
 
     async def gateways(client):
-        """Each gateway address off the path: one echo request (none to a limited host) and one GET of `/`."""
+        """Each gateway address off the path (a limited host is not one): one echo request and one GET of `/`."""
         async def one(address):
             ping = deps.ping or _default_ping
             answered, page = await asyncio.gather(
@@ -218,12 +228,39 @@ async def run_discovery(options: DiscoveryOptions, live_path: Callable[[], Any],
                         deps: Optional[Deps] = None,
                         progress: Optional[Callable[[str], None]] = None) -> DiscoveryResult:
     """Discovers the path and returns the draft (contract-shaped hops, diffed against `live_path()`) and notes.
-    `live_path()` gives the live hops, or (awaitable or not) a pair (live hops, hops removed from the path)."""
+    `live_path()` gives the live hops, or (awaitable or not) a pair (live hops, hops removed from the path).
+    One span ("discovery.run", with the traces and the checks as children) and one count per run."""
+    trigger = discovery_trigger.get()
+    started = time.perf_counter()
+    outcome = "done"
+    with tracer.start_as_current_span("discovery.run", attributes={
+            "discovery.trigger": trigger, "discovery.asn_lookup": options.asn_lookup,
+            "discovery.device_checks": options.device_checks}) as span:
+        try:
+            result = await _discover(options, live_path, deps, progress)
+            if not any(result.path.reached.values()):
+                outcome = "no_answer"
+            return result
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except Exception:
+            outcome = "failed"
+            raise
+        finally:
+            span.set_attribute("discovery.outcome", outcome)
+            discovery_runs.add(1, {"trigger": trigger, "outcome": outcome})
+            discovery_duration.record(time.perf_counter() - started, {"trigger": trigger})
+
+
+async def _discover(options: DiscoveryOptions, live_path: Callable[[], Any], deps: Optional[Deps],
+                    progress: Optional[Callable[[str], None]]) -> DiscoveryResult:
     deps = deps or Deps()
     say = progress or (lambda text: None)
     notes: List[str] = []
     order = [s.address for s in PUBLIC_SERVERS]
-    traces = await run_traces(deps.trace or _default_trace, order, say)
+    with tracer.start_as_current_span("discovery.traces"):
+        traces = await run_traces(deps.trace or _default_trace, order, say)
     path = merge_paths(traces, order)
     gateway = await asyncio.to_thread(deps.gateway or _default_gateway)
     if not path.hops:
@@ -243,8 +280,9 @@ async def run_discovery(options: DiscoveryOptions, live_path: Callable[[], Any],
     say("Looking up names" + (", who operates each hop" if options.asn_lookup else "") +
         (" and checking devices" if options.device_checks or options.snmp else ""))
     try:
-        names, asns, pages, off_path, igds, snmp = await asyncio.wait_for(
-            _checks(path, options, deps), CHECKS_DEADLINE_S)
+        with tracer.start_as_current_span("discovery.checks"):
+            names, asns, pages, off_path, igds, snmp = await asyncio.wait_for(
+                _checks(path, options, deps), CHECKS_DEADLINE_S)
     except asyncio.TimeoutError:
         notes.append("The lookups and device checks took too long and were left out.")
         names, asns, pages, off_path, igds, snmp = {}, {}, {}, [], [], {}

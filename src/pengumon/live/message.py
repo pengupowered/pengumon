@@ -20,3 +20,6 @@ class LiveStreamMessage(BaseModel):
     line: Optional[Dict[str, Optional[float]]] = None
     # Changes whenever an incident is created, resolved or annotated (the dashboard fetches the incident list when it does).
     incidents_version: int = 0
+    # The settings document's revision (pengumon.settings): a dashboard that sees it change re-reads
+    # /api/settings/values. None while no settings store runs.
+    settings_revision: Optional[int] = None

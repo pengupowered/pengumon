@@ -4,7 +4,7 @@ The scenario drives a real NetworkProber and the classifier with a fake clock (o
 repository and a scripted line load, and records for every round the diagnosis, the active incident, the failure
 counters and the per-target status, plus every repository call, callback and path-trace start. The result is
 compared with tests/golden/classifier_characterization/<scenario>.json: one file per config (`default`,
-`two_failures`, `fallback`, each with its own "texts" list) and one for the status matrix.
+`two_failures`, `fallback`, `custom_levels`, each with its own "texts" list) and one for the status matrix.
 
 Regenerate only on purpose: PENGUMON_REGEN_GOLDEN=1 python -m pytest tests/test_classifier_characterization.py
 """
@@ -191,10 +191,121 @@ FALLBACK_PHASES = [
     P("nominal", 6),
 ]
 
+# Non-default outage rules (degraded 20 %, down 50 %, recovery after 5 rounds, ISP latency 120 ms, DNS degraded
+# 35 %, DNS cooldown 60 s) over a path with two targets per role, so loss moves in 5 % steps: every phase sits
+# between a default level and its custom one, so a level read from anywhere but the config changes this golden.
+CUSTOM_LEVELS = ClassifierConfig(degraded_loss_pct=20.0, down_loss_pct=50.0, consecutive_successes_for_recovery=5,
+                                 isp_latency_spike_threshold_ms=120.0, dns_degraded_loss_pct=35.0,
+                                 dns_cooldown_seconds=60.0)
+CUSTOM_TARGETS = [
+    ("lan_a", "local", "Local Router", "192.168.88.1", True),
+    ("lan_b", "local", "Second Router", "192.168.88.2", True),
+    ("gw_a", "gateway", "Modem Gateway", "192.168.100.1", True),
+    ("gw_b", "gateway", "Second Modem", "192.168.100.2", True),
+    ("isp_a", "isp", "ISP Hub A", "198.51.100.1", True),
+    ("isp_b", "isp", "ISP Hub B", "198.51.100.3", True),
+    ("pub_a", "public", "Cloudflare", "192.0.2.10", True),
+    ("pub_b", "public", "Google", "192.0.2.11", True),
+]
+CUSTOM_ORDER = ["lan_a", "lan_b", "gw_a", "gw_b", "isp_a", "isp_b", "pub_a", "pub_b", "dns"]
+CUSTOM_BASE = {"lan_a": 1.0, "lan_b": 1.2, "gw_a": 2.0, "gw_b": 2.2, "isp_a": 9.0, "isp_b": 11.0, "pub_a": 14.0,
+               "pub_b": 16.0, "dns": 20.0}
+LOSS_15 = (L(5), L(10))      # per target of a pair: 2 + 1 of 20 lost
+LOSS_20 = (L(5), L(5))       # 4 of 20
+LOSS_30 = (L(10, 3), L(10, 3))
+LOSS_40 = (L(2), L(10, 3))   # 5 + 3 of 20
+LOSS_45 = (L(2), L(5, 2))    # 5 + 4 of 20
+LOSS_50 = (L(2), L(2))
+
+
+def pair(a, b, loss):
+    return {a: loss[0], b: loss[1]}
+
+
+CUSTOM_PHASES = [
+    P("nominal", 12),
+    P("local loss 15%", 14, **pair("lan_a", "lan_b", LOSS_15)),
+    P("recover", 14),
+    P("local loss 20%", 14, **pair("lan_a", "lan_b", LOSS_20)),
+    P("recover", 18),
+    P("local loss 45%", 14, **pair("lan_a", "lan_b", LOSS_45)),
+    P("local loss 50%", 14, **pair("lan_a", "lan_b", LOSS_50)),
+    P("recover", 18),
+    P("gateway loss 15%", 14, **pair("gw_a", "gw_b", LOSS_15)),
+    P("recover", 14),
+    P("gateway loss 45%", 14, **pair("gw_a", "gw_b", LOSS_45)),
+    P("recover", 18),
+    P("gateway down, local loss 15%", 14, **pair("gw_a", "gw_b", LOSS_50), **pair("lan_a", "lan_b", LOSS_15)),
+    P("recover", 18),
+    P("isp and public down, local loss 15%", 14, **pair("isp_a", "isp_b", LOSS_50),
+      **pair("pub_a", "pub_b", LOSS_50), **pair("lan_a", "lan_b", LOSS_15)),
+    P("recover", 18),
+    P("isp loss 40% public 15%", 14, **pair("isp_a", "isp_b", LOSS_40), **pair("pub_a", "pub_b", LOSS_15)),
+    P("recover", 18),
+    P("public loss 45%", 14, **pair("pub_a", "pub_b", LOSS_45)),
+    P("recover", 18),
+    P("isp latency 100", 14, isp=C(100.0)),
+    P("recover", 14),
+    P("isp latency 130", 14, isp=C(130.0)),
+    P("recover", 14),
+    P("dns loss 30%", 14, upstream_age=200.0, dns=L(10, 3)),
+    P("recover", 14),
+    P("dns outage 70 s after an upstream issue", 14, upstream_age=70.0, dns=L(2)),
+    P("recover", 18),
+    P("dns loss 40%", 14, upstream_age=200.0, dns=L(5, 2)),
+    P("recover", 18),
+    P("busy, isp loss 30% public 15%", 14, load=95.0, **pair("isp_a", "isp_b", LOSS_30),
+      **pair("pub_a", "pub_b", LOSS_15)),
+    P("busy recover", 14, load=95.0),
+    P("recover", 14),
+    P("public latency", 16, pub=C(150.0)),
+    P("recover", 14),
+    # loss under the custom degraded level alongside a latency fault: a latency incident (10 rounds), not a loss one
+    P("public latency, local loss 15%", 14, pub=C(150.0), **pair("lan_a", "lan_b", LOSS_15)),
+    P("recover", 18),
+    P("public latency, gateway loss 15%", 14, pub=C(150.0), **pair("gw_a", "gw_b", LOSS_15)),
+    P("recover", 18),
+    P("public latency, isp loss 15%", 14, pub=C(150.0), **pair("isp_a", "isp_b", LOSS_15)),
+    P("recover", 18),
+    P("public latency and loss 15%", 14, pub_a=lambda k, base: None if k % 5 == 0 else 150.0,
+      pub_b=lambda k, base: None if k % 10 == 0 else 150.0),
+    P("recover", 18),
+    P("public latency, dns loss 30%", 14, pub=C(150.0), dns=L(10, 3)),
+    P("recover", 18),
+    # isp-only loss under load, with loss elsewhere under the custom levels: still only at the ISP hops
+    P("busy, isp loss 30% local 15%", 14, load=95.0, **pair("isp_a", "isp_b", LOSS_30),
+      **pair("lan_a", "lan_b", LOSS_15)),
+    P("busy recover", 18, load=95.0),
+    P("busy, isp loss 30% gateway 15%", 14, load=95.0, **pair("isp_a", "isp_b", LOSS_30),
+      **pair("gw_a", "gw_b", LOSS_15)),
+    P("busy recover", 18, load=95.0),
+    P("busy, isp loss 30% dns 30%", 14, load=95.0, upstream_age=200.0, dns=L(10, 3),
+      **pair("isp_a", "isp_b", LOSS_30)),
+    P("busy recover", 18, load=95.0),
+    P("recover", 14),
+    P("isp loss 15% public 20%", 14, **pair("isp_a", "isp_b", LOSS_15), **pair("pub_a", "pub_b", LOSS_20)),
+    P("recover", 18),
+    P("isp loss 40%, dns loss 30%", 14, upstream_age=200.0, dns=L(10, 3), **pair("isp_a", "isp_b", LOSS_40)),
+    P("recover", 18),
+    # loss under the custom degraded level is no upstream issue: DNS is judged right after it
+    P("gateway loss 15% after a quiet spell", 14, skip=100.0, **pair("gw_a", "gw_b", LOSS_15)),
+    P("dns outage right after", 24, dns=L(2)),
+    P("recover", 18),
+    P("isp loss 15% after a quiet spell", 14, skip=100.0, **pair("isp_a", "isp_b", LOSS_15)),
+    P("dns outage right after", 24, dns=L(2)),
+    P("recover", 18),
+    P("public loss 15% after a quiet spell", 14, skip=100.0, **pair("pub_a", "pub_b", LOSS_15)),
+    P("dns outage right after", 24, dns=L(2)),
+    P("recover", 18),
+]
+
 CONFIGS = [
     ("default", ClassifierConfig(), TARGETS, ORDER, BASE, PHASES),
-    ("two_failures", ClassifierConfig(consecutive_failures_for_incident=2), TARGETS, ORDER, BASE, PHASES),
+    # recovery was the onset count before it became a setting of its own: this scenario was recorded with both at 2
+    ("two_failures", ClassifierConfig(consecutive_failures_for_incident=2, consecutive_successes_for_recovery=2),
+     TARGETS, ORDER, BASE, PHASES),
     ("fallback", ClassifierConfig(), FALLBACK_TARGETS, FALLBACK_ORDER, FALLBACK_BASE, FALLBACK_PHASES),
+    ("custom_levels", CUSTOM_LEVELS, CUSTOM_TARGETS, CUSTOM_ORDER, CUSTOM_BASE, CUSTOM_PHASES),
 ]
 
 CONFIG_NAMES = [config[0] for config in CONFIGS]

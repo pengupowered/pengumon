@@ -8,6 +8,7 @@ import { targetList } from '../../js/util.js';
 import { SERIES, combine, median, seriesMembers } from '../../js/path.js';
 import { pingTargets, renderCharts, resetView, setLineMode, view } from './charts.js';
 import { primaryDevice } from '../../js/devices.js';
+import { applyTabs, selectTab } from '../../js/tabs.js';
 
 const has = (v) => v !== null && v !== undefined;
 let requestSeq = 0;
@@ -150,12 +151,22 @@ async function loadHistory(durationSeconds) {
   }
 }
 
+// On a phone the chart sits on the Live tab, which is not shown while the Incidents tab is: open it, or the window is
+// drawn where nobody sees it.
+function showLatencyTab() {
+  const section = document.getElementById('latencyChart').closest('[data-panel]');
+  if (!section || !section.hidden) return;
+  selectTab((section.dataset.tab || '').split(/\s+/)[0]);
+  applyTabs();
+}
+
 export async function loadHistoricalRange(startTime, endTime) {
   const seq = ++requestSeq;
   state.currentMode = 'custom';
   const t = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   label(`incident window ${t(startTime)} – ${t(endTime)}`);
   markRange('');
+  showLatencyTab();
   try {
     const samples = await fetchSamples(`start_time=${startTime}&end_time=${endTime}`);
     if (seq !== requestSeq || !samples || !samples.length) return;

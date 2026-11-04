@@ -3,6 +3,6 @@
 services:
   pengumon:
     volumes:
-      # A private CA, to verify an HTTPS health endpoint listed under service_checks in config.yaml
+      # A private CA, to verify an HTTPS health endpoint listed under the service checks on the Settings page
       # (that service sets ca_file: /app/certs/home-ca.pem)
       - /path/to/ca.pem:/app/certs/home-ca.pem:ro

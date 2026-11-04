@@ -1,6 +1,7 @@
 // Incident log panel: the table of outages, with the inspector that opens from a row.
 
 import { updateIncidentsTable } from './incidents.js';
+import { bindIncidents, loadSince, reload } from './list.js';
 import './inspector.js';
 import './help.js';
 
@@ -12,13 +13,13 @@ export default {
   core: true,
   available: () => true,
   mount(section, ctx) {
-    // The list is fetched (gzipped) at start and whenever the server's incidents_version changes, which includes the
-    // first message after a reconnect; the latency chart gets it too, for its incident windows.
-    const show = (list) => { updateIncidentsTable(list); ctx.bus.publish('incidents:list', list); };
-    const load = () => fetch('/api/incidents?limit=500')
-      .then(r => r.json())
-      .then(show)
-      .catch(console.error);
+    // The newest page is fetched at start and whatever is loaded so far whenever the server's incidents_version changes
+    // (which includes the first message after a reconnect); older incidents are loaded when something needs them
+    // (list.js). The latency chart gets the list too, for its incident windows.
+    bindIncidents((list) => { updateIncidentsTable(list); ctx.bus.publish('incidents:list', list); });
+    // the timeline shows 7 days, so the list reaches back that far; a chart range asked for from the inspector may be older
+    const week = () => Date.now() / 1000 - 7 * 86400;
+    const load = () => reload().then(() => loadSince(week()));
     let version = null;
     ctx.bus.subscribe('incidents_version', (v) => {
       if (v === version) return;
@@ -28,5 +29,6 @@ export default {
     });
     ctx.bus.subscribe('connection', (state) => { if (state === 'open' && version !== null) load(); });
     load();
+    ctx.bus.subscribe('chart:range', (r) => { if (r && typeof r.start === 'number') loadSince(r.start); });
   }
 };

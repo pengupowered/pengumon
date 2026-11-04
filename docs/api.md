@@ -10,6 +10,7 @@
 - `POST /api/path/import`: That YAML (or a config.yaml) in the body: `{"hops": [...], "device_matches"}`, a draft for the editor; nothing is applied. 422 with the reason for a bad file
 - `POST /api/targets`, `DELETE /api/targets/{id}`: One hop added at the end of the path, or removed (the add-target dialog, the trace dialog's Monitor); 400 for a taken id or past 64 hops
 - `GET /api/report?days=30`: Reliability report: per-day availability per hop, incident count and minutes by cause (expected incidents excluded), worst hours of the day. `tz_offset_minutes` buckets days and hours in the viewer's timezone
+- `GET /api/incidents?limit=100&offset=0`: Network incidents, newest first (`scope`, `include_expected`); `offset` skips the newest, so a client loads a first page and older ones on demand
 - `GET /api/incidents/dossier`: Evidence dossier for the ISP (window up to 30 days); conclusions are derived from the data, expected incidents are excluded and counted
 - `GET /api/status`: Current diagnosis, including `load_pct`
 - `GET /api/devices`: Every configured device: id, driver, host, url, model, `label` (what it is and its model, e.g. "ASUS router · RT-AX88U"; its id when no model is set), enabled, capabilities (`offers`), line technology, poll interval, `has_credentials`, and its last poll (`status`, `last_poll`, `error_kind`, `error_message`). Never a credential
@@ -18,7 +19,7 @@
 - `POST /api/discovery`: Starts discovering the path (`{"asn_lookup": true, "snmp": false, "device_checks": true}`, all optional) and answers `{"id"}`; a second start while one runs returns the running id; rate limited. Never applies anything. What it sends where: [discovery.md](discovery.md)
 - `GET /api/discovery/{id}`: A run's `state` (`running`, `done`, `failed`), `progress`, `draft` (`{"hops": [...]}`, path hops with `evidence`, `confidence`, `suggested_driver` and `status` new/same/changed/gone; empty until done) and `notes`; 404 for an unknown id or one finished over ten minutes ago
 - `GET /api/notifications`: The server's alert channels, `{"channels": [{name, kind (ntfy or webhook), format, host}]}`; never a URL path, query, header or secret
-- `POST /api/notifications/test`: Sends a test message through every channel now and answers `{"channels": [{name, ok, detail}]}` (`detail` is a short reason such as `HTTP 404` or `timed out`); 409 when no channel is configured; rate limited
+- `POST /api/notifications/test`: Sends a test message through every channel now and answers `{"channels": [{name, ok, detail}]}` (`detail` is a short reason in plain words, such as `the server answered 404`, `could not connect` or `timed out`); 409 when no channel is configured; rate limited
 - `GET /api/features`: Per feature (`line_load`, `line_health`, `router_system`, `clients`, `mesh`): `available`, `reason_kind` (`available`, `none`, `disabled`, `not_configured`), the devices that provide it, and otherwise why not (e.g. `router (asuswrt) provides wan_counters but is not configured: no password`)
 - `GET /api/devices/{id}/clients`: The connected clients: `{ts, nodes, clients, summary: {online, wired, by_band, by_node}, privacy}`. Needs the `client_inventory` capability (400 otherwise, 404 for an unknown id); rate limited. What it shows of each client follows `privacy.client_details`, see "Clients and mesh" below
 - `GET /api/devices/{id}/clients/history?start_time=&end_time=`: Client counts over time (online, wired, per band, per mesh node), bucketed on the server to at most 300 points (each the mean of its bucket); defaults to the last 24 hours. Counts only, never a client
@@ -28,7 +29,7 @@
 
 ## Where the routes live
 
-One router module per feature in `src/pengumon/api/`: `targets.py`, `path.py` (the path editor's routes), `incidents.py` (list, inspect, dossier), `history.py`, `reports.py` (report, loss grid, uptime), `ops.py` (info, status, health, traceroute, `/metrics`), plus `devices.py`, `clients.py`, `services.py` and `engine/discovery/api.py`. `common.py` has what they share (`StateDep`, `json_response`, `device_or_404`). `api/__init__.py` lists the feature routers in `ROUTERS`; `api/router.py` only mounts them and holds no handlers (`tests/test_api_routers.py`). A new endpoint goes in its feature's module.
+One router module per feature in `src/pengumon/api/`: `targets.py`, `path.py` (the path editor's routes), `incidents.py` (list, inspect, dossier), `history.py`, `reports.py` (report, loss grid, uptime), `ops.py` (info, status, health, traceroute, `/metrics`), `settings.py` (the Settings page; its bodies are in `settings_models.py`), plus `devices.py`, `clients.py`, `services.py` and `engine/discovery/api.py`. `common.py` has what they share (`StateDep`, `json_response`, `device_or_404`). `api/__init__.py` lists the feature routers in `ROUTERS`; `api/router.py` only mounts them and holds no handlers (`tests/test_api_routers.py`). A new endpoint goes in its feature's module.
 
 ## The probe path's history, preview and route check
 
@@ -60,3 +61,55 @@ token when one is set, and changes nothing that is live unless it says so.
 
 `GET /api/path` and `POST /api/path/import` also answer `device_matches`, and `GET /api/devices` gives each device a
 `label` (see the list above).
+
+## Settings
+
+The Settings page reads these. The bodies are pydantic models in `src/pengumon/api/settings_models.py`; the list of
+settings, their sections and words come from `src/pengumon/settings/registry.py`, and each setting's type, range and
+default from its config section model. A key is a dotted config.yaml path (`classifier.down_loss_pct`); values are in
+stored units (probe rounds, fractions, seconds) and the page converts them with the schema's `scale` and `rounds`.
+Secrets (the ntfy topic and token, webhook URLs, header secrets) are never sent back: only whether each is set,
+where from, and for a URL its host.
+
+- **`GET /api/settings/schema`**: `{"round_seconds", "sections": [{id, title, order}], "settings": [...], "lists",
+  "secrets"}`. Each setting has its registry entry (`key`, `section`, `group`, `label`, `effect`, `unit`, `scale`,
+  `rounds`, `live`, `env`, `advanced`, `export`, `order`, `related`, `also_in`) and, read from its field, `type`
+  (number, integer, boolean, text, choice, time, timezone, layout), `nullable`, `min`, `max`, `exclusive_min`,
+  `exclusive_max`, `max_length`, `step`, `choices` and `default`. `lists` has `devices`, `services`, `webhooks` and
+  `dns_probes`, each with its `item_fields` and `default_items`; devices also have `drivers` (label, poll defaults,
+  default user name, URL schemes and the driver's `options` as fields; `mesh_node_labels` is type `map`). Webhook
+  items have no `url`: it is the secret slot `webhook.<id>.url`. Sent with an ETag of the app version.
+- **`GET /api/settings`**: `{"revision", "values", "lists", "secrets", "learned", "about", "can_edit"}`. `values`:
+  per key `{value, stored, source: default | stored | env, pending_restart, live_failed}`; a key a variable pins
+  (`PENGUMON_LOG_LEVEL`, `PENGUMON_LOG_LEVELS`, `PENGUMON_GRAFANA_URL`; set and not empty) has source `env`.
+  `lists`: per list `{set, items, errors}`; `set` false means the default items. `secrets`: per slot
+  `{set, source: env | secrets_file | secret_file | null, host}`. `learned`: the learned line capacity
+  `{down_mbps, up_mbps}`. `about` (listen address, data folder, config and database paths, whether a token is set,
+  viewing without it, the OTLP host, the version) is sent only to someone who may edit.
+- **`GET /api/settings/values`**: `{"revision", "values": {key: effective value}}`.
+
+- **`POST /api/settings/validate`** (60 a minute): a change `{values: {key: value | null}, lists: {name: [...] |
+  null}}` against the current state -> `{ok, errors, warnings, summary}`. Nothing is applied. `warnings` are not
+  refusals (retention under 7 days, lowering the raw retention, client details shown to anyone without a token);
+  `summary` is the version line the save would write.
+- **`PUT /api/settings`** (20 a minute, bucket `settings`): `{base_revision, values, lists, secrets}`. `values[key] =
+  null` resets a key (Reset), `lists[name] = null` a list, `secrets[slot] = ""` clears a slot; a secret's value goes
+  only this way, never back. `?source=restore` marks the save of a version loaded with `GET /versions/{n}`,
+  `?source=yaml_import` one of an Import draft (default `save`). The order: validate (422, or 400 for a key or slot a
+  variable pins), write secrets.json (500, nothing saved), commit, apply live. A key or list the request touches that
+  changed between `base_revision` and now answers 409 `{detail, revision, conflicts}`; untouched parts may have
+  changed. Answer: `{revision, summary, applied, restart_needed, live_failed}`; `live_failed` parts are saved and
+  apply at the next start.
+- **`GET /api/settings/versions`**: the kept versions (the last 50), newest first: `[{revision, applied_at, source:
+  import | save | restore | yaml_import, summary}]`. **`GET /api/settings/versions/{n}`**: `{revision, values,
+  lists}`, that version as a draft against the current state (null for a value stored now and not then); 404 when it
+  is no longer kept.
+- **`GET /api/settings/export`**: the stored values and the set lists as YAML in config.yaml syntax. No secret: a
+  webhook has no URL and its headers name their secrets. Needs the token even when viewing without it is allowed.
+- **`POST /api/settings/import`** (20 a minute): YAML in the body (an export, or a whole config.yaml; the path
+  import's limits: 256 KiB, depth 16, no anchors, aliases or merge keys) -> `{values, lists, notes}`, a draft.
+  Nothing is applied. Bootstrap keys and `targets:` are ignored, webhook URLs and plain header values are left out,
+  each with a note.
+
+Errors of the settings endpoints that change things use one shape: `{"detail", "errors": [{"where": "values.<key>" |
+"lists.<name>[<i>].<field>" | "secrets.<slot>", "message"}]}`; a message never repeats the submitted value.

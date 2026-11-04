@@ -241,7 +241,7 @@ async def test_put_with_a_stale_revision_is_a_409_and_nothing_changes(path_app):
     ([_hop(TargetConfig(id=f"h{i}", name="H", address="192.0.2.7"), i) for i in range(MAX_PATH_HOPS + 1)], 422,
      "at most 64"),
     ([_hop(GW, 0, id="dns_a")], 400, "DNS lookup"),
-    ([_hop(GW, 0, device_id="nope")], 400, "No device nope"),
+    ([_hop(GW, 0, device_id="nope")], 400, "(device nope) is linked to a device that is not set up here"),
 ])
 async def test_put_refuses_an_invalid_path_and_keeps_the_live_one(path_app, hops, status, says):
     ac, state = path_app
@@ -396,6 +396,24 @@ async def test_family_is_carried_through_put_export_and_import(path_app):
     assert hops[2]["address"] == "2001:db8::1"
 
 
+async def test_a_hops_warn_level_is_stored_applied_live_and_exported(path_app):
+    ac, state = path_app
+    far = TargetConfig(id="far", name="Far server", address="203.0.113.80", category="public", warn_latency_ms=150)
+    res = await ac.put("/api/path", json={"base_revision": 1, "hops": [_hop(GW, 0), _hop(far, 1)]})
+    assert res.status_code == 200, res.text
+    assert [h["warn_latency_ms"] for h in res.json()["hops"]] == [None, 150.0]
+    assert state.config.targets[1].warn_latency_ms == 150
+    _, stored = await state.repository.load_path()
+    assert [t.warn_latency_ms for t in stored] == [None, 150.0]
+    for _ in range(3):  # 120 ms: amber for a public hop (60 ms), not for this one
+        state.prober._update_target_stats(ProbeSample(target_id="far", success=True, latency_ms=120.0))
+    assert state.prober.stats["far"].status == "up"
+    text = (await ac.get("/api/path/export")).text
+    assert text.count("warn_latency_ms: 150") == 1  # left out where unset
+    hops = (await ac.post("/api/path/import", content=text.encode())).json()["hops"]
+    assert [h["warn_latency_ms"] for h in hops] == [None, 150.0]
+
+
 async def test_test_probe_uses_the_family_and_says_when_this_host_has_no_ipv6(path_app, monkeypatch):
     ac, state = path_app
     backend = state.prober._backend
@@ -508,11 +526,12 @@ MERGE_BOMB = "l0: &l0 {k: 1}\n" + "".join(
 
 
 @pytest.mark.parametrize("text, says", [
-    (ALIAS_BOMB + "targets:\n- {id: a, name: n, address: 192.0.2.1, record_type: *i}\n", "anchors and aliases"),
-    (MERGE_BOMB, "anchors and aliases"),
-    ("targets:\n- &x {id: a, name: n, address: 192.0.2.1}\n", "anchors and aliases"),
-    ("targets:\n- {<<: {id: a}, name: n, address: 192.0.2.1}\n", "merge keys"),
-    ("targets: " + "[" * 20000, "nested too deeply"),
+    pytest.param(ALIAS_BOMB + "targets:\n- {id: a, name: n, address: 192.0.2.1, record_type: *i}\n", "anchors and aliases",
+                 id="alias bomb"),
+    pytest.param(MERGE_BOMB, "anchors and aliases", id="merge bomb"),
+    pytest.param("targets:\n- &x {id: a, name: n, address: 192.0.2.1}\n", "anchors and aliases", id="anchor"),
+    pytest.param("targets:\n- {<<: {id: a}, name: n, address: 192.0.2.1}\n", "merge keys", id="merge key"),
+    pytest.param("targets: " + "[" * 20000, "nested too deeply", id="20000 nested lists"),  # the id was 20 KB of this text
 ])
 async def test_import_refuses_alias_bombs_merge_keys_and_deep_nesting_at_once(path_app, text, says):
     ac, _ = path_app

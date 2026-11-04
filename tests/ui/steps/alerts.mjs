@@ -7,7 +7,11 @@ export const steps = [
   ["alerts modal: sound toggle and tones", async ({ click, eq, ok, page, text, until }) => {
     await click("#btnNotify");
     await until(() => document.getElementById("alertsModal").classList.contains("active"));
-    ok("permission badge", (await text("#notifStatusBadge")).trim().length > 0);
+    // not a secure context (the run's origin): the browser would deny the permission, so the dialog says what works instead
+    // of offering buttons that cannot
+    eq("badge", (await text("#notifStatusBadge")).trim(), "Needs HTTPS");
+    ok("no permission or test button", await page.$eval("#notifButtons", (e) => e.hidden || getComputedStyle(e).display === "none"));
+    ok("it says why and what to use", /need HTTPS or the same machine/.test(await text("#notifHelpText")) && /ntfy or a webhook \(Settings > Alerts\)/.test(await text("#notifHelpText")));
     await click("[data-action=toggleSoundAlerts]");
     await until(() => document.getElementById("btnToggleSound").checked);
     eq("stored", await page.evaluate(() => localStorage.getItem("pengumon_sound")), "true");
@@ -70,7 +74,7 @@ export const steps = [
   ["alerts dialog: server channels (none configured, then ntfy and webhooks) and the test button", async ({ click, eq, ok, page, until }) => {
     await click("#btnNotify");
     await until(() => document.getElementById("alertsModal").classList.contains("active"));
-    await until(() => /No ntfy topic or webhook/.test(document.getElementById("alChannelsText").textContent));
+    await until(() => /No ntfy topic or webhook is set up yet: add one in Settings > Alerts/.test(document.getElementById("alChannelsText").textContent));
     ok("no test button without a channel", await page.$eval("#btnServerTest", (b) => b.hidden));
     await page.keyboard.press("Escape");
     await until(() => !document.getElementById("alertsModal").classList.contains("active"));
@@ -82,7 +86,7 @@ export const steps = [
       window.fetch = (url, opts) => {
         const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
         if (url === "/api/notifications") return json({ channels: [{ name: "ntfy", kind: "ntfy", format: null, host: "ntfy.example.com" }, { name: "<b>hook</b>", kind: "webhook", format: "discord", host: "discord.example.com" }] });
-        if (url === "/api/notifications/test") return json({ channels: [{ name: "ntfy", ok: true, detail: null }, { name: "<b>hook</b>", ok: false, detail: "HTTP 404" }] });
+        if (url === "/api/notifications/test") return json({ channels: [{ name: "ntfy", ok: true, detail: null }, { name: "<b>hook</b>", ok: false, detail: "the server answered 404" }] });
         return real(url, opts);
       };
     });
@@ -98,8 +102,8 @@ export const steps = [
     eq("channels listed as text", await page.$$eval("#alChannels li", (l) => l.map((x) => x.textContent).join("|")), "ntfy ntfy, ntfy.example.com|<b>hook</b> webhook, discord, discord.example.com");
     eq("nothing injected", await page.$$eval("#alChannels b", (b) => b.length), 2);
     await click("#btnServerTest");
-    await until(() => /failed/.test(document.getElementById("alServerResult").textContent));
-    eq("each channel's answer", await page.$eval("#alServerResult", (e) => e.textContent), "ntfy: delivered; <b>hook</b>: failed (HTTP 404)");
+    await until(() => /not delivered/.test(document.getElementById("alServerResult").textContent));
+    eq("each channel's answer", await page.$eval("#alServerResult", (e) => e.textContent), "ntfy: delivered; <b>hook</b>: not delivered, the server answered 404");
     await page.evaluate(() => { window.fetch = window.__realFetch; });
     await page.keyboard.press("Escape");
     await until(() => !document.getElementById("alertsModal").classList.contains("active"));

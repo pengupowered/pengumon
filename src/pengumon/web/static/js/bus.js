@@ -5,6 +5,7 @@
 
 const subscribers = new Map(); // topic -> Set of callbacks
 const lastValues = new Map(); // topic -> last published value
+const every = new Map(); // topic -> how many subscribers need every change of it, also while the tab is hidden
 
 function deliver(topic, fn, value) {
   try {
@@ -15,12 +16,22 @@ function deliver(topic, fn, value) {
 }
 
 export const bus = {
-  // Returns the function that unsubscribes.
-  subscribe(topic, fn) {
+  // Returns the function that unsubscribes. A hidden tab gets only the newest message when it shows again (live.js); a
+  // subscriber that must see every change of its topic meanwhile (an alert on a status change, a list it keeps of the
+  // readings it saw) passes { every: true }, and live.js then still publishes that topic while hidden (when it changed).
+  subscribe(topic, fn, { every: needsEvery = false } = {}) {
     if (!subscribers.has(topic)) subscribers.set(topic, new Set());
     subscribers.get(topic).add(fn);
+    if (needsEvery) every.set(topic, (every.get(topic) || 0) + 1);
     if (lastValues.has(topic)) deliver(topic, fn, lastValues.get(topic));
-    return () => subscribers.get(topic).delete(fn);
+    return () => {
+      if (subscribers.get(topic).delete(fn) && needsEvery) every.set(topic, every.get(topic) - 1);
+    };
+  },
+
+  // Does a subscriber of this topic need every change of it, also while the tab is hidden?
+  wantsEvery(topic) {
+    return (every.get(topic) || 0) > 0;
   },
 
   publish(topic, value) {

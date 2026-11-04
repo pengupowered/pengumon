@@ -27,6 +27,25 @@ edit from an older revision is refused) and `path_initialised`, set by the one-t
 the old `custom_targets` (kept, no longer written) so that import never runs twice. The import runs at start
 (`engine/path.py`), not in the migration, because it needs the config.
 
+**The settings store (schema v15).** What the Settings page edits (pengumon.settings, `db/settings.py`):
+
+* `settings_values(key, value, updated)` - the single values the owner set (registry key, JSON value); a missing key
+  means the default.
+* `settings_items(list, id, position, config, updated)` - the items of the four lists (`devices`, `services`,
+  `webhooks`, `dns_probes`), one row per item, the item as JSON (so a new field needs no migration).
+* `settings_versions(revision, applied_at, source, summary, document)` - the whole document after each save (revision
+  1 is the one-time import; source `import`, `save`, `restore` or `yaml_import`); the last 50 are kept.
+* `meta`: `settings_revision`, `settings_initialised` (the import ran; never cleared), `settings_lists_set` (the lists
+  that are set, not at their default; a set list may be empty), `settings_import_report` (what the import left out and
+  why, never a value) and `settings_imported_at`.
+
+The migration creates the tables only; the one-time import of `config.yaml` runs at start (it needs the config), in
+one transaction with revision 1. A save is one write transaction too: the conflict check, the rows, the new revision
+and its version. Rows of keys or lists a newer build wrote are kept and ignored (logged once at start). None of these
+tables ever holds a secret: the ntfy topic and token, webhook URLs and header secrets are in `secrets.json`. A v15
+database opened by an older build logs "newer than this build; not migrating" and runs on `config.yaml`; the deploy's
+rollback restores the pre-deploy backup in any case.
+
 **Device readings (schema v9).** Readings are stored per device id and kind of reading; no table names a vendor:
 
 * `device_samples(device_id, ts, status, error_kind, error_message, ...)` - one row per poll of a device, `WITHOUT

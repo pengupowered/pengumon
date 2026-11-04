@@ -1,4 +1,6 @@
-// Browser smoke test of the dashboard: the runner. Usage: node smoke.mjs BASE_URL OUT_DIR VARIANT
+// Browser smoke test of the dashboard: the runner. Usage: node smoke.mjs BASE_URL OUT_DIR VARIANT [SHARD]
+// SHARD "i/n" (1 based) runs only the i-th of n slices of the step files, so the long `full` variant can run as several
+// apps and browsers side by side (test_ui_smoke.py); the slices are balanced by the weights in SHARD_WEIGHT below.
 // (PGBROWSER = dir with node_modules/puppeteer-core; variants: full, bare, tworouters, unknownline, longpath, token, viewonly, see test_ui_smoke.py)
 // Supported way to run it: scripts/test-ui.sh (locked-down container, see Dockerfile.ui); the image sets PGBROWSER,
 // PUPPETEER_EXECUTABLE_PATH (Debian's chromium) and PENGUMON_BROWSER_ARGS. Alternative: an installed Chrome (e.g. on
@@ -22,7 +24,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createContext } from "./lib.mjs";
 import { checkSources, checkSubjects, libNames } from "./guards.mjs";
 
-const [base, outDir, variant] = process.argv.slice(2);
+const [base, outDir, variant, shardArg = "1/1"] = process.argv.slice(2);
+const [shardIndex, shardCount] = shardArg.split("/").map(Number);
+// Seconds each step file takes in the `full` variant (measured; the run prints them as fileMs), only to balance the slices.
+const SHARD_WEIGHT = { "settings.mjs": 34, "path-editor.mjs": 26, "core.mjs": 21, "matrix.mjs": 12, "strips.mjs": 9, "router.mjs": 8, "device-setup.mjs": 8,
+  "incidents.mjs": 6, "diagnosis.mjs": 6, "trace.mjs": 5.5, "target-history.mjs": 5, "add-target.mjs": 5, "alerts.mjs": 4.5, "line.mjs": 4,
+  "report.mjs": 3, "dossier.mjs": 3, "layout.mjs": 3, "latency.mjs": 2, "heat.mjs": 2, "sign-out.mjs": 1, "services.mjs": 1 };
+// PENGUMON_BROWSER=firefox: one pass in Firefox (WebDriver BiDi), only these step files (docs/testing.md). A step that needs
+// a Chromium-only API says so with the option `chromiumOnly: "<reason>"`; Firefox skips it and prints the reason.
+const firefox = process.env.PENGUMON_BROWSER === "firefox";
+const FIREFOX_FILES = ["core.mjs", "settings.mjs"];
 const here = path.dirname(fileURLToPath(import.meta.url));
 const stepsDir = path.join(here, "steps");
 const staticDir = path.resolve(here, "../../src/pengumon/web/static");
@@ -56,20 +67,42 @@ const panelRank = (m) => (m.subject.startsWith("panel:") ? panelIds.indexOf(m.su
 modules.sort((a, b) => rank(a) - rank(b) || panelRank(a) - panelRank(b) || a.file.localeCompare(b.file));
 
 // ---- run ----
-const skipped = [];
+const todoOf = (m) => m.steps.filter(([, , o]) => (o?.variants ?? m.variants ?? ["full"]).includes(variant) && !(firefox && o?.chromiumOnly));
+let mine = modules.filter((m) => (!firefox || FIREFOX_FILES.includes(m.file)) && todoOf(m).length);
+if (shardCount > 1) {
+  // Greedy: the heaviest unit first, into the lightest slice; each slice keeps the order above. The files that run last
+  // build on one another (add-target adds a target the path editor's steps then see), so they are one unit.
+  const unitOf = (m) => (m.runsLast ? "runsLast" : m.file);
+  const units = new Map();
+  for (const m of mine) units.set(unitOf(m), (units.get(unitOf(m)) ?? 0) + weightOf(m));
+  const load = Array(shardCount).fill(0);
+  const slice = new Map();
+  for (const [unit, w] of [...units].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
+    const k = load.indexOf(Math.min(...load));
+    load[k] += w;
+    slice.set(unit, k + 1);
+  }
+  mine = mine.filter((m) => slice.get(unitOf(m)) === shardIndex);
+}
+function weightOf(m) { return SHARD_WEIGHT[m.file] ?? todoOf(m).length; }
+const skipped = firefox ? mine.flatMap((m) => m.steps.filter(([, , o]) => o?.chromiumOnly).map(([n, , o]) => `${m.subject}: ${n} (not in Firefox: ${o.chromiumOnly})`)) : [];
+const fileMs = {};
 let started = false;
-run: for (const m of modules) {
-  const todo = m.steps.filter(([, , o]) => (o?.variants ?? m.variants ?? ["full"]).includes(variant));
-  if (!todo.length) continue;
+run: for (const m of mine) {
+  const todo = todoOf(m);
+  const t0 = Date.now();
   if (started) await ctx.resetPage();
   started = true;
+  let fatal = false;
   for (const [i, [name, fn, opts]] of todo.entries()) {
     const label = `${m.subject}: ${name}`;
     if (await ctx.step(label, fn)) continue;
-    if (opts?.fatal) break run;
-    skipped.push(...todo.slice(i + 1).map(([n]) => `${m.subject}: ${n}`));
+    if (opts?.fatal) fatal = true;
+    else skipped.push(...todo.slice(i + 1).map(([n]) => `${m.subject}: ${n}`));
     break; // the rest of this file starts from a page in an unknown state
   }
+  fileMs[m.file] = Date.now() - t0;
+  if (fatal) break run;
 }
 
 // ---- finish ----
@@ -80,7 +113,7 @@ if (csp.length) problems.push(`CSP violations: ${csp.join("; ")}`);
 if (ctx.dialogs.length) problems.push(`unexpected dialogs: ${ctx.dialogs.join("; ")}`);
 const bad = stats.failed.length > 0 || problems.length > 0;
 console.log(JSON.stringify({
-  steps: stats.steps.length, assertions: stats.assertions, failed: stats.failed, skipped, passed: stats.steps, scripts, perf: ctx.report.perf, problems,
+  steps: stats.steps.length, assertions: stats.assertions, failed: stats.failed, skipped, passed: stats.steps, scripts, perf: ctx.report.perf, fileMs, problems,
 }, null, 1));
 await ctx.browser.close();
 process.exit(bad ? 1 : 0);

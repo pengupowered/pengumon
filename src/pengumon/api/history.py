@@ -3,9 +3,11 @@
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from pengumon.api.common import StateDep, json_response
+from pengumon.api.common import StateDep, json_response, record_answer, record_capped
+from pengumon.db.probes import HISTORY_ROW_CAP
+from pengumon.security import rate_limit
 
 router = APIRouter(prefix="/api")
 
@@ -15,7 +17,7 @@ router = APIRouter(prefix="/api")
 HISTORY_UNBUCKETED_MAX_SECONDS = 3600
 
 
-@router.get("/history")
+@router.get("/history", dependencies=[Depends(rate_limit("history", 60, 60))])
 async def get_history(
     state: StateDep,
     start_time: Optional[float] = None,
@@ -39,13 +41,19 @@ async def get_history(
     if not bucket_seconds or bucket_seconds <= 1:
         if et - st > HISTORY_UNBUCKETED_MAX_SECONDS:
             bucket_seconds = 10 if et - st <= 86400 else 60
+            record_capped("history", "range")
     rows = await state.repository.get_history(
         start_time=st,
         end_time=et,
         target_ids=target_ids,
         bucket_seconds=bucket_seconds,
     )
+    if len(rows) >= HISTORY_ROW_CAP:
+        record_capped("history", "rows")
     if compact:
         fields = list(rows[0]) if rows else []
-        return json_response({"fields": fields, "rows": [list(r.values()) for r in rows]})
-    return json_response(rows)
+        response = json_response({"fields": fields, "rows": [list(r.values()) for r in rows]})
+    else:
+        response = json_response(rows)
+    record_answer("history", len(rows), len(response.body))
+    return response

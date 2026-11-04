@@ -15,7 +15,7 @@ Left to right:
 - **Live indicator**: "Live · 1 s" while the socket is open, "Reconnecting" when it is not.
 - **LAN address chip** (when the server knows its LAN URL) with a copy button.
 - **Tools**: Trace (route trace), Dossier (ISP outage dossier), Alerts (browser notifications on or off), Target (add a
-  probe target), **Layout** (panel arrangement), theme toggle, and a **Grafana** menu with links to the dashboards
+  probe target), **Settings** (every setting of Pengumon), **Layout** (panel arrangement), theme toggle, and a **Grafana** menu with links to the dashboards
   when `PENGUMON_GRAFANA_URL` is set (partial `templates/features/grafana.html`; without it the button is not rendered).
   On a phone the tools collapse into a "more" menu that copies them.
 
@@ -140,13 +140,50 @@ adding a device needs no layout change.
 
 Two layers:
 
-1. The **default**, from the server: `dashboard:` in `config.yaml`, `order:` (these panels first, the rest follow in
+1. The **default**, from the server: `dashboard:` in the settings (Settings > Export shows it as YAML), `order:` (these panels first, the rest follow in
    their usual order) and `hidden:` (not shown). Unknown or repeated ids are a config error; the valid ids are the
    panel folder names. It reaches the page on `<body data-layout>`.
 2. The **browser's own choice**, in `localStorage` (`pengumon.layout.v1`) after the first change. It wins over the
    default, so the phone and the PC can differ. A stored layout never hides a panel added later.
 
 Cards fill a 12-column grid (`data-size` 4, 8 or 12); the last card of a row that would leave a gap widens.
+
+## Settings
+
+The **Settings** button (or `#settings` at the end of the address) opens one full-height dialog (`dialogs/settings/`)
+with the sections in this order: Outage rules, Alerts, Your line, Devices and services, Probing, Retention, Privacy,
+Discovery, Display, a collapsed Advanced area ("Change these only if you know why") and "About this install". A rail
+on the left jumps between them; at 720 px and below it is a "Jump to section" list and the dialog is full screen.
+
+- **A row** is the label and input (numbers in their own unit: seconds, milliseconds, minutes, percent), then the effect
+  in one line, "Default 15 %", the badges and **Reset to default**. Badges: *Changed* (stored, not the default),
+  *Unsaved* (in the draft), *From environment · NAME* (the input is read-only and there is no Reset),
+  *Applies after a restart*. A hop-colour row shows the incident rule it relates to, with a link to it.
+- **Nothing applies until Save.** The Save button counts the changes ("Save 3 changes"); Cancel, the close button and
+  Escape ask before throwing a draft away. Every number is checked against its range in the browser (the message
+  appears under the field and Save stays off) and again by the server 0.4 s after the last edit (messages and amber
+  warnings land under the field they name). Saving sends the revision the page loaded; if a part you touched changed
+  elsewhere the server answers 409, the page keeps theirs, tells you which, and keeps the rest of your draft.
+- **Preview** (shown when the draft changes an outage or alert rule) replays the last N days of stored samples with the
+  draft rules: "4 incidents instead of 9 · 2 alerts instead of 6 · recorded: 11", with the notes and a short list of the
+  incidents that would no longer open or would newly open. It runs on demand and is marked out of date after a further
+  edit.
+- **Secrets** (the ntfy topic and token, a webhook's address, a header's value) are write-only: the row says "Set ·
+  host" or "Not set" and offers Replace and Remove. The text you type goes to the server in the Save and is never shown
+  again, kept in a version or exported.
+- **Lists:** webhooks (Alerts), host app checks (Devices and services) and DNS lookups (Probing) are cards with Add,
+  Remove and, where order matters, Move up/down. A saved item's id is fixed. They apply without a restart.
+- **Versions** lists the last 50 Saves; **Load** puts one in the page as a draft and Save restores it. **Export** downloads
+  the settings as YAML (without secrets; viewers do not get it) and **Import** reads such a file, or a config.yaml, into
+  a draft with notes on what it left out.
+- **Display** has "Use this browser's layout for everyone", which writes this browser's panel order and hidden panels
+  into the draft (the Layout dialog links to it).
+- **View only.** Without the access token (when `PENGUMON_VIEW_WITHOUT_TOKEN` allows viewing) the page shows a "View
+  only" bar, every input is disabled and every changing control carries `data-needs-edit`; signing in turns them on.
+
+The help texts of the panels (hop colours, the busy level, router and DOCSIS levels) are functions of the settings values
+(`js/settings-values.js`, GET `/api/settings/values`), so they quote what the page uses now. The latency panel opens on
+`display.default_latency_range`.
 
 ## Mobile tabs
 
@@ -161,11 +198,25 @@ Wider than 720 px there is no bar and every shown panel appears.
 - Owned by a panel (extra `*.html` in its folder): **Local network** (SVG topology, filter chips, clients table) and
   **Router history** (router), **Channels** with a per-channel history (line, DOCSIS only), **Inspector** (incidents).
 - Standalone (`static/dialogs/<id>/`): **add-target**, **alerts**, **device-setup** (credentials and a test poll for a
-  device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **path-editor** (the probe path:
+  device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **settings**, **path-editor** (the probe path:
   Path health's Edit, first-run review, Rediscover, Export / Import), **target-history**, **trace**.
 
 Dialogs are `div.modal` toggled by `.active` (`openModal` in `util.js`); on a phone they open as a bottom sheet. Their
 help texts and labels live in their own folder.
+
+A standalone dialog loads its code when it is first opened (all but **alerts**, which watches the diagnosis from the
+start): its folder has a `dialog.json` such as `{"lazy": {"actions": ["openSettings"], "modals": [], "hash": "settings"}}`
+naming what opens it (click actions, modals the generic `openModal` action opens, a location hash). `js/panels/index.js`
+imports the module the first time one of those is used, and ahead of the click when the pointer or focus reaches the
+control. `tests/test_frontend.py` checks that every way into a lazy dialog is named. The styles and markup stay in the page.
+
+The incident list (`panels/incidents/list.js`) loads the newest 50 incidents, and older ones in pages of 50 when the
+7-day timeline, a search, the last page, a time window opened from another panel or a custom chart range needs them, up
+to 500 (`GET /api/incidents?limit=&offset=`).
+
+A hidden tab is not drawn: `js/live.js` keeps only the newest message and publishes it once when the tab shows again
+(then `tab:resumed` makes the live chart fetch the minute it missed). A subscriber that must see every change of its
+topic meanwhile passes `{ every: true }` to `bus.subscribe` (the alerts, the device feed).
 
 ## States
 
@@ -200,7 +251,8 @@ All under `src/pengumon/web/static/`:
 - `page.css`, `style.css`: page layout (header, grid, banners), and the app layer (panel groups, modal behaviour).
 - `js/`: the core and shared library: `main.js` (entry), `live.js` (the socket; one bus topic per key of each
   message), `bus.js`, `layout.js`, `tabs.js`, `chrome.js` (theme and menus), `dispatch.js` (delegated actions),
-  `devices.js` and `device-feed.js` (devices and features), `device-panel.js`, `help.js`, `util.js`, `state.js`,
+  `devices.js` and `device-feed.js` (devices and features), `device-panel.js`, `help.js`, `settings-values.js` (the live
+  settings values for help texts), `util.js`, `state.js`,
   `grades.js`, `path.js`, `sparkline.js`, `chart-theme.js`.
 - `panels/<id>/`, `dialogs/<id>/`: the features.
 - `vendor/`: Chart.js. The page is served from `/static/v/<hash>/` where the hash covers the whole tree, so all modules
@@ -210,8 +262,8 @@ Event handlers are delegated: markup carries `data-action`, `data-input`, `data-
 register the handler with `registerActions`, which keeps the CSP.
 
 **Metric help.** An info button (`data-help="<key>"`) opens a popover saying what a number measures and what is
-normal. Each folder registers its texts with `registerHelp` in its `help.js`; a key must exist and be used, and quoted
-thresholds must match the code. Use this instead of `title=` (which stays on icon-only buttons).
+normal. Each folder registers its texts with `registerHelp` in its `help.js`; a key must exist and be used. A text that
+quotes a threshold is a function of the settings values (`(values) => string`), so it never goes stale. Use this instead of `title=` (which stays on icon-only buttons).
 
 ## Adding a panel
 

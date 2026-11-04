@@ -64,7 +64,7 @@ export const steps = [
     ok(`technology then host once: ${meta}`, /^DOCSIS · [\d.]+$/.test(meta));
   }],
 
-  ["channels dialog: per-channel power and SNR charts with the server's good zone and grades, list, dark and light", async ({ LINE, click, count, dialogShot, eq, modalOpen, ok, page, setTheme, shown, text, waitCount }) => {
+  ["channels dialog: per-channel power and SNR charts with the server's good zone and grades, list, dark and light", async ({ LINE, click, count, dialogShot, eq, modalOpen, ok, page, setTheme, shown, tabStaysIn, text, waitCount }) => {
     await setTheme("dark");
     await click(`${LINE} [data-action=openChannelsModal]`);
     await waitCount("#channelsPowerChart svg rect[data-tip]", 3);
@@ -79,6 +79,8 @@ export const steps = [
     await setTheme("light");
     await dialogShot("channels-light");
     await setTheme("dark");
+    await tabStaysIn("channelsModal");
+    await page.click("#channelsModal .modal-t");
     await page.keyboard.press("Escape");
     eq("escape closes it", await modalOpen("channelsModal"), false);
   }],

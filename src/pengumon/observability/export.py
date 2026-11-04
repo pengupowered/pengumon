@@ -20,6 +20,7 @@ client names or addresses (the client inventory never reaches a log, a span or a
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -38,6 +39,9 @@ log = logging.getLogger("pengumon.telemetry")
 SERVICE_NAME = "pengumon"
 METRIC_EXPORT_INTERVAL_MS = 30000
 SHUTDOWN_TIMEOUT_MS = 5000
+# The whole of Telemetry.shutdown(): podman gives the container 10 s after SIGTERM, and the app's own shutdown (database,
+# the other components) runs before this one, so a dead collector may cost no more than this.
+SHUTDOWN_DEADLINE_SECONDS = 3.0
 LOGGERS = ("pengumon", "uvicorn.error")  # not uvicorn.access: the request spans cover requests, without query strings
 # uvicorn's INFO lines name the client's address and port ("192.0.2.7:52887 - WebSocket /ws"): only its warnings and
 # errors are exported
@@ -110,21 +114,32 @@ class Telemetry:
     def enabled(self) -> bool:
         return bool(self.signals)
 
-    def shutdown(self) -> None:
-        """Flushes and stops every exporter, bounded by SHUTDOWN_TIMEOUT_MS each, so a stop never hangs on an
-        unreachable collector."""
+    def shutdown(self, deadline_seconds: float = SHUTDOWN_DEADLINE_SECONDS) -> None:
+        """Flushes and stops every exporter, all of them within `deadline_seconds` in total, so a stop never hangs on
+        an unreachable collector (the exporters retry with back-off). What is not done by then is abandoned: the work
+        runs on a daemon thread that the process leaves behind."""
         if self.log_handler is not None:
             for name in LOGGERS:
                 logging.getLogger(name).removeHandler(self.log_handler)
-        for provider in (self.tracer_provider, self.meter_provider, self.logger_provider):
-            if provider is None:
-                continue
-            try:
-                if hasattr(provider, "force_flush"):
-                    provider.force_flush(SHUTDOWN_TIMEOUT_MS)
-                provider.shutdown()
-            except Exception as e:  # the process is stopping: say so and go on
-                log.warning(f"Telemetry shutdown: {type(provider).__name__} failed: {type(e).__name__}")
+        end = time.monotonic() + deadline_seconds
+
+        def stop_all() -> None:
+            for provider in (self.tracer_provider, self.meter_provider, self.logger_provider):
+                if provider is None:
+                    continue
+                try:
+                    if hasattr(provider, "force_flush"):
+                        provider.force_flush(int(max(0.0, min(SHUTDOWN_TIMEOUT_MS / 1000, end - time.monotonic())) * 1000))
+                    provider.shutdown()
+                except Exception as e:  # the process is stopping: say so and go on
+                    log.warning(f"Telemetry shutdown: {type(provider).__name__} failed: {type(e).__name__}")
+
+        worker = threading.Thread(target=stop_all, name="telemetry-shutdown", daemon=True)
+        worker.start()
+        worker.join(max(0.0, end - time.monotonic()))
+        if worker.is_alive():
+            log.warning(f"Telemetry shutdown did not finish within {deadline_seconds:g} s (is the collector down?); "
+                        "leaving the rest")
 
 
 def setup_telemetry(environ: Optional[Mapping[str, str]] = None, *, set_global: bool = True) -> Telemetry:

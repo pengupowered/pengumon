@@ -11,10 +11,16 @@ from pengumon.incidents.model import Incident
 from pengumon.observability.telemetry import incidents_started
 
 
+# What the record of an incident says when probing stopped under it (it did not recover as far as anyone knows)
+MEASURING_STOPPED = ("Measuring stopped here: this computer could no longer send pings, so Pengumon cannot say whether "
+                     "the network recovered.")
+
+
 @dataclass
 class TrackerOutcome:
     started: Optional[Incident] = None  # created (and stored) this round
     resolved: Optional[Incident] = None  # resolved this round (no longer active)
+    escalated: Optional[Incident] = None  # the active incident's severity rose to critical this round
 
 
 class IncidentTracker:
@@ -102,28 +108,47 @@ class IncidentTracker:
                                 self.active_incident.description,
                                 self.active_incident.severity,
                             )
+                        outcome.escalated = self.active_incident
         else:
             self.loss_failure_counter = 0
             self.latency_failure_counter = 0
             self.failure_counter = 0
             if self.active_incident:
                 self.recovery_counter += 1
-                if self.recovery_counter >= self.config.consecutive_failures_for_incident:
+                if self.recovery_counter >= self.config.consecutive_successes_for_recovery:
                     # Resolve incident accurately at the last anomalous sample
                     resolve_ts = self.last_failure_ts if self.last_failure_ts > 0 else ts
-                    self.active_incident.end_time = resolve_ts
-                    self.active_incident.duration_seconds = round(max(1.0, resolve_ts - self.active_incident.start_time), 1)
-                    self.active_incident.resolved = True
-                    if self.repository and self.active_incident.id:
-                        await self.repository.resolve_incident(
-                            self.active_incident.id,
-                            self.active_incident.end_time
-                        )
-                        if self.active_incident.load_pct != self._stored_load_pct:
-                            # Peak load over the whole incident, not just at its start.
-                            await self.repository.set_incident_load(
-                                self.active_incident.id, self.active_incident.load_pct
-                            )
+                    await self._close(resolve_ts)
                     outcome.resolved = self.active_incident
                     self.active_incident = None
         return outcome
+
+    async def _close(self, end_ts: float, note: str = "") -> None:
+        """Ends the active incident at `end_ts` (stored, with the peak load), adding `note` to its description."""
+        incident = self.active_incident
+        incident.end_time = end_ts
+        incident.duration_seconds = round(max(1.0, end_ts - incident.start_time), 1)
+        incident.resolved = True
+        if note:
+            incident.description = f"{incident.description} {note}"
+        if self.repository and incident.id:
+            await self.repository.resolve_incident(incident.id, incident.end_time)
+            if note:
+                await self.repository.update_incident_classification(
+                    incident.id, incident.kind, incident.cause_code, incident.title, incident.description,
+                    incident.severity)
+            if incident.load_pct != self._stored_load_pct:
+                # Peak load over the whole incident, not just at its start.
+                await self.repository.set_incident_load(incident.id, incident.load_pct)
+
+    async def stop_measuring(self, ts: float) -> Optional[Incident]:
+        """Probing became unavailable (this host cannot send pings): the open incident ends at `ts`, the moment the
+        last round was measured, with a note that measuring stopped. Not a recovery: nothing says the network is
+        back, so the caller sends no "resolved". Returns the incident, or None when none was open."""
+        incident = self.active_incident
+        self.failure_counter = self.loss_failure_counter = self.latency_failure_counter = self.recovery_counter = 0
+        if incident is None:
+            return None
+        await self._close(max(ts, incident.start_time), MEASURING_STOPPED)
+        self.active_incident = None
+        return incident

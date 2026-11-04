@@ -48,11 +48,14 @@ and integrity hashes, in `tests/ui/runner/package.json` / `package-lock.json`, a
 - The runner image installs with `npm ci --ignore-scripts`: the lockfile is followed exactly, hashes are verified and no
   dependency lifecycle script runs. The lock currently has no package with an install script; re-check after an update.
 - `Dockerfile.ui` here is only `FROM localhost/ui-test-runner:1` (override with the `BASE` build arg) plus the hash-locked
-  Python test requirements and the repo (image `localhost/pengumon-ui-test`). The production `Dockerfile` and
+  Python test requirements and the repo (image `localhost/pengumon-ui-test:<work tree hash>`). The production `Dockerfile` and
   `Dockerfile.test` contain no Node, npm packages or browser.
 - Chromium comes from Debian (`apt`), Node from the official `node:22-slim` image pinned by digest (Debian's
   nodejs 20 is older than puppeteer-core's `engines.node`). Bump the digest together with the other base images, in the
   runner's `Dockerfile`.
+- Firefox (one test pass) is Mozilla's ESR release tarball, fetched by `tests/ui/runner/fetch-firefox.py` in a build
+  stage and accepted only if its SHA-256 equals the one pinned in the runner's `Dockerfile` (the value in the release's own
+  `SHA256SUMS`). Update both values together; ESR keeps the pin stable for a year. It is in the test runner image only.
 - The tests run with `--network none`, so the browser cannot reach anything but the app on loopback. `scripts/test-ui.sh`
   starts them with its hardening flags inline (or through a shared `run.sh` when `UI_RUNNER_DIR` names one). If the
   base image is missing it stops and says to run `tests/ui/runner/build.sh`.

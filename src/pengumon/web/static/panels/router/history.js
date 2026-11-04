@@ -3,7 +3,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { deviceName, formatClock, openModal, setText } from '../../js/util.js';
+import { deviceName, formatClock, keepKeyboard, openModal, setText } from '../../js/util.js';
 import { series as tone, token } from '../../js/chart-theme.js';
 
 const RANGES = { 3600: true, 21600: true, 86400: true, 604800: true };
@@ -274,6 +274,7 @@ export function openRouterHistory(deviceId) {
   if (!device) return;
   document.getElementById('routerHistTitle').textContent = `${deviceName(device)} history`;
   markRange();
+  keepKeyboard(document.getElementById('routerHistModal'));
   openModal('routerHistModal');
   load();
 }

@@ -20,7 +20,7 @@ Logs go to stdout (journald, through Podman). Each line keeps the `time [LEVEL] 
 device=router driver=asuswrt failures=1`. A device that keeps failing logs when it starts failing, when the error
 changes, every 15 minutes while it lasts, and when it recovers (with the outage length), not on every poll.
 
-- `PENGUMON_LOG_LEVEL`: Root level (otherwise `server.log_level` in `config.yaml`, default `info`)
+- `PENGUMON_LOG_LEVEL`: Root level (otherwise `server.log_level` in the settings, default `info`)
 - `PENGUMON_LOG_LEVELS`: Per-logger levels, e.g. `pengumon.drivers=debug` (every request to the modem and router: method, path, status, duration, size; never bodies or query strings)
 - `PENGUMON_LOG_FORMAT`: `json` for one JSON object per line
 
@@ -39,7 +39,9 @@ bounded to 5 s each.
   (`pengumon.probes`, answered / lost) per target; device poll duration and outcome (ok, partial, error with its
   type, unconfigured); incidents opened by kind and severity; host service checks; probe round time; database
   flushes; FastAPI's HTTP request duration; and gauges read when the metrics are collected: target status, overall
-  network status, device status, open incident, probe loop age (grows when the 1 s loop stalls).
+  network status, device status, open incident, probe loop age (grows when the 1 s loop stalls). The metrics
+  reference below lists everything else: the process and event loop, storage, dashboard clients, devices, discovery,
+  alerts, settings and previews.
 * **Logs**: the `pengumon` loggers and uvicorn's warnings and errors (its INFO lines name client addresses), with the
   `key=value` context as attributes and the trace and span id of the span they were logged in.
 
@@ -52,6 +54,145 @@ Labels are device and target ids from the config, categories, outcomes and error
 client names or query strings. Credential and login requests, static files, `/api/health` and `/metrics` are excluded
 from FastAPI's telemetry. `PENGUMON_GRAFANA_URL` (a plain http(s) base URL, checked at start) adds **Grafana:
 Dashboard / Logs / Traces** links under the header; the dashboard is expected under the uid `pengumon`.
+
+### Metrics reference
+
+Every instrument pengumon exports, with the name Prometheus shows (the OTel name has dots; a unit of `s` or `By` adds
+`_seconds` / `_bytes`, a counter adds `_total`, a histogram `_bucket`, `_sum`, `_count`). The first column says what
+you are looking at; **g** is a gauge read when the metrics are collected, **c** a counter, **h** a histogram.
+Attributes are the whole label set: ids from the config (`device`, `device.id` shown as `device_id`, `target`,
+`service`), categories, outcomes and error kinds, never an address, a name, a URL, a topic, a message or an incident
+id. Nothing on the 1 s probe path costs more than a few microseconds a round (measured in the table's last section).
+
+**The process and the event loop** (`observability/runtime.py`; the loop monitor is a small task on the event loop)
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_process_memory_rss_bytes` | g | | Resident memory (Linux only; left out elsewhere). A line that climbs and never falls back is a leak |
+| `pengumon_process_cpu_time_seconds` | g | `mode` user, system | CPU the process used since it started; graph `rate()` for cores |
+| `pengumon_process_threads` | g | | Threads of the process |
+| `pengumon_process_open_fds` | g | | Open file descriptors (Linux, macOS) |
+| `pengumon_asyncio_tasks` | g | | Asyncio tasks alive at the loop monitor's last sample (counted on the loop, not on the export thread) |
+| `pengumon_asyncio_loop_lag_seconds` | h | | How much later than asked a 0.5 s sleep woke up. Over 0.25 s for 2 s logs a WARNING once ("Event loop running late"), and one line when it is over |
+| `pengumon_probe_round_work_seconds` | h | `step` store, classify, publish | What pengumon itself spends in a round after the probes were answered; apart from probe round-trip time |
+| `pengumon_probe_rounds_late_total` | c | `cause` overran, starved | Rounds that started over 1.5 intervals after the one before |
+| `pengumon_probe_rounds_skipped_total` | c | | Rounds that should have run in that gap and did not |
+| `pengumon_dns_lookups_stuck` | g | | System-resolver lookups still running past their timeout; each holds a thread |
+
+**Storage**
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_db_sample_buffer` | g | | Probe samples waiting for the next commit. Grows past a flush's worth only while writes fail |
+| `pengumon_db_samples_dropped_total` | c | | Samples thrown away because writes kept failing and the buffer (10 000) was full |
+| `pengumon_db_flush_failures_total` | c | `error` exception type | Failed commits |
+| `pengumon_db_file_size_bytes` | g | `file` main, wal | Size of the SQLite file and its write-ahead log |
+| `pengumon_db_retention_rows_total` | c | `table` | Rows the hourly retention removed |
+| `pengumon_db_retention_duration_seconds` | h | | Time one retention run took, vacuum included |
+| `pengumon_db_vacuum_pages_total` | c | | Free pages the incremental vacuum returned to the file system |
+
+Already there: `pengumon_db_flush_duration_seconds`, `pengumon_db_flush_rows_total`.
+
+**Dashboard clients**
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_api_answer_rows` | h | `endpoint` history, device_history, device_history_bucketed | Rows in a history answer |
+| `pengumon_api_answer_size_bytes` | h | `endpoint` | Body bytes of a history answer (not recorded for the bucketed device answer, which FastAPI encodes) |
+| `pengumon_api_answer_capped_total` | c | `endpoint`, `cap` rows, range | Answers that reached the 50 000-row cap, or whose unbucketed range was bucketed (`history`) or cut to 48 h (`device_history`) |
+| `pengumon_api_rate_limited_total` | c | `bucket` | Requests answered 429 by a rate limit |
+| `pengumon_ws_clients` | g | | Dashboards connected to the live stream |
+| `pengumon_ws_message_size_bytes` | h | | Bytes of one live message (once per message, not per client) |
+| `pengumon_ws_send_duration_seconds` | h | `outcome` sent, failed | Time to send one message to one dashboard |
+| `pengumon_ws_clients_dropped_total` | c | `reason` timeout, error | Dashboards disconnected because a send failed (INFO log "Dashboard client dropped") |
+
+**Devices and background tasks**
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_device_polls_skipped_total` | c | `device_id`, `reason` min_interval, credentials_floor, gate_wait, auth_stopped | Polls a device's gate held back: a caller got the latest reading, a credentials test came too soon, the schedule waited for the gate, a refused login stopped the schedule |
+| `pengumon_device_failures` | g | `device` | Consecutive failed polls |
+| `pengumon_device_backoff_seconds` | g | `device` | How much longer than its interval a device with a minimum interval is waited for after failures |
+| `pengumon_device_rebuilds_total` | c | `device_id`, `reason` added, changed, removed, failed | Devices the supervisor built or dropped after a saved change |
+| `pengumon_device_gate_handovers_total` | c | `device_id` | Rebuilt devices that took over the previous one's gate (`Device.inherit_gate`) |
+| `pengumon_task_exits_total` | c | `kind` the coroutine's name, `error` type | Background tasks that died of an exception (any is a bug; the ERROR log has the traceback) |
+
+Already there: `pengumon_device_polls_total`, `pengumon_device_poll_duration_seconds`, `pengumon_device_status`.
+
+**Discovery, route changes, traceroute, alerts**
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_discovery_runs_total` | c | `trigger` manual, daily, incident, confirm; `outcome` done, no_answer, failed, cancelled | Discovery runs (`no_answer`: no trace reached a public server) |
+| `pengumon_discovery_duration_seconds` | h | `trigger` | Time of a run |
+| `pengumon_drift_checks_total` | c | `reason` daily, incident; `outcome` unchanged, changed, failed | Route-change checks |
+| `pengumon_drift_route_changes_total` | c | `kind` new, gone, changed; `stage` found, confirmed | Changes the first run saw, and the ones the repeat run confirmed |
+| `pengumon_traceroute_duration_seconds` | h | `family` 4, 6 | Time of one in-process traceroute once it was its turn (the wait for another trace is not in it) |
+| `pengumon_traceroute_hops` | h | `family` | Hops a traceroute found |
+| `pengumon_alerts_total` | c | `event`, `channel`, `outcome` | What became of each alert. Before any channel (`channel="all"`): `held` (quiet hours), `delayed`, `dropped` (a rule), `suppressed` (repeat window); per channel (`ntfy` or the webhook's id): `sent`, `failed` |
+| `pengumon_alerts_held` | g | | Alerts waiting for their time |
+| `pengumon_alert_delivery_duration_seconds` | h | `channel` | Delivery time to one channel, retries included |
+
+**Settings and preview**
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_settings_saves_total` | c | `source` save, restore, yaml_import; `outcome` saved, invalid, conflict, secrets_failed | Saves |
+| `pengumon_settings_live_failures_total` | c | `section`, `applier` | Live appliers that raised after a save (the change then applies at the next start). The ERROR log names the applier, the setting keys, list names and secret slot names, and where it was raised: never the message, a traceback or a value (the traceback is at DEBUG) |
+| `pengumon_settings_imports_total` | c | `outcome` ok, invalid | Settings files read for import |
+| `pengumon_preview_runs_total` | c | `outcome` done, cap, cancelled, failed, busy | Outage-rules previews (`cap`: stopped at the 60 s limit; `busy`: refused because one was running) |
+| `pengumon_preview_duration_seconds` | h | `outcome` | Time a preview ran |
+| `pengumon_preview_rounds` | h | | Probe rounds a finished preview replayed |
+
+**Spans** added: `discovery.run` (attributes `discovery.trigger`, `discovery.outcome`) with children `discovery.traces`,
+`discovery.trace` (one per server) and `discovery.checks`; `discovery.drift_check` (`drift.reason`, `drift.outcome`)
+around its runs; `alert.deliver` (`alert.channel`, `alert.event`, `alert.outcome`); `settings.preview`
+(`preview.outcome`, `preview.days`, `preview.rounds`). Their errors set the span status like the older ones.
+
+**Logs** added: `Event loop running late` (WARNING, through StateLog); `Probe round started late` (DEBUG);
+`Dashboard client dropped` (INFO); `Request refused by a rate limit` (DEBUG, the bucket only); `Settings preview ended`
+(INFO, outcome, seconds, rounds); the failing live applier (ERROR, above); a failed ntfy post names the error type and
+status, never the topic URL.
+
+### Grafana dashboard
+
+`docs/grafana/pengumon.json` is the dashboard behind the **Grafana: Dashboard** link (uid `pengumon`), for a Grafana with
+Prometheus, Loki and Tempo datasources whose uids are `prometheus`, `loki` and `tempo` (the Grafana LGTM stack's
+defaults). Import it (Dashboards > New > Import), or provision it from a file. It holds no address or name of your
+network. Rows: the network probes, modem and router polling, host services, **pengumon itself** (round time, memory,
+CPU, threads, descriptors, tasks, loop lag, round work, late rounds, stuck DNS lookups), **Storage**, **Dashboard
+clients**, **Devices**, **Discovery and alerts**, **Settings and preview**, then logs and traces. Add a link to your
+pengumon page under Dashboard settings > Links.
+
+The queries use only plain PromQL, so they run on a stock Prometheus with no feature flag (an earlier version used the
+experimental `anchored` range modifier, which a stock Prometheus refuses). Counters are shown with `increase()` over the
+panel's interval. Prometheus extrapolates `increase()` to the edges of the window, and it cannot see a counter's rise from
+nothing to its first value (a counter that shows up already at 1 has not "increased" yet). For large counts the effect is
+negligible. For small counts, such as "Incidents opened" with two incidents in a day, the number can read 1.8 or 2.3
+instead of 2, and the first event of a counter that was never seen before can be missed. Read small numbers as
+"about", and use the incident list in Pengumon itself for the exact count.
+
+The **Service** selector at the top picks one instance by its `OTEL_SERVICE_NAME` (default `pengumon`), and every
+panel, log and trace query is limited to it. A second instance, or a test run exporting under another name, never
+mixes into the panels.
+
+Older instruments, for completeness: `pengumon_probe_latency_seconds`, `pengumon_probes_total`,
+`pengumon_probe_round_duration_seconds`, `pengumon_incidents_started_total`, `pengumon_service_check_duration_seconds`,
+`pengumon_service_up`, and the gauges `pengumon_target_status`, `pengumon_system_status`, `pengumon_incident_active`,
+`pengumon_device_status` and `pengumon_probe_loop_age_seconds`.
+
+The new gauges have the same name in the Prometheus text at `/metrics` and over OTLP (older ones keep the names they
+had: `pengumon_collector_status` is `pengumon.device.status`).
+
+### Cost of the instruments
+
+Measured on the probe loop alone (12 targets, a fake prober, classifier and store, the real OTLP exporters on, the
+loop's pacing sleep replaced by a yield, process CPU time over 100 000 rounds, median of four alternating runs against
+the code before the instruments): 308 us a round before, 314 us after without a dashboard open (+6 us, 2 %); 383 us
+before, 395 us after with one open (+12 us; the run-to-run spread is about 15 us). The new per-round work is three
+`perf_counter` pairs, three histogram records with fixed attributes (a fourth while a dashboard is open) and one
+subtraction for the late-round check. Everything else is recorded where a rare event happens, or read when the metrics
+are collected every 30 s.
 
 ## 🔔 Notifications
 

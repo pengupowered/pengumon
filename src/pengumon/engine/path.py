@@ -153,9 +153,11 @@ class PathManager:
         if clash:
             raise PathError(f"{', '.join(clash)} is the id of a DNS lookup; give the hop another id")
         devices = {d.id for d in self.config.devices}
-        unknown = sorted({t.device_id for t in targets if t.device_id and t.device_id not in devices})
-        if unknown:
-            raise PathError(f"No device {', '.join(unknown)} is configured (config.yaml devices:)")
+        missing = [t for t in targets if t.device_id and t.device_id not in devices]
+        if missing:
+            names = ", ".join(f"\"{t.name}\" (device {t.device_id})" for t in missing)
+            raise PathError(f"{names} {'is' if len(missing) == 1 else 'are'} linked to a device that is not set up here. "
+                            "On that hop choose Change, then No device, or add the device in Settings, Devices.")
 
     async def apply(self, base_revision: int, targets: List[TargetConfig]) -> int:
         """Stores the path if it is still at base_revision (else PathConflict), then makes it live. A home hop new

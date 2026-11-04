@@ -10,13 +10,18 @@ from pengumon.incidents.loss import TargetLoss
 from pengumon.models.probes import ProbeSample
 from pengumon.db.core import DAY
 from pengumon.db.schema import UPSERT_ROLLUP_1M_FROM_SAMPLES
-from pengumon.observability.telemetry import db_flush_duration, db_flush_rows
+from pengumon.observability import StateLog, get_logger
+from pengumon.observability.telemetry import db_flush_duration, db_flush_failures, db_flush_rows, db_samples_dropped
 
 # /api/history rules: raw samples only for short ranges, sub-minute buckets (computed from raw samples)
 # up to a day, per-minute rollups for everything else. Every answer is capped.
 HISTORY_RAW_MAX_SECONDS = 6 * 3600
 HISTORY_SMALL_BUCKET_MAX_SECONDS = 24 * 3600
-HISTORY_ROW_CAP = 200_000
+# 50 000 rows is about 2 MB of JSON and 25 MB of peak memory; 200 000 was 8 MB and 100 MB. The buckets widen to fit.
+HISTORY_ROW_CAP = 50_000
+# While every flush fails (disk full, read-only volume, corrupt file) the buffer keeps the newest samples only: about
+# ten minutes at the usual 12 samples a second, some 12 MB.
+SAMPLE_BUFFER_MAX = 10_000
 # Exact percentiles for sub-minute buckets sort every answered probe of the range (0.1 s for 1 h, about 2 s for 24 h on
 # 10 targets), so the band is only computed for ranges up to this long; longer ones leave it None.
 HISTORY_BAND_RAW_MAX_SECONDS = 6 * 3600
@@ -26,14 +31,35 @@ _BUCKET_KEYS = ("target_id", "timestamp", "latency_ms", "packet_loss_pct", "jitt
                 "total_count", "latency_p10_ms", "latency_p90_ms")
 
 
+_log = get_logger("pengumon.db")
+
+
 class ProbeQueries:
     async def insert_samples(self, samples: List[ProbeSample]):
         """Buffers probe samples and commits them in batches (every `sample_flush_seconds`)."""
         if not samples:
             return
         self._sample_buffer.extend(samples)
+        self._cap_sample_buffer()
         if time.monotonic() - self._last_flush >= self.sample_flush_seconds:
-            await self.flush_samples()
+            try:
+                await self.flush_samples()
+            except Exception:
+                pass  # logged by flush_samples; the round still classifies and publishes, the samples are retried
+
+    def _cap_sample_buffer(self):
+        """While writes fail: drops the oldest buffered samples beyond SAMPLE_BUFFER_MAX; logs once when it starts.
+        (A healthy buffer is never cut: it is written within `sample_flush_seconds`, whatever one call brought.)"""
+        if not self._flush_state.failing:
+            return
+        extra = len(self._sample_buffer) - SAMPLE_BUFFER_MAX
+        if extra <= 0:
+            return
+        del self._sample_buffer[:extra]
+        db_samples_dropped.add(extra)
+        if not self._dropping:
+            self._dropping = True
+            _log.warning(f"Sample buffer full ({SAMPLE_BUFFER_MAX} samples) while writes fail: dropping the oldest")
 
     async def flush_samples(self):
         """Writes any buffered samples. Called before reads and on shutdown."""
@@ -57,9 +83,14 @@ class ProbeQueries:
                 first_minute = int(min(s.timestamp for s in batch) // 60)
                 last_minute = int(max(s.timestamp for s in batch) // 60)
                 await db.execute(UPSERT_ROLLUP_1M_FROM_SAMPLES, (first_minute * 60, (last_minute + 1) * 60))
-        except Exception:
+        except Exception as e:
             self._sample_buffer = batch + self._sample_buffer  # keep them for the next attempt
+            db_flush_failures.add(1, {"error": type(e).__name__})
+            self._flush_state.failure(f"{type(e).__name__}: {e}", buffered=len(self._sample_buffer))
+            self._cap_sample_buffer()
             raise
+        self._flush_state.success(rows=len(batch))
+        self._dropping = False
         self._remember_targets(ids)
         db_flush_duration.record(time.monotonic() - started)
         db_flush_rows.add(len(batch))

@@ -14,6 +14,7 @@ COPY pyproject.toml config.example.yaml README.md LICENSE requirements.in requir
 COPY src/ src/
 COPY tests/ tests/
 COPY scripts/ scripts/
+COPY docs/ docs/
 COPY compose.release.yaml docker-compose.yml Dockerfile CHANGELOG.md ./
 COPY .github/ .github/
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]

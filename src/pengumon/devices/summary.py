@@ -82,6 +82,12 @@ class LiveSummaries:
         self._cache: Dict[str, tuple] = {}  # device id -> ((snapshot, clients, mesh) it was built from, summary)
         self.builds = 0  # how many summaries were built (tests: the cost per tick)
 
+    def forget_missing(self) -> None:
+        """Drops the cached summaries of devices no longer in the registry (after the devices were rebuilt)."""
+        present = {d.id for d in self._registry} if self._registry is not None else set()
+        for device_id in [i for i in self._cache if i not in present]:
+            del self._cache[device_id]
+
     def current(self) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}
         if self._registry is None:

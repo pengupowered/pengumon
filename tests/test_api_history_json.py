@@ -118,3 +118,20 @@ async def test_a_long_range_without_a_bucket_is_bucketed_not_returned_raw(fake_r
         await ac.get("/api/history?start_time=0&end_time=172800")          # 2 days: minute buckets
         await ac.get("/api/history?start_time=0&end_time=21600&bucket_seconds=30")  # a given bucket is kept
     assert [c[3] for c in fake_repo.calls] == [None, 10, 60, 30]
+
+
+@pytest.mark.asyncio
+async def test_unbucketed_device_history_is_cut_to_its_newest_48_hours(fake_repo):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        assert (await ac.get("/api/devices/router/history?start_time=0&end_time=1000000")).status_code == 200
+        assert (await ac.get("/api/devices/router/history?start_time=900000&end_time=1000000")).status_code == 200
+    (_, start, end, _), (_, start2, _, _) = fake_repo.calls
+    assert (start, end) == (1000000 - 48 * 3600, 1000000)
+    assert start2 == 900000  # a range inside the cap is left alone
+
+
+@pytest.mark.asyncio
+async def test_history_is_rate_limited(fake_repo):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        codes = [(await ac.get("/api/history?start_time=10&end_time=20")).status_code for _ in range(61)]
+    assert codes[:60] == [200] * 60 and codes[60] == 429

@@ -93,11 +93,20 @@ class MemoryRepo:
         self.saved = json.dumps(drift)
 
 
+class TooManyWaits(BaseException):
+    """Not an Exception: the code under test cannot swallow it with `except Exception`, which once let a loop run on."""
+
+
 def checker(net, repo=None, jobs=None, sleep=None, **kw):
     sent = []
 
+    waits = []
+
     async def no_wait(seconds):
-        return None
+        # The loop in run_daily() never ends by itself: a test that uses this default would spin for ever.
+        waits.append(seconds)
+        if len(waits) > 100:
+            raise TooManyWaits("run_daily() waited more than 100 times: give the test its own sleep that ends it")
 
     drift = DriftChecker(run=net.run, paths=net.paths, repository=repo or MemoryRepo(), jobs=jobs,
                          notify=sent.append, sleep=sleep or no_wait, **kw)
@@ -201,6 +210,17 @@ async def test_a_check_while_the_connection_is_down_compares_nothing():
     public = await drift.check()
     assert public["state"] == "failed" and public["changes"] == [] and "not compared" in public["error"]
     assert public["discovery_id"] is None and sent == []
+
+
+async def test_a_failed_check_keeps_the_unreviewed_changes_of_the_last_good_one():
+    net = Network(ROUTE_B, APPLIED)
+    drift, _ = checker(net)
+    good = await drift.check()
+    assert good["state"] == "changed" and good["good_at"]
+    net.traces = DOWN
+    public = await drift.check()
+    assert public["state"] == "failed" and public["changes"] and public["discovery_id"] and "not compared" in public["error"]
+    assert public["good_at"] == good["good_at"]  # the notice says when the shown changes were found
 
 
 async def test_a_failing_discovery_is_a_failed_check(caplog):
@@ -366,7 +386,9 @@ async def test_the_component_hooks_incident_end_after_the_notifier_and_stops_the
 async def test_background_checks_can_be_turned_off_and_the_asn_lookup_on():
     state = AppState(repository=MemoryRepo(), classifier=FakeClassifier(None))
     await component.register(Context(app=app, config=AppConfig(discovery={"background": False}), state=state))
-    assert state.drift is None and state.classifier.on_incident_resolved is None
+    assert not state.drift.enabled  # built anyway: the switch is read live (the Settings page can turn it on)
+    state.classifier.on_incident_resolved("incident")
+    assert state.drift._incident_task is None  # but a switched-off checker schedules nothing
     state = AppState(repository=MemoryRepo())
     await component.register(Context(app=app, config=AppConfig(discovery={"asn_lookup": True}), state=state))
     assert state.drift.options.asn_lookup is True
@@ -410,7 +432,7 @@ async def test_a_route_change_notification_links_to_path_health():
     await asyncio.gather(*list(notifier._tasks))
     ntfy = next(r for r in requests if r.url.host == "ntfy.test")
     assert ntfy.headers["Click"] == "http://pengu.example.com:8000/#live"
-    assert ntfy.headers["Title"] == "Pengumon: your provider's route changed"
+    assert ntfy.headers["Title"] == "Pengumon: your network path changed"
     assert "Provider hop 2" in ntfy.content.decode()
     body = json.loads(next(r for r in requests if r.url.host == "hooks.example.com").content)
     assert (body["event"], body["link"]) == ("path_changed", "http://pengu.example.com:8000/#live")
@@ -429,3 +451,9 @@ async def test_without_a_public_url_ntfy_gets_no_click_link():
     await asyncio.gather(*list(notifier._tasks))
     assert "Click" not in requests[0].headers
     await notifier.aclose()
+
+
+async def test_the_default_fake_sleep_ends_a_daily_loop_that_would_spin():
+    drift, _ = checker(Network(ROUTE_A, APPLIED))
+    with pytest.raises(TooManyWaits):
+        await drift.run_daily()

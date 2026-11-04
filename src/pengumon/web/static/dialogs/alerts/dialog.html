@@ -6,8 +6,8 @@
     <div class="modal-b">
       <div class="opt-row"><div><b>Desktop notifications</b><span>A pop-up when an outage starts or ends.</span></div><span class="al-state"><span id="notifStatusBadge" class="badge quiet st-unknown">Checking</span>
         <label class="switch" id="notifSwitch" hidden><input type="checkbox" role="switch" data-action="toggleNotificationsEnabled" aria-label="Desktop notifications on"><span></span></label></span></div>
-      <p class="fine" id="notifHelpText">If the browser blocks notifications for this address, allow them from the site settings (the icon left of the address), then press Test. On plain http over the LAN most browsers refuse them; <a href="http://localhost:8000">localhost</a> works, and so does the sound below.</p>
-      <div class="row-btns"><button type="button" class="btn outline sm" id="btnRequestNotif" data-action="requestDesktopPermission">Allow notifications</button><button type="button" class="btn sm" data-action="sendTestNotification">Test</button></div>
+      <p class="fine" id="notifHelpText">If the browser blocks notifications for this address, allow them from the site settings (the icon left of the address), then press Test.</p>
+      <div class="row-btns" id="notifButtons"><button type="button" class="btn outline sm" id="btnRequestNotif" data-action="requestDesktopPermission">Allow notifications</button><button type="button" class="btn sm" data-action="sendTestNotification">Test</button></div>
       <div class="opt-row al-sound"><div><b id="alSoundLabel">Sound</b><span>A short tone in this tab, no permission needed.</span></div>
         <label class="switch"><input type="checkbox" id="btnToggleSound" role="switch" data-action="toggleSoundAlerts" aria-labelledby="alSoundLabel"><span></span></label></div>
       <div class="row-btns">

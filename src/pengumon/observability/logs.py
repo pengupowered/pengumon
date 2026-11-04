@@ -25,6 +25,8 @@ from typing import Any, Callable, Dict, Mapping, Optional, TextIO
 
 from opentelemetry import trace
 
+from pengumon.settings.env import env_value
+
 HANDLER_NAME = "pengumon"
 CONTEXT_ATTR = "pengumon_context"
 TEXT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -153,8 +155,8 @@ def setup_logging(level: Optional[str] = None, *, levels: Optional[str] = None, 
                   stream: Optional[TextIO] = None) -> logging.Handler:
     """Installs the pengumon handler on the root logger (replacing an earlier one, so calling it again is safe)
     and routes uvicorn's loggers through it. Other handlers, such as pytest's, are left alone."""
-    level = _level(os.getenv("PENGUMON_LOG_LEVEL") or level)
-    overrides = parse_levels(os.getenv("PENGUMON_LOG_LEVELS") or levels)
+    level = _level(env_value("PENGUMON_LOG_LEVEL") or level)
+    overrides = parse_levels(env_value("PENGUMON_LOG_LEVELS") or levels)
     fmt = (os.getenv("PENGUMON_LOG_FORMAT") or fmt or "text").strip().lower()
     if fmt not in ("text", "json"):
         raise ValueError(f"invalid log format {fmt!r}: expected text or json")
@@ -175,12 +177,31 @@ def setup_logging(level: Optional[str] = None, *, levels: Optional[str] = None, 
         uvicorn_logger.propagate = True
     for name, name_level in {**DEFAULT_LEVELS, **overrides}.items():
         logging.getLogger(name).setLevel(name_level)
+    _applied[:] = list(overrides)
     return handler
+
+
+_applied: list = []  # the logger names the last per-logger spec set
+
+
+def apply_levels(level: Optional[str], levels: Optional[str]) -> None:
+    """Applies the effective server.log_level and server.log_levels (the Settings, PENGUMON_LOG_LEVEL /
+    PENGUMON_LOG_LEVELS already folded in): the root level, then each named logger. A logger the previous spec named
+    and this one does not goes back to its default (DEFAULT_LEVELS, else inherited)."""
+    if level:
+        logging.getLogger().setLevel(_level(level))
+    spec = parse_levels(levels)
+    for name in _applied:
+        if name not in spec:
+            logging.getLogger(name).setLevel(DEFAULT_LEVELS.get(name, logging.NOTSET))
+    for name, name_level in spec.items():
+        logging.getLogger(name).setLevel(name_level)
+    _applied[:] = list(spec)
 
 
 def apply_config_level(level: Optional[str]) -> None:
     """Applies server.log_level from config.yaml once it is loaded; PENGUMON_LOG_LEVEL, if set, still wins."""
-    if not os.getenv("PENGUMON_LOG_LEVEL") and level:
+    if not env_value("PENGUMON_LOG_LEVEL") and level:
         logging.getLogger().setLevel(_level(level))
 
 

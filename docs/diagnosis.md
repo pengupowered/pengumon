@@ -33,6 +33,29 @@ Pengumon concurrently probes multiple network stages every second and classifies
   - DNS Query (`google.com`): 🔴 **Timeout (>400ms)**
   - Diagnosed Root Cause: **DNS Resolver Outage**
 
+## The levels (Settings, Outage rules)
+
+Each level below is a setting (`classifier.*`); the defaults are what the classifier always used. A change applies
+from the next probe round and never relabels stored incidents.
+
+- **Loss of a role** (the last 10 probes of its targets): degraded from `degraded_loss_pct` (15 %), down from
+  `down_loss_pct` (40 %). DNS lookups are degraded from `dns_degraded_loss_pct` (25 %) and down from the same
+  down level.
+- **DNS cooldown:** after trouble upstream of the home network (loss at the gateway, ISP hops or public targets,
+  or slow public targets), DNS faults are not judged for `dns_cooldown_seconds` (90 s), so a line blip is not
+  reported as a DNS outage.
+- **Latency and jitter** per role: `local_*`, `gateway_*` and `public_*_spike_threshold_ms`. The ISP hops have
+  `isp_latency_spike_threshold_ms`; empty, they use the internet's level (80 ms).
+- **When incidents start and end** (rounds of 1 s): a loss incident opens after
+  `consecutive_failures_for_incident` faulty rounds (3), a latency-only one after
+  `consecutive_failures_for_latency_incident` (10), and either ends after `consecutive_successes_for_recovery`
+  healthy rounds in a row (3). The end time is the last faulty round.
+- **Internal, not settings:** DNS is judged only while every lower layer loses under 10 %; an ISP outage names the
+  ISP hop from 30 % ISP-hop loss, otherwise peering; a sample over 150 ms makes its target an affected one.
+
+A hop's own "warn above" level in the path editor (`warn_latency_ms`) changes only that hop's colour on the
+dashboard; the incident rules above still judge its role's average.
+
 ## Load-aware classification
 
 A line running near its capacity queues packets in the modem and router (bufferbloat), so ping times rise and
@@ -55,8 +78,9 @@ looks at the WAN load (from the Asus router's 10 s byte counters) when it judges
 
 Routers answer ping from a slow path and drop those replies first, whether or not the line is busy. Loss at
 the `isp`-category hops (intermediate routers such as Hop 3 and Hop 4, and the ISP's DNS address)
-that does not carry through to the end targets is therefore not packet loss. When the ISP hops lose 15% or
-more, but the public targets lose under 15% **and** under half of what the ISP hops lose, and the local
+that does not carry through to the end targets is therefore not packet loss. When the ISP hops lose the degraded
+level (15% by default) or more, but the public targets lose under it **and** under half of what the ISP hops lose,
+and the local
 router, gateway and DNS probes are healthy, the status is `healthy` ("Hop 3 drops some ping replies, but later
 hops and public targets are fine: routers often deprioritise ping replies, so this is not packet loss"), no
 incident is opened and no failure counter builds up. The busy rule above runs first and keeps its behaviour for
@@ -64,10 +88,11 @@ the loaded case.
 
 On the first start of 0.2.0 a one-time backfill (recorded in `meta` as
 `incident_ping_deprioritisation_backfill`) re-checks old "ISP Line / ... Packet Loss|Outage" incidents that
-still have raw samples (7 days): if the public targets stayed under 15% and under half the ISP loss, the
-incident is marked expected. Incidents without raw samples are left alone. A second, separate backfill
+still have raw samples (7 days): if the public targets stayed under the degraded level and under half the ISP
+loss, the incident is marked expected. Incidents without raw samples are left alone. A second, separate backfill
 (`incident_load_backfill`) annotates old incidents with the router load around them and marks latency-only and
-ISP-hop-loss incidents under heavy load as expected.
+ISP-hop-loss incidents under heavy load as expected. It runs once: a later capacity or busy level does not
+re-annotate them.
 
 **Expected incidents** are hidden on the dashboard by default (a toggle shows them with a "busy line" badge)
 and `GET /api/incidents?include_expected=false` omits them. The dossier, the reliability report and the

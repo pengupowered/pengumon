@@ -9,6 +9,7 @@ import time
 
 from pengumon.components import Component, Context
 from pengumon.engine.classifier import OutageClassifier
+from pengumon.lines import wording
 from pengumon.observability import get_logger
 
 _log = get_logger("pengumon")  # the app's lifecycle lines keep the logger name they have always had
@@ -20,9 +21,15 @@ async def register(ctx: Context) -> Component:
         config=ctx.config.classifier, repository=repository, known_targets=ctx.config.targets, load=ctx.line_load,
         on_incident_started=notifier.on_incident_started if notifier else None,
         on_incident_resolved=notifier.on_incident_resolved if notifier else None,
+        on_incident_escalated=notifier.on_incident_escalated if notifier else None,
         line_technology=ctx.state.devices.line_technology(),
     )
     ctx.state.classifier = classifier
+    hub = getattr(ctx, "settings", None)
+    if hub is not None:
+        @hub.on(events=["devices_rebuilt"], name="classifier.devices")
+        def _devices_rebuilt(change) -> None:
+            classifier.line = wording(ctx.state.devices.line_technology())  # the access line may be another technology
 
     async def stop() -> None:
         await classifier.cancel_background()

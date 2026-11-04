@@ -1,0 +1,10 @@
+{
+  "lazy": {
+    "actions": [
+      "openSettings",
+      "openSettingsAt"
+    ],
+    "modals": [],
+    "hash": "settings"
+  }
+}

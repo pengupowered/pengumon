@@ -31,6 +31,9 @@ class TargetConfig(BaseModel):
     device_id: Optional[str] = Field(None, max_length=64)
     # The owner set "No device" on this hop: it is never linked by its address again (engine.device_links)
     device_unlinked: bool = False
+    # This hop turns amber above this average latency instead of its role's level (prober.hop_status); None: the
+    # role's. Only the hop's colour: the incident rules still judge the role's average (the owner's decision).
+    warn_latency_ms: Optional[float] = Field(None, gt=0, le=10000)
 
     @field_validator("group", "device_id")
     @classmethod
@@ -115,6 +118,9 @@ class TargetStats(BaseModel):
     # An IPv6 target while this host has no IPv6 (no route, or none in the OS): not probed, no samples, no verdict
     # (engine.prober; re-checked every few minutes). Shown as "IPv6 unavailable on this host", like ignores_ping.
     ipv6_unavailable: bool = False
+    # This host cannot send pings at all now (Prober.probing_problem): nothing is measured, so the figures are stale and
+    # the hop is neither up nor down. Set every round.
+    probing_unavailable: bool = False
 
 
 

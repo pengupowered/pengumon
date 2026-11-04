@@ -302,3 +302,37 @@ CREATE TABLE IF NOT EXISTS path_events (
 CREATE_PATH_EVENTS_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_path_events_target ON path_events(target_id, at);
 """
+
+# --- schema v15: the settings store (pengumon.settings, db/settings.py) ------------------------------------------------
+#
+# The single values the owner set (registry key -> JSON value; a missing key means the default), the items of the four
+# lists (one row per item, its whole model as JSON, so a new field needs no migration) and the saved versions (the
+# whole document after each save; db/settings.py keeps the last 50). None of them ever holds a secret.
+CREATE_SETTINGS_VALUES_TABLE = """
+CREATE TABLE IF NOT EXISTS settings_values (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated REAL NOT NULL
+);
+"""
+
+CREATE_SETTINGS_ITEMS_TABLE = """
+CREATE TABLE IF NOT EXISTS settings_items (
+    list TEXT NOT NULL,
+    id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    config TEXT NOT NULL,
+    updated REAL NOT NULL,
+    PRIMARY KEY (list, id)
+);
+"""
+
+CREATE_SETTINGS_VERSIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS settings_versions (
+    revision INTEGER PRIMARY KEY,
+    applied_at REAL NOT NULL,
+    source TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    document TEXT NOT NULL
+);
+"""

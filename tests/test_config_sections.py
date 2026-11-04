@@ -20,6 +20,9 @@ SETTINGS_MODULES = [
     "pengumon.config", "pengumon.engine.prober_settings", "pengumon.engine.classifier_settings",
     "pengumon.engine.load_settings", "pengumon.services.settings", "pengumon.clients.settings",
     "pengumon.web.settings", "pengumon.devices.settings", "pengumon.secrets", "pengumon.engine.netinfo",
+    "pengumon.notify_settings", "pengumon.engine.discovery.settings", "pengumon.lines.levels", "pengumon.devices.levels",
+    "pengumon.reports.settings", "pengumon.settings.general", "pengumon.settings.registry",
+    "pengumon.settings.lenient", "pengumon.settings.importer", "pengumon.settings.manager",
 ]
 
 
@@ -40,7 +43,7 @@ def test_config_py_defines_only_appconfig_and_the_core_sections():
     classes = [n.name for n in tree.body if isinstance(n, ast.ClassDef)]
     assert sorted(classes) == ["AppConfig", "DatabaseConfig", "ServerConfig"]
     functions = [n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    assert sorted(functions) == ["_read_yaml", "load_config", "load_server_config", "read_config_file"]  # secrets writing and gateway discovery live elsewhere
+    assert sorted(functions) == ["_bootstrap", "_read_yaml", "load_config", "load_server_config", "read_config_file"]  # secrets writing and gateway discovery live elsewhere
 
 
 def _runtime_imports_of_config(tree: ast.AST):
@@ -64,7 +67,10 @@ def test_only_the_app_imports_pengumon_config():
     """A feature reads its section from the AppConfig it is handed and imports its own settings module."""
     offenders = [f"{path.relative_to(SRC)}:{line}" for path in sorted(SRC.rglob("*.py"))
                  for line in _runtime_imports_of_config(ast.parse(path.read_text(encoding="utf-8")))
-                 if path.relative_to(SRC).as_posix() not in ("main.py", "cli.py")]  # the app and its command
+                 # the app, its command, and the settings store (it describes, imports and builds AppConfig)
+                 if path.relative_to(SRC).as_posix() not in ("main.py", "cli.py", "settings/registry.py",
+                                                              "settings/importer.py", "settings/manager.py",
+                                                              "settings/check.py")]
     assert offenders == []
 
 

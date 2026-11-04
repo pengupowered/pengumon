@@ -287,7 +287,10 @@ def test_ci_builds_the_package_once_and_tests_that_wheel_in_the_image_and_native
     assert "--prebuilt" in test["run"]
     assert "if" not in test  # every architecture builds and tests the image; only the browser check is amd64-only
     assert "--no-e2e" in test["run"]
-    assert jobs["native"]["strategy"]["matrix"]["os"] == ["ubuntu-24.04", "ubuntu-24.04-arm", "macos-14", "windows-latest"]
+    # Linux x64 is the unit job and the image job; the native legs are the other systems
+    assert jobs["native"]["strategy"]["matrix"]["os"] == ["ubuntu-24.04-arm", "macos-14", "windows-latest"]
+    setup = next(s for s in jobs["native"]["steps"] if str(s.get("uses", "")).startswith("actions/setup-python@"))
+    assert setup["with"]["cache"] == "pip" and "requirements-dev.txt" in setup["with"]["cache-dependency-path"]
     assert jobs["native"]["env"]["PENGUMON_REQUIRE_ICMP"] == "1"
     native = "\n".join(s.get("run", "") for s in jobs["native"]["steps"])
     assert "--require-hashes" in native and "pengumon run" in native and "/api/health" in native
@@ -432,3 +435,17 @@ def test_every_release_job_that_writes_to_the_registry_logs_in_first():
         first_write = next(i for i, s in enumerate(steps)
                            if any(k in yaml.safe_dump(s) for k in ("push-to-registry: true", "push: true", "imagetools create")))
         assert login is not None and login < first_write, f"job {name} writes to the registry without logging in first"
+
+
+def test_each_provenance_step_is_retried_once_after_a_transient_failure():
+    # v0.20.2's release stopped at "Image provenance" on a transient Sigstore error ("error fetching tlog entry").
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))["jobs"]
+    attest_jobs = {n: j for n, j in jobs.items() if any("attest-build-provenance" in s.get("uses", "") for s in j["steps"])}
+    assert set(attest_jobs) == {"attest-image", "attest-files"}
+    for name, job in attest_jobs.items():
+        steps = [s for s in job["steps"] if "attest-build-provenance" in s.get("uses", "")]
+        assert len(steps) == 2, name
+        first, second = steps
+        assert first.get("id") == "attest" and first.get("continue-on-error") is True, name
+        assert second.get("if") == "steps.attest.outcome == 'failure'" and "continue-on-error" not in second, name
+        assert first["with"] == second["with"], name

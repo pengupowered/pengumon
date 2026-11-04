@@ -3,13 +3,27 @@
 // and after every theme change (chrome.js), and every chart is redrawn; a module gives its charts series colours
 // only, never text, grid or tooltip colours.
 
-export const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// Reading a token resolves it through getComputedStyle (a style recalculation when anything is dirty), and the charts
+// and sparklines read the same few tokens on every message, so the values are kept until the theme changes
+// (applyChartTheme, below, empties the cache; it runs at start and after every theme change). An empty result
+// (a token that is not defined yet) is never kept.
+const tokenCache = new Map();
+export const clearTokenCache = () => tokenCache.clear();
+export function token(name) {
+  let v = tokenCache.get(name);
+  if (v === undefined) {
+    v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    if (v) tokenCache.set(name, v);
+  }
+  return v;
+}
 
 // The categorical series colours in their fixed order (tokens.css --s1..--s4), for charts whose series are not targets.
 export const series = (i) => token(`--s${(i % 4) + 1}`);
 
 // Chart.js defaults from the tokens: text, grid, font, tooltip. Called at start and after every theme change.
 export function applyChartTheme() {
+  clearTokenCache();
   if (typeof Chart === 'undefined') return;
   const d = Chart.defaults;
   d.color = token('--ink-3');

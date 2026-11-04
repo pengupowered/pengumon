@@ -1,8 +1,10 @@
-# Pengumon configuration example. Copy it to config.yaml (git-ignored) and adjust the addresses to your network:
+# Pengumon configuration example. Copy it to config.yaml (git-ignored):
 #   cp config.example.yaml config.yaml
+# Settings live on the dashboard's Settings page. This file only sets the listen address, the port, the database path and
+# the probe interval, and it is read once more for the bootstrap of the first import: on the first start Pengumon copies
+# what the sections below say into the Settings page. After that, edits to the rest of this file are ignored and the
+# startup log says so; change them on the Settings page. Details: docs/configuration.md.
 # The addresses are placeholders: common LAN defaults, and RFC 5737 documentation ranges for the ISP hops and DNS.
-# Every section is described in docs/configuration.md; devices, service checks and the client list have their own
-# pages: docs/devices.md, docs/services.md, docs/clients.md.
 
 server:
   # host: "127.0.0.1"   # listen address; the default is this computer only. PENGUMON_HOST (the container sets it
@@ -157,7 +159,7 @@ notifications:
   #       Authorization: "secret:my_api_token"
 
 # Route-change checks: discovery reruns quietly once a day (and about ten minutes after an incident ends) and says
-# "your provider's route changed" when the route no longer matches the applied path (Path health, and one
+# "your network path changed" when the route no longer matches the applied path (Path health, and one
 # notification). Off with background: false. asn_lookup: true lets those runs ask Team Cymru who operates each public
 # hop (off by default: nothing about your path leaves this computer). docs/discovery.md has what is sent.
 # discovery:
@@ -172,22 +174,25 @@ privacy:
 
 # The modem and router read over HTTP (or SNMP). The ids are also the keys of their stored history and of their
 # credentials (PENGUMON_DEVICE_<ID>_USERNAME / _PASSWORD, /run/secrets/pengumon_<id>_password, or the dashboard
-# settings). Drivers (xfinity_xb, asuswrt, openwrt, snmp), their options, TLS and credentials: docs/devices.md.
-devices:
-  - id: modem
-    driver: xfinity_xb
-    url: "http://192.168.100.1"
-    poll_interval_seconds: 900  # 15 minutes (polling a cable gateway more often can exhaust it)
-  - id: router
-    driver: asuswrt
-    url: "http://192.168.1.1"
-    poll_interval_seconds: 10
-    options:
-      clientlist_interval_seconds: 60
-      # Mesh node names, by the node's MAC (or its last six hex digits); used before the names the router reports.
-      # mesh_node_labels:
-      #   "AA:BB:CC:00:11:22": "Hall"
-      #   "334455": "Study"
+# settings). The two below are examples, commented out so a new install starts with no devices: to use one, remove
+# the leading "# " of the `devices:` line and of the device's lines, and fill in your address. The first start imports
+# the list into Settings > Devices (you can also add devices there at any time).
+# Drivers (xfinity_xb, asuswrt, openwrt, snmp), their options, TLS and credentials: docs/devices.md.
+# devices:
+#   - id: modem
+#     driver: xfinity_xb
+#     url: "http://192.168.100.1"
+#     poll_interval_seconds: 900  # 15 minutes (polling a cable gateway more often can exhaust it)
+#   - id: router
+#     driver: asuswrt
+#     url: "http://192.168.1.1"
+#     poll_interval_seconds: 10
+#     options:
+#       clientlist_interval_seconds: 60
+#       # Mesh node names, by the node's MAC (or its last six hex digits); used before the names the router reports.
+#       # mesh_node_labels:
+#       #   "02:00:00:00:11:22": "Hall"
+#       #   "334455": "Study"
   # An OpenWrt router instead (ubus over HTTP; the user needs the rpcd ACL in docs/devices.md):
   # - id: router
   #   driver: openwrt

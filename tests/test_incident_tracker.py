@@ -35,8 +35,10 @@ def load(pct):
                        down_source="configured", up_source="configured")
 
 
-def make(repository=None, failures=3):
-    config = ClassifierConfig(consecutive_failures_for_incident=failures)
+def make(repository=None, failures=3, recoveries=None):
+    """Recovery defaults to the onset count, which it always was before it became a setting of its own."""
+    config = ClassifierConfig(consecutive_failures_for_incident=failures,
+                              consecutive_successes_for_recovery=failures if recoveries is None else recoveries)
     return IncidentTracker(config, repository)
 
 
@@ -166,3 +168,24 @@ async def test_without_a_repository_the_incident_has_no_id_and_nothing_is_stored
     assert outcomes[1].started.id is None
     resolved = (await feed(tracker, NOMINAL, 2, clock))[1].resolved
     assert resolved is not None and resolved.resolved and resolved.id is None
+
+
+async def test_recovery_takes_its_own_count_of_healthy_rounds():
+    tracker, clock = make(failures=2, recoveries=5), Clock()
+    await feed(tracker, LOSS, 2, clock)
+    incident = tracker.active_incident
+    last_bad = clock.now
+    outcomes = await feed(tracker, NOMINAL, 4, clock)
+    assert all(o.resolved is None for o in outcomes) and tracker.active_incident is incident  # 4 of 5
+    await feed(tracker, LOSS, 1, clock)  # a fault restarts the count
+    last_bad = clock.now
+    outcomes = await feed(tracker, NOMINAL, 5, clock)
+    assert [o.resolved is not None for o in outcomes] == [False] * 4 + [True]
+    assert incident.end_time == last_bad
+
+
+async def test_recovery_is_independent_of_the_onset_count():
+    tracker, clock = make(failures=5, recoveries=1), Clock()
+    await feed(tracker, LOSS, 5, clock)
+    assert tracker.active_incident is not None
+    assert (await feed(tracker, NOMINAL, 1, clock))[0].resolved is not None

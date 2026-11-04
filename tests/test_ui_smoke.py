@@ -34,6 +34,7 @@ from pengumon.models.probes import PathTraceHop, ProbeSample
 ROOT = Path(__file__).resolve().parents[1]
 UI = Path(__file__).resolve().parent / "ui"
 PGBROWSER = os.environ.get("PGBROWSER") or str(Path.home() / "pgbrowser")
+BROWSER_HOST = "pengumon-test"  # a single-label name, like homeserver: the app accepts those by default; tests/ui/lib.mjs maps it to 127.0.0.1 in the browser
 TARGETS = [("local_router", "Hop 1: Local Router (LAN)", "local"),
            ("isp_gateway", "Hop 2: ISP Modem / Gateway", "gateway"),
            ("cloudflare_dns", "Public: Cloudflare Anycast (1.1.1.1)", "public")]
@@ -146,38 +147,55 @@ DEVICES = {
 }
 
 
-@pytest.mark.parametrize("variant", list(DEVICES))
-def test_dashboard_in_headless_chromium(tmp_path, variant):
+# `full` is most of the time of the suite (about 150 s of steps), so it runs as three slices of the step files, each with
+# its own app and browser (smoke.mjs, SHARD); the other variants take about 20 s each. With pytest-xdist
+# (scripts/test-ui.sh) they all run side by side.
+FULL_SHARDS = 3
+# The order matters to pytest-xdist (scripts/test-ui.sh, 4 workers, `--dist worksteal`): each worker starts on a block of
+# four runs and idle workers take the unstarted ones of the others, but never the last one. A slice of `full` every fourth
+# run keeps two of them from queueing on one worker.
+RUNS = [pytest.param(*r, id="-".join([r[0]] + ([r[1].replace("/", "of")] if r[1] != "1/1" else []) + ([r[2]] if len(r) > 2 else []))) for r in (
+    # one pass in Firefox (core and Settings steps only, smoke.mjs FIREFOX_FILES), in two slices like `full`; they run beside the
+    # Chromium ones
+    ("full", "3/3"), ("full", "2/2", "firefox"), ("longpath", "1/1"),
+    ("full", "1/3"), ("token", "1/1"), ("tworouters", "1/1"),
+    ("full", "2/3"), ("viewonly", "1/1"), ("bare", "1/1"),
+    ("full", "1/2", "firefox"), ("unknownline", "1/1"))]
+assert {r.values[0] for r in RUNS} == set(DEVICES) and sum(r.values[0] == "full" and len(r.values) == 2 for r in RUNS) == FULL_SHARDS
+
+
+@pytest.mark.parametrize("variant, shard, browser", [pytest.param(*r.values, id=r.id) if len(r.values) == 3 else pytest.param(*r.values, "chromium", id=r.id) for r in RUNS])
+def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
     """`full`: modem, router and a two-node mesh (every panel and the Local network modal). `bare`: no devices at all
     (no device cards, the rest of the live page works). `tworouters`: a card per router. `unknownline`: the line card's
     common part only. `token`: `full` behind an access token (sign in, sign out, sign out everywhere). `viewonly`: the
     token with PENGUMON_VIEW_WITHOUT_TOKEN on (view only, then sign in to edit)."""
     db = tmp_path / "smoke.db"
-    port = free_port()
     asyncio.run(seed(str(db), time.time()))
     config = tmp_path / "config.yaml"
     targets = "".join(
         f'  - {{id: "{t}", name: "{n}", category: {c}, address: "127.0.0.1", enabled: true}}\n'
         for t, n, c in (LONG_TARGETS if variant == "longpath" else TARGETS))
-    config.write_text(
+    config_text = (
         "prober: {interval_seconds: 1.0}\n"
         f"targets:\n{targets}"  # no dns_probes: the two default lookups
         f'database: {{db_path: "{db.as_posix()}"}}\n'
         "privacy: {client_details: full}\n"  # the Clients modal then shows names and addresses
         "line: {isp_name: Example ISP}\n"  # the dossier title and file name the smoke script checks
         "service_checks:\n  interval_seconds: 2\n  failures_for_incident: 1\n  services:\n"
-        f'    - {{id: svc_up, name: "Service Up", url: "http://127.0.0.1:{port}/api/health", description: "the app itself",'
+        f'    - {{id: svc_up, name: "Service Up", url: "http://127.0.0.1:@PORT@/api/health", description: "the app itself",'
         ' open_url: "http://services.example.test:9000/app"}\n'
         '    - {id: svc_down, name: "Service Down", url: "http://127.0.0.1:1/health"}\n'
-        + DEVICES[variant],
-        encoding="utf-8")
+        + DEVICES[variant])
 
-    env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "PENGUMON_CONFIG": str(config), "PGBROWSER": PGBROWSER}
+    env = {**os.environ, "PENGUMON_BROWSER": browser, "PYTHONPATH": str(ROOT / "src"), "PENGUMON_CONFIG": str(config), "PGBROWSER": PGBROWSER}
     # configured devices (a password each), so the features the history views need are available
     env.update({"PENGUMON_DEVICE_MODEM_PASSWORD": "smoke-pw", "PENGUMON_DEVICE_ROUTER_PASSWORD": "smoke-pw",
                 "PENGUMON_DEVICE_ROUTER2_PASSWORD": "smoke-pw"})
     if variant == "unknownline":
         env["PENGUMON_SMOKE_LINE_TECHNOLOGY"] = "fiber"
+    if variant == "full":  # a value pinned by the environment: the Settings page shows it as "From environment" (steps/settings.mjs)
+        env["PENGUMON_LOG_LEVEL"] = "warning"
     if variant == "longpath":  # as on Windows: round trips in whole milliseconds (serve.py's stand-in backend)
         env["PENGUMON_SMOKE_PROBE_RESOLUTION_MS"] = "1.0"
     for name in ("PENGUMON_ACCESS_TOKEN", "PENGUMON_ALLOWED_HOSTS", "PENGUMON_ALLOWED_ORIGINS", "PENGUMON_VIEW_WITHOUT_TOKEN"):
@@ -189,21 +207,40 @@ def test_dashboard_in_headless_chromium(tmp_path, variant):
         env["PENGUMON_ACCESS_TOKEN"] = env["PENGUMON_SMOKE_TOKEN"] = "smoke-token-not-a-secret"
         headers = {"Authorization": "Bearer smoke-token-not-a-secret"}
     # cwd: the credential forms write data/secrets.json relative to it, so they must not write into the repository
-    server = subprocess.Popen([sys.executable, str(UI / "serve.py"), str(port)], cwd=tmp_path, env=env,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    server = None
     try:
-        base = f"http://127.0.0.1:{port}"
-        for _ in range(100):
-            try:
-                if urllib.request.urlopen(f"{base}/api/health", timeout=1).status == 200:
+        # free_port() closes its socket before the app binds, and several runs start at once (pytest-xdist): another one
+        # can take the port in between. Then the app exits with "address already in use" and this starts again.
+        for attempt in range(5):
+            port = free_port()
+            config.write_text(config_text.replace("@PORT@", str(port)), encoding="utf-8")
+            server = subprocess.Popen([sys.executable, str(UI / "serve.py"), str(port)], cwd=tmp_path, env=env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            # The browser opens the app by a name that is not local (lib.mjs maps it to 127.0.0.1), as people do over the LAN:
+            # a page on 127.0.0.1 or localhost is a secure context, where the Clipboard API, notifications and downloads
+            # work, so it hides what fails over http://homeserver:8000. The checks of this file talk to 127.0.0.1 directly.
+            base = f"http://{BROWSER_HOST}:{port}"
+            local = f"http://127.0.0.1:{port}"
+            for _ in range(100):
+                if server.poll() is not None:
                     break
-            except OSError:
-                time.sleep(0.2)
-        else:
-            server.terminate()
-            pytest.fail(f"the app did not start:\n{server.communicate(timeout=10)[0]}")
+                try:
+                    if urllib.request.urlopen(f"{local}/api/health", timeout=1).status == 200:
+                        break
+                except OSError:
+                    time.sleep(0.2)
+            else:
+                server.terminate()
+                pytest.fail(f"the app did not start:\n{server.communicate(timeout=10)[0]}")
+            if server.poll() is None:
+                time.sleep(0.5)  # an answer may have come from another run's app that took this port first: ours exits
+            if server.poll() is None:
+                break
+            output = server.communicate(timeout=10)[0]
+            if "address already in use" not in output.lower() or attempt == 4:
+                pytest.fail(f"the app did not start:\n{output}")
         for _ in range(100):  # the first service check ran before the port was open; the page loads the settled state
-            services = urllib.request.Request(f"{base}/api/services", headers=headers)
+            services = urllib.request.Request(f"{local}/api/services", headers=headers)
             if '"status":"up"' in urllib.request.urlopen(services, timeout=5).read().decode():
                 break
             time.sleep(0.2)
@@ -211,12 +248,13 @@ def test_dashboard_in_headless_chromium(tmp_path, variant):
             pytest.fail("the service check of the app itself never came up")
         out_dir = tmp_path / "out"  # screenshots and the downloaded dossier; tmp_path is the only writable place in the container
         out_dir.mkdir()
-        run = subprocess.run(["node", str(UI / "smoke.mjs"), base, str(out_dir), variant], env=env, capture_output=True, text=True, timeout=240)
+        run = subprocess.run(["node", str(UI / "smoke.mjs"), base, str(out_dir), variant, shard], env=env, capture_output=True, text=True, timeout=240)
         print(run.stdout)  # shown with -s: the steps passed and the sparkline cost
         assert run.returncode == 0, f"{run.stdout}\n{run.stderr}"
     finally:
-        server.terminate()
-        try:
-            server.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            server.kill()
+        if server is not None and server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()

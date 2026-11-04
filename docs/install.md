@@ -126,9 +126,12 @@ docker compose up -d                  # or: podman compose up -d
 ```
 
 Open `http://<host>:8000` and press **Review** on the banner (see [Your first minutes](#your-first-minutes)).
-`config.yaml` holds the settings that are not edited in the dashboard: device drivers, service checks, thresholds, line
-capacity. The example has no active `targets:` (the path is discovered); a `targets:` list there is an optional fixed
-list, used on the first start only.
+Settings (devices, service checks, alerts, thresholds, your line's capacity) live on the dashboard's **Settings** page.
+`config.yaml` holds only the listen address, the port, the database path, the probe interval and the bootstrap of the
+first import: on the first start Pengumon copies what the file says into the Settings page, once. After that, edits to
+the file are ignored and the log says so (`config.yaml is ignored for settings`). The container mounts it read-only
+anyway. The example has no active `targets:` (the path is discovered); a `targets:` list there is an optional fixed list,
+used on the first start only.
 
 Optional settings (access token, device passwords, ntfy, OpenTelemetry) go in a `.env` file next to `compose.yaml`;
 [`.env.example`](../.env.example) lists them. The container listens on all interfaces, so **set
@@ -164,7 +167,10 @@ before rebuilding.
    check the hops (each has a role, a badge of how sure it is, and the reasons), rename any you like, and press
    **Apply**. Until then the default targets are probed. What discovery sends where is in
    [discovery.md](discovery.md); the editor is in [path-editor.md](path-editor.md).
-3. A week of history makes the charts and reports useful. Nothing leaves your computer unless you turn on alerts or the
+3. Open **Settings** to set up what you want to be told about: alerts, your own apps, a router or modem, your line's
+   capacity. Changes apply at once and need no restart; none of it is edited in `config.yaml` (see
+   [configuration.md](configuration.md)).
+4. A week of history makes the charts and reports useful. Nothing leaves your computer unless you turn on alerts or the
    OpenTelemetry export ([telemetry.md](telemetry.md)).
 
 ## Opening the dashboard from other devices
@@ -175,7 +181,8 @@ from a phone or another computer (the usual case on a Raspberry Pi or a server):
 1. Choose a long random access token and give it to the service as `PENGUMON_ACCESS_TOKEN`. Without a token, anyone who
    can reach the port can read the data and change settings.
 2. Listen on the network: `pengumon service install --host 0.0.0.0` (add `--system` or `--user` as the same install
-   used), or `server.host: "0.0.0.0"` in `config.yaml` and a restart. Containers already do.
+   used), or `server.host: "0.0.0.0"` in `config.yaml` and a restart (the listen address is one of the few things that file still
+   holds). Containers already do.
 3. Open `http://<computer's address>:8000` and sign in with the token. If you use a name that is not an IP address, a
    single word or `.lan`, `.local`, `.home.arpa` or `.internal`, add it to `PENGUMON_ALLOWED_HOSTS` ([Security](security.md)).
 4. Your computer's firewall must allow the port; the install scripts do not open it.
@@ -197,7 +204,19 @@ and `sudo systemctl restart pengumon` (`systemctl --user restart pengumon`). On 
 Run the same install script again (it fetches the newest release, or pass `--version X.Y.Z`). It first runs
 `pengumon backup` (a consistent copy of the database, `secrets.json` and `sessions.json` in `backups/` inside the data
 directory; it runs as the service's own account, so it can read the data: on Linux through `systemd-run` with the service's DynamicUser identity, on macOS with `sudo -u _pengumon`) and stops if the backup fails, removes the old service, reinstalls the program from the new release, and
-installs the service again. Your configuration and data are not touched. Containers: see above.
+installs the service again. Your settings and data are not touched. Containers: see above, and for the program installed with uv, [the uv section](#quick-way-uv-tool-install).
+
+### Backing up the data
+
+`pengumon backup [--to DIR]` copies the database, `secrets.json` and `sessions.json` to a timestamped folder (default
+`backups/` inside the data directory). It works on the data directory that `pengumon paths` prints for the user running
+it. That is the service's data for a `--user` install and for the container (`docker exec pengumon pengumon backup`).
+For a **system service on Linux** the data belongs to the service's own account, so the plain command, run as you, looks
+in your home directory and finds nothing (it says so, and points here). Use `--system`:
+`sudo /opt/pengumon/venv/bin/pengumon backup --system --to ~/pengumon-backups` (`--to` is required), and
+`sudo /opt/pengumon/venv/bin/pengumon paths --system` shows where the service keeps its data and its `config.yaml`
+(`/var/lib/pengumon`; on macOS `/Library/Application Support/Pengumon`). An upgrade with the install script runs the
+backup for you, as the service's account.
 
 ## Uninstall
 
@@ -205,11 +224,16 @@ installs the service again. Your configuration and data are not touched. Contain
 curl -fsSL https://github.com/pengupowered/pengumon/releases/latest/download/install.sh | sh -s -- --uninstall
 ```
 
-On Windows: `install.ps1 -Uninstall`. This removes the service and the program; **your data stays** in the data
+On Windows: `install.ps1 -Uninstall`. This removes the service and the program (installed with uv instead? see
+[the uv section](#quick-way-uv-tool-install)); **your data stays** in the data
 directory (each system's section above names it; `pengumon paths` prints it). Delete that folder yourself if you want
 it gone. On macOS the hidden
 `_pengumon` account also stays, because it owns the data. Without the script: `pengumon service uninstall` removes only
 the service.
+
+Also left behind on Linux: if you set the access token with `systemctl edit pengumon`, that file
+(`/etc/systemd/system/pengumon.service.d/`) holds the token and stays. Delete it if you no longer want it on the disk.
+The data directory also holds `secrets.json` (webhook addresses and device passwords) and your backups.
 
 ## The `pengumon service` command
 
@@ -286,3 +310,13 @@ script for that), and it does not set up the service: run `pengumon service inst
 `uv tool install --exclude-newer "7 days" --exclude-newer-package "pengumon=0 days" pengumon`: "7 days" holds back
 dependencies, and Pengumon itself gets no delay (a plain `--exclude-newer "7 days ago"` would hide Pengumon's own new
 release for a week). PyPI releases need the owner's approval, so PyPI can lag a GitHub release by a few minutes.
+
+**Upgrade** with uv: back up first (`pengumon backup`), then `uv tool upgrade pengumon` (or
+`uv tool install --force pengumon`; both skip the hash check, like the first install), then `pengumon service install
+--user`. That restarts the service on the new program and keeps its listen address and port. Until you do, the service
+keeps running the old program; `pengumon service status` says so when the two differ.
+
+**Remove** in this order: `pengumon service uninstall --user` first, then `uv tool uninstall pengumon`. If you remove
+the program first, the service stays registered but no longer starts, because the program it starts is gone (if you
+did, run `systemctl --user disable --now pengumon` and delete `~/.config/systemd/user/pengumon.service`). Your data
+stays either way; `pengumon paths` (run it before you uninstall) says where it is.

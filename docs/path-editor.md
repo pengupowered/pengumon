@@ -46,6 +46,9 @@ Likely, IPv6, ...).
   for anything that is not a stage of the path (a NAS, a VPN endpoint, a server): it is probed and charted but never
   blamed for an outage.
 - **Probe the name's IPv4 / IPv6 address**: only for a host name. An IP address is probed as it is.
+- **More > Warn above [ ] ms**: an optional latency level for this hop alone, for a far-away server that is always slow.
+  Empty by default (the placeholder shows the role's level, "role level: 60 ms", read from Settings). The hop's colour
+  turns amber above it; incidents still use the role's level, so this changes nothing but that hop's colour.
 - Up and down arrows move the hop; **Remove** takes it out.
 
 **Change address** replaces the address of a hop in place, for a router your provider renumbered. The hop keeps its
@@ -55,7 +58,7 @@ health or in Hop details) marks the moment: "Address changed: old → new" on it
 **The device** (only on hops whose role is Your network or Line / gateway) names the configured device this hop is,
 with its own current status as its card shows it: "Readings from: ASUS router · RT-AX88U · Healthy · CPU 12% · 23
 clients", or for a modem "Xfinity gateway · modem · Line up · SNR 35.9 dB · 32 channels". Pengumon reads that device
-directly (devices are configured in `config.yaml`, see [devices.md](devices.md)); its details are in the Router or Line
+directly (devices are set up on the Settings page, see [devices.md](devices.md)); its details are in the Router or Line
 panel, which the link under the device line opens (it closes the editor, and asks first if you changed something).
 The hop's own figures are still its ping. Path health's Router and Line nodes name the device in their tooltip.
 
@@ -106,7 +109,7 @@ hides the notice until the route changes again.
 
 ## Export and import
 
-**Export** downloads the applied path as `pengumon-path.yaml`, a `targets:` list in the syntax `config.yaml` used to
+**Export** shows the applied path as YAML in the editor, with **Copy** and a **Download file** link (`pengumon-path.yaml`; Chrome blocks a download from a page served over plain HTTP on another machine, Copy works everywhere). It is a `targets:` list in the syntax `config.yaml` used to
 take. **Import** reads such a file (or a whole `config.yaml`) into the editor as a draft to review and Apply. It is for
 moving a path between installs or keeping a copy. Files are limited to 256 KB and a limited nesting depth, and YAML
 anchors, aliases and merge keys are refused. A device that the other install has and this one does not is dropped
@@ -135,7 +138,7 @@ Apply, the defaults keep being probed.
 From 0.17 or older: on the first start of a newer version, the `targets:` list in `config.yaml` and the targets you
 added from the dashboard are imported into the database once, with their ids, so all history stays attached (more than
 64 targets: the extras come in as removed hops that you can restore in the editor). After that the `targets:` list in
-`config.yaml` is ignored (the startup log says so); edit the path here. Every other section stays in `config.yaml`.
+`config.yaml` is ignored (the startup log says so); edit the path here. Every other setting is on the Settings page.
 
 From 0.19: the "Ignores ping" setting is gone. Any value stored with a hop is dropped at the first start (the startup
 log says so), and the hops of your network and the line are linked to their devices by address once.

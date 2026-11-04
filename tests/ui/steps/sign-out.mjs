@@ -7,6 +7,7 @@
 // header signs in; signing out makes the page view only again. The run fails on any refused request the page itself
 // makes (lib.mjs), so a view-only page that still tried to change something would fail here too.
 
+import { loopback } from "../lib.mjs";
 export const subject = "dialog:sign-out";
 export const variants = ["token"];
 const VIEW_TIP = "View only · Sign in to edit";
@@ -18,14 +19,15 @@ const editState = (p) => p.evaluate((sels) => sels.map((s) => {
   return e ? `${s}: ${e.getAttribute("aria-disabled") === "true" ? "off" : "on"} ${e.title}` : `${s}: missing`;
 }), EDIT_CONTROLS);
 // What the server answers a request from outside the page without the token (Node's fetch: no cookie).
-const asViewer = async (base, method, path, body) => (await fetch(`${base}${path}`, {
-  method, headers: { Origin: base, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) })).status;
+// These two run in node, which cannot resolve the browser's host name: they ask the app on 127.0.0.1 (its own origin).
+const asViewer = async (base, method, path, body) => (await fetch(`${loopback(base)}${path}`, {
+  method, headers: { Origin: loopback(base), "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) })).status;
 
 // The page's session cookie. It is HttpOnly, so it is read through the browser, the way someone copying it out of a
 // browser profile would get it.
 const sessionCookieOf = async (p) => (await p.browserContext().cookies()).find((c) => c.name === "pg_session");
 // What the server answers a request that carries only this cookie (sent from Node, not the page: a 401 is expected).
-const statusWithCookie = async (base, value) => (await fetch(`${base}/api/status`, { headers: { Cookie: `pg_session=${value}` } })).status;
+const statusWithCookie = async (base, value) => (await fetch(`${loopback(base)}/api/status`, { headers: { Cookie: `pg_session=${value}` } })).status;
 const atSignInPage = (p) => new URL(p.url()).pathname === "/login";
 const openSignOut = async ({ click, until }) => {
   await click("#btnSignOut");
@@ -125,6 +127,7 @@ export const steps = [
     await click("#headerTools [data-arg=addTargetModal]");
     await until(() => document.getElementById("addTargetModal").classList.contains("active"));
     await click("[data-action=cancelAddTarget]");
+    await ctx.dialogKeys("#btnSignOut", "signOutModal");
     await openSignOut(ctx);
     await Promise.all([page.waitForNavigation({ waitUntil: "load" }), click("#btnSignOutHere")]);
     await page.goto(base + "/", { waitUntil: "load" });
@@ -158,6 +161,13 @@ export const steps = [
     ok("everywhere is offered", await page.$eval("[data-sign-out-everywhere]", (e) => !e.hidden));
     eq("its confirmation is not shown yet", await page.$eval("#signOutEverywhereConfirm", (e) => e.hidden), true);
     await shots("sign-out");
+    await click("#btnSignOutEverywhere"); // ask, then leave with Escape: the next opening is fresh
+    eq("the confirmation is shown", await page.$eval("#signOutEverywhereConfirm", (e) => e.hidden), false);
+    await page.keyboard.press("Escape");
+    await until(() => !document.getElementById("signOutModal").classList.contains("active"));
+    await openSignOut(ctx);
+    eq("reopened: the confirmation is hidden again", await page.$eval("#signOutEverywhereConfirm", (e) => e.hidden), true);
+    eq("reopened: the ask button is enabled", await page.$eval("#btnSignOutEverywhere", (e) => e.disabled), false);
     await click("[data-action=closeModal][data-arg=signOutModal]");
     await phone(async () => {
       await click(".tb-more");
@@ -182,7 +192,7 @@ export const steps = [
       document.getElementById("statusPillWord").textContent = "Degraded";
       document.getElementById("statusPillMetrics").innerHTML = ["100% loss", "1234.5 ms to internet"]
         .map((t) => `<span class="sep" aria-hidden="true">·</span><span class="num">${t}</span>`).join("");
-      document.getElementById("lanUrlLink").textContent = "http://192.0.2.200:8000";
+      document.getElementById("lanUrlLink").textContent = "192.0.2.200:8000";
       document.getElementById("lanPill").hidden = false;
       document.getElementById("btnSignOut").hidden = false;
     });
@@ -196,8 +206,17 @@ export const steps = [
     });
     for (const width of [1600, 1400, 1290, 1281, 1280, 1181, 1180, 1100, 1001, 1000, 900, 800, 721, 720, 600, 390]) {
       await page.setViewport({ width, height: 900 });
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); // the header fits itself on the next frame
       const f = await fits();
       ok(`the header fits at ${width} px (${f.over.toFixed(1)} px past the bar's padding)`, f.over <= 0.5 && !f.scrolls);
+      // the LAN address is never left cut off as "LAN": whole in the header, or the first item of the "more" menu (the phone's menu has it too)
+      const lan = await page.evaluate(() => {
+        const link = document.getElementById("lanUrlLink");
+        const chip = document.getElementById("lanPill").getBoundingClientRect().width > 0;
+        const more = document.querySelector(".tb-more").getBoundingClientRect().width > 0;
+        return { chip, whole: link.scrollWidth <= link.getBoundingClientRect().width && link.clientWidth > 0, more };
+      });
+      ok(`the LAN address is whole or in the menu at ${width} px (${JSON.stringify(lan)})`, lan.chip ? lan.whole : lan.more);
     }
     await page.setViewport(DESKTOP);
   }],

@@ -1,7 +1,7 @@
 # Unit tests and the browser (UI) tests, run the same way as locally: scripts/test.sh and scripts/test-ui.sh, which use
 # Podman (preinstalled on GitHub's ubuntu runners). Then the package: the wheel and sdist are built once ("package"),
-# and that same wheel is what the container image (amd64 and arm64) and the native installs (Linux x64 and arm64,
-# macOS, Windows) are tested with. It runs on a ci/<name> branch (the release candidate is pushed there first) and on pull
+# and that same wheel is what the container image (amd64 and arm64) and the native installs (Linux arm64, macOS,
+# Windows) are tested with. Linux x64 has no native leg: the unit job and the image job already cover it. It runs on a ci/<name> branch (the release candidate is pushed there first) and on pull
 # requests, not on main: the release commit is fast-forwarded onto main afterwards and is not tested again. release.yml
 # finds this run (scripts/find-tested-run.sh) and publishes its artifacts "dist" and "release-assets", so they are kept
 # for 30 days.
@@ -26,6 +26,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # scripts/test.sh runs the suite in parallel (pytest-xdist, 4 workers: the runner has 4 vCPUs); scripts/test-ui.sh runs
+  # the browser variants side by side the same way. Both default to what suits a hosted runner.
   unit:
     name: Unit tests
     runs-on: ubuntu-24.04
@@ -45,7 +47,7 @@ jobs:
         run: |
           python3 scripts/junit-annotations.py --last --title-prefix "unit: " "$RUNNER_TEMP/junit/unit.xml"
 
-  # The browser runner image (Chromium, Node, puppeteer-core, ESLint), built once per change of its own files and kept
+  # The browser runner image (Chromium, Firefox, Node, puppeteer-core, ESLint), built once per change of its own files and kept
   # in the Actions cache under the hash of those files (hashFiles works only inside steps, so each step names the key).
   # Only this job saves it (two jobs saving one key collide); the jobs that need it restore it after this one has run.
   runner-image:
@@ -61,7 +63,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ui-test-runner.tar
-          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/fetch-firefox.py', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
           lookup-only: true
       - name: Build the runner image
         if: steps.lookup.outputs.cache-hit != 'true'
@@ -73,7 +75,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ui-test-runner.tar
-          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/fetch-firefox.py', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
 
   ui:
     name: Browser tests
@@ -88,7 +90,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ui-test-runner.tar
-          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/fetch-firefox.py', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
           fail-on-cache-miss: true
       - name: Load it
         run: podman load -i "$RUNNER_TEMP/ui-test-runner.tar"
@@ -168,7 +170,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ui-test-runner.tar
-          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
+          key: ui-test-runner-${{ hashFiles('tests/ui/runner/Dockerfile', 'tests/ui/runner/fetch-firefox.py', 'tests/ui/runner/package.json', 'tests/ui/runner/package-lock.json') }}
           fail-on-cache-miss: true
       - name: Load it
         if: matrix.e2e
@@ -177,7 +179,8 @@ jobs:
         run: scripts/test-container.sh --prebuilt ${{ matrix.e2e && ' ' || '--no-e2e' }}
 
   # The wheel on each OS without a container, as a user installs it: the unit suite natively (the OS's own ICMP
-  # backend for real: PENGUMON_REQUIRE_ICMP turns "ICMP unavailable" from a skip into a failure), then the CI wheel
+  # backend for real: PENGUMON_REQUIRE_ICMP turns "ICMP unavailable" from a skip into a failure; one process, unlike
+  # the unit job, which runs the same suite in parallel on Linux x64), then the CI wheel
   # in a fresh venv with the locked runtime dependencies: `pengumon doctor`, and `pengumon run` until /api/health
   # answers. Linux needs the ping_group_range sysctl; macOS and Windows need nothing.
   native:
@@ -188,7 +191,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        os: [ubuntu-24.04-arm, macos-14, windows-latest]
     defaults:
       run:
         shell: bash
@@ -206,6 +209,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip  # pip's download cache, keyed on the locked files (the installs below are hash-checked either way)
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            requirements-build.txt
       - name: Allow unprivileged ICMP (Linux)
         if: runner.os == 'Linux'
         run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
@@ -366,6 +374,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
       - name: Install the locked runtime dependencies (where uid 65534 can read them)
         run: |
           python -m venv /tmp/pengumon-venv
@@ -400,6 +410,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
       - name: Allow unprivileged ICMP (Linux)
         if: runner.os == 'Linux'
         run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"

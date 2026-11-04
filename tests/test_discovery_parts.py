@@ -514,3 +514,12 @@ def test_the_lan_source_address_is_a_real_address_or_none():
     from pengumon.engine.discovery import upnp
     address = upnp.lan_source_address()
     assert address is None or (address != "0.0.0.0" and socket.inet_aton(address))
+
+
+async def test_without_a_lan_address_there_is_no_ssdp_search_and_nothing_listens(monkeypatch):
+    from pengumon.engine.discovery import upnp
+    opened = []
+    monkeypatch.setattr(upnp, "lan_source_address", lambda: None)
+    monkeypatch.setattr(upnp.socket, "socket", lambda *a, **k: opened.append(a) or (_ for _ in ()).throw(AssertionError("socket opened")))
+    assert await upnp.ssdp_search(wait=0.01) == []
+    assert opened == []

@@ -166,17 +166,38 @@ async def test_a_name_target_is_probed_at_its_ipv4_address():
     assert sample.success and backend.sent[0][0] == "127.0.0.1"
 
 
-async def test_no_icmp_is_a_loss_with_the_reason(monkeypatch):
+async def test_no_icmp_records_no_loss_and_says_why(monkeypatch):
     def unavailable():
         raise IcmpUnavailable("cannot open an ICMP socket: ping socket: Permission denied", "sudo ...")
 
     monkeypatch.setattr(icmp_select, "open_backend", unavailable)
     prober = NetworkProber(ping_timeout=0.1)
-    sample = await prober.probe_icmp(_target())
-    assert not sample.success and sample.error == "ICMP unavailable: cannot open an ICMP socket: ping socket: Permission denied"
+    assert await prober.probe_icmp(_target()) is None  # no sample: 100% loss would open a false network incident
+    assert prober.probing_problem() == ("cannot open an ICMP socket: ping socket: Permission denied", "sudo ...")
     assert prober.probe_method() == {"backend": None, "resolution_ms": None,
                                      "error": "cannot open an ICMP socket: ping socket: Permission denied",
                                      "fix": "sudo ..."}
+    await prober.execute_probe_round(targets=[_target()], dns_probes=[])
+    assert prober.stats and all(st.probing_unavailable for st in prober.stats.values())  # the page says "Not probed", not "No reply"
+
+
+async def test_every_send_refused_is_not_probing_not_a_loss():
+    import errno
+
+    class Refusing:
+        name, resolution_ms = "x", 0.001
+
+        async def probe(self, address, *, timeout, ttl=64):
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+
+        def close(self):
+            pass
+
+    prober = NetworkProber(ping_timeout=0.1, backend=Refusing())
+    assert prober.probing_problem() is None
+    assert await prober.probe_icmp(_target()) is None  # no sample: no 100% loss for the classifier to blame on cabling
+    reason, _fix = prober.probing_problem()
+    assert "does not let Pengumon send pings" in reason
 
 
 def test_probe_method_names_the_backend():

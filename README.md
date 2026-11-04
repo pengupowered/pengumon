@@ -108,9 +108,15 @@ The probe path is edited in the dashboard, not in `config.yaml`: **Path health >
 order (see [First run](#first-run) and [docs/path-editor.md](https://github.com/pengupowered/pengumon/blob/main/docs/path-editor.md)). **Export** and **Import** move a
 path between installs as YAML.
 
-Upgrading from 0.17 or older: the first start imports config.yaml's `targets:` and the targets added from the dashboard
-into the database once, with their ids, so all history stays attached. From then on config.yaml's `targets:` is ignored
-(the startup log says so); every other section stays in `config.yaml`. A `targets:` list in config.yaml is now just an optional fixed list for the first start only; a fresh install leaves it out and discovers its path.
+Everything else is set on the **Settings** page of the dashboard: devices, service checks, alerts, thresholds, your
+line's capacity. `config.yaml` is only for the listen address, the port, the database path, the probe interval and the
+one-time import described next. It is read once, on the first start after an install or an upgrade to 0.21, and copied
+into the Settings page; after that, edits to `config.yaml` are ignored (the startup log says so). Change settings on the
+page instead.
+
+Upgrading from 0.17 or older: the first start also imports config.yaml's `targets:` and the targets added from the
+dashboard into the database once, with their ids, so all history stays attached. From then on `targets:` in the file is
+ignored; a fresh install leaves it out and discovers its path.
 
 Each hop has a role (**category**) that places it on the path. Any number of each works, and none is required:
 
@@ -146,15 +152,9 @@ conditions (busy line) never alert, a cause alerts at most once every 5 minutes,
 probes. Two channels, either or both:
 
 - **ntfy.** Set `PENGUMON_NOTIFY_URL` (and `PENGUMON_NOTIFY_TOKEN` for a protected server) in `.env`.
-- **Webhooks.** List them under `notifications.webhooks` in `config.yaml`: Discord, Slack, or JSON for Home Assistant
-  and your own scripts. Tokens go in headers, which may name a secret instead of holding it.
-
-```yaml
-notifications:
-  public_url: "http://pengu.lan:8000"   # optional: the dashboard link in the messages
-  webhooks:
-    - { name: discord, url: "https://discord.com/api/webhooks/<id>/<token>", format: discord }
-```
+- **Webhooks.** Add them on the **Settings** page: Discord, Slack, or JSON for Home Assistant and your own scripts.
+  Tokens go in headers, which may name a secret instead of holding it. The URL is kept out of the settings, in
+  `secrets.json`.
 
 The **Alerts** dialog lists the configured channels and has a **Send test** button. The payload, the three formats and
 the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md).

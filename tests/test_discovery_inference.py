@@ -369,13 +369,16 @@ async def test_gateway_addresses_on_the_path_or_on_this_hosts_own_network_are_no
     assert result.lan.hosts().count("192.168.1.1") == result.lan.hosts().count("192.168.0.7") == 2
 
 
-async def test_a_limited_host_among_the_gateway_addresses_gets_one_get_and_no_ping():
+async def test_a_limited_host_among_the_gateway_addresses_gets_no_request_at_all():
+    """A configured device (the modem) is read only by its driver, behind that driver's gate: the trace missing it
+    does not make it an off-path gateway to ping or fetch."""
     traces = three_paths(shared=[("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
     result = await discover(traces, options=NO_ASN, limited={"10.0.0.1"}, answers_ping={"10.0.0.1"},
                             pages={"10.0.0.1": XFINITY_LOGIN})
     assert "10.0.0.1" not in result.pinged
-    assert [(r.method, r.url.path) for r in result.lan.requests if r.url.host == "10.0.0.1"] == [("GET", "/")]
-    assert by_address(result)["10.0.0.1"]["category"] == "gateway"  # its page answered
+    assert "10.0.0.1" not in result.lan.hosts()
+    assert "10.0.0.1" not in by_address(result)
+    assert "192.168.100.1" in result.pinged  # the other gateway addresses are still asked
 
 
 async def test_with_device_checks_off_only_the_background_runs_ask_the_gateway_addresses():

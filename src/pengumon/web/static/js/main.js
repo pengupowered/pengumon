@@ -10,6 +10,7 @@ import { featureAvailable, loadDevices, missingNote, primaryDevice } from './dev
 import { state } from './state.js';
 import { bus } from './bus.js';
 import { initHelp } from './help.js';
+import { initSettingsValues } from './settings-values.js';
 import { initTabs } from './tabs.js';
 import { mountLayout } from './layout.js';
 import { connectWebSocket } from './live.js';
@@ -31,7 +32,7 @@ function context() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   initChrome();
-  await Promise.all([initTargets(), loadDevices()]);
+  await Promise.all([initTargets(), loadDevices(), initSettingsValues()]);
   initHelp();
   mountLayout(await loadModules(), context());
   initTabs();

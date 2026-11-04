@@ -3,7 +3,7 @@
 // (a taken id, the limit of custom targets, a host it refuses) is shown the same way.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, hostProblem, icon, initTargets } from '../../js/util.js';
+import { closeModal, escapeHtml, hostProblem, icon, initTargets, keepKeyboard } from '../../js/util.js';
 
 const ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const FIELDS = ['name', 'address', 'id'];
@@ -148,21 +148,4 @@ registerActions('change', {
 registerActions('click', {
   cancelAddTarget: () => cancelAddTarget()
 });
-
-// Keyboard: focus moves into the dialog when it opens, Tab stays inside it and Escape closes it.
-export function keepKeyboard(modal, firstFocus) {
-  new MutationObserver(() => {
-    if (modal.classList.contains('active') && !modal.contains(document.activeElement)) (modal.querySelector(firstFocus) || modal.querySelector('.m-close')).focus();
-  }).observe(modal, { attributes: true, attributeFilter: ['class'] });
-  modal.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !ev.defaultPrevented) { closeModal(modal.id); return; }
-    if (ev.key !== 'Tab') return;
-    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
-    if (!items.length) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
-    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
-  });
-}
 keepKeyboard($('addTargetModal'), '#targetName');

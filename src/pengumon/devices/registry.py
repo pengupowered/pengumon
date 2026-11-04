@@ -8,12 +8,12 @@ The registry is the only way code reaches a device: by id, or by what it provide
 here or elsewhere knows a device id, a vendor or an address.
 """
 
-from typing import Callable, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Type
+from typing import Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Type
 
 import httpx
 
 from pengumon.capabilities import Capability
-from pengumon.devices.settings import DeviceConfig
+from pengumon.devices.settings import DeviceConfig, unique_device_ids  # noqa: F401  (re-exported)
 from pengumon.devices.device import Device
 from pengumon.devices.monitors import LineMonitor, RouterMonitor, UnconfiguredMessages
 from pengumon.devices.wan import WanRates
@@ -110,16 +110,25 @@ def build_devices(configs: Sequence[DeviceConfig], repository=None,
 
 
 class DeviceRegistry:
-    """The configured devices, in config order. Immutable: built once at startup."""
+    """The configured devices, in config order. `replace` swaps the whole set at once (settings applied live); the
+    object stays the same, so everyone holding `state.devices` sees the new set. `errors` holds, per device id, why a
+    configured device is not running (it could not be built); the settings page shows it on the device's card."""
 
     def __init__(self, devices: Iterable[Device] = ()):
-        self._devices: Tuple[Device, ...] = tuple(devices)
-        by_id = {}
-        for device in self._devices:
+        self._devices: Tuple[Device, ...] = ()
+        self._by_id: Mapping[str, Device] = {}
+        self.errors: Dict[str, str] = {}
+        self.replace(devices)
+
+    def replace(self, devices: Iterable[Device]) -> None:
+        """Swaps the devices (a tuple and an id map, assigned together after the check)."""
+        new = tuple(devices)
+        by_id: Dict[str, Device] = {}
+        for device in new:
             if device.id in by_id:
                 raise DeviceConfigError(f"device id {device.id!r} is used twice")
             by_id[device.id] = device
-        self._by_id: Mapping[str, Device] = by_id
+        self._devices, self._by_id = new, by_id
 
     def __iter__(self) -> Iterator[Device]:
         return iter(self._devices)

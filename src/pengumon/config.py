@@ -9,38 +9,72 @@ part of the config (pengumon.secrets).
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from pengumon import paths
 from pengumon.clients.settings import PrivacyConfig
-from pengumon.devices.settings import DeviceConfig
+from pengumon.devices.levels import RouterLevelsConfig
+from pengumon.devices.settings import DeviceConfig, unique_device_ids
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.discovery.settings import DiscoverySettings
 from pengumon.engine.load_settings import LineConfig
 from pengumon.engine.netinfo import default_dns_probes, default_targets, get_default_gateway_ip
 from pengumon.engine.prober_settings import DnsProbeConfig, ProberConfig
+from pengumon.lines.levels import LineSignalConfig
 from pengumon.models.probes import TargetConfig
-from pengumon.notify_settings import NotificationsConfig
+from pengumon.notify_settings import AlertsConfig, NotificationsConfig
 from pengumon.observability import get_logger
+from pengumon.observability.logs import parse_levels
+from pengumon.reports.settings import ReportsConfig, UptimeConfig
 from pengumon.services.settings import ServiceChecksConfig
-from pengumon.web.settings import DashboardConfig
+from pengumon.settings import lenient
+from pengumon.settings.general import GeneralConfig
+from pengumon.web.settings import DashboardConfig, DisplayConfig
 
 _log = get_logger("pengumon.config")
+
+
+_LEVEL_ALIASES = {"warn": "warning", "fatal": "critical"}
 
 
 class ServerConfig(BaseModel):
     host: str = paths.DEFAULT_HOST  # PENGUMON_HOST wins; see pengumon.paths.listen_address
     port: int = paths.DEFAULT_PORT  # PENGUMON_PORT wins
-    log_level: str = "info"
+    log_level: Literal["debug", "info", "warning", "error", "critical"] = "info"  # PENGUMON_LOG_LEVEL wins
+    # Per-logger levels, "pengumon.devices=debug,uvicorn.access=warning" (observability.logs.parse_levels);
+    # PENGUMON_LOG_LEVELS wins
+    log_levels: Optional[str] = None
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _level_name(cls, value):
+        if isinstance(value, str):
+            value = value.strip().lower()
+            return _LEVEL_ALIASES.get(value, value)
+        return value
+
+    @field_validator("log_levels")
+    @classmethod
+    def _levels(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None
+        parse_levels(value)
+        return value.strip()
 
 
 class DatabaseConfig(BaseModel):
     db_path: Optional[str] = None  # unset: <data directory>/pengumon.db; a relative path is relative to the cwd (legacy)
-    retention_days: int = 7
-    rollup_retention_days: int = 400  # per-minute rollups (raw samples: retention_days)
+    retention_days: int = Field(7, ge=1, le=90)  # raw samples; line-capacity learning needs 7
+    rollup_retention_days: int = Field(400, ge=30, le=1000)  # per-minute rollups, at least retention_days
+
+    @model_validator(mode="after")
+    def _rollups_outlive_raw(self):
+        if self.rollup_retention_days < self.retention_days:
+            raise ValueError("rollup_retention_days must be at least retention_days")
+        return self
 
 
 # Models that may carry a credential (or a URL someone put one in) never echo their input in validation errors: the
@@ -64,6 +98,13 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
+    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    general: GeneralConfig = Field(default_factory=GeneralConfig)
+    display: DisplayConfig = Field(default_factory=DisplayConfig)
+    line_signal: LineSignalConfig = Field(default_factory=LineSignalConfig)
+    router_levels: RouterLevelsConfig = Field(default_factory=RouterLevelsConfig)
+    uptime: UptimeConfig = Field(default_factory=UptimeConfig)
+    reports: ReportsConfig = Field(default_factory=ReportsConfig)
     _targets_are_defaults: bool = PrivateAttr(default=False)  # load_config filled in default_targets()
 
     @property
@@ -74,16 +115,14 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def _unique_device_ids(self):
-        seen_ids: Dict[str, str] = {}
-        seen_env: Dict[str, str] = {}
-        for device in self.devices:
-            if device.id in seen_ids:
-                raise ValueError(f"devices: id {device.id!r} is used twice; every device needs its own id")
-            env = device.credential_env_name
-            if env in seen_env:
-                raise ValueError(f"devices: ids {seen_env[env]!r} and {device.id!r} share the credential variables "
-                                 f"PENGUMON_DEVICE_{env}_*; rename one")
-            seen_ids[device.id] = seen_env[env] = device.id
+        unique_device_ids(self.devices)
+        return self
+
+    @model_validator(mode="after")
+    def _wan_critical_above_busy(self):
+        # The WAN gauge warns from the busy level, so its critical level must lie above it.
+        if not self.router_levels.wan_critical_pct > self.classifier.busy_load_pct:
+            raise ValueError("router_levels.wan_critical_pct must be above classifier.busy_load_pct")
         return self
 
 
@@ -116,15 +155,49 @@ def load_server_config(config_path: Optional[str] = None) -> ServerConfig:
     return ServerConfig(**(read_config_file(path).get("server") or {}))
 
 
-def load_config(config_path: Optional[str] = None) -> AppConfig:
+# The keys read from config.yaml at every start, before the database opens; strictly: a bad one stops the start.
+# Everything else is a setting, owned by the settings store once it was imported (pengumon.settings).
+BOOTSTRAP_KEYS = ("server.host", "server.port", "database.db_path", "prober.interval_seconds")
+
+
+def _bootstrap(raw: dict) -> None:
+    """Validates the bootstrap keys of the file on their own; raises ValueError (the start fails) for a bad one."""
+    for key in BOOTSTRAP_KEYS:
+        section, name = key.split(".")
+        part = raw.get(section)
+        if isinstance(part, dict) and name in part:
+            model = AppConfig.model_fields[section].annotation
+            try:
+                model.model_validate({name: part[name]})
+            except ValidationError as e:
+                raise ValueError(f"config file: {key} is not valid ({lenient.reason(e.errors()[0])})") from None
+        elif part is not None and not isinstance(part, dict):
+            raise ValueError(f"config file: {section}: must be a mapping")
+
+
+def load_config(config_path: Optional[str] = None, *, lenient_rest: bool = False) -> AppConfig:
     """Load configuration from YAML file or return defaults. Credentials are not part of it: pengumon.secrets reads
-    them when the devices are built."""
+    them when the devices are built.
+
+    With `lenient_rest` (the app's start): the bootstrap keys (BOOTSTRAP_KEYS) and `targets` are validated strictly,
+    and a refused value anywhere else is logged by its key and left at its default instead of stopping the start:
+    those values are the settings store's (pengumon.settings), which validates them on its own."""
     if config_path is None:
         path = paths.config_path()
     else:
         path = Path(config_path)
     raw = read_config_file(path)
-    config = AppConfig(**raw)
+    if lenient_rest:
+        _bootstrap(raw)
+        rest = {k: v for k, v in raw.items() if k != "targets"}
+        config, dropped = lenient.validate_leniently(AppConfig, rest)
+        if dropped:
+            _log.warning(f"config.yaml: {len(dropped)} value(s) refused and left at their defaults: "
+                         f"{', '.join(lenient.removed_paths(dropped))}")
+        if raw.get("targets") is not None:
+            config.targets = AppConfig(targets=raw["targets"]).targets
+    else:
+        config = AppConfig(**raw)
 
     if not config.targets:
         gateway = get_default_gateway_ip()

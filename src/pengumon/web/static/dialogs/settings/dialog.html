@@ -1,0 +1,34 @@
+<!-- Settings: every setting of Pengumon on one page (dialog.js). A draft: nothing applies until Save. -->
+<div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="modal-content" style="--w: 960px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg><h2 class="modal-t" id="settingsTitle" tabindex="-1">Settings</h2><span class="modal-m" id="settingsMeta">nothing changes until Save</span>
+      <button type="button" class="btn icon m-close" data-action="settingsClose" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b" id="settingsBody">
+      <div class="pe-ro" id="settingsReadOnly" hidden><svg class="i sm" aria-hidden="true"><use href="#i-lock"/></svg><span>View only · Sign in to change settings.</span></div>
+      <div id="settingsNotes" role="status" aria-live="polite"></div>
+      <section class="set-preview" id="settingsPreview" aria-label="Preview of the outage rules" hidden></section>
+      <section class="set-versions" id="settingsVersions" aria-label="Earlier versions" tabindex="-1" hidden></section>
+      <section class="set-versions" id="settingsExportView" aria-label="Export" tabindex="-1" hidden></section>
+      <div class="set-wrap">
+        <nav class="set-rail" aria-label="Sections" id="settingsRail"></nav>
+        <label class="set-jump" for="settingsJump"><span>Jump to section</span><select class="input" id="settingsJump" data-change="settingsGoto"></select></label>
+        <fieldset class="set-fs" id="settingsFields"><legend class="sr-only">Settings</legend><div id="settingsSections"><p class="fine">Loading…</p></div></fieldset>
+      </div>
+    </div>
+    <div class="set-confirm" id="settingsConfirm" role="alertdialog" aria-labelledby="settingsConfirmText" hidden>
+      <span id="settingsConfirmText"></span>
+      <span class="set-confirm-b"><button type="button" class="btn sm" data-action="settingsConfirmNo" id="btnConfirmNo">Keep editing</button><button type="button" class="btn sm danger" data-action="settingsConfirmYes" id="btnConfirmYes">Discard</button></span>
+    </div>
+    <footer class="modal-f">
+      <div class="left">
+        <button type="button" class="btn sm" id="settingsExport" data-action="settingsExport" aria-expanded="false" aria-controls="settingsExportView" hidden><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export</button>
+        <button type="button" class="btn sm" data-action="settingsImport" data-needs-edit><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Import</button>
+        <input type="file" id="settingsImportFile" accept=".yaml,.yml,text/yaml,application/yaml" data-change="settingsImportFile" hidden>
+        <button type="button" class="btn sm" id="btnSettingsVersions" data-action="settingsVersions" aria-expanded="false" aria-controls="settingsVersions"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>Versions</button>
+      </div>
+      <button type="button" class="btn" id="btnSettingsCancel" data-action="settingsCancel">Cancel</button>
+      <button type="button" class="btn outline" id="btnSettingsPreview" data-action="settingsPreview" data-needs-edit hidden title="Replay the stored samples with the draft outage and alert rules"><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg><span>Preview</span></button>
+      <button type="button" class="btn primary" id="btnSettingsSave" data-action="settingsSave" data-needs-edit disabled><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg><span>Save</span></button>
+    </footer>
+  </div>
+</div>

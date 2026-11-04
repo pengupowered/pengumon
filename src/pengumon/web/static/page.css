@@ -46,7 +46,7 @@ body[data-status="unknown"] { --gst: var(--unknown); }
   background: var(--st-bg); border: 1px solid color-mix(in srgb, var(--st) 42%, transparent); font-size: var(--fs-sm); white-space: nowrap;
   overflow: hidden; /* a long verdict title is cut with an ellipsis (its full text is the pill's title=), never pushed past the header */
 }
-.status-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--st); flex: none; }
+.status-pill .dot { position: relative; width: 9px; height: 9px; border-radius: 50%; background: var(--st); flex: none; --ps: 2.33; }
 .status-pill .sp-ic { display: none; color: var(--st); }
 .status-pill b { font-weight: var(--fw-semi); }
 .status-pill .sp-word { display: none; }
@@ -55,19 +55,23 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .status-pill .sep { color: var(--ink-4); }
 .status-pill .sp-metrics { display: inline-flex; gap: 7px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .status-pill .sp-note { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding-left: 9px; border-left: 1px solid var(--line-strong); color: var(--warn); }
-.topbar.st-good .status-pill .dot, .topbar.st-warn .status-pill .dot, .topbar.st-busy .status-pill .dot, .topbar.st-crit .status-pill .dot { animation: breathe 2.4s var(--ease) infinite; }
+.topbar.st-good .status-pill .dot::after, .topbar.st-warn .status-pill .dot::after, .topbar.st-busy .status-pill .dot::after, .topbar.st-crit .status-pill .dot::after { animation: breathe 2.4s var(--ease) infinite; }
 .live { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
-.live i { width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
-.live-connecting i { background: var(--unknown); animation: breathe 1.2s infinite; --st: var(--unknown); }
+.live i { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--good); --ps: 3; }
+/* The pulse ring is a disc behind the dot that grows and fades with `transform` and `opacity` only, which run on the compositor
+   (animating box-shadow repainted the page's header 60 times a second). */
+.status-pill .dot::after, .live i::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--st, var(--good)); opacity: 0; will-change: transform, opacity; }
+.live-connecting i { background: var(--unknown); --st: var(--unknown); }
+.live-connecting i::after { animation: breathe 1.2s infinite; }
 .live-stale { color: var(--warn); }
 .tb-actions { display: flex; align-items: center; gap: 2px; }
 .tb-sep { width: 1px; height: 20px; background: var(--line-strong); margin: 0 6px; }
 .tb-grafana { margin-left: 6px; }
 .tb-more { display: none; }
 /* "View only · Sign in to edit" (chrome.js, a viewer without the token): a link to the sign-in page */
-/* It gives way when the header is full (the status pill's text varies): the words end in an ellipsis, never overflow. */
+/* Its words stay whole; the status pill beside it gives way (its text varies) and ends in an ellipsis. */
 .view-only { border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-bg); color: var(--ink-1); margin-right: 6px;
-  flex: 0 1 auto; min-width: 32px; overflow: hidden; }
+  flex: none; min-width: 32px; overflow: hidden; }
 .view-only svg.i { color: var(--warn); flex: none; }
 .view-only .vo-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 1440px) { .view-only .vo-more { display: none; } }
@@ -125,7 +129,7 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 @media (max-width: 720px) { .conn-banner { margin-inline: 12px; width: auto; } }
 /* the verdict is not known while the data is not arriving: the pill turns grey and the cards dim */
 .topbar[data-conn="lost"] .status-pill.status-pill { --st: var(--unknown); --st-bg: var(--unknown-bg); }
-.topbar[data-conn="lost"] .status-pill .dot { animation: none; }
+.topbar[data-conn="lost"] .status-pill .dot::after { animation: none; }
 body[data-conn="lost"] .page .panel-b { opacity: .55; filter: saturate(.5); transition: opacity var(--t-med); }
 
 /* ---------- Phone: shell details ---------- */

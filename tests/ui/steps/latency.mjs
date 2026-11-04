@@ -24,6 +24,24 @@ export const steps = [
     ok("legend", /Internet/.test(await text("#latencyLegend")));
   }],
 
+  ["an empty chart says Not probing while this host cannot send pings, and \"every probe was lost\" otherwise", async ({ layoutMounted, moduleUrl, ok, page, text, until, waitText }) => {
+    const url = await moduleUrl("../panels/latency/charts.js");
+    const noReplies = (flag) => page.evaluate(async (u, f) => {
+      window.__smokeMutate = (d) => d.targets.forEach((t) => { t.probing_unavailable = f; t.last_ms = null; t.recent_latencies = []; });
+      const { view } = await import(u);
+      Object.assign(view, { series: {}, byTarget: {}, lo: [], hi: [], wan: [] }); // nothing but probes without a reply from here on
+    }, url, flag);
+    await noReplies(true);
+    await until(() => /^Not probing: pings are not allowed on this computer/.test(document.getElementById("latencyNote").textContent));
+    ok("it does not suggest an outage", !/lost/.test(await text("#latencyNote")));
+    await noReplies(false);
+    await until(() => /^No replies in this time: every probe was lost/.test(document.getElementById("latencyNote").textContent));
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    await page.reload({ waitUntil: "load" });
+    await waitText("#wsText", /^Live/);
+    await layoutMounted();
+  }],
+
   ["time ranges switch the main chart", async ({ click, eq, page, until, waitText }) => {
     for (const [arg, label] of [["3600", "last 1 h · avg per 10 s"], ["900", "last 15 min · avg per 2 s"]]) {
       await click(`#timeRangeButtons button[data-arg="${arg}"]`);
@@ -109,4 +127,15 @@ export const steps = [
       await stubFetch(null);
     }
   }, { variants: ["longpath"] }],
+
+  ["the chart labels are not rebuilt with toLocaleTimeString for every point on every message", async ({ eq, ok, page, until }) => {
+    await until(() => window.document.readyState === "complete");
+    const calls = await page.evaluate(() => new Promise((resolve) => {
+      const native = Date.prototype.toLocaleTimeString;
+      let n = 0;
+      Date.prototype.toLocaleTimeString = function (...a) { n++; return native.apply(this, a); };
+      setTimeout(() => { Date.prototype.toLocaleTimeString = native; resolve(n); }, 3500); // three or four messages, 60 points each
+    }));
+    ok(`toLocaleTimeString calls in 3.5 s: ${calls} (one per point per message would be 180 or more)`, calls < 40);
+  }],
 ];

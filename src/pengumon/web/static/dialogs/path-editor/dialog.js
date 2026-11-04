@@ -22,16 +22,17 @@ import {
   DEVICE_ROLES, ROLES, ROLE_EFFECT, ROLE_HINT, ROLE_WORD, cleanName, deviceHost, deviceLabel, deviceStatus, errorText, fetchPath,
   fetchVersion, fetchVersions, readPreview, startDiscovery, startPreview, stopPreview, waitDiscovery
 } from '../../js/path-api.js';
-import { IGNORES_PING, IGNORES_PING_WHY, NO_IPV6, NO_IPV6_WHY, median, shortLabels } from '../../js/path.js';
+import { IGNORES_PING, IGNORES_PING_WHY, NO_IPV6, NO_IPV6_WHY, NO_PINGS_WHY, median, shortLabels } from '../../js/path.js';
 import { watchDevice } from '../../js/device-feed.js';
+import { settingsValues, val } from '../../js/settings-values.js';
 
-const { closeModal, escapeHtml, hostProblem, icon, openModal, STATUS } = util;
+const { closeModal, copyExport, escapeHtml, exportViewHtml, hostProblem, icon, openModal, STATUS } = util;
 // The sign-in helpers (js/util.js): canEdit(), and data-needs-edit on every control that changes something (dimmed with
 // the "View only" tooltip, its clicks blocked, for a viewer who has not signed in).
 const { canEdit } = util;
 
 const $ = (id) => document.getElementById(id);
-const UI_FIELDS = ['joined', 'added', 'evidence', 'confidence', 'suggested_driver', 'status', 'addressFrom', 'autoLinked'];
+const UI_FIELDS = ['joined', 'added', 'evidence', 'confidence', 'suggested_driver', 'status', 'addressFrom', 'autoLinked', 'moreOpen'];
 const CONFIDENCE = { high: ['good', 'Sure'], likely: ['unknown', 'Likely'], unknown: ['warn', 'Unsure'] };
 const STATUS_CHIP = { new: ['good', 'New'], changed: ['warn', 'Changed'], gone: ['crit', 'Not found by discovery'] };
 const LEVEL = { up: 'good', degraded: 'warn', down: 'crit' };
@@ -78,6 +79,9 @@ function load(path, hops, source, { notes = [], matches = {}, revision = null } 
   }
   draft.start = JSON.stringify(payload()); // before the automatic links, so a linked-for-you draft counts as changed
   draft.hops.forEach((h) => autoLink(h, matches[h.id]));
+  // What Cancel compares with: the automatic links are not the owner's edits. A draft that is not the live path
+  // (Rediscover, a version, a file) is not what is applied, so it always counts as changed (null).
+  draft.opened = source === 'live' ? JSON.stringify(payload()) : null;
   leaveArmed = false;
   stopRunningPreview();
   render();
@@ -199,6 +203,7 @@ function measurement(h) {
   const twin = liveTwin(h);
   if (twin) {
     const t = live.get(twin);
+    if (t.enabled !== false && t.probing_unavailable === true) return { level: 'unknown', html: 'Not probed · pings are not allowed', title: NO_PINGS_WHY, word: 'Not probed' };
     if (t.enabled !== false && t.ipv6_unavailable === true) return { level: 'unknown', html: escapeHtml(NO_IPV6), title: NO_IPV6_WHY, word: 'Not probed' };
     if (t.enabled !== false && t.ignores_ping === true) {
       return { level: 'unknown', html: `No reply · ${escapeHtml(IGNORES_PING.toLowerCase())} (not counted as an outage)`, title: IGNORES_PING_WHY, word: 'No reply' };
@@ -297,15 +302,15 @@ function deviceBlock(h) {
       const panel = deviceStatus(device, null);
       why = `${escapeHtml(DEVICE_WHY)} <button type="button" class="pe-lnk" data-action="showDevicePanel" data-arg="${escapeHtml(panel.panel)}">${escapeHtml(panel.panelName)} panel</button>.`;
     } else {
-      why = 'That device is not in this install\'s config.yaml: nothing reads it here.';
+      why = 'That device is not set up on this install (Settings, Devices): nothing reads it here.';
     }
   } else if (state.devices.length) {
     line = `${icon('plug', 'sm')}<span class="muted">No device connected</span> · <button type="button" class="btn sm outline" data-action="connectPathDevice" data-needs-edit data-arg="${id}">${icon('lock')}Connect</button>`;
   } else {
-    line = `${icon('plug', 'sm')}<span class="muted">No device connected</span> · <span class="fine">add one under <code>devices:</code> in config.yaml to read it</span>`;
+    line = `${icon('plug', 'sm')}<span class="muted">No device connected</span> · <span class="fine">add one in Settings, Devices, to read it</span>`;
   }
   const driver = !h.device_id && h.suggested_driver
-    ? `<p class="fine pe-suggest">Discovery thinks this is a device the <code>${escapeHtml(h.suggested_driver)}</code> driver can read${state.devices.some((d) => d.driver === h.suggested_driver) ? '' : `: add it under <code>devices:</code> in config.yaml (driver <code>${escapeHtml(h.suggested_driver)}</code>)`}.</p>` : '';
+    ? `<p class="fine pe-suggest">Discovery thinks this is a device the <code>${escapeHtml(h.suggested_driver)}</code> driver can read${state.devices.some((d) => d.driver === h.suggested_driver) ? '' : `: add it in Settings, Devices (driver <code>${escapeHtml(h.suggested_driver)}</code>)`}.</p>` : '';
   return `<div class="pe-dev"><div class="pe-dev-l">${line}</div>${chooser}<p class="fine pe-dev-why">${why}</p>${driver}</div>`;
 }
 
@@ -358,6 +363,24 @@ function addressForm(h) {
     <p class="fine" id="peAddrWhy-${id}" data-f="why">${escapeHtml(ADDRESS_WHY)}</p></form>`;
 }
 
+// The role's amber level for latency (Settings > Outage rules > Advanced > Hop colours), the placeholder of "Warn above".
+const ROLE_LEVEL = { local: 'local_latency_ms', gateway: 'gateway_latency_ms', public: 'public_latency_ms', dns: 'dns_latency_ms' };
+function roleLevelText(h) {
+  const key = ROLE_LEVEL[h.category];
+  const ms = key ? val(settingsValues(), `prober.hop_status.${key}`, null) : null;
+  return ms === null ? 'role level: none' : `role level: ${ms} ms`;
+}
+
+// "Warn above [ ] ms": this hop turns amber above its own average latency instead of its role's. Colour only: incidents
+// still use the role's level.
+function moreBlock(h, n) {
+  const id = escapeHtml(h.id);
+  const set = h.warn_latency_ms !== null && h.warn_latency_ms !== undefined && h.warn_latency_ms !== '';
+  return `<details class="pe-more" data-more="${id}"${h.moreOpen || set ? ' open' : ''}><summary>More</summary>
+    <label class="field pe-warn"><span>Warn above</span><span class="pe-warn-in"><input class="input num" type="text" inputmode="decimal" autocomplete="off" value="${set ? escapeHtml(h.warn_latency_ms) : ''}" placeholder="${escapeHtml(roleLevelText(h))}" maxlength="8"${canEdit() ? '' : ' disabled'} data-input="editPathHop" data-change="editPathHop" data-field="warn_latency_ms" data-arg="${id}" aria-label="Warn above, in milliseconds, for hop ${n}" aria-describedby="peWarn-${id}"><span class="muted">ms</span></span></label>
+    <p class="fine pe-warn-fx" id="peWarn-${id}">Only this hop's colour. Incidents still use the role's level.</p></details>`;
+}
+
 function card(h, i, hops) {
   const n = i + 1;
   const id = escapeHtml(h.id);
@@ -393,7 +416,7 @@ function card(h, i, hops) {
       </div>
     </div>
     <p class="fine pe-role-fx" id="peFx-${id}">${escapeHtml(ROLE_EFFECT[h.category] || '')}</p>
-    ${deviceBlock(h)}${evidence}</li>`;
+    ${moreBlock(h, n)}${deviceBlock(h)}${evidence}</li>`;
 }
 
 function renderRemoved() {
@@ -415,6 +438,7 @@ function renderClean() {
 
 function render(focus) {
   const hops = draft.hops;
+  guardBack();
   renderChain();
   renderClean();
   $('pathEditorHops').innerHTML = hops.length ? hops.map((h, i) => card(h, i, hops)).join('')
@@ -477,8 +501,12 @@ function onTargets(targets) {
 }
 
 // ---------- opening and closing ----------
+let opener = null; // what had the focus when the editor opened: it gets it back on closing
 async function open(arg = '') {
   note('', '');
+  opener = document.activeElement instanceof HTMLElement && !$('pathEditorModal').contains(document.activeElement) ? document.activeElement : opener;
+  $('pathDiscAsn').checked = !!val(settingsValues(), 'discovery.asn_lookup', false); // as Settings says, off unless the owner turned it on
+  showExport(false);
   openModal('pathEditorModal');
   if (!unsubscribe) unsubscribe = bus.subscribe('targets', onTargets);
   $('pathEditorChain').innerHTML = '';
@@ -495,10 +523,15 @@ async function open(arg = '') {
   } catch (e) {
     note('crit', `<b>The path could not be loaded.</b> ${escapeHtml(e.message)}`);
   }
+  const first = $('pathEditorHops').querySelector('.pe-name');
+  if (first && document.activeElement && document.activeElement.classList.contains('m-close')) first.focus({ preventScroll: true });
   loadVersions();
 }
 
 function closed() {
+  if (backGuard) { backGuard = false; if (guardState()) history.back(); }
+  if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+  opener = null;
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   unwatchDevices();
   stopRunningPreview();
@@ -516,7 +549,8 @@ function showDiscovery(path, run) {
   const counts = ['new', 'changed', 'gone'].map((s) => [s, draft.hops.filter((h) => h.status === s).length]).filter(([, c]) => c);
   const diff = counts.length ? ` Compared with the live path: ${counts.map(([s, c]) => `${c} ${s === 'gone' ? 'not found' : s}`).join(', ')}.` : '';
   const notes = (run.notes || []).length ? `<ul class="pe-notes">${run.notes.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>` : '';
-  note('unknown', `<b>Discovery found ${draft.hops.length} hop${draft.hops.length === 1 ? '' : 's'}.</b> Check each one's role and reasons, then Apply.${diff}${notes}`);
+  const found = draft.hops.filter((h) => h.status !== 'gone').length; // the live hops discovery did not see are kept, not found
+  note('unknown', `<b>Discovery found ${found} hop${found === 1 ? '' : 's'}.</b> Check each one's role and reasons, then Apply.${diff}${notes}`);
 }
 
 async function rediscover() {
@@ -567,6 +601,34 @@ async function loadVersion(el) {
   }
 }
 
+// ---------- export ----------
+// The saved path as YAML, shown with Copy and a download link (a file downloaded over plain HTTP is blocked or warned
+// about by Chrome; see exportViewHtml). The view opens at the top of the dialog body: bring it into view.
+function showExport(on) {
+  $('pathExport').setAttribute('aria-expanded', String(on));
+  $('pathExportView').hidden = !on;
+  if (!on) $('pathExportView').innerHTML = '';
+}
+
+async function toggleExport() {
+  const on = $('pathExportView').hidden;
+  showExport(on);
+  if (!on) return;
+  const box = $('pathExportView');
+  box.innerHTML = '<p class="fine">Loading…</p>';
+  box.scrollIntoView({ block: 'start' });
+  try {
+    const res = await fetch('/api/path/export', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`The path could not be exported (${res.status}).`);
+    box.innerHTML = exportViewHtml({ prefix: 'path', intro: 'The probe path as YAML. Import reads it in another install.',
+      text: await res.text(), href: '/api/path/export', file: 'pengumon-path.yaml' });
+  } catch (e) {
+    box.innerHTML = `<p class="fine">${escapeHtml(e.message)}</p>`;
+  }
+  box.scrollIntoView({ block: 'start' });
+  box.focus({ preventScroll: true });
+}
+
 // ---------- preview ----------
 function stopRunningPreview() {
   if (preview && preview.state === 'running') stopPreview(preview.id);
@@ -612,6 +674,7 @@ async function runPreview() {
 
 // ---------- edits ----------
 function edit(el) {
+  if (!draft) return; // a change event that arrives as the dialog closes (Esc in a field)
   const h = hopById(el.dataset.arg);
   if (!h) return;
   const field = el.dataset.field;
@@ -623,8 +686,20 @@ function edit(el) {
     renderClean();
     return;
   }
+  if (field === 'warn_latency_ms') { // no re-draw: typing keeps the focus
+    const text = el.value.trim();
+    const n = Number(text);
+    const bad = text !== '' && !(Number.isFinite(n) && n > 0 && n <= 10000);
+    h.warn_latency_ms = text === '' ? null : bad ? text : n; // a bad text is sent as typed and the server refuses it
+    el.setAttribute('aria-invalid', String(bad));
+    const fx = $(`peWarn-${h.id}`);
+    if (fx) fx.textContent = bad ? 'Enter a number above 0 and up to 10000.' : 'Only this hop\'s colour. Incidents still use the role\'s level.';
+    return;
+  }
   if (field === 'category') {
     h.category = el.value;
+    h.group = null; // a group belongs to the old role
+    h.joined = false;
     autoLink(h);
   } else if (field === 'family') { h.family = Number(el.value) === 6 ? 6 : 4; tests.delete(h.id); }
   render({ id: h.id, field });
@@ -668,7 +743,7 @@ function remove(el) {
   removed.push({ hop: h, index: i, live: liveHops.has(h.id), deleteHistory: false });
   render();
   const next = draft.hops[Math.min(i, draft.hops.length - 1)];
-  (next ? document.querySelector(`#pathEditorHops [data-hop="${CSS.escape(next.id)}"] .pe-remove`) : document.querySelector('#pathEditorRemoved button'))?.focus();
+  (next ? document.querySelector(`#pathEditorHops [data-hop="${CSS.escape(next.id)}"] .pe-name`) : document.querySelector('#pathEditorRemoved button'))?.focus();
 }
 
 function undo(el) {
@@ -691,12 +766,13 @@ function addHop(ev) {
   const where = $('pathAddPosition').value;
   const at = where === 'end' ? draft.hops.length : Number(where);
   const family = isName(address) && $('pathAddFamily').value === '6' ? 6 : 4;
-  const hop = { id: freshId(category, address), name: address, address, family, category, enabled: true, record_type: 'A', nameserver: null, color: null,
+  const twin = draft.hops.find((h) => h.address.toLowerCase() === address.toLowerCase());
+  const hop = { id: freshId(category, address), name: address.slice(0, 100), address, family, category, enabled: true, record_type: 'A', nameserver: null, color: null,
     group: null, device_id: null, joined: false, added: true };
   autoLink(hop);
   draft.hops.splice(at, 0, hop);
   $('pathAddAddress').value = '';
-  hint.textContent = 'Added to the draft. Test or preview it, then Apply.';
+  hint.textContent = twin ? `Added, but ${twin.name} already has this address. Test or preview it, then Apply.` : 'Added to the draft. Test or preview it, then Apply.';
   render({ id: hop.id });
 }
 
@@ -841,6 +917,7 @@ async function apply() {
       if (!del.ok) failed.push(r.hop.name);
     }
     if (failed.length) { note('warn', `<b>Applied</b>, but the history of ${escapeHtml(failed.join(', '))} could not be deleted.`); return; }
+    draft.opened = JSON.stringify(payload()); // applied: nothing left to lose, so the reload below does not ask
     note('good', '<b>Applied.</b> The new path is probed from now on; the dashboard reloads to show it.');
     setTimeout(() => location.reload(), 600); // every panel then draws the new path from the start
   } catch (e) {
@@ -868,13 +945,48 @@ async function importFile(input) {
   }
 }
 
-function cancel() {
+// Whether the draft differs from what the editor opened with (a device linked for you does not count).
+function changed() {
+  return !!draft && (draft.opened === null || JSON.stringify(payload()) !== draft.opened);
+}
+
+// Back and reload with a changed draft ask first. The first changed draft gets a history entry of its own (the entry
+// before it is the page without the hash); closing the editor takes that entry away again, so no dead Back press stays.
+let backGuard = false;
+const pageToken = Math.random().toString(36).slice(2); // an entry of an earlier page load (a reload keeps history.state) is not this page's
+const guardState = () => !!(history.state && history.state.pathEditor === pageToken);
+function guardBack() {
+  if (backGuard || !changed() || !canEdit()) return;
+  history.pushState({ pathEditor: pageToken }, '');
+  backGuard = true;
+}
+window.addEventListener('popstate', () => {
+  if (!backGuard || guardState() || !$('pathEditorModal').classList.contains('active')) return;
+  if (changed() && canEdit()) { // Back pressed: stay (the entry is put back) and ask
+    history.pushState({ pathEditor: pageToken }, '');
+    cancel();
+  } else { backGuard = false; closeModal('pathEditorModal'); }
+});
+// A reload (Apply does one) keeps the history entry of the editor's draft: the new page takes it away, so no Back press is dead.
+window.addEventListener('load', () => { if (history.state && history.state.pathEditor) history.back(); }, { once: true });
+window.addEventListener('beforeunload', (ev) => {
+  if ($('pathEditorModal').classList.contains('active') && changed() && canEdit()) { ev.preventDefault(); ev.returnValue = ''; }
+});
+
+// Every way out (Cancel, X, Esc) comes here: a changed draft is not thrown away without a question.
+function cancel(force = false) {
+  if (!force && changed() && canEdit()) {
+    note('warn', '<b>Your changes are not applied.</b> Closing now throws them away. '
+      + '<button type="button" class="btn sm" data-action="discardPathEditor">Discard changes and close</button>');
+    return;
+  }
   closeModal('pathEditorModal'); // the observer below lets go of the live data and stops a preview
 }
 
 registerActions('click', {
   openPathEditor: (el) => open(el.dataset.arg || ''),
   cancelPathEditor: () => cancel(),
+  discardPathEditor: () => cancel(true),
   reloadPathEditor: () => open(''),
   movePathHop: (el) => move(el),
   mergePathHops: (el) => merge(el, true),
@@ -893,6 +1005,8 @@ registerActions('click', {
   previewPath: () => runPreview(),
   applyPath: () => apply(),
   rediscoverPath: () => rediscover(),
+  pathExport: () => toggleExport(),
+  pathExportCopy: () => copyExport('path'),
   importPath: () => $('pathImportFile').click()
 });
 registerActions('input', { editPathHop: (el, ev) => edit(el, ev) });
@@ -921,7 +1035,7 @@ function keepKeyboard(modal, firstFocus) {
   modal.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && !ev.defaultPrevented) {
       if (addressing) { cancelAddress(addressing); ev.preventDefault(); return; }
-      closeModal(modal.id);
+      cancel();
       return;
     }
     if (ev.key !== 'Tab') return;
@@ -933,4 +1047,11 @@ function keepKeyboard(modal, firstFocus) {
     else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
   });
 }
+// which hop cards have "More" open survives a re-draw
+$('pathEditorHops').addEventListener('toggle', (ev) => {
+  const d = ev.target;
+  if (!(d instanceof Element) || !d.classList.contains('pe-more')) return;
+  const h = draft && hopById(d.dataset.more);
+  if (h) h.moreOpen = d.open;
+}, true);
 keepKeyboard($('pathEditorModal'), '.pe-name');

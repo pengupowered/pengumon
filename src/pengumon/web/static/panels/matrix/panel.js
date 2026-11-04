@@ -77,7 +77,7 @@ function updateHopMatrix(targets) {
     // Recent 1-minute rolling loss
     const recentLoss = (t.loss_recent_pct !== undefined) ? t.loss_recent_pct : t.loss_pct;
     const ignores = quiet.has(t.target_id);
-    const unprobed = ignores && quiet.get(t.target_id).kind === 'ipv6';
+    const unprobed = ignores && quiet.get(t.target_id).kind !== 'ping';
     const level = ignores ? 'unknown' : lossLevel(t, recentLoss);
     const w = stats.get(t.target_id);
     const totalLost = Math.max(0, t.sent - t.received);
@@ -90,7 +90,7 @@ function updateHopMatrix(targets) {
     setText(r.name, t.name);
     setText(r.addr, t.address);
     r.addrWrap.hidden = nameSaysAddress(t.name, t.address);
-    r.sub.title = r.addrWrap.hidden ? t.name : `${t.name} · ${t.address}`;
+    r.label.title = t.name; r.sub.title = r.addrWrap.hidden ? t.name : `${t.name} · ${t.address}`;
     if (r.loss.dataset.key !== `${level}|${recentLoss}|${ignores}|${unprobed}`) {
       r.loss.dataset.key = `${level}|${recentLoss}|${ignores}|${unprobed}`;
       r.loss.className = recentLoss > 0 || level !== 'good' ? `chip st st-${level}` : 'chip';

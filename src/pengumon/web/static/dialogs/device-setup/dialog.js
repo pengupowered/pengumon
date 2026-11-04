@@ -5,7 +5,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { closeModal, deviceName, escapeHtml, icon, openModal } from '../../js/util.js';
+import { closeModal, deviceName, escapeHtml, icon, keepKeyboard, openModal } from '../../js/util.js';
 import { publishDevice } from '../../js/device-feed.js';
 
 const ERRORS = { // the last reading's failure, by the driver's error kind: its title
@@ -31,7 +31,7 @@ export function openDeviceSetup(id) {
   $('setupLead').textContent = `pengumon signs in to ${name}'s admin page to read ${reads.length ? reads.join(', ') : 'its status'}. `
     + 'The password is stored on this host only, in local storage that is not in git, and is never sent anywhere else.';
   $('setupAddress').value = device.url || device.host || '';
-  $('setupAddressHint').textContent = `From config.yaml (devices: ${device.id})`;
+  $('setupAddressHint').textContent = `From Settings > Devices (${device.id})`;
   const err = $('setupError');
   err.hidden = !device.error_message;
   if (device.error_message) err.innerHTML = `${icon('lock')}<div><b>${escapeHtml(ERRORS[device.error_kind] || 'The last reading failed')}</b>${escapeHtml(device.error_message)}</div>`;
@@ -104,21 +104,4 @@ registerActions('click', {
 registerActions('submit', {
   saveDeviceCredentials: (el, ev) => save(ev)
 });
-
-// Keyboard: focus moves into the dialog when it opens, Tab stays inside it and Escape closes it.
-export function keepKeyboard(modal, firstFocus) {
-  new MutationObserver(() => {
-    if (modal.classList.contains('active') && !modal.contains(document.activeElement)) (modal.querySelector(firstFocus) || modal.querySelector('.m-close')).focus();
-  }).observe(modal, { attributes: true, attributeFilter: ['class'] });
-  modal.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && !ev.defaultPrevented) { closeModal(modal.id); return; }
-    if (ev.key !== 'Tab') return;
-    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
-    if (!items.length) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
-    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
-  });
-}
 keepKeyboard($('deviceSetupModal'), '#setupPassword');

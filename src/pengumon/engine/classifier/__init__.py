@@ -1,8 +1,10 @@
 """Diagnostic classifier engine for network root-cause isolation.
 
-OutageClassifier is the orchestrator: it owns the clock, the load reading and the callbacks, and each round it
-runs metrics.round_metrics -> rules.diagnose -> rules.apply_load -> rules.apply_hop_deprioritisation ->
-tracker.IncidentTracker.observe. The pieces:
+OutageClassifier is the orchestrator: it owns the clock, the load reading and the callbacks. Each round it computes
+metrics.round_metrics and hands them to ClassifierCore.step, which runs rules.diagnose -> rules.apply_load ->
+rules.apply_hop_deprioritisation -> tracker.IncidentTracker.observe; the side effects (path trace, log lines,
+callbacks) stay in OutageClassifier. The outage-rules preview (engine.replay) drives a ClassifierCore of its own with
+the timestamps of stored samples. The pieces:
 
 * verdict.py   Verdict, the frozen result of a round; its `kind` drives control flow, the texts are for people
 * metrics.py   CategoryMetrics / RoundMetrics, computed once per round (not pengumon.metrics, the Prometheus one)
@@ -16,25 +18,76 @@ golden patches `time` and `_trigger_path_trace` on pengumon.engine.classifier.
 import asyncio
 import time
 import logging
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 from pengumon.incidents.model import SystemDiagnosis, Incident
 from pengumon.models.probes import ProbeSample, TargetStats
 from pengumon.incidents.taxonomy import ISP_LINE_KINDS
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.db.repository import DatabaseRepository
-from pengumon.engine.load import LineLoad
+from pengumon.engine.load import LineLoad, LoadReading
 from pengumon.engine.classifier.metrics import CategoryMetrics, RoundMetrics, round_metrics
 from pengumon.engine.classifier.rules import apply_hop_deprioritisation, apply_load, diagnose
 from pengumon.engine.classifier.tracker import IncidentTracker, TrackerOutcome
 from pengumon.engine.classifier.verdict import NOMINAL, Verdict
-from pengumon.lines import wording
+from pengumon.lines import GENERIC, LineWording, wording
 from pengumon.observability.telemetry import tracer
 
 logger = logging.getLogger("pengumon.classifier")
 
+PATH_TRACE_MAX_HOPS = 15  # the traceroute when an incident starts
+
 __all__ = [
-    "OutageClassifier", "Verdict", "NOMINAL", "CategoryMetrics", "RoundMetrics", "IncidentTracker", "TrackerOutcome",
+    "OutageClassifier", "ClassifierCore", "StepResult", "Verdict", "NOMINAL", "CategoryMetrics", "RoundMetrics",
+    "IncidentTracker", "TrackerOutcome",
 ]
+
+
+@dataclass
+class StepResult:
+    """What one ClassifierCore.step concluded. `is_loss_or_outage` is judged on the base diagnosis (before the load
+    adjustment); `reading` is the load reading the step was given; `outcome` says which incident started, escalated
+    or resolved this round."""
+
+    verdict: Verdict
+    is_loss_or_outage: bool
+    reading: Optional[LoadReading]
+    outcome: TrackerOutcome
+
+
+class ClassifierCore:
+    """The verdict logic of one round, without a clock, callbacks or background tasks: diagnose, the load and
+    hop-deprioritisation adjustments, and the incident tracker. Owns the tracker and the time of the last upstream
+    issue (the DNS cooldown). `config` is read at every step, so a change to it applies from the next round.
+
+    The live OutageClassifier and the outage-rules replay both run their rounds through `step`, so the replay's
+    verdicts are the live code's."""
+
+    def __init__(self, config: ClassifierConfig, repository: Optional[DatabaseRepository] = None,
+                 line: LineWording = GENERIC):
+        self.config = config
+        self.line = line  # how access-line faults are described (pengumon.lines)
+        self.tracker = IncidentTracker(config, repository)
+        self.last_upstream_issue_ts: float = 0.0
+
+    async def step(self, m: RoundMetrics, ts: float, reading: Optional[LoadReading]) -> StepResult:
+        """Judges one round's metrics at time `ts`, with the line load `reading` of this round (None: unknown)."""
+        config = self.config
+        if m.upstream_issue(config):
+            self.last_upstream_issue_ts = ts
+
+        # Classify root cause based on sustained rolling metrics
+        verdict = diagnose(m, config, ts, self.last_upstream_issue_ts, self.line)
+
+        # Determine if degradation is packet loss / hard outage vs pure latency / jitter
+        is_loss_or_outage = m.is_loss_or_outage(verdict.status, config)
+
+        if verdict.is_fault and reading is not None:
+            verdict = apply_load(verdict, m, reading, config, is_loss_or_outage)
+        if verdict.is_fault and verdict.kind in ISP_LINE_KINDS:
+            verdict = apply_hop_deprioritisation(verdict, m, config)
+        outcome = await self.tracker.observe(verdict, is_loss_or_outage=is_loss_or_outage, reading=reading, ts=ts)
+        return StepResult(verdict, is_loss_or_outage, reading, outcome)
 
 
 class OutageClassifier:
@@ -49,21 +102,50 @@ class OutageClassifier:
         on_incident_started: Optional[Callable[[Incident], None]] = None,
         on_incident_resolved: Optional[Callable[[Incident], None]] = None,
         line_technology: Optional[str] = None,
+        on_incident_escalated: Optional[Callable[[Incident], None]] = None,
     ):
         # Plain synchronous callbacks that must return quickly (the notifier only schedules a task).
         self.on_incident_started = on_incident_started
         self.on_incident_resolved = on_incident_resolved
-        self.config = config
+        self.on_incident_escalated = on_incident_escalated  # an active incident's severity rose to critical
         self.repository = repository
         self.known_targets = known_targets if known_targets is not None else []  # shared: a path edit updates it
         self.load = load
-        self.line = wording(line_technology)  # how access-line faults are described (pengumon.lines)
-        self.tracker = IncidentTracker(config, repository)
+        self.core = ClassifierCore(config, repository, wording(line_technology))
         self.last_diagnosis: SystemDiagnosis = SystemDiagnosis()
         self.last_verdict: Verdict = NOMINAL
-        self.last_upstream_issue_ts: float = 0.0
+        self._last_measured_ts: float = 0.0  # when evaluate last ran: the time probing stopped, if it does
         # Strong references to background tasks: the event loop holds tasks only weakly.
         self._background: set = set()
+
+    # The core's state, under the names callers and tests have always used.
+    @property
+    def config(self) -> ClassifierConfig:
+        return self.core.config
+
+    @config.setter
+    def config(self, config: ClassifierConfig) -> None:
+        self.core.config = self.core.tracker.config = config
+
+    @property
+    def line(self) -> LineWording:
+        return self.core.line
+
+    @line.setter
+    def line(self, line: LineWording) -> None:
+        self.core.line = line
+
+    @property
+    def tracker(self) -> IncidentTracker:
+        return self.core.tracker
+
+    @property
+    def last_upstream_issue_ts(self) -> float:
+        return self.core.last_upstream_issue_ts
+
+    @last_upstream_issue_ts.setter
+    def last_upstream_issue_ts(self, ts: float) -> None:
+        self.core.last_upstream_issue_ts = ts
 
     # State that lives in the tracker, under the names callers and tests have always used.
     @property
@@ -94,35 +176,37 @@ class OutageClassifier:
     def last_failure_ts(self) -> float:
         return self.tracker.last_failure_ts
 
+    async def not_probing(self, reason: str, fix: Optional[str]) -> SystemDiagnosis:
+        """The diagnosis while this host cannot send pings (Prober.probing_problem): nothing was measured, so no
+        verdict about the network and no new incident. An incident that is open ends at the last round measured, with a
+        note that measuring stopped; the callbacks hear nothing (it is not a recovery, so no "resolved" goes out). Says
+        why, and the one step that fixes it."""
+        if self.tracker.active_incident is not None:
+            ended = await self.tracker.stop_measuring(self._last_measured_ts or time.time())
+            logger.warning(f"Network incident #{ended.id} ended: measuring stopped ({reason}); not a recovery")
+        text = ("Pengumon is running but cannot send pings from this computer, so it is measuring nothing and reports no "
+                f"outage. Why: {reason}.")
+        if fix:
+            text += f" To fix it, run this once: {fix}"
+        self.last_diagnosis = SystemDiagnosis(
+            status="unknown", cause_code="nominal", title="Not probing: pings are not allowed", description=text,
+            active_incident=self.tracker.active_incident, timestamp=time.time())
+        return self.last_diagnosis
+
     async def evaluate(
         self,
         samples: List[ProbeSample],
         stats: Dict[str, TargetStats]
     ) -> SystemDiagnosis:
         """Evaluates the latest probe samples against the diagnostic matrix."""
-        ts = time.time()
-        
+        ts = self._last_measured_ts = time.time()
+
         # Rolling metrics across the last 10 samples of each category, computed once for the round
         m = round_metrics(stats, samples)
-
-        # Track upstream issues
-        if m.upstream_issue(self.config.public_latency_spike_threshold_ms):
-            self.last_upstream_issue_ts = ts
-
-        # Classify root cause based on sustained rolling metrics
-        verdict = diagnose(m, self.config, ts, self.last_upstream_issue_ts, self.line)
-
-        # Determine if degradation is packet loss / hard outage vs pure latency / jitter
-        is_loss_or_outage = m.is_loss_or_outage(verdict.status)
-
         reading = self.load.current(ts) if self.load else None
-        if verdict.is_fault and reading is not None:
-            verdict = apply_load(
-                verdict, m, reading, self.config.busy_load_pct, is_loss_or_outage)
-        if verdict.is_fault and verdict.kind in ISP_LINE_KINDS:
-            verdict = apply_hop_deprioritisation(verdict, m)
+        result = await self.core.step(m, ts, reading)
+        verdict, outcome = result.verdict, result.outcome
         self.last_verdict = verdict
-        outcome = await self.tracker.observe(verdict, is_loss_or_outage=is_loss_or_outage, reading=reading, ts=ts)
         if outcome.started is not None:
             if self.repository:
                 task = asyncio.create_task(self._trigger_path_trace(outcome.started.id))
@@ -130,6 +214,10 @@ class OutageClassifier:
                 task.add_done_callback(self._background.discard)
             logger.warning(f"🚨 Network Incident Started: {outcome.started.title} (ID: {outcome.started.id})")
             self._notify(self.on_incident_started, outcome.started)
+        if outcome.escalated is not None:
+            logger.warning(f"🚨 Network Incident Escalated to critical: {outcome.escalated.title} "
+                           f"(ID: {outcome.escalated.id})")
+            self._notify(self.on_incident_escalated, outcome.escalated)
         if outcome.resolved is not None:
             logger.info(
                 f"✅ Network Incident Resolved: {outcome.resolved.title} (Duration: {outcome.resolved.duration_seconds}s)")
@@ -172,7 +260,7 @@ class OutageClassifier:
         try:
             from pengumon.engine.mtr import MtrEngine
             from pengumon.models.probes import PathTraceHop
-            engine = MtrEngine(target_host=self.config.path_trace_target, max_hops=15, timeout=1.5,
+            engine = MtrEngine(target_host=self.config.path_trace_target, max_hops=PATH_TRACE_MAX_HOPS, timeout=1.5,
                                known_targets=self.known_targets)
             hops = await engine.run_trace()
             span.set_attribute("trace.hops", len(hops or []))

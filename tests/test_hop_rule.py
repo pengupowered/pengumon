@@ -135,7 +135,7 @@ async def test_backfill_marks_incidents_whose_public_targets_stayed_fine(tmp_pat
     await probe(90, 32, isp_lost=32, public_lost=1)  # all lost at the hop, 1 at public
     await probe(190, 32, isp_lost=12, public_lost=10)  # public 31% is not below half... and over 15%
 
-    assert await backfill_ping_deprioritisation(repo, TARGETS) == 2
+    assert await backfill_ping_deprioritisation(repo, TARGETS, 15.0) == 2
     got = {i.id: i for i in await repo.get_recent_incidents(limit=20)}
     assert got[hop_only].expected and got[outage_hop_only].expected
     assert not got[real].expected
@@ -145,7 +145,7 @@ async def test_backfill_marks_incidents_whose_public_targets_stayed_fine(tmp_pat
 
     # Idempotent, and independent of the load backfill's key.
     await probe(290, 32, isp_lost=12, public_lost=0)
-    assert await backfill_ping_deprioritisation(repo, TARGETS) is None
+    assert await backfill_ping_deprioritisation(repo, TARGETS, 15.0) is None
     assert not (await repo.get_incident_by_id(no_samples)).expected
 
 
@@ -162,3 +162,22 @@ async def test_fault_descriptions_phrase_causes_as_possible_causes(make):
     assert diagnosis.status in ("degraded", "down")
     assert "Possible causes:" in diagnosis.description
     assert "baseline ~12" not in diagnosis.description
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("degraded_loss_pct, marked", [(15.0, False), (20.0, True)])
+async def test_backfill_judges_the_public_loss_against_the_degraded_level(tmp_path, degraded_loss_pct, marked):
+    repo = DatabaseRepository(db_path=str(tmp_path / "p.db"), sample_flush_seconds=0)
+    await repo.initialize()
+    base = time.time() - 3600
+    hop = await repo.create_incident(Incident(
+        start_time=base, end_time=base + 20.0, duration_seconds=20.0, cause_code="access_line_drop",
+        title="ISP Line / Hop 3 Packet Loss", description="d", severity="warning", resolved=True, kind="isp_loss"))
+    samples = []
+    for i in range(32):  # window [start - 10, end + 2]: the hop loses 32 of 32, the public target 6 (18.75 %)
+        t = base - 10 + i
+        samples.append(ProbeSample(target_id="rur", timestamp=t, success=False, latency_ms=None))
+        samples.append(ProbeSample(target_id="cf", timestamp=t, success=i >= 6, latency_ms=14.0))
+    await repo.insert_samples(samples)
+    assert await backfill_ping_deprioritisation(repo, TARGETS, degraded_loss_pct) == int(marked)
+    assert (await repo.get_incident_by_id(hop)).expected is marked

@@ -21,8 +21,8 @@ import './help.js';
 const { escapeHtml, icon, latestMs, setBadge, setText, STATUS } = util;
 
 // The classifier's status -> the design's status level and its word.
-const LEVEL = { healthy: 'good', degraded: 'warn', down: 'crit', busy: 'busy' };
-const WORD = { healthy: 'Healthy', degraded: 'Degraded', down: 'Down', busy: 'Busy' };
+const LEVEL = { healthy: 'good', degraded: 'warn', down: 'crit', busy: 'busy', unknown: 'unknown' };
+const WORD = { healthy: 'Healthy', degraded: 'Degraded', down: 'Down', busy: 'Busy', unknown: 'Not probing' }; // unknown: this host cannot send pings
 
 export const levelOf = (status) => LEVEL[status] || 'unknown';
 
@@ -70,7 +70,7 @@ function hostNode(count) {
 }
 
 function nodeShell(n) {
-  return `<li class="link" data-link="${escapeHtml(n.key)}" aria-hidden="true"><svg class="wire" viewBox="0 0 40 10" preserveAspectRatio="none"><line x1="0" y1="5" x2="40" y2="5"/></svg><span class="cut" hidden>${icon('close', 'sm')}</span><span class="delta"></span></li>
+  return `<li class="link" data-link="${escapeHtml(n.key)}" aria-hidden="true"><span class="wirebox"><svg class="wire" viewBox="0 0 40 10" preserveAspectRatio="none"><line x1="0" y1="5" x2="40" y2="5"/></svg></span><span class="cut" hidden>${icon('close', 'sm')}</span><span class="delta"></span></li>
     <li class="node-wrap"><button type="button" class="node" data-node="${escapeHtml(n.key)}" data-action="openTargetHistory" data-range="live" data-arg="${escapeHtml(n.target)}"${n.history ? ` data-group="${escapeHtml(JSON.stringify(n.history))}"` : ''}>
       <span class="node-top"><span class="node-ic">${icon(n.icon)}</span><span class="node-id"><span class="node-kind"></span></span><span class="node-st"></span></span><span class="node-name"></span>
       <div class="node-val"></div><div class="node-meta"></div><span class="node-spark"></span></button></li>`;
@@ -96,7 +96,7 @@ export function deltaText(d) {
 
 function paintNode(el, link, n, prev) {
   const word = n.quiet ? n.quietWords.word : STATUS[n.level].word; // ignores ping, or IPv6 unavailable on this host
-  const unprobed = n.quiet && n.quietWords.kind === 'ipv6'; // its last figures are from before IPv6 went away
+  const unprobed = n.quiet && n.quietWords.kind !== 'ping'; // its last figures are from before IPv6 went away, or pings stopped
   // what a click opens follows the node (its worst target, or the members of a group can change under the same key)
   if (el.dataset.arg !== n.target) el.dataset.arg = n.target;
   const group = n.history ? JSON.stringify(n.history) : '';
@@ -192,8 +192,10 @@ function updateChain(targets) {
   const internet = nodes.find((n) => n.kind === 'Internet') || nodes[nodes.length - 1]; // the first Internet node, not its IPv6 servers
   const worst = nodes.filter((n) => n.loss !== null).reduce((a, b) => (b.loss > (a ? a.loss : -1) ? b : a), null);
   const parts = [];
-  if (worst && worst.loss > 0) parts.push(`${fmtPct(worst.loss)} loss`);
-  if (internet && has(internet.ms)) parts.push(`${fmtMs(internet.ms)} ms to internet`);
+  // While this host can't send pings, the last figures are stale: the pill says nothing rather than old numbers.
+  const noPings = targets.some((t) => t.probing_unavailable === true);
+  if (!noPings && worst && worst.loss > 0) parts.push(`${fmtPct(worst.loss)} loss`);
+  if (!noPings && internet && has(internet.ms)) parts.push(`${fmtMs(internet.ms)} ms to internet`);
   const metrics = document.getElementById('statusPillMetrics');
   if (metrics) metrics.innerHTML = parts.map((p) => `<span class="sep" aria-hidden="true">·</span><span class="num">${escapeHtml(p)}</span>`).join('');
 }
@@ -263,7 +265,10 @@ async function firstRunBanner() {
     const id = await startDiscovery({ asnLookup: false, snmp: false, firstRun: true });
     const run = id ? await waitDiscovery(id, (text) => { const p = document.querySelector('#pathBanner [data-f=progress]'); if (p) p.textContent = text; }) : null;
     if (run && run.state === 'done') {
-      banner(review(`discovery:${id}`, 'Pengumon found your network path', '· Review it: until you apply it, the default targets are probed.'));
+      const homeFound = ((run.draft && run.draft.hops) || []).some((h) => h.category === 'local' || h.category === 'gateway');
+      banner(homeFound
+        ? review(`discovery:${id}`, 'Pengumon found your network path', '· Review it: until you apply it, the default targets are probed.')
+        : review(`discovery:${id}`, 'Pengumon could not find your router', '· Only public servers answered. Review the draft: until you apply a path, the default targets are probed.'));
       return;
     }
   } catch (_) { /* no discovery in this build, or it failed: the defaults can be reviewed all the same */ }
@@ -280,17 +285,21 @@ export async function driftNotice() {
   let drift;
   try { drift = await fetchDrift(); } catch (_) { return; }
   const box = document.getElementById('pathBanner');
-  const changes = drift && drift.state === 'changed' && drift.discovery_id ? (drift.changes || []) : [];
+  // a failed check keeps the changes of the last good one until they are reviewed
+  const changes = drift && (drift.state === 'changed' || drift.state === 'failed') && drift.discovery_id ? (drift.changes || []) : [];
   if (!changes.length) {
     if (box.dataset.kind === 'drift') { banner(''); delete box.dataset.kind; }
     return;
   }
-  const key = `${drift.discovery_id}|${drift.checked_at}`;
+  const key = `${drift.discovery_id}|${drift.checked_at}|${drift.state}`;
   if (key === driftKey && box.dataset.kind === 'drift') return;
   driftKey = key;
+  const first = String(changes[0].text || '').replace(/\.$/, '');
   const more = changes.length > 1 ? ` (and ${changes.length - 1} more)` : '';
+  const goodAt = drift.good_at ? new Date(drift.good_at * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const failed = drift.state === 'failed' ? ` The latest route check could not run, so this is from the check on ${goodAt || 'an earlier day'}.` : '';
   const edit = util.canEdit();
-  banner(`<div class="result st-warn">${icon('route')}<span><b>Your path changed</b> · ${escapeHtml(changes[0].text || '')}${escapeHtml(more)}</span>`
+  banner(`<div class="result st-warn">${icon('route')}<span><b>Your path changed</b> · ${escapeHtml(first)}${escapeHtml(more)}.${escapeHtml(failed)}</span>`
     + `<button type="button" class="btn sm primary" data-action="openPathEditor" data-needs-edit data-arg="${escapeHtml(`discovery:${drift.discovery_id}`)}">Review</button>`
     + `${edit ? '<button type="button" class="btn sm" data-action="dismissPathDrift" data-needs-edit>Dismiss</button>' : ''}</div>`);
   box.dataset.kind = 'drift';

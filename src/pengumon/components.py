@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Corou
 from pengumon.api.state import STATE_ATTR, AppState
 from pengumon.observability import get_logger
 from pengumon.observability.export import observe_state
+from pengumon.observability.telemetry import task_exits
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from pengumon.engine.load import LineLoad
     from pengumon.incidents.model import SystemDiagnosis
     from pengumon.notify import Notifier
+    from pengumon.settings.hub import SettingsHub
 
 _log = get_logger("pengumon.components")
 
@@ -38,6 +40,25 @@ class LivePart:
 
     name: str
     value: Callable[["SystemDiagnosis"], Any]
+
+
+def task_kind(task: "asyncio.Task") -> str:
+    """What a task runs, as its coroutine's qualified name ("Device.run"): fixed in the code, so it is a metric label
+    (the task's own name, "Task-17", is not)."""
+    coro = task.get_coro()
+    return getattr(coro, "__qualname__", None) or type(coro).__name__
+
+
+def log_unexpected_exit(task: "asyncio.Task") -> None:
+    """Done-callback for a task that should run until shutdown: logs the exception it died of, when it dies (not at
+    shutdown, when its result is collected). A cancelled task is not an unexpected exit."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        kind = task_kind(task)
+        task_exits.add(1, {"kind": kind, "error": type(exc).__name__})
+        _log.error(f"Background task {task.get_name()} stopped: {type(exc).__name__}: {exc}", kind=kind, exc_info=exc)
 
 
 @dataclass
@@ -63,6 +84,7 @@ class Context:
     app: "FastAPI"
     config: "AppConfig"
     state: AppState
+    settings: Optional["SettingsHub"] = None  # settings: subscribe appliers for live setting changes (settings/hub.py)
     notifier: Optional["Notifier"] = None  # notify, for the classifier and the service checks
     line_load: Optional["LineLoad"] = None  # line_load, for the classifier
     components: List[Component] = field(default_factory=list)  # registered so far, in list order
@@ -71,8 +93,16 @@ class Context:
     def spawn(self, coro: Coroutine) -> asyncio.Task:
         """Starts a background task that runs until shutdown, when it is cancelled before any component stops."""
         task = asyncio.create_task(coro)
+        task.add_done_callback(log_unexpected_exit)
+        task.add_done_callback(self._forget)  # a finished task (a rebuilt device's old one) is not kept
         self.tasks.append(task)
         return task
+
+    def _forget(self, task: "asyncio.Task") -> None:
+        try:
+            self.tasks.remove(task)
+        except ValueError:
+            pass
 
     def live_parts(self) -> Tuple[LivePart, ...]:
         """The live-message parts of the registered components, in list order."""
@@ -120,9 +150,10 @@ async def run_components(app: "FastAPI", config: "AppConfig", modules: Sequence,
     try:
         yield ctx
     finally:
-        for task in ctx.tasks:
+        tasks = list(ctx.tasks)  # (a task that ends leaves the list)
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*ctx.tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         for component in reversed(ctx.components):
             if component.stop is None:
                 continue

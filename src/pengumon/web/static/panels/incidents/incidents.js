@@ -3,6 +3,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { badge, escapeHtml, icon } from '../../js/util.js';
+import { CAP, hasMore, isLoading, loadAll, loadMore, loadSince, oldestLoaded, totalCounts } from './list.js';
 
 let allRawIncidents = [];
 let incidentSearchQuery = '';
@@ -10,7 +11,6 @@ let incidentPageSize = 10;
 let incidentCurrentPage = 1;
 let showExpectedIncidents = false;
 let incidentWindow = null; // {start, end, label, lost, sent}: only the incidents overlapping this time (showIncidentWindow)
-const LOADED = 500; // the panel fetches this many of the newest incidents (panel.js)
 
 export function toggleExpectedIncidents() {
   showExpectedIncidents = !showExpectedIncidents;
@@ -66,6 +66,7 @@ export function showIncidentWindow(win) {
   renderIncidentsPage();
   renderTimeline();
   if (!win) return;
+  loadSince(win.start); // older than what is loaded: load back to it (list.js re-renders)
   const section = document.querySelector('[data-panel=incidents]');
   if (!section) return;
   const reveal = () => requestAnimationFrame(() => {
@@ -88,6 +89,7 @@ export function handleIncidentSearch(query) {
   incidentSearchQuery = (query || '').trim().toLowerCase();
   incidentCurrentPage = 1;
   renderIncidentsPage();
+  if (incidentSearchQuery && hasMore()) loadAll(); // a search looks through everything the list can hold (list.js re-renders)
 }
 
 export function changeIncidentPageSize(val) {
@@ -96,10 +98,17 @@ export function changeIncidentPageSize(val) {
   renderIncidentsPage();
 }
 
-export function gotoIncidentPage(action) {
+export function gotoIncidentPage(action, loaded = false) {
   const filtered = getFilteredIncidents();
   const totalPages = Math.max(1, Math.ceil(filtered.length / incidentPageSize));
-  
+  // past the last loaded page: load the older ones first (the last page is the oldest there is)
+  if (!loaded && hasMore() && (action === 'last' || (action === 'next' && incidentCurrentPage >= totalPages))) {
+    // a last page that was not full is filled first (the new rows continue it); stepping on would skip them
+    const partial = action === 'next' && filtered.length < totalPages * incidentPageSize;
+    (action === 'last' ? loadAll() : loadMore()).then(() => (partial ? renderIncidentsPage() : gotoIncidentPage(action, true)));
+    return;
+  }
+
   if (action === 'first') incidentCurrentPage = 1;
   else if (action === 'prev') incidentCurrentPage = Math.max(1, incidentCurrentPage - 1);
   else if (action === 'next') incidentCurrentPage = Math.min(totalPages, incidentCurrentPage + 1);
@@ -145,11 +154,18 @@ function renderIncidentsPage() {
     incidentCurrentPage = totalPages;
   }
 
+  // the server's count when it gave one, else what is loaded so far ("+" while there may be more)
+  const known = totalCounts();
+  // the total shown is that same count wherever a total appears, while more is still to load (unfiltered; a filter counts what matches)
+  const unfiltered = !incidentSearchQuery && !incidentWindow;
+  const knownShown = known ? (showExpectedIncidents ? known.total : known.total - known.expected) : null;
+  const shownTotal = knownShown !== null && unfiltered && hasMore() ? Math.max(totalCount, knownShown) : totalCount;
+  const expectedCount = known ? known.expected : allRawIncidents.filter(inc => inc.expected).length;
   if (countBadge) {
-    countBadge.textContent = `${visibleIncidents().length} recorded events`;
+    countBadge.textContent = known ? `${showExpectedIncidents ? known.total : known.total - known.expected} recorded events`
+      : `${visibleIncidents().length}${hasMore() ? '+' : ''} recorded events`;
   }
 
-  const expectedCount = allRawIncidents.filter(inc => inc.expected).length;
   const btnExpected = document.getElementById('btnToggleExpected');
   if (btnExpected) {
     btnExpected.hidden = expectedCount === 0;
@@ -166,7 +182,7 @@ function renderIncidentsPage() {
     if (totalCount === 0) {
       pageInfo.textContent = 'Showing 0 events';
     } else {
-      pageInfo.textContent = `Showing ${startIdx + 1}–${endIdx} of ${totalCount} events${incidentSearchQuery || incidentWindow ? ' (filtered)' : ''}`;
+      pageInfo.textContent = `Showing ${startIdx + 1}–${endIdx} of ${shownTotal}${hasMore() && unfiltered && knownShown === null ? '+' : ''} events${incidentSearchQuery || incidentWindow ? ' (filtered)' : ''}`;
     }
   }
 
@@ -176,8 +192,9 @@ function renderIncidentsPage() {
 
   if (btnFirst) btnFirst.disabled = (incidentCurrentPage <= 1);
   if (btnPrev) btnPrev.disabled = (incidentCurrentPage <= 1);
-  if (btnNext) btnNext.disabled = (incidentCurrentPage >= totalPages);
-  if (btnLast) btnLast.disabled = (incidentCurrentPage >= totalPages);
+  // more is loaded when the last loaded page is passed
+  if (btnNext) btnNext.disabled = (incidentCurrentPage >= totalPages && !hasMore());
+  if (btnLast) btnLast.disabled = (incidentCurrentPage >= totalPages && !hasMore());
 
   renderWindowBar(totalCount);
   if (!tbody) return;
@@ -208,8 +225,9 @@ function emptyWindowText() {
   const win = incidentWindow;
   const hidden = showExpectedIncidents ? 0 : allRawIncidents.filter((inc) => inc.expected && overlaps(inc, win)).length;
   if (hidden) return ['Only busy-line events here', `${hidden === 1 ? 'One incident' : `${hidden} incidents`} in this time ${hidden === 1 ? 'was' : 'were'} explained by a busy line. Show expected to list ${hidden === 1 ? 'it' : 'them'}.`];
-  const oldest = allRawIncidents.length >= LOADED ? Math.min(...allRawIncidents.map((inc) => inc.start_time)) : null;
-  if (oldest !== null && win.start < oldest) return ['Older than the list', `Only the newest ${LOADED} incidents are loaded, and this time is before them.`];
+  if (isLoading() && hasMore() && win.start < (oldestLoaded() ?? Infinity)) return ['Loading', 'Looking for older incidents.'];
+  const oldest = !hasMore() && allRawIncidents.length >= CAP ? oldestLoaded() : null;
+  if (oldest !== null && win.start < oldest) return ['Older than the list', `Only the newest ${CAP} incidents are loaded, and this time is before them.`];
   if (win.sent === 0 || win.state === 'no_data') return ['No probes in this time', 'Nothing was probed then (pengumon was not running), so there is nothing to list.'];
   if (win.sent > 0 && win.lost === 0) return ['Nothing failed in this time', `All ${win.sent.toLocaleString()} probes answered and no incident was open.`];
   if (win.state === 'ok') return ['Nothing failed in this time', 'No incident was open, and this target lost no probes.'];

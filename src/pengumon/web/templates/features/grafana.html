@@ -1,6 +1,7 @@
 <!-- Telemetry in Grafana (PENGUMON_GRAFANA_URL, observability/grafana.py); owned by the Grafana feature, not the page.
-     A header button with a menu of the links (chrome.js toggles any [data-action=toggleMenu] menu). -->
-<div class="tb-grafana">
+     A header button with a menu of the links (chrome.js toggles any [data-action=toggleMenu] menu). Always in the page, hidden
+     while there are no links: a Save of display.grafana_url refills the menu (dialogs/settings/dialog.js, grafanaLinks). -->
+<div class="tb-grafana" id="tbGrafana"{% if not grafana_links %} hidden{% endif %}>
   <button type="button" class="btn sm outline" data-action="toggleMenu" data-arg="grafanaMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="grafanaMenu">
     <svg class="i" aria-hidden="true"><use href="#i-chart"/></svg><span class="lbl">Grafana</span><svg class="i sm" aria-hidden="true"><use href="#i-chevron"/></svg>
   </button>

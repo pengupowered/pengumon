@@ -7,21 +7,29 @@ from typing import Any, Dict, List, Optional, Tuple
 from pengumon.incidents.taxonomy import is_service_kind
 from pengumon.reports.queries import block_stats
 from pengumon.reports.common import _canonical_order, _targets
+from pengumon.reports.settings import UptimeConfig
 
 
 UPTIME_WINDOWS = {"24h": (900, 96), "7d": (86400, 7), "30d": (86400, 30)}  # block seconds, number of blocks
 UPTIME_MIN_PROBES = 10  # fewer probes than this in a block say nothing about it: no data
-UPTIME_DEGRADED_LOSS_PCT = 1.0  # a block with this much loss, or one minute with every probe lost, is degraded
-UPTIME_OUTAGE_DEAD_MINUTES = 2  # this many minutes with every probe lost is an outage (one is a blip)
+_DEFAULTS = UptimeConfig()
 
 
-def block_status(sent: int, ok: int, dead_minutes: int) -> str:
-    """ok / degraded / outage / no_data for one block of one target."""
+def uptime_levels(config) -> UptimeConfig:
+    """The uptime levels in force: the live config's uptime: section (its defaults without one)."""
+    return getattr(config, "uptime", None) or _DEFAULTS
+
+
+def block_status(sent: int, ok: int, dead_minutes: int, levels: Optional[UptimeConfig] = None) -> str:
+    """ok / degraded / outage / no_data for one block of one target. `levels` (the uptime: settings; None: the
+    defaults): outage_dead_minutes minutes with every probe lost is an outage (one is a blip); degraded_loss_pct %
+    loss, or one such minute, is degraded."""
+    levels = levels or _DEFAULTS
     if sent < UPTIME_MIN_PROBES:
         return "no_data"
-    if dead_minutes >= UPTIME_OUTAGE_DEAD_MINUTES:
+    if dead_minutes >= levels.outage_dead_minutes:
         return "outage"
-    if dead_minutes >= 1 or (sent - ok) * 100.0 / sent >= UPTIME_DEGRADED_LOSS_PCT:
+    if dead_minutes >= 1 or (sent - ok) * 100.0 / sent >= levels.degraded_loss_pct:
         return "degraded"
     return "ok"
 
@@ -56,6 +64,7 @@ async def build_uptime(repository, config, window: str = "24h", now: Optional[fl
     def overlaps(spans, lo, hi) -> bool:
         return any(a < hi and b >= lo for a, b in spans)
 
+    levels = uptime_levels(config)  # read now: the levels in force for this request
     cfg_targets = _targets(config)
     order = _canonical_order(cfg_targets)
     names = {t.id: t.name for t in cfg_targets}
@@ -66,7 +75,7 @@ async def build_uptime(repository, config, window: str = "24h", now: Optional[fl
         cells = []
         for k in range(first, last + 1):
             r = blocks.get(k)
-            status = block_status(r["sent"], r["ok"], r["dead_minutes"]) if r else "no_data"
+            status = block_status(r["sent"], r["ok"], r["dead_minutes"], levels) if r else "no_data"
             if status in ("degraded", "outage"):
                 lo, hi = k * block_seconds - offset, (k + 1) * block_seconds - offset
                 if overlaps(explained, lo, hi) and not overlaps(faults, lo, hi):

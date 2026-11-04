@@ -81,7 +81,7 @@
     {
      "cause_code": "a_cause",
      "count": 1,
-     "minutes": 0.0
+     "minutes": 60.0
     },
     {
      "cause_code": "dns_resolver_failure",
@@ -91,7 +91,7 @@
    ],
    "count": 4,
    "excluded_expected": 1,
-   "minutes": 8.0
+   "minutes": 68.0
   },
   "loss_by_hour": [
    {

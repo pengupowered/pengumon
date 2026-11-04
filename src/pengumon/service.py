@@ -14,6 +14,7 @@ the user ones use the per-user default.
 import getpass
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -83,6 +84,13 @@ def _exec_start(exe: str) -> str:
     return f"ExecStart={_sd_word(exe, exec_line=True)} run"
 
 
+def _condition_exists(exe: str) -> str:
+    """Start only while the program is there: after `uv tool uninstall` (or deleting the folder) the unit is skipped
+    instead of failing with status 203/EXEC every five seconds, forever."""
+    _no_control(exe, "The path of pengumon")
+    return "ConditionPathExists=" + exe.replace("%", "%%")
+
+
 def _environment(env: Dict[str, str]) -> List[str]:
     lines = []
     for key, value in env.items():
@@ -104,6 +112,7 @@ def render_systemd_system(exe: str, env: Optional[Dict[str, str]] = None) -> str
         "Documentation=https://github.com/pengupowered/pengumon",
         "After=network-online.target",
         "Wants=network-online.target",
+        _condition_exists(exe),
         "",
         "[Service]",
         "Type=simple",
@@ -164,6 +173,7 @@ def render_systemd_user(exe: str, env: Optional[Dict[str, str]] = None) -> str:
         "Description=Pengumon, home network monitor",
         "Documentation=https://github.com/pengupowered/pengumon",
         "After=network-online.target",
+        _condition_exists(exe),
         "",
         "[Service]",
         "Type=simple",
@@ -313,6 +323,50 @@ def _env_for(host: Optional[str], port: Optional[int]) -> Dict[str, str]:
     return env
 
 
+_UNIT_ENV = re.compile(r'^Environment="?(PENGUMON_HOST|PENGUMON_PORT)=([^"\n]*)"?\s*$', re.MULTILINE)
+_TASK_ARG = re.compile(r'--(host|port)\s+("[^"]*"|\S+)')
+
+
+def existing_settings(kind: str, scope: str, *, home: Optional[Path] = None, env: Optional[Dict[str, str]] = None,
+                      run: Optional[Callable] = None) -> Dict[str, str]:
+    """The listen address (PENGUMON_HOST, PENGUMON_PORT) an installed service was given with --host and --port, read
+    from its definition; {} when there is none or it sets neither. An upgrade passes them on, so installing again does
+    not quietly close the dashboard to the other devices."""
+    home = home or Path.home()
+    found: Dict[str, str] = {}
+    try:
+        if kind == "linux":
+            path = Path(SYSTEM_UNIT_PATH) if scope == SYSTEM else systemd_user_unit_path(home, env)
+            for key, value in _UNIT_ENV.findall(path.read_text(encoding="utf-8")):
+                found[key] = value.replace("%%", "%")
+        elif kind == "macos":
+            path = Path(MAC_DAEMON_PLIST) if scope == SYSTEM else launch_agent_path(home)
+            with open(path, "rb") as handle:
+                variables = plistlib.load(handle).get("EnvironmentVariables") or {}
+            found = {k: str(v) for k, v in variables.items() if k in ("PENGUMON_HOST", "PENGUMON_PORT")}
+        else:
+            done = (run or default_runner)(["schtasks", "/Query", "/TN", TASK, "/XML"])
+            if done.returncode == 0:
+                from xml.sax.saxutils import unescape
+                match = re.search(r"<Arguments>(.*?)</Arguments>", done.stdout, re.DOTALL)
+                for name, value in _TASK_ARG.findall(unescape(match.group(1)) if match else ""):
+                    found["PENGUMON_" + name.upper()] = value.strip('"')
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return {}
+    if "PENGUMON_PORT" in found and not found["PENGUMON_PORT"].isdigit():
+        del found["PENGUMON_PORT"]
+    return found
+
+
+def service_data_dir(kind: str) -> str:
+    """Where the system service keeps its data (its unit sets PENGUMON_DATA to this)."""
+    if kind == "linux":
+        return SYSTEM_DATA_DIR
+    if kind == "macos":
+        return MAC_DAEMON_DATA_DIR
+    raise ServiceError("Windows has no system service: its task runs as you, with the data in the usual place")
+
+
 def system_kind(platform: Optional[str] = None) -> str:
     platform = platform or sys.platform
     if platform.startswith("linux"):
@@ -374,7 +428,10 @@ def plan_install(
         exe = _exe(python, False)
         unit = systemd_user_unit_path(home, env)
         text = render_systemd_user(exe, extra)
-        notes = ["Check that it can probe: pengumon doctor"]
+        notes = [f"Check that it can probe: {exe} doctor"]
+        if "/uv/tools/" in exe:
+            notes.append("After `uv tool install` of a newer version, run `pengumon service install` again to restart it on the new "
+                         "version. Before `uv tool uninstall pengumon`, run `pengumon service uninstall --user`.")
         if linger is False:
             notes.insert(0, "It stops when you log out. To keep it running: sudo loginctl enable-linger "
                          + (account or "$USER"))
@@ -558,6 +615,12 @@ def run_plan(plan: Plan, run: Runner = default_runner, out=None) -> None:
 
 def health(host: str, port: int, timeout: float = 3.0) -> Optional[str]:
     """The version /api/health reports, or None when nothing healthy answers."""
+    body = health_body(host, port, timeout)
+    return body.get("version") if body else None
+
+
+def health_body(host: str, port: int, timeout: float = 3.0) -> Optional[dict]:
+    """What /api/health says (status "ok", version, probing), or None when nothing healthy answers."""
     import json
 
     shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
@@ -566,7 +629,7 @@ def health(host: str, port: int, timeout: float = 3.0) -> Optional[str]:
             body = json.loads(reply.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError):
         return None
-    return body.get("version") if isinstance(body, dict) and body.get("status") == "ok" else None
+    return body if isinstance(body, dict) and body.get("status") == "ok" else None
 
 
 def installed_scopes(kind: str, home: Optional[Path] = None, env: Optional[Dict[str, str]] = None,
@@ -640,7 +703,15 @@ def cmd_install(args, run: Runner = default_runner) -> int:
     exe = _exe(None, kind == "windows")
     if not args.dry_run and not Path(exe).exists():
         raise ServiceError(f"{exe} does not exist: run this from the pengumon that is installed in a virtual environment")
-    plan = plan_install(kind, scope, host=args.host, port=args.port,
+    home = Path.home()
+    kept = existing_settings(kind, scope, home=home, run=run)
+    host = args.host or kept.get("PENGUMON_HOST")
+    port = args.port or (int(kept["PENGUMON_PORT"]) if kept.get("PENGUMON_PORT") else None)
+    if (host, port) != (args.host, args.port):
+        kept_words = ", ".join(w for w in (f"host {host}" if host != args.host else "",
+                                           f"port {port}" if port != args.port else "") if w)
+        print(f"Keeping the installed service's listen address ({kept_words}). Add --host or --port to change it.")
+    plan = plan_install(kind, scope, home=home, host=host, port=port,
                         account=getpass.getuser(), linger=_linger(run) if kind == "linux" and scope == USER else None)
     print(f"{'Would install' if args.dry_run else 'Installing'} Pengumon {__version__} as a service ({plan.mode}):")
     if args.dry_run:
@@ -650,9 +721,54 @@ def cmd_install(args, run: Runner = default_runner) -> int:
             print(f"\n--- {name} ---\n{text.rstrip()}")
         return 0
     run_plan(plan, run)
-    host, port, _, _ = paths.listen_address(None, {**os.environ, **_env_for(args.host, args.port)})
+    host, port, _, _ = paths.listen_address(None, {**os.environ, **_env_for(host, port)})
     print(f"Pengumon is starting; open http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/")
+    if host in ("0.0.0.0", "::"):
+        for line in _other_devices_lines(port, _token_is_set(kind, scope, home)):
+            print(line)
     return 0
+
+
+def _token_is_set(kind: str, scope: str, home: Path) -> bool:
+    """Whether an access token is already given to this service (or to this shell): its unit, a systemd drop-in
+    (`systemctl edit`), a launchd plist or the environment mention PENGUMON_ACCESS_TOKEN. False when unknown."""
+    if os.environ.get("PENGUMON_ACCESS_TOKEN"):
+        return True
+    try:
+        if kind == "linux":
+            unit = Path(SYSTEM_UNIT_PATH) if scope == SYSTEM else systemd_user_unit_path(home)
+            files = [unit, *sorted(unit.parent.joinpath(unit.name + ".d").glob("*.conf"))]
+        elif kind == "macos":
+            files = [Path(MAC_DAEMON_PLIST) if scope == SYSTEM else launch_agent_path(home)]
+        else:
+            return False
+        return any("PENGUMON_ACCESS_TOKEN" in f.read_text(encoding="utf-8", errors="replace") for f in files)
+    except OSError:
+        return False
+
+
+def _other_devices_lines(port: int, has_token: bool) -> List[str]:
+    """What to tell the user after `--host 0.0.0.0`: the address other devices use (this computer's name, and its
+    address on the network when it can be found the way the dashboard's header finds it), then the token advice."""
+    import socket
+
+    from pengumon.engine.netinfo import get_lan_ips
+    urls = []
+    try:
+        urls.append(f"http://{socket.gethostname()}:{port}/")
+    except OSError:
+        pass
+    try:
+        urls.extend(f"http://{ip}:{port}/" for ip in get_lan_ips()[:1])
+    except Exception:  # noqa: BLE001 - a lookup that fails only means one line fewer
+        pass
+    lines = []
+    if urls:
+        lines.append("From other devices on your network, open " + " or ".join(urls))
+    lines.append("It listens on every network connection of this computer, so anyone on the network can reach it."
+                 + (" The access token you set protects it." if has_token
+                    else " Set an access token first (see docs/install.md)."))
+    return lines
 
 
 def cmd_uninstall(args, run: Runner = default_runner) -> int:
@@ -688,11 +804,24 @@ def cmd_status(args, run: Runner = default_runner) -> int:
     for scope in scopes:
         state = manager_state(kind, scope, run)
         print(f"{scope} service: {state}")
-    host, port, _, _ = paths.listen_address(None)
-    version = health(host, port)
-    if version:
+    listen_env = dict(os.environ)
+    for scope in scopes:  # the port the service was installed with, unless this command is told another
+        for key, value in existing_settings(kind, scope, run=run).items():
+            listen_env.setdefault(key, value)
+    host, port, _, _ = paths.listen_address(None, listen_env)
+    body = health_body(host, port)
+    if body:
         healthy = True
+        version = body.get("version")
         print(f"answering on port {port}: Pengumon {version}")
+        if version and version != __version__:
+            print(f"The program on disk is Pengumon {__version__}, but the running service is {version}. "
+                  "Run `pengumon service install` to restart it on the new version.")
+        if body.get("probing") == "unavailable":
+            print(f"NOT PROBING: {body.get('probing_problem') or 'this computer cannot send pings'}. "
+                  "Pengumon is running but measures nothing"
+                  + (f". To fix it, run this once: {body['probing_fix']}" if body.get("probing_fix") else
+                     ". Run `pengumon doctor` for the fix."))
     else:
         print(f"nothing healthy answers on port {port} (if the service listens elsewhere, set PENGUMON_PORT for this command)")
     return 0 if healthy else 1

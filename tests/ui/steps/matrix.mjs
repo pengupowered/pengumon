@@ -45,7 +45,7 @@ export const steps = [
   }, { variants: ALL_VARIANTS }],
 
   ["sparkline update cost per message stays small", async ({ report, moduleUrl, ok, page }) => {
-    await page.waitForFunction(() => (window.__pengumonPerf?.matrixMs.length ?? 0) >= 20, { timeout: 40000 }); // about one message a second
+    await page.waitForFunction(() => (window.__pengumonPerf?.matrixMs.length ?? 0) >= 10, { timeout: 40000 }); // about one message a second; 7 left after the first three, enough for a mean
     const perf = await page.evaluate(() => window.__pengumonPerf);
     const sorted = perf.matrixMs.slice(3).sort((a, b) => a - b); // the first messages build the rows
     const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length;
@@ -69,10 +69,9 @@ export const steps = [
     await page.keyboard.press("Escape");
     eq("escape closes", await popoverText(), null);
     eq("describedby removed", await page.$eval('.info[data-help="hop.jitter"]', (b) => b.hasAttribute("aria-describedby")), false);
-    await new Promise((r) => setTimeout(r, 300)); // Escape gives focus back to the button, which may scroll the page (and a scroll closes popovers)
   }],
 
-  ["rows are named as Path health names them; min, avg and max cover the last 60 probes; help sits in the column headers", async ({ count, eq, ok, page, until }) => {
+  ["rows are named as Path health names them; min, avg and max cover the last 60 probes; help sits in the column headers", async ({ count, eq, nextMessages, ok, page, until }) => {
     await until(() => /ms$/.test(document.querySelector("#hopMatrixBody tr:first-child [data-f=rangeText]")?.textContent ?? ""));
     const labels = await page.$$eval("#hopMatrixBody [data-f=label]", (els) => els.map((e) => e.textContent).join(","));
     eq("short names", labels, "Router,Line,Internet,DNS lookup 1,DNS lookup 2");
@@ -85,7 +84,7 @@ export const steps = [
     }
     // the server's min_ms / max_ms are since start: a spike long ago must not show as the current range
     await page.evaluate(() => { window.__smokeMutate = (d) => { d.targets[0].max_ms = 999; d.targets[0].min_ms = 0.001; }; });
-    await new Promise((r) => setTimeout(r, 2500));
+    await nextMessages(2); // two messages with the mutated figures have arrived and been drawn
     const shown = await page.$eval("#hopMatrixBody tr:first-child [data-f=rangeText]", (e) => e.textContent);
     await page.evaluate(() => { window.__smokeMutate = null; });
     ok(`the since-start extremes are not shown: ${shown}`, !/999|0\.001/.test(shown));

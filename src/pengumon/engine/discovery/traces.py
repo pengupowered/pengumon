@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from pengumon.engine.mtr import TracerouteHop
+from pengumon.observability.telemetry import tracer
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,9 @@ async def run_traces(trace: Trace, servers: Sequence[str],
     for n, server in enumerate(servers, start=1):
         if progress:
             progress(f"Tracing the path to {server} ({n} of {len(servers)})")
-        out[server] = list(await trace(server))
+        with tracer.start_as_current_span("discovery.trace", attributes={"discovery.trace.n": n}) as span:
+            out[server] = list(await trace(server))
+            span.set_attribute("discovery.trace.hops", len(out[server]))
     return out
 
 

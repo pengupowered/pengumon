@@ -50,6 +50,8 @@ export const steps = [
   ["page loads grey (Connecting), then the websocket connects and the favicon is served", async ({ base, eq, outDir, page, path, waitText }) => {
     await page.goto(base + "/", { waitUntil: "load" });
     await waitText("#wsText", /^Live/);
+    // the run opens the app by a non-local name (lib.mjs BROWSER_HOST), as people do: no secure context, so no Clipboard API
+    eq("not a secure context, no Clipboard API", await page.evaluate(() => [window.isSecureContext, "clipboard" in navigator].join()), "false,false");
     eq("live indicator", await page.$eval("#wsStatus", (e) => e.className), "live live-live");
     const icon = await page.evaluate(async () => { const r = await fetch("/favicon.ico"); return `${r.status} ${r.headers.get("content-type")}`; });
     eq("favicon", icon, "200 image/x-icon");
@@ -73,10 +75,10 @@ export const steps = [
 
   ["lan pill shows the access URL and copies it", async ({ click, eq, ok, page, text, until }) => {
     await until(() => getComputedStyle(document.getElementById("lanPill")).display !== "none");
-    ok("lan url", /^http:\/\/.+:\d+$/.test(await page.$eval("#lanUrlLink", (a) => a.textContent)));
+    ok("lan url (the address, without the scheme; the link has it whole)", /^[^/]+:\d+$/.test(await text("#lanUrlLink")) && /^http:\/\/.+:\d+$/.test(await page.$eval("#lanUrlLink", (a) => a.href.replace(/\/$/, ""))));
     await click("#btnCopyLan");
     await until(() => document.getElementById("btnCopyLan").dataset.copied === "1");
-    eq("clipboard", await page.evaluate(() => navigator.clipboard.readText()), await text("#lanUrlLink"));
+    eq("clipboard", await page.evaluate(() => window.__clip()), await page.$eval("#lanUrlLink", (a) => a.title));
   }],
 
   ["desktop layout: no tab bar and every card shown", async ({ LINE, ROUTER, eq, ok, visible }) => {
@@ -86,7 +88,7 @@ export const steps = [
     }
   }],
 
-  ["mobile viewport (390x844): tab bar, tab switching, hash, back button, reload, tooltip stays on screen", async ({ LINE, ROUTER, click, eq, ok, outDir, page, path, until, visible, waitCount }) => {
+  ["mobile viewport (390x844): tab bar, tab switching, hash, back button, reload, tooltip stays on screen", async ({ LINE, ROUTER, click, eq, frames, ok, outDir, page, path, until, visible, waitCount }) => {
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true }); // puppeteer reloads the page for isMobile
     await waitCount("#hopMatrixBody tr", 5); // the 5 default targets (the add-target dialog's step, which adds a sixth, runs last)
     await until(() => getComputedStyle(document.getElementById("mobileTabs")).display !== "none");
@@ -118,7 +120,7 @@ export const steps = [
     await click("#mobileTabs [data-arg=live]");
     await until(() => location.hash === "#live");
     await page.evaluate(() => document.querySelector('[data-panel=matrix] .info[data-help="hop.latency"]').scrollIntoView({ block: "center" }));
-    await new Promise((r) => setTimeout(r, 300)); // let the scroll events pass before opening
+    await frames(3); // let the scroll events pass before opening
     await click('[data-panel=matrix] .info[data-help="hop.latency"]');
     await until(() => !document.getElementById("helpPopover").hidden);
     ok("tooltip inside the viewport", await page.$eval("#helpPopover", (e) => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= window.innerWidth && r.top >= 0 && r.bottom <= window.innerHeight; }));
@@ -128,7 +130,7 @@ export const steps = [
     for (const sel of ["#diagnosisBanner", LINE, ROUTER, "#servicesCard", "#incidentsBody"]) ok(`${sel} shown again on desktop`, await visible(sel));
   }],
 
-  ["phone (390 px): no sideways scrolling on any tab, dark and light", async ({ bare, PHONE, SHOTS, click, eq, page, shot, until, waitCount }) => {
+  ["phone (390 px): no sideways scrolling on any tab, dark and light", async ({ bare, PHONE, SHOTS, click, eq, layoutSettled, page, shot, until, waitCount }) => {
     await page.setViewport(PHONE);
     await waitCount("#hopMatrixBody tr", 5);
     await until(() => getComputedStyle(document.getElementById("mobileTabs")).display !== "none");
@@ -139,7 +141,7 @@ export const steps = [
       for (const tab of TABS) {
         await click(`#mobileTabs [data-arg=${tab}]`);
         await until((t) => location.hash === `#${t}`, tab);
-        await new Promise((r) => setTimeout(r, 700)); // charts and tables settle
+        await layoutSettled(); // charts and tables settle
         const over = (await overflowing(page)).join("; ");
         if (over) wide.push(`${tab} (${scheme}): ${over}`);
         if (SHOTS) await shot(`phone-${tab}-${scheme}`, { fullPage: true });
@@ -148,7 +150,7 @@ export const steps = [
     eq("sideways overflow", wide.join(" | "), "");
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
     await click("#mobileTabs [data-arg=live]");
-  }],
+  }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
 
   ["theme: toggle switches light and dark, is stored, survives a reload and beats the OS setting", async ({ SHOTS, click, eq, ok, page, shot, waitCount }) => {
     await page.setViewport({ width: 1400, height: 1000 });
@@ -171,7 +173,7 @@ export const steps = [
     await waitCount("#hopMatrixBody tr", 5);
     if (SHOTS) await shot("desktop-light", { fullPage: true });
     await page.evaluate(() => localStorage.removeItem("pengumon.theme"));
-  }],
+  }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
 
   ["loading: before any data the pill and the verdict are grey 'Connecting', the path is skeletons, nothing green", async ({ layoutMounted, PHONE, SHOTS, count, eq, ok, page, shot, text }) => {
     await page.evaluate(() => sessionStorage.setItem("smokeWs", "dead"));
@@ -260,7 +262,7 @@ export const steps = [
     const anim = await page.$eval("#statusPill .dot", (e) => getComputedStyle(e).animationName);
     eq("pill dot not animated", anim, "none");
     await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "no-preference" }, { name: "prefers-color-scheme", value: "light" }]);
-  }],
+  }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
 
   ["info buttons are marked up all over the page (the help popovers themselves are tested in each panel)", async ({ ok, page }) => {
     ok("info buttons are all over the page", await page.$$eval(".info[data-help]", (bs) => bs.length > 15));
@@ -274,24 +276,108 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=targetHistModal]");
   }, { variants: ["bare"] }],
 
-  ["no text is cut or runs out of its card at 1440, 1024 and phone width (every tab)", async ({ PHONE, eq, layoutMounted, page, until }) => {
+  ["no text is cut or runs out of its card at 1440, 1024 and phone width (every tab)", async ({ PHONE, eq, layoutMounted, layoutSettled, page, until }) => {
     await until(() => /ms/.test(document.getElementById("statusPillMetrics")?.textContent ?? ""));
     for (const w of [1440, 1024]) {
       await page.setViewport({ width: w, height: 900 });
-      await new Promise((r) => setTimeout(r, 600));
+      await layoutSettled();
       eq(`${w}: cut text`, (await clippedText(page)).join(" | "), "");
     }
     await page.setViewport(PHONE);
     await page.reload({ waitUntil: "load" });
     await layoutMounted();
-    await new Promise((r) => setTimeout(r, 1500));
+    await layoutSettled();
     const tabs = await page.$$eval(".tabbar button:not([hidden])", (b) => b.map((x) => x.dataset.arg ?? x.textContent.trim()));
     for (let i = 0; i < tabs.length; i++) {
       await page.evaluate((k) => document.querySelectorAll(".tabbar button:not([hidden])")[k].click(), i);
-      await new Promise((r) => setTimeout(r, 500));
+      await layoutSettled();
       eq(`phone, tab ${tabs[i]}: cut text`, (await clippedText(page)).join(" | "), "");
     }
     await page.evaluate(() => document.querySelector(".tabbar button:not([hidden])").click()); // back to the first tab (the hash outlives a reload)
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["full", "longpath"] }],
+
+  ["colours: a target's colour and the design tokens are read once (not by getComputedStyle on every use) and follow both themes live", async ({ eq, ok, page, setTheme, until, waitCount }) => {
+    await waitCount("#pathChain .node[data-node]", 3);
+    const probe = () => page.evaluate(async () => {
+      const find = (f) => performance.getEntriesByType("resource").map((r) => r.name).find((n) => n.endsWith(f));
+      const util = await import(find("/js/util.js"));
+      const theme = await import(find("/js/chart-theme.js"));
+      const id = util.canonicalTargetOrder[0];
+      const real = window.getComputedStyle;
+      let calls = 0;
+      window.getComputedStyle = (...a) => { calls++; return real.apply(window, a); };
+      let colour; let crit;
+      try { for (let i = 0; i < 30; i++) { colour = util.getTargetInfo(id).color; crit = theme.token("--crit"); } } finally { window.getComputedStyle = real; }
+      const root = real(document.documentElement);
+      return { calls, colour, crit, wantCrit: root.getPropertyValue("--crit").trim(), want: [1, 2, 3, 4, 5, 6, 7, 8].map((k) => root.getPropertyValue(`--s${k}`).trim()) };
+    });
+    const seen = {};
+    for (const theme of ["dark", "light", "dark"]) {
+      await setTheme(theme);
+      const p = await probe();
+      ok(`${theme}: 60 reads cost at most 2 style lookups (got ${p.calls})`, p.calls <= 2);
+      ok(`${theme}: the target colour is one of the theme's series colours (${p.colour})`, p.want.includes(p.colour));
+      eq(`${theme}: the crit token follows the theme`, p.crit, p.wantCrit);
+      if (seen[theme]) eq(`${theme}: the same on the way back`, p.colour + p.crit, seen[theme]);
+      seen[theme] = p.colour + p.crit;
+    }
+    ok("the two themes really differ", seen.dark !== seen.light);
+    await setTheme(null);
+  }],
+
+  ["a hidden tab publishes only the diagnosis; the newest message comes once when it shows, and the live chart refills", async ({ eq, ok, page, until, waitCount }) => {
+    await waitCount("#pathChain .node[data-node]", 3);
+    await page.evaluate(async () => {
+      const bus = (await import(performance.getEntriesByType("resource").map((r) => r.name).find((n) => n.endsWith("/js/bus.js")))).bus;
+      window.__seen = { message: 0, targets: 0, diagnosis: 0 };
+      Object.keys(window.__seen).forEach((t) => bus.subscribe(t, () => { window.__seen[t]++; }));
+      Object.keys(window.__seen).forEach((t) => { window.__seen[t] = 0; }); // subscribing replays the last value
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await setMutate(page, `d.diagnosis.title = "Hidden " + Math.floor(d.timestamp)`); // the diagnosis changes every message; targets always do
+    await new Promise((r) => setTimeout(r, 4500));
+    const hidden = await page.evaluate(() => ({ ...window.__seen, history: performance.getEntriesByType("resource").filter((r) => /\/api\/history\?/.test(r.name)).length }));
+    eq("hidden: no message published", hidden.message, 0);
+    eq("hidden: no targets published", hidden.targets, 0);
+    ok(`hidden: the diagnosis still is (${hidden.diagnosis}), as alerts need it`, hidden.diagnosis >= 3);
+    await setMutate(page, null);
+    const shown = await page.evaluate(() => {
+      delete document.visibilityState; delete document.hidden;
+      document.dispatchEvent(new Event("visibilitychange"));
+      return { ...window.__seen };
+    });
+    eq("shown: the newest message is published once", shown.message, 1);
+    eq("shown: and its targets", shown.targets, 1);
+    await until((h) => performance.getEntriesByType("resource").filter((r) => /\/api\/history\?/.test(r.name)).length > h, hidden.history);
+    await until(() => window.__seen.message >= 3); // and the feed goes on
+  }],
+
+  ["dialogs load when first opened: only the alerts dialog at start, a control the pointer reaches loads its dialog ahead of the click, and #settings opens on load", async ({ click, eq, ok, page, layoutMounted, until }) => {
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    const loaded = () => page.evaluate(() => performance.getEntriesByType("resource").map((r) => r.name.match(/\/dialogs\/([\w-]+)\/dialog\.js$/)?.[1]).filter(Boolean).sort().join());
+    eq("at start", await loaded(), "alerts");
+    await page.hover("#btnSettings");
+    await until(() => performance.getEntriesByType("resource").some((r) => /\/dialogs\/settings\/dialog\.js$/.test(r.name)));
+    ok("the pointer loaded only that dialog", (await loaded()) === "alerts,settings");
+    await click("#btnSettings");
+    await until(() => document.getElementById("settingsModal").classList.contains("active") && document.querySelectorAll("#settingsSections .set-row").length > 10);
+    await click("[data-action=settingsClose]");
+    await until(() => !document.getElementById("settingsModal").classList.contains("active"));
+    // a click with no hover before it (a keyboard or touch user): the dialog loads, then opens and takes the focus
+    await click('[data-action=openModal][data-arg=tracerouteModal]');
+    await until(() => document.getElementById("tracerouteModal").classList.contains("active") && document.activeElement?.id === "traceTargetInput");
+    ok("the trace dialog was loaded by that click", (await loaded()).split(",").includes("trace"));
+    await click("[data-action=closeModal][data-arg=tracerouteModal]");
+    // a link to #settings opens the page's Settings on load
+    await page.evaluate(() => { location.hash = "settings"; });
+    await page.reload({ waitUntil: "load" });
+    await until(() => document.getElementById("settingsModal").classList.contains("active") && document.querySelectorAll("#settingsSections .set-row").length > 10);
+    await click("[data-action=settingsClose]");
+    await until(() => !document.getElementById("settingsModal").classList.contains("active") && location.hash === "");
+  }],
 ];

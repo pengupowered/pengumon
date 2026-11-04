@@ -8,9 +8,26 @@ const maps = { click: {}, input: {}, change: {}, submit: {} };
 export function registerActions(kind, actions) {
   if (!maps[kind]) throw new Error(`registerActions: unknown event kind "${kind}"`);
   for (const name of Object.keys(actions)) {
-    if (name in maps[kind]) throw new Error(`registerActions: ${kind} action "${name}" is already registered`);
+    if (name in maps[kind] && !stubs.has(maps[kind][name])) throw new Error(`registerActions: ${kind} action "${name}" is already registered`);
   }
-  Object.assign(maps[kind], actions);
+  Object.assign(maps[kind], actions); // a stand-in (below) gives way to the real handler
+}
+
+// A lazy dialog's opening actions, before its module is loaded: the stand-in loads the module (`load` returns a promise,
+// panels/index.js) and runs the real handler, which that module registered in its place.
+const stubs = new Set();
+export function registerLazy(kind, names, load) {
+  for (const name of names) {
+    if (name in maps[kind]) throw new Error(`registerLazy: ${kind} action "${name}" is already registered`);
+    const stub = (el, ev) => {
+      load().then(() => {
+        const real = maps[kind][name];
+        if (real && real !== stub) real(el, ev);
+      }).catch(() => { /* load() has logged why */ });
+    };
+    stubs.add(stub);
+    maps[kind][name] = stub;
+  }
 }
 
 function delegate(type, attr, actions) {

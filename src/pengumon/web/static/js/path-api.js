@@ -72,13 +72,28 @@ export function deviceStatus(device, snap) {
 }
 
 // The message of a failed answer: FastAPI's detail (a string, or a list of {loc, msg}), else the status.
+// A validation error's place in the editor's words: the server counts hops from 0 ("hops 7" is card 8) and calls the
+// role "category".
+const FIELD_WORD = { category: 'role', warn_latency_ms: 'warn above', device_id: 'device' };
+function whereText(loc) {
+  const parts = (loc || []).filter((p) => p !== 'body');
+  const words = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] === 'hops' && typeof parts[i + 1] === 'number') { words.push(`Hop ${parts[i + 1] + 1}`); i++; }
+    else if (parts[i] !== 'hops') words.push(FIELD_WORD[parts[i]] || String(parts[i]).replace(/_/g, ' '));
+  }
+  return words.join(', ');
+}
+// "Input should be 'local', 'gateway' ..." lists the role codes; the editor calls them by their words.
+const roleWords = (msg) => msg.replace(/Input should be ('\w+'(,| or)? ?)+/, () => `Pick a role: ${ROLES.map((r) => r[1]).join(', ')}`);
+
 export async function errorText(res) {
   const body = await res.json().catch(() => ({}));
   const detail = body.detail;
   if (Array.isArray(detail)) {
     return detail.map((d) => {
-      const where = (d.loc || []).filter((p) => p !== 'body').join(' ');
-      return `${where ? `${where}: ` : ''}${String(d.msg || '').replace(/^Value error, /, '')}`;
+      const where = whereText(d.loc);
+      return `${where ? `${where}: ` : ''}${roleWords(String(d.msg || '').replace(/^Value error, /, ''))}`;
     }).join(' · ');
   }
   if (typeof detail === 'string') return detail;

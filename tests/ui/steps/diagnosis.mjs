@@ -46,12 +46,23 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=targetHistModal]");
   }, { variants: ALL_VARIANTS }],
 
-  ["path health with seven long-named nodes: short labels uncut, configured name as tooltip, no overlap, at 1440, 1024 and phone width", async ({ eq, ok, page, path, outDir, until, waitCount }) => {
+  ["while this host cannot send pings, the path's nodes say Not probed (not No reply) and are not drawn as down", async ({ eq, page, until, waitCount }) => {
+    await waitCount("#pathChain .node[data-node]", 3);
+    // as in real use: no new probes, so the last figures stay in the stats (stale) while the flag says why
+    await page.evaluate(() => { window.__smokeMutate = (d) => d.targets.forEach((t) => { t.probing_unavailable = true; t.status = "down"; }); });
+    await until(() => [...document.querySelectorAll("#pathChain .node[data-node] .node-val")].every((e) => e.textContent === "Not probed"));
+    eq("no node is drawn down", await page.$$eval("#pathChain .node.st-crit", (els) => els.length), 0);
+    eq("the header pill shows no stale figures", await page.$eval("#statusPillMetrics", (e) => e.textContent.trim()), "");
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    await until(() => /^\d/.test(document.querySelector("#pathChain .node[data-node] .node-val")?.textContent ?? ""));
+  }],
+
+  ["path health with seven long-named nodes: short labels uncut, configured name as tooltip, no overlap, at 1440, 1024 and phone width", async ({ eq, layoutSettled, ok, page, path, outDir, until, waitCount }) => {
     await waitCount("#pathChain .node[data-node]", 6);
     await until(() => /^\d/.test(document.querySelector("#pathChain .node[data-node] .node-val")?.textContent ?? ""));
     for (const [w, shot] of [[1440, "path-long-1440.png"], [1024, "path-long-1024.png"], [390, "path-long-390.png"]]) {
       await page.setViewport({ width: w, height: 1000 });
-      await new Promise((r) => setTimeout(r, 400));
+      await layoutSettled();
       const m = await measurePath(page);
       eq(`${w}: hop nodes`, m.count, 6);
       eq(`${w}: labels`, m.kinds.map((k) => k.text).join(">"), "Router>Line>ISP hop 1>ISP hop 2>ISP hop 3>Internet · 3");
@@ -84,7 +95,7 @@ export const steps = [
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["longpath"] }],
 
-  ["one Internet figure: the median across the public targets in the hero node and the header pill, the node names them; a faster later hop reads as about 0 ms with a tooltip; the pills stay on their links at 1024", async ({ eq, ok, page, until, waitCount }) => {
+  ["one Internet figure: the median across the public targets in the hero node and the header pill, the node names them; a faster later hop reads as about 0 ms with a tooltip; the pills stay on their links at 1024", async ({ eq, layoutSettled, ok, page, until, waitCount }) => {
     await waitCount("#pathChain .node[data-node]", 6);
     const series = { lp_router: 5, lp_modem: 8, lp_isp1: 9, lp_isp2: 6.8, lp_isp3: 7, lp_public: 10, lp_public2: 20, lp_public3: 40 };
     await page.evaluate((v) => {
@@ -102,7 +113,7 @@ export const steps = [
     ok("no negative sign on a small negative delta", !deltas.some((d) => /^−\d(\.\d)? ms$/.test(d.text)));
     for (const w of [1024, 1440]) {
       await page.setViewport({ width: w, height: 1000 });
-      await new Promise((r) => setTimeout(r, 400));
+      await layoutSettled();
       const off = await page.$$eval("#pathChain .link", (links) => links.map((l) => {
         const a = l.getBoundingClientRect(); const d = l.querySelector(".delta").getBoundingClientRect(); const c = (r) => r.left + r.width / 2;
         return { dx: Math.abs(c(a) - c(d)), gap: d.top - a.bottom };
@@ -173,5 +184,32 @@ export const steps = [
       eq("the word", pill.word, "Healthy");
       ok("not cut, and the long title is left to the hero card", !pill.cut && !pill.title);
     });
+  }],
+  ["on a phone a long host name in the verdict sentence wraps and does not widen the page", async ({ ok, page, phone }) => {
+    await phone(async () => {
+      const wide = await page.evaluate(() => {
+        const desc = document.getElementById("diagnosisDesc");
+        const before = desc.textContent;
+        desc.textContent = `40% of recent probes to the ${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)} were lost.`;
+        const width = document.documentElement.scrollWidth - document.documentElement.clientWidth;
+        desc.textContent = before;
+        return width;
+      });
+      ok("no sideways scroll", wide <= 1);
+    });
+  }],
+  ["the always-on animations (flowing wire dashes, pulsing status dots) only animate transform and opacity, so they run on the compositor", async ({ eq, ok, page, until, waitCount }) => {
+    await waitCount("#pathChain .node[data-node]", 3);
+    await until(() => document.querySelector("#pathChain.is-live") !== null && document.querySelector("#pathChain .link:not(.broken) .wirebox") !== null);
+    const found = await page.evaluate(() => document.getAnimations().map((a) => ({
+      name: a.animationName, props: [...new Set(a.effect.getKeyframes().flatMap((k) => Object.keys(k)))].filter((p) => !["offset", "easing", "composite", "computedOffset"].includes(p)).sort().join(","),
+      target: a.effect.target?.className || a.effect.target?.tagName
+    })).filter((a) => ["flow", "breathe"].includes(a.name)));
+    ok(`the wire dashes flow: ${JSON.stringify(found)}`, found.filter((a) => a.name === "flow").length === 3);
+    ok(`the status dot pulses: ${JSON.stringify(found)}`, found.some((a) => a.name === "breathe"));
+    eq("what flow and breathe animate", [...new Set(found.map((a) => `${a.name}:${a.props}`))].sort().join(" "), "breathe:opacity,transform flow:transform");
+    // a broken link has no moving dashes
+    const live = await page.$eval("#pathChain .link:not(.broken) .wirebox", (e) => getComputedStyle(e, "::after").animationName);
+    eq("a live link's strip is animated", live, "flow");
   }],
 ];

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from pengumon import __version__
+from pengumon.observability.runtime import loop_monitor, process_stats
 
 Sample = Tuple[Dict[str, str], Optional[float]]
 
@@ -105,6 +106,53 @@ def _build_info(state) -> List[Sample]:
     return [({"version": __version__}, 1)]
 
 
+def _process(key: str) -> Callable[[Any], List[Sample]]:
+    def collect(state) -> List[Sample]:
+        return [({}, process_stats()[key])]
+    return collect
+
+
+def _process_cpu(state) -> List[Sample]:
+    stats = process_stats()
+    return [({"mode": "user"}, stats["user"]), ({"mode": "system"}, stats["system"])]
+
+
+def _asyncio_tasks(state) -> List[Sample]:
+    return [({}, loop_monitor.tasks)]  # counted on the loop at its last sample, not here on the export thread
+
+
+def _dns_stuck(state) -> List[Sample]:
+    return [({}, state.prober.lookups_stuck)] if state.prober is not None and hasattr(state.prober, "lookups_stuck") \
+        else []
+
+
+def _sample_buffer(state) -> List[Sample]:
+    size = getattr(state.repository, "sample_buffer_size", None)
+    return [({}, size)] if size is not None else []
+
+
+def _db_size(state) -> List[Sample]:
+    sizes = state.repository.file_sizes() if hasattr(state.repository, "file_sizes") else {}
+    return [({"file": name}, size) for name, size in sizes.items()]
+
+
+def _ws_clients(state) -> List[Sample]:
+    from pengumon.api.ws import ws_manager  # (not at import: the api package imports this one)
+    return [({}, len(ws_manager.active_connections))]
+
+
+def _per_device(getter) -> Callable[[Any], List[Sample]]:
+    def collect(state) -> List[Sample]:
+        return [({"device": d.id}, getter(d)) for d in (state.devices.all() if state.devices is not None else ())
+                if d.enabled]
+    return collect
+
+
+def _alerts_held(state) -> List[Sample]:
+    notifier = state.notifier
+    return [({}, notifier.pending_count())] if notifier is not None and hasattr(notifier, "pending_count") else []
+
+
 GAUGES: List[Gauge] = [
     Gauge("pengumon_target_last_latency_ms", None, "ms", "Latency of the last successful probe.",
           _per_target(lambda s: s.last_ms)),
@@ -132,5 +180,33 @@ GAUGES: List[Gauge] = [
           "1 for the collector's current status, 0 for the others.", _device_status),
     Gauge("pengumon_probe_loop_age_seconds", "pengumon.probe.loop.age", "s",
           "Seconds since the last probe round finished.", _probe_loop_age),
+    Gauge("pengumon_process_memory_rss_bytes", "pengumon.process.memory.rss", "By",
+          "Resident memory of the pengumon process (Linux).", _process("rss")),
+    Gauge("pengumon_process_cpu_time_seconds", "pengumon.process.cpu.time", "s",
+          "CPU time the pengumon process has used since it started, by mode (user, system); graph its rate.",
+          _process_cpu),
+    Gauge("pengumon_process_threads", "pengumon.process.threads", "{thread}", "Threads of the pengumon process.",
+          _process("threads")),
+    Gauge("pengumon_process_open_fds", "pengumon.process.open_fds", "{fd}",
+          "Open file descriptors of the pengumon process (Linux and macOS).", _process("fds")),
+    Gauge("pengumon_asyncio_tasks", "pengumon.asyncio.tasks", "{task}",
+          "Asyncio tasks alive at the event-loop monitor's last sample.", _asyncio_tasks),
+    Gauge("pengumon_dns_lookups_stuck", "pengumon.dns.lookups.stuck", "{lookup}",
+          "System-resolver DNS lookups still running past their timeout (each holds a thread until the resolver gives up).",
+          _dns_stuck),
+    Gauge("pengumon_db_sample_buffer", "pengumon.db.sample_buffer", "{row}",
+          "Probe samples buffered in memory, waiting for the next commit (the buffer is capped while writes fail).",
+          _sample_buffer),
+    Gauge("pengumon_db_file_size_bytes", "pengumon.db.file.size", "By",
+          "Size of the SQLite database file and of its write-ahead log, by file (main, wal).", _db_size),
+    Gauge("pengumon_ws_clients", "pengumon.ws.clients", "{client}", "Dashboards connected to the live stream.",
+          _ws_clients),
+    Gauge("pengumon_device_failures", "pengumon.device.failures", "{poll}",
+          "Consecutive failed polls of a device (0 once a poll works).", _per_device(lambda d: d.consecutive_failures)),
+    Gauge("pengumon_device_backoff_seconds", "pengumon.device.backoff", "s",
+          "How much longer than its interval a device is waited for after failures (devices with a minimum interval).",
+          _per_device(lambda d: d.backoff_seconds)),
+    Gauge("pengumon_alerts_held", "pengumon.alerts.held", "{alert}",
+          "Alerts waiting for their time (the delay setting or the end of quiet hours).", _alerts_held),
     Gauge("pengumon_build_info", None, "1", "Version of this build.", _build_info),
 ]

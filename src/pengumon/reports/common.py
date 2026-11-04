@@ -4,10 +4,15 @@ split of incident rows into real and expected ones."""
 from typing import Any, Dict, Iterable, List, Optional
 
 from pengumon.incidents.taxonomy import is_service_kind
+from pengumon.reports.settings import ReportsConfig
+
+_DEFAULTS = ReportsConfig()
 
 
-# A hop counts as lossy, and as failing, from this many percentage points above the hops before it.
-LOSS_MATERIAL_PCT = 0.5
+def material_loss_points(config) -> float:
+    """How many percentage points above the hops before it make a hop lossy, and failing (reports.material_loss_points
+    of the live config; its default without one)."""
+    return getattr(getattr(config, "reports", None), "material_loss_points", _DEFAULTS.material_loss_points)
 
 
 def _targets(config) -> list:
@@ -20,18 +25,22 @@ def _canonical_order(cfg_targets: list) -> List[str]:
     return [t.id for t in cfg_targets]
 
 
-def find_primary_failing_hop(hop_stats: List[Dict[str, Any]], ignoring: Iterable[str] = ()) -> Optional[Dict[str, Any]]:
-    """First hop (list order) whose loss is at least LOSS_MATERIAL_PCT above every hop before it.
+def find_primary_failing_hop(hop_stats: List[Dict[str, Any]], ignoring: Iterable[str] = (),
+                            material: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """First hop (list order) whose loss is at least `material` percentage points above every hop before it (None:
+    the default of reports.material_loss_points).
 
     hop_stats must be in canonical order. Hops without probes are skipped, and so are the hops that ignore ping
     (`ignoring`, engine.path_rules): their unanswered pings are no loss on the path.
     """
+    if material is None:
+        material = _DEFAULTS.material_loss_points
     skip = set(ignoring)
     worst_before = 0.0
     for h in hop_stats:
         if not h["sent"] or h["target_id"] in skip:
             continue
-        if h["loss_pct"] >= worst_before + LOSS_MATERIAL_PCT:
+        if h["loss_pct"] >= worst_before + material:
             return h
         worst_before = max(worst_before, h["loss_pct"])
     return None

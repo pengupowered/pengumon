@@ -2,12 +2,16 @@
 
     pengumon [run]                 start the server (the default)
     pengumon version
-    pengumon paths                 config file, data directory, database, secrets, listen address, and where each
+    pengumon paths [--system]      config file, data directory, database, secrets, listen address, and where each
                                    value came from (pengumon.paths has the rules)
-    pengumon backup [--to DIR]     a consistent copy of the database (VACUUM INTO, safe while the app runs) plus
+    pengumon backup [--to DIR] [--system]
+                                   a consistent copy of the database (VACUUM INTO, safe while the app runs) plus
                                    secrets.json and sessions.json, in a timestamped folder (default: <data>/backups)
     pengumon service install|uninstall|status
                                    start Pengumon automatically (systemd, launchd or a logon task; pengumon.service)
+    pengumon settings check-import --config C --db D [--secrets S] [--live]
+                                   a dry run of the one-time settings import on copies of D and S (the originals are
+                                   never written): per key same / differs / skipped, no values (pengumon.settings.check)
     pengumon doctor                can this host probe? The ICMP backend and its resolution, an echo to 127.0.0.1,
                                    a TTL=1 probe (the first router), the gateway, IPv6 (a route, the IPv6 backend,
                                    an echo to ::1, the IPv6 default router), the data directory and the listen
@@ -20,6 +24,7 @@ Standard library only apart from the app's own config models; the server is impo
 import argparse
 import errno
 import os
+import shlex
 import shutil
 import sqlite3
 import sys
@@ -39,17 +44,73 @@ def _file_settings():
     return ServerConfig(**(raw.get("server") or {})), DatabaseConfig(**(raw.get("database") or {})), path
 
 
+def _use_system_service(args) -> bool:
+    """With --system: look where the system service keeps its files (and listens), not in this account's own place.
+    Done through the environment, which every path lookup reads first. Returns whether it did."""
+    if not getattr(args, "system", False):
+        return False
+    kind = service.system_kind()
+    os.environ["PENGUMON_DATA"] = service.service_data_dir(kind)
+    os.environ.pop("PENGUMON_CONFIG", None)  # the unit never sets it: the config is in the service's data directory
+    for key, value in service.existing_settings(kind, service.SYSTEM).items():
+        os.environ.setdefault(key, value)
+    return True
+
+
+def _needs_sudo(command: str) -> SystemExit:
+    """What a normal user sees instead of a traceback when the system service's private files can't be read."""
+    exe = sys.argv[0] if os.path.isabs(sys.argv[0]) else (shutil.which("pengumon") or "pengumon")
+    return SystemExit("The system service's files belong to its own account: run this with sudo.\n"
+                      f"  sudo {exe} {command}")
+
+
+def _system_service_note() -> Optional[str]:
+    """A hint when a system service is installed but this command is looking at the account's own files."""
+    if os.environ.get("PENGUMON_DATA"):
+        return None
+    try:
+        kind = service.system_kind()
+        if service.SYSTEM not in service.installed_scopes(kind):
+            return None
+        return (f"A system service is installed; it keeps its files in {service.service_data_dir(kind)} and has its own "
+                "permission to send pings. This command shows this account's own place instead. Add --system "
+                "(with sudo) for the service's files; `pengumon service status` says whether the service can probe.")
+    except (service.ServiceError, OSError):
+        return None
+
+
+def _user_service_listen() -> Optional[str]:
+    """host:port of the service installed for this account (service install --user, as install.sh sets it up), or
+    None: what doctor reports, since the service, not this shell, is what listens."""
+    try:
+        kind = service.system_kind()
+        if service.USER not in service.installed_scopes(kind):
+            return None
+        settings = service.existing_settings(kind, service.USER)
+    except (service.ServiceError, OSError):
+        return None
+    if not settings:
+        return None
+    return f"{settings.get('PENGUMON_HOST', '127.0.0.1')}:{settings.get('PENGUMON_PORT', '8000')}"
+
+
 def cmd_version(_args) -> int:
     print(f"pengumon {__version__}")
     return 0
 
 
-def cmd_paths(_args) -> int:
-    server, database, config = _file_settings()
+def cmd_paths(args) -> int:
+    system = _use_system_service(args)
+    try:
+        server, database, config = _file_settings()
+    except PermissionError:
+        if not system:
+            raise
+        raise _needs_sudo("paths --system") from None
     host, port, host_from, port_from = paths.listen_address(server)
     rows = [
         ("config file", f"{config}{'' if config.exists() else '  (missing: defaults are used)'}", paths.config_source()),
-        ("data directory", str(paths.data_dir()), paths.data_dir_source()),
+        ("data directory", str(paths.data_dir()), "the system service (--system)" if system else paths.data_dir_source()),
         ("database", paths.db_path(database.db_path),
          "database.db_path in the config" if database.db_path else "<data directory>/pengumon.db"),
         ("secrets", str(paths.secrets_path()), "<data directory>/secrets.json"),
@@ -61,6 +122,9 @@ def cmd_paths(_args) -> int:
     width = max(len(r[0]) for r in rows)
     for name, value, source in rows:
         print(f"{name:<{width}}  {value}   [{source}]")
+    note = None if system else _system_service_note()
+    if note:
+        print(f"\n{note}")
     return 0
 
 
@@ -116,7 +180,12 @@ def _copy_private_file(source: Path, target: Path) -> None:
         shutil.copyfileobj(src, dst)
 
 
-def _backup(to: Optional[str]) -> Path:
+def _backup(to: Optional[str], system: bool = False) -> Path:
+    if system and not to:
+        raise SystemExit("pengumon backup --system: say where the copy goes, e.g. "
+                         "sudo pengumon backup --system --to ~/pengumon-backups (the service's own folder is not for root's files)")
+    if system and hasattr(os, "geteuid") and os.geteuid() != 0:
+        raise _needs_sudo(f"backup --system --to {shlex.quote(to)}")
     server, database, _ = _file_settings()
     db = Path(paths.db_path(database.db_path))
     if not db.is_file():
@@ -149,7 +218,18 @@ def _backup(to: Optional[str]) -> Path:
 
 
 def cmd_backup(args) -> int:
-    print(_backup(args.to))
+    system = _use_system_service(args)
+    try:
+        print(_backup(args.to, system))
+    except PermissionError:
+        if not system:
+            raise
+        raise _needs_sudo("backup --system" + (f" --to {shlex.quote(args.to)}" if args.to else " --to DIR")) from None
+    except SystemExit as exc:
+        note = None if system else _system_service_note()
+        if note and isinstance(exc.code, str) and "no database" in exc.code:
+            raise SystemExit(f"{exc.code}\n{note}") from None
+        raise
     return 0
 
 
@@ -235,35 +315,62 @@ def cmd_doctor(_args) -> int:
         rows += _ipv6_rows(backend, loopback6)
     server, _database, config = _file_settings()
     host, port, _host_from, _port_from = paths.listen_address(server)
+    listen = f"{host}:{port}"
+    installed = _user_service_listen()
+    if installed and installed != listen:
+        listen = f"{installed} (the installed service; this shell alone would use {host}:{port})"
     rows += [
         ("config file", f"{config}{'' if config.exists() else '  (missing: defaults are used)'}"),
         ("data directory", str(paths.data_dir())),
-        ("listen address", f"{host}:{port}"),
+        ("listen address", listen),
     ]
     width = max(len(r[0]) for r in rows)
     for name, value in rows:
         print(f"{name:<{width}}  {value}")
     if fix:
         print(f"{'fix':<{width}}  {fix}")
+    note = _system_service_note()
+    if note and not ok:
+        print(f"note: This result is for your own account. {note}")
     print("probing works" if ok else "probing does not work", file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
 
 
+def cmd_settings(args) -> int:
+    from pengumon.settings.check import check_import
+
+    if getattr(args, "settings_command", None) != "check-import":
+        print("pengumon settings: the only command is check-import", file=sys.stderr)
+        return 2
+    return check_import(args.config, args.db, args.secrets, live=args.live)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pengumon", description="Home network monitor. No command: run the server.")
-    sub = parser.add_subparsers(dest="command", metavar="{run,version,paths,backup,doctor,service}")
+    sub = parser.add_subparsers(dest="command", metavar="{run,version,paths,backup,doctor,settings,service}")
     run = sub.add_parser("run", help="start the server (the default)")
     run.add_argument("--host", help="listen address (same as PENGUMON_HOST)")
     run.add_argument("--port", type=int, help="listen port (same as PENGUMON_PORT)")
     run.set_defaults(func=cmd_run)
     sub.add_parser("version", help="print the version").set_defaults(func=cmd_version)
-    sub.add_parser("paths", help="show where the config, data and database are, and the listen address"
-                   ).set_defaults(func=cmd_paths)
+    paths_cmd = sub.add_parser("paths", help="show where the config, data and database are, and the listen address")
+    paths_cmd.add_argument("--system", action="store_true", help="the system service's files (/var/lib/pengumon on Linux)")
+    paths_cmd.set_defaults(func=cmd_paths)
     backup = sub.add_parser("backup", help="copy the database, secrets and sessions into a timestamped folder")
     backup.add_argument("--to", metavar="DIR", help="parent folder for the timestamped backup (default: <data>/backups)")
+    backup.add_argument("--system", action="store_true",
+                        help="back up the system service's data (run with sudo; needs --to)")
     backup.set_defaults(func=cmd_backup)
     sub.add_parser("doctor", help="check that this host can probe (ICMP backend, loopback, first router) and how to fix it"
                    ).set_defaults(func=cmd_doctor)
+    settings = sub.add_parser("settings", help="the settings store: check-import (a dry run of the one-time import)")
+    settings_sub = settings.add_subparsers(dest="settings_command", metavar="{check-import}")
+    check = settings_sub.add_parser("check-import", help="run the one-time import on copies and compare, no values")
+    check.add_argument("--config", required=True, metavar="C", help="the config.yaml to import")
+    check.add_argument("--db", required=True, metavar="D", help="the database (copied; never written)")
+    check.add_argument("--secrets", metavar="S", help="secrets.json (copied; never written)")
+    check.add_argument("--live", action="store_true", help="the database is already imported: compare only")
+    settings.set_defaults(func=cmd_settings)
     service.add_parser(sub)
     return parser
 

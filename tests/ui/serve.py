@@ -211,7 +211,13 @@ if os.environ.get("PENGUMON_SMOKE_LINE_TECHNOLOGY"):
     XfinityXbDriver.line_technology = os.environ["PENGUMON_SMOKE_LINE_TECHNOLOGY"]
 NetworkProber.probe_icmp = probe_icmp
 NetworkProber.probe_dns = probe_dns
-NetworkProber.backend = lambda self: STAND_IN_BACKEND
+def _no_pings(self):
+    from pengumon.engine.icmp_base import IcmpUnavailable
+    raise IcmpUnavailable("the system does not let Pengumon open an ICMP socket", "sudo sysctl -w net.ipv4.ping_group_range='0 2147483647'")
+
+
+# PENGUMON_SMOKE_NO_PINGS=1: this host cannot send pings (for looking at the page in that state)
+NetworkProber.backend = _no_pings if os.environ.get("PENGUMON_SMOKE_NO_PINGS") else (lambda self: STAND_IN_BACKEND)
 Device.poll = device_poll
 
 

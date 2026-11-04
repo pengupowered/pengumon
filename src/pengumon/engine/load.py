@@ -102,14 +102,14 @@ class LineLoad:
             if not self._said_no_device:
                 self._said_no_device = True
                 logger.info("Line capacity: no device reports WAN counters, so it cannot be learned; load-aware "
-                            "classification needs line: in config")
+                            "classification needs the line speeds (Settings, Your line)")
             return
         result = await self.repository.get_wan_rate_percentile(
             self.device_id, now - CAPACITY_HISTORY_SECONDS, CAPACITY_PERCENTILE)
         if not result or result[0] < CAPACITY_MIN_SAMPLES:
             logger.info(
                 f"Line capacity: {result[0] if result else 0} {self.device_id} samples in 7 days, need "
-                f"{CAPACITY_MIN_SAMPLES} to learn it; load-aware classification waits (or set line: in config)"
+                f"{CAPACITY_MIN_SAMPLES} to learn it; load-aware classification waits (or set the line speeds in Settings, Your line)"
             )
             return
         _, rx, tx = result
@@ -191,12 +191,12 @@ async def backfill_incident_load(repository, line_load: LineLoad, busy_load_pct:
     """One-time annotation of incidents recorded before load awareness: load_pct from the stored WAN rates of the
     line load's device around each one, and expected = 1 for load-explainable ones at or above busy_load_pct.
 
-    Recorded in the meta table together with the capacity and threshold it used, so it runs once per
-    capacity: when those change (e.g. a configured capacity replaces a learned one) every incident is
-    annotated again. Incidents without rates around them keep load_pct NULL and expected 0; incidents the
-    intermediate-hop backfill marked stay expected. Returns the number of incidents annotated, or None when
-    it did not run (already done for this capacity, or the capacity or the device is not known yet, in which case
-    it is retried on the next start).
+    Runs once: recorded in the meta table (with the capacity and threshold it used, for the record), and never
+    again after that, whatever the capacity or busy_load_pct are later. Outage rules apply from the moment they
+    are set: a Settings change never rewrites stored incidents. Incidents without rates around them keep load_pct
+    NULL and expected 0; incidents the intermediate-hop backfill marked stay expected. Returns the number of
+    incidents annotated, or None when it did not run (already done, or the capacity or the device is not known
+    yet, in which case it is retried on the next start).
     """
     if not line_load.down_mbps or not line_load.up_mbps:
         logger.info("Incident load backfill postponed: line capacity unknown")
@@ -204,16 +204,12 @@ async def backfill_incident_load(repository, line_load: LineLoad, busy_load_pct:
     if line_load.device_id is None:
         logger.info("Incident load backfill postponed: no device reports WAN counters")
         return None
-    done = await repository.get_meta(BACKFILL_META_KEY)
-    if done:
-        previous = json.loads(done)
-        if (previous.get("down_mbps"), previous.get("up_mbps"), previous.get("busy_load_pct")) == (
-                line_load.down_mbps, line_load.up_mbps, busy_load_pct):
-            return None
+    if await repository.get_meta(BACKFILL_META_KEY):
+        return None
     ping_done = await repository.get_meta(PING_BACKFILL_META_KEY)
     keep_expected = set(json.loads(ping_done).get("incident_ids", [])) if ping_done else set()
     annotated = expected = 0
-    for row in await repository.get_incidents_without_load(include_annotated=bool(done)):
+    for row in await repository.get_incidents_without_load():
         start = row["start_time"]
         end = row["end_time"] if row["end_time"] is not None else start
         rates = await repository.get_wan_rates(line_load.device_id, start - BACKFILL_BEFORE_SECONDS,
@@ -243,11 +239,12 @@ def _loss_pct(rows) -> Optional[float]:
     return (sum(1 for r in rows if not r["success"]) / len(rows) * 100.0) if rows else None
 
 
-async def backfill_ping_deprioritisation(repository, targets: Iterable) -> Optional[int]:
+async def backfill_ping_deprioritisation(repository, targets: Iterable, degraded_loss_pct: float) -> Optional[int]:
     """One-time reclassification of ISP-line incidents (kinds isp_loss and isp_outage) recorded before the
     intermediate-hop rule: where the raw samples around the incident show the public targets losing under
-    15% and under half of what the ISP-category hops lost, the loss never reached the end targets, so the
-    incident is marked expected (the routers only deprioritised ping replies).
+    degraded_loss_pct (the classifier's, 15 % by default) and under half of what the ISP-category hops lost, the
+    loss never reached the end targets, so the incident is marked expected (the routers only deprioritised ping
+    replies).
 
     `targets` are the configured targets (id, category). Incidents whose window [start - 10 s, end + 2 s]
     no longer has raw samples are left alone. Recorded in its own meta key, separate from the load backfill,
@@ -269,7 +266,7 @@ async def backfill_ping_deprioritisation(repository, targets: Iterable) -> Optio
         if isp is None or public is None:
             continue
         checked += 1
-        if public < 15.0 and public < isp / 2:
+        if public < degraded_loss_pct and public < isp / 2:
             await repository.set_incident_expected(row["id"])
             marked.append(row["id"])
     await repository.set_meta(PING_BACKFILL_META_KEY, json.dumps({

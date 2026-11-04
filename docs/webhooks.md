@@ -3,9 +3,11 @@
 Webhooks are a second alert channel next to [ntfy](telemetry.md#-notifications). They receive exactly the alerts ntfy
 does, after the same rules, so you can use either, both, or several webhooks:
 
-- an incident starts (not for expected `busy` conditions), at most one message per cause every 5 minutes;
+- an incident starts (not for expected `busy` conditions), at most one message per cause every 5 minutes (see
+  [When alerts go out](#when-alerts-go-out));
 - an announced incident resolves;
-- one of your [own apps](services.md) has failed for `notify_after_seconds`, and when it answers again.
+- one of your [own apps](services.md) has failed for `notify_after_seconds`, and when it answers again;
+- your network path changed ([discovery](discovery.md)).
 
 Delivery runs in a background task with a timeout (5 s, `timeout_seconds`). A failed delivery is retried once after
 2 seconds when the cause looks temporary (timeout, connection error, HTTP 429 or 5xx) and then logged as
@@ -14,7 +16,9 @@ is often part of it) or a header value.
 
 ## Configuration
 
-In `config.yaml`:
+Add webhooks on the **Settings** page (Alerts, Channels): name, URL, format, headers and timeout. The settings are shown below as YAML,
+the syntax that **Settings > Export** writes and **Import** reads. A `config.yaml` is read only for a one-time import on
+the first start of 0.21; after that, edits to it are ignored (see [configuration.md](configuration.md)).
 
 ```yaml
 notifications:
@@ -38,10 +42,54 @@ notifications:
   the log names the webhook and the secret (never a value).
 - Names must be unique. `public_url` is the "link" of a `json` message and a last line of Slack and Discord messages;
   without it there is no link.
+- The URL and the secret header values are entered on the Settings page. They are kept in
+  `data/secrets.json` (`webhook_urls.<id>` and `webhooks.<name>`), never shown again, and a webhook added, changed
+  or removed there is in use at once, without a restart. A webhook with no URL set is not used.
+- The ntfy topic address and token are the secrets `ntfy.url` and `ntfy.token` (`PENGUMON_NOTIFY_URL` and
+  `PENGUMON_NOTIFY_TOKEN` still win when set and not empty).
 
 The **Alerts** dialog lists every configured channel (name, format and host; no path, query or header) and **Send
 test** sends one message through all of them and shows what each answered. The same is `GET /api/notifications` and
 `POST /api/notifications/test`.
+
+## When alerts go out
+
+The `alerts:` rules decide when a message leaves, for ntfy and every webhook alike (Settings, Alerts):
+
+```yaml
+alerts:
+  min_severity: warning        # warning (default) or critical: send only critical network incidents
+  delay_seconds: 0             # wait this long (0-3600) before announcing a network incident
+  repeat_window_seconds: 300   # the same cause is announced at most once in this time (0: every one)
+  quiet_hours:
+    enabled: false
+    start: "22:00"             # in general.timezone; may be later than end, which crosses midnight
+    end: "07:00"
+    critical_still: true       # a critical network incident goes out at once even in quiet hours
+general:
+  timezone: Europe/Berlin      # defaults to the server's time zone
+```
+
+- **Only critical** (`min_severity: critical`) applies to **network incidents** only. A warning incident is not
+  announced when it starts; if it later turns critical it is considered then, as if it had started at that moment.
+  Messages about your own apps and route changes are not filtered by severity (an app has its own `notify` switch).
+- **Delay** counts from the start of the incident, which is dated to its first bad probe round, so "5 minutes" means
+  an outage that lasted 5 minutes. An incident that ends first sends nothing, no start message and no "resolved".
+- **Quiet hours** hold a message until they end. What is still going on at that moment goes out once, with "Ongoing since 03:12:"
+  after "Pengumon:" in the title (the time the incident or outage began, in your time zone). Something that ended in
+  the meantime is dropped: an incident that resolved, an app that came back (both its messages). A route-change message is
+  sent at the end (a newer one replaces one still waiting). A "resolved" message for an incident you were told about waits too, unless the incident was critical and
+  `critical_still` let it through. The **Send test** message is never held or filtered.
+- The window follows the wall clock of `general.timezone`, also on the days the clocks change: "22:00-07:00" ends at
+  07:00 on the clock whether the night had 23, 24 or 25 hours. A time that does not exist (the skipped hour in spring)
+  counts from the moment the clock passes it; one that happens twice (autumn) counts at both.
+- Changes made on the Settings page apply at once. A message that is waiting is timed again under the new rules
+  (switching quiet hours off sends what they held), and what was announced before stays known, so its "resolved"
+  still goes out.
+
+The time zone is read from the system's zone data (`/usr/share/zoneinfo`, present in the container image; on Windows,
+which has none, from the `tzdata` package that is installed with Pengumon there); `UTC` and
+fixed offsets such as `+01:00` always work.
 
 ## Formats
 
@@ -57,7 +105,7 @@ meaning (`version` rises if that ever has to happen).
   "event": "incident_started",
   "severity": "critical",
   "title": "Pengumon: ISP Outage",
-  "message": "Cause: internet_backbone_transit_loss\nHub unreachable\nLine load: 72%",
+  "message": "Cause: Internet Backbone Transit Loss\nHub unreachable\nLine load: 72%",
   "incident_id": 42,
   "cause": "internet_backbone_transit_loss",
   "service_id": null,
@@ -90,7 +138,7 @@ meaning (`version` rises if that ever has to happen).
 ### `path_changed`
 
 Sent once per set of changes when the background route check (discovery rerun daily and after an incident ends) finds
-that your provider's route differs from the applied path. `severity` is `info`, `incident_id`, `cause` and `service_id`
+that the route differs from the applied path (your own hops, the line or your provider's). `severity` is `info`, `incident_id`, `cause` and `service_id`
 are `null`, and `message` lists the changes in plain words, one per line (at most six, then "...and N more"). `link`
 is `notifications.public_url` followed by `#live`, which opens Path health with its "Your path changed · Review"
 notice; ntfy gets the same link as its click action.

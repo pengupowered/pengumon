@@ -1,8 +1,23 @@
-# 🛠️ Configuration (`config.yaml`)
+# 🛠️ Configuration
 
-The sections below are the core ones. Devices, service checks and clients have their own pages: [devices.md](devices.md), [services.md](services.md), [clients.md](clients.md).
+**Settings live on the Settings page of the dashboard**, not in a file. Devices, service checks, alerts, thresholds, your
+line's capacity and the rest are edited there, take effect at once and need no restart. Settings > Export writes them as
+YAML; Import reads such a file back.
 
-`config.example.yaml` is the tracked template; copy it to `config.yaml` (git-ignored) and edit that copy.
+`config.yaml` still exists, with a narrow job:
+
+- It holds the **listen address, the port, the database path and the probe interval** (`server.host`, `server.port`,
+  `database.db_path`, `prober.interval_seconds`); these are read at every start.
+- It is the **bootstrap of the first import**: on the first start of 0.21 or later, Pengumon copies the other
+  sections of the file into the Settings page, once.
+- After that, **edits to any other part of `config.yaml` are ignored**, and the startup log says so
+  (`config.yaml is ignored for settings (managed in the dashboard since <date>)`, with the number of keys that differ).
+  Change them on the Settings page. Details: [The other settings](#the-other-settings-managed-in-the-dashboard).
+
+A new install needs no `config.yaml` at all. `config.example.yaml` is the tracked template for the first import; copy it
+to `config.yaml` (git-ignored) only if you want to start with devices or service checks already listed. Devices,
+service checks and clients have their own pages: [devices.md](devices.md), [services.md](services.md),
+[clients.md](clients.md). The YAML reference blocks further down show the syntax of the file and of Export and Import.
 
 ## Where files live, and the listen address
 
@@ -45,7 +60,7 @@ python3 -m venv ~/.venvs/pengumon
 ```
 
 Build the wheel from a checkout with `pip wheel --no-deps --no-build-isolation -w dist .` (needs the locked
-`requirements-build.txt`). Put your `config.yaml` in the data directory shown by `pengumon paths`.
+`requirements-build.txt`). A `config.yaml` goes in the data directory shown by `pengumon paths` (only if you want one; see the top of this page).
 
 ## The probe path (targets): edited in the dashboard
 
@@ -109,12 +124,38 @@ state like a hop that ignores ping: no loss, no outage, no incident. Pengumon ch
 a send fails for lack of a route), so a network that gains or loses IPv6 is followed. Loopback (`::1`) and link-local
 targets need no route to the internet. [probing.md](probing.md) has the details.
 
-## The other settings
+## The other settings: managed in the dashboard
+
+**Since the settings store (schema v15), the settings below are edited on the Settings page, not in `config.yaml`.**
+At the first start of that version Pengumon imports `config.yaml` once, value for value: every key the file sets is
+stored (even one equal to its default), and every list it has (`devices:`, `service_checks: services:`,
+`notifications: webhooks:`, `dns_probes:`; an empty one too) is stored as set. A value the new ranges refuse is left
+out, keeps its default, and is named in the startup log and on the page's About box (by key, never by value); the start
+goes on. Webhook URLs and plain header values move to `secrets.json` at that import (a header becomes
+`secret:<id>_<header>`), so the store holds no credential. `prober.ping_count_per_probe` did nothing and is dropped.
+
+After that the file is read at every start only for the **bootstrap keys**: `server.host`, `server.port`,
+`database.db_path` and `prober.interval_seconds` (strictly: a bad one stops the start), and the probe path's one-time
+import (`targets:`). Everything else in it is ignored, and the startup log says how many of its keys differ from the
+dashboard ("config.yaml is ignored for settings (managed in the dashboard since <date>); 3 keys differ: ..."). Settings
+> Export writes the stored settings as YAML in this syntax (no secrets), and Settings > Import reads such a file (or a
+whole `config.yaml`) into a draft.
+
+Variables still win while they are set and not empty, and the page shows those values as "from environment":
+
+- `PENGUMON_LOG_LEVEL` and `PENGUMON_LOG_LEVELS` over `server.log_level` and `server.log_levels`;
+- `PENGUMON_GRAFANA_URL` over `display.grafana_url`;
+- `PENGUMON_NOTIFY_URL` and `PENGUMON_NOTIFY_TOKEN` over the ntfy topic and token.
+
+Before an upgrade to this version, `pengumon settings check-import --config C --db D [--secrets S]` runs the import on
+copies of the database and secrets.json (the originals are never written) and prints, per key, `same`, `differs` or
+`skipped (<reason>)`, and per list its items: names and counts only, no values. `--live` compares an already
+imported database.
 
 Access (the token, sign-in, view only, allowed host names) is set with environment variables, not in `config.yaml`:
 see [Security](security.md).
 
-You can customize probe frequencies and alert thresholds in `config.yaml` (start from `config.example.yaml`).
+What the import reads, as it was written in `config.yaml` (start from `config.example.yaml`):
 
 ```yaml
 prober:
@@ -151,8 +192,8 @@ classifier:
 
 ### Route-change checks (`discovery:`)
 
-Pengumon reruns discovery quietly once a day, and about ten minutes after an incident ends, and tells you when your
-provider's route no longer matches the applied path ("Your path changed · Review" on Path health, and one
+Pengumon reruns discovery quietly once a day, and about ten minutes after an incident ends, and tells you when the
+route no longer matches the applied path ("Your path changed · Review" on Path health, and one
 notification through ntfy or your webhooks). Both settings are optional; these are the defaults:
 
 ```yaml

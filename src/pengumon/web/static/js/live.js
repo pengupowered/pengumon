@@ -8,6 +8,41 @@ import { sessionEnded } from './session.js';
 let ws;
 let received = false; // any message since the page loaded
 
+// A hidden tab does not need the picture: nobody sees the charts or the tables. While `document.hidden`
+// a message is parsed, but only the topics that a subscriber asked to see in full (bus.subscribe(..., { every: true }):
+// an alert on a status change, a list kept of the readings seen) are published, and only when their value changed.
+// Everything else is a snapshot that the next message replaces or is built up from the per-second messages (the live
+// chart), so only the newest whole message is kept, and when the tab shows again it is published once, followed by
+// `tab:resumed` ({missed, at}) so that what builds history from the per-second messages can fetch what it missed.
+let held = null; // the newest message not published (hidden tab)
+let missed = 0; // how many messages were not published
+const sent = new Map(); // topic -> JSON of what was last published while hidden
+
+function changed(topic, value) {
+  const now = JSON.stringify(value);
+  const before = sent.has(topic) ? sent.get(topic) : JSON.stringify(bus.last(topic));
+  sent.set(topic, now);
+  return now !== before;
+}
+
+function publishAll(data) {
+  Object.entries(data).forEach(([topic, value]) => {
+    if (value !== undefined) bus.publish(topic, value);
+  });
+  bus.publish('message', data);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !held) return;
+  const data = held;
+  const n = missed;
+  held = null;
+  missed = 0;
+  sent.clear();
+  publishAll(data);
+  bus.publish('tab:resumed', { missed: n, at: Date.now() });
+});
+
 export function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -52,10 +87,15 @@ export function connectWebSocket() {
       console.error('Error parsing telemetry:', e);
       return;
     }
-    Object.entries(data).forEach(([topic, value]) => {
-      if (value !== undefined) bus.publish(topic, value);
-    });
-    bus.publish('message', data);
+    if (document.hidden) {
+      Object.entries(data).forEach(([topic, value]) => {
+        if (value !== undefined && bus.wantsEvery(topic) && changed(topic, value)) bus.publish(topic, value);
+      });
+      held = data;
+      missed += 1;
+      return;
+    }
+    publishAll(data);
   };
 
   ws.onclose = (event) => {

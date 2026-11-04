@@ -170,9 +170,14 @@ async def test_dossier_and_report_endpoints(tmp_path, app_state):
 @pytest.mark.asyncio
 async def test_health_200_when_fresh_503_when_stale(app_state):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        app_state.prober = SimpleNamespace(last_round_ts=time.time() - 2)
+        app_state.prober = SimpleNamespace(last_round_ts=time.time() - 2, probing_problem=lambda: None)
         res = await ac.get("/api/health")
-        assert res.status_code == 200 and res.json()["version"] == __version__
+        assert res.status_code == 200 and res.json()["version"] == __version__ and res.json()["probing"] == "ok"
+        # alive, but no pings can be sent: still 200 (a restart would not help), and it says so with the fix
+        app_state.prober = SimpleNamespace(last_round_ts=time.time() - 2, probing_problem=lambda: ("no ICMP", "echo fix"))
+        body = (await ac.get("/api/health")).json()
+        assert body["status"] == "ok" and body["probing"] == "unavailable"
+        assert body["probing_problem"] == "no ICMP" and body["probing_fix"] == "echo fix"
         app_state.prober = SimpleNamespace(last_round_ts=time.time() - 30)
         res = await ac.get("/api/health")
         assert res.status_code == 503 and "ago" in res.json()["reason"]
@@ -256,7 +261,7 @@ async def test_notifier_sends_start_and_resolve_with_token():
     assert start.headers["Authorization"] == "Bearer secret"
     assert "ISP Outage" in start.headers["Title"]
     body = start.content.decode()
-    assert "internet_backbone_transit_loss" in body and "72%" in body
+    assert "Cause: ISP Outage" in body and "72%" in body
     assert "resolved" in end.headers["Title"].lower()
     assert "5.0 min" in end.content.decode()
     await n.aclose()
@@ -306,7 +311,7 @@ def test_notifier_from_env(monkeypatch):
 async def test_classifier_calls_incident_callbacks():
     started, resolved = [], []
     c = OutageClassifier(
-        config=ClassifierConfig(consecutive_failures_for_incident=2),
+        config=ClassifierConfig(consecutive_failures_for_incident=2, consecutive_successes_for_recovery=2),
         on_incident_started=started.append, on_incident_resolved=resolved.append,
     )
     stats = {

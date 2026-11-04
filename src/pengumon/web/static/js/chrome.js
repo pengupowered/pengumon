@@ -15,7 +15,7 @@
 import { registerActions } from './dispatch.js';
 import { state } from './state.js';
 import { applyChartTheme, token } from './chart-theme.js';
-import { VIEW_ONLY_TIP, setCanEdit } from './util.js';
+import { VIEW_ONLY_TIP, copyText, setCanEdit } from './util.js';
 
 const THEME_KEY = 'pengumon.theme';
 const dark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -73,8 +73,10 @@ function fetchNetworkInfo() {
         const pill = document.getElementById('lanPill');
         const link = document.getElementById('lanUrlLink');
         link.href = lanUrl;
-        link.textContent = lanUrl;
+        link.textContent = lanUrl.replace(/^https?:\/\//, ''); // the scheme is no help to read, and costs the header 45 px
+        link.title = lanUrl;
         pill.hidden = false;
+        fitHeader();
       }
       showSignOut(info.session);
       showAccess(info.can_edit !== false); // an older server without the field: editable, as before
@@ -83,6 +85,50 @@ function fetchNetworkInfo() {
       document.dispatchEvent(new CustomEvent('networkinfo', { detail: info }));
     })
     .catch((e) => { setCanEdit(true); console.error(e); }); // unknown: the server still decides each request
+}
+
+// The LAN address never shrinks to a cut-off "LAN": where the header has no room for it (a long status pill, the View only
+// chip), the chip leaves the header and the address is the first item of the "more" menu (the topbar's attribute `data-lan-menu`
+// shows that button on a wide screen too, and style.css hides the tool copies there). Measured with the chip in place,
+// so the attribute is taken off first; the browser paints only the end result.
+function fitHeader() {
+  const bar = document.getElementById('topbar');
+  const link = document.getElementById('lanUrlLink');
+  const text = document.getElementById('statusPillText');
+  if (!bar || !link || !text) return;
+  delete bar.dataset.lanMenu;
+  if (!lanUrl || window.innerWidth <= 720) return; // the phone's menu lists the address by itself (lanMenuItem)
+  if (window.innerWidth <= 1180) { bar.dataset.lanMenu = ''; return; } // style.css hides the chip there: the menu has it
+  const cut = (el) => el.scrollWidth > el.getBoundingClientRect().width; // an ellipsis shows for even a fraction of a pixel
+  if (cut(link)) { bar.dataset.lanMenu = ''; return; }
+  if (!cut(text)) return;
+  bar.dataset.lanMenu = ''; // the status title is cut: does it fit without the address?
+  if (cut(text)) delete bar.dataset.lanMenu;
+}
+
+// A row in the "more" menu with the address and a copy action, for when the header's chip is not shown.
+function lanMenuItem(menu) {
+  let item = menu.querySelector('.menu-lan');
+  if (!item) {
+    item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'menu-lan';
+    item.setAttribute('role', 'menuitem');
+    item.dataset.action = 'copyLanUrl';
+    menu.prepend(item);
+  }
+  const chip = document.getElementById('lanPill');
+  item.hidden = !lanUrl || getComputedStyle(chip).display !== 'none';
+  item.textContent = `LAN address ${lanUrl} (copy)`;
+  item.title = 'Copy the LAN address';
+}
+
+function watchHeader() {
+  let queued = false;
+  const queue = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; fitHeader(); }); } };
+  new ResizeObserver(queue).observe(document.querySelector('.tb-inner'));
+  // the status pill's words and the View only / Sign out chips change what is left for the address
+  new MutationObserver(queue).observe(document.getElementById('topbar'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden'] });
 }
 
 // ---------- view only (util.js canEdit) ----------
@@ -100,16 +146,13 @@ function showSignOut(session) {
   document.querySelectorAll('[data-sign-out-everywhere]').forEach((el) => { el.hidden = !session?.sign_out_everywhere; });
 }
 
-function copyLanUrl() {
+async function copyLanUrl() {
   if (!lanUrl) return;
-  navigator.clipboard.writeText(lanUrl).then(() => {
-    const use = document.querySelector('#copyIcon use');
-    use.setAttribute('href', '#i-ok');
-    document.getElementById('btnCopyLan').dataset.copied = '1';
-    setTimeout(() => { use.setAttribute('href', '#i-copy'); delete document.getElementById('btnCopyLan').dataset.copied; }, 2000);
-  }).catch(() => {
-    prompt('Copy LAN URL:', lanUrl);
-  });
+  if (!(await copyText(lanUrl))) { prompt('Copy LAN URL:', lanUrl); return; }
+  const use = document.querySelector('#copyIcon use');
+  use.setAttribute('href', '#i-ok');
+  document.getElementById('btnCopyLan').dataset.copied = '1';
+  setTimeout(() => { use.setAttribute('href', '#i-copy'); delete document.getElementById('btnCopyLan').dataset.copied; }, 2000);
 }
 
 // ---------- menus ----------
@@ -156,7 +199,7 @@ export function showMenu(menu, button) {
 export function toggleMenu(button) {
   const menu = document.getElementById(button.dataset.arg);
   if (!menu) return;
-  if (menu.id === 'headerMenu') fillHeaderMenu(menu);
+  if (menu.id === 'headerMenu') { fillHeaderMenu(menu); lanMenuItem(menu); }
   showMenu(menu, button);
 }
 
@@ -242,6 +285,7 @@ function initRovingCells() {
 export function initChrome() {
   document.addEventListener('viewonly', () => toast(VIEW_ONLY_TIP));
   initCellTips();
+  watchHeader();
   initRovingCells();
   fetchNetworkInfo();
   setTheme(storedTheme());

@@ -10,6 +10,7 @@ charset-normalizer
 click
 colorama
 dnspython
+execnet
 fastapi
 googleapis-common-protos
 h11
@@ -37,6 +38,7 @@ pydantic-settings
 pygments
 pytest
 pytest-asyncio
+pytest-xdist
 python-dotenv
 pyyaml
 requests
@@ -44,6 +46,7 @@ setuptools
 starlette
 typing-extensions
 typing-inspection
+tzdata
 urllib3
 uvicorn
 uvloop

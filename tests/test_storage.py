@@ -613,3 +613,13 @@ def test_error_kind_is_stored_but_not_part_of_the_models_json():
         assert "error_kind" not in model.model_dump()
         assert "error_kind" not in json.loads(model.model_dump_json())
         assert model.error_kind == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_a_long_answer_for_many_targets_is_capped_at_50_000_rows(repo):
+    """5 targets over 30 days at 60 s is 216 000 rows; the buckets widen so that no answer passes 50 000."""
+    now = time.time()
+    await repo.insert_samples(_samples(now - 120, 60, targets=("a", "b", "c", "d", "e")))
+    rows, width = await repo.get_history_buckets(now - 30 * DAY, now, bucket_seconds=60)
+    assert width >= 5 * 30 * DAY / 50_000 and width % 60 == 0
+    assert len(rows) <= 50_000

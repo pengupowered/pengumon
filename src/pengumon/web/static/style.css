@@ -30,10 +30,16 @@
 @media (max-width: 1180px) { .lan-pill { display: none !important; } }
 /* where both fit, the LAN address gives way before the status pill: the pill's numbers were cut ("11.2 ms to i") */
 @media (min-width: 1181px) { .lan-pill { flex-shrink: 20; } }
+/* no room for the address in the header (chrome.js fitHeader): it moves to the "more" menu, which then shows on a wide screen too */
+.topbar[data-lan-menu] .lan-pill { display: none !important; }
+@media (min-width: 721px) {
+  .topbar[data-lan-menu] .tb-more { display: inline-flex; }
+  #headerMenu > :not(.menu-lan) { display: none; }
+}
 #btnNotify.is-on { color: var(--accent); }
 #btnNotify.is-on::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: -2px; }
 .tb-grafana { position: relative; }
-.menu[hidden] { display: none; }
+.menu[hidden], .menu [hidden] { display: none; }
 .menu.fixed { position: fixed; }
 .live-live i { background: var(--good); }
 

@@ -191,7 +191,7 @@ async def test_v9_migration_keeps_every_reading_as_the_api_showed_it(tmp_path, m
     monkeypatch.setattr(v009_device_tables, "tracer", spans)
 
     with caplog.at_level(logging.INFO, logger="pengumon.db"):
-        assert await migrations.migrate(path) == migrations.LATEST_VERSION == 14
+        assert await migrations.migrate(path) == migrations.LATEST_VERSION == 15
 
     repo = DatabaseRepository(db_path=path)
     await repo.initialize()
@@ -527,7 +527,12 @@ async def test_the_converted_config_yaml_shows_the_history_stored_under_modem_an
     from pengumon.config import load_config
     from pengumon.incidents.model import Incident
 
+    from pengumon.devices.settings import DeviceConfig
+
     config = load_config(str(Path(__file__).resolve().parents[1] / "config.example.yaml"))
+    config.devices = [  # what the example's (commented-out) modem and router describe
+        DeviceConfig(id="modem", driver="xfinity_xb", url="http://192.168.100.1", poll_interval_seconds=900),
+        DeviceConfig(id="router", driver="asuswrt", url="http://192.168.1.1", poll_interval_seconds=10)]
     registry = build_devices(config.devices, repo)  # no credentials and no polling: only the stored rows
     app_state.repository, app_state.devices, app_state.config = repo, registry, config
     now = time.time()

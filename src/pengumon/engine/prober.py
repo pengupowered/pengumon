@@ -1,10 +1,13 @@
 """Concurrent network probers for ICMP ping and DNS resolution."""
 
 import asyncio
+import errno
 import logging
 import time
 import socket
-from typing import Any, Dict, Iterable, List, Optional
+import sys
+import threading
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 try:
@@ -26,12 +29,25 @@ from pengumon.engine.path_rules import ignoring_ping
 logger = logging.getLogger("pengumon.prober")
 
 
+def _send_fix() -> Optional[str]:
+    """The step that lets this host send pings after a permission error (Linux: the sysctl line pengumon doctor prints)."""
+    if not sys.platform.startswith("linux"):
+        return None
+    from pengumon.engine.icmp_linux import SYSCTL_FIX
+    return SYSCTL_FIX
+
+
 def _literal_version(address: str) -> Optional[int]:
     """4 or 6 for an IP literal, None for a host name."""
     try:
         return ip_literal(address)[1]
     except ValueError:
         return None
+
+
+def _lookup(d: DnsProbeConfig) -> tuple:
+    """What a DNS probe asks: a change to it makes its earlier statistics another lookup's."""
+    return (d.domain, d.nameserver, d.record_type)
 
 
 class NetworkProber:
@@ -45,8 +61,10 @@ class NetworkProber:
         status_thresholds: Optional[HopStatusConfig] = None,
         backend: Optional[IcmpBackend] = None,
         ipv6: Optional[Ipv6Availability] = None,
+        dns_timeout: Optional[float] = None,
     ):
         self.ping_timeout = ping_timeout
+        self.dns_timeout = dns_timeout  # a lookup is lost after this; None: ping_timeout (prober.dns_timeout_seconds)
         self.status_thresholds = status_thresholds or HopStatusConfig()
         self.history_window = history_window
         self.stagger_seconds = stagger_seconds
@@ -56,10 +74,30 @@ class NetworkProber:
         self._backend: Optional[IcmpBackend] = backend  # None: the app's shared one (icmp_select)
         self.ipv6 = ipv6 or Ipv6Availability()  # whether IPv6 targets can be probed from this host now
         self._families: Dict[str, int] = {}  # each ICMP target's family, to tell an edited hop from the same one
+        self._warn_latency: Dict[str, float] = {}  # a hop's own "warn above" level (TargetConfig.warn_latency_ms)
+        self._dns_lookups: Dict[str, tuple] = {}  # what each DNS probe's stats measure (domain, nameserver, type)
+        # Lookups through the system resolver run in a thread that cannot be cancelled: one that outlives its timeout
+        # keeps running (and holds one of the default executor's threads) until the resolver gives up.
+        self._stuck_lock = threading.Lock()
+        self.lookups_stuck = 0  # such lookups running now
+        # Set when the system refused to send a ping (permission denied) and cleared by the next one that is sent: the
+        # backend opened, yet no probe can go out, which is the same state as no backend (probing_problem).
+        self._send_denied: Optional[IcmpUnavailable] = None
 
     def backend(self) -> IcmpBackend:
         """The ICMP backend probes go through; raises IcmpUnavailable when this host can't send ICMP."""
         return self._backend if self._backend is not None else shared_backend()
+
+    def probing_problem(self) -> Optional[Tuple[str, Optional[str]]]:
+        """(why, the one step that fixes it or None) while this host cannot send pings at all, else None: the ICMP
+        backend can't be opened, or every send is refused with a permission error. Probes are then not sent, no loss is
+        recorded and the classifier says so instead of reporting an outage (engine.loop)."""
+        try:
+            self.backend()
+        except IcmpUnavailable as e:
+            return e.reason, e.fix
+        denied = self._send_denied
+        return (denied.reason, denied.fix) if denied is not None else None
 
     def probe_method(self) -> Dict[str, Any]:
         """How probes are sent, for /api/info and pengumon doctor: the backend's name and RTT resolution, or why
@@ -84,6 +122,10 @@ class NetworkProber:
                 recent_latencies=[],
             )
         self._families[target.id] = target.family
+        if target.warn_latency_ms is not None:
+            self._warn_latency[target.id] = target.warn_latency_ms
+        else:
+            self._warn_latency.pop(target.id, None)
 
     def set_targets(self, targets: List[TargetConfig], dns_ids: Iterable[str] = ()):
         """Makes `targets` (in path order) the ICMP targets, without a restart (an applied path edit): a new one
@@ -94,6 +136,7 @@ class NetworkProber:
         keep_dns = {i: old[i] for i in dns_ids if i in old}
         families = self._families
         self._families = {}
+        self._warn_latency = {}
         self.stats = {}
         for t in targets:
             st = old.get(t.id)
@@ -105,14 +148,43 @@ class NetworkProber:
                 self.last_samples.pop(t.id, None)
             self.register_target(t)
         self.stats.update(keep_dns)
+        self._dns_lookups = {i: v for i, v in self._dns_lookups.items() if i in keep_dns}
+        live = set(self.stats)
+        for tid in [k for k in self.last_samples if k not in live]:
+            del self.last_samples[tid]
+        self.update_path_flags()
+
+    def set_dns_targets(self, dns_probes: List[DnsProbeConfig]) -> None:
+        """Makes `dns_probes` the DNS probes, without a restart (a saved DNS lookups list): a new one starts with
+        empty statistics, a removed one is forgotten, one whose domain, nameserver or record type changed starts
+        over, the others keep their statistics and take the new name, enabled flag and colour. The ICMP targets keep
+        theirs and stay first, the DNS probes follow in list order. The probe loop reads the list (config.dns_probes)
+        each round, so it probes the new ones from its next round."""
+        dns_ids = set(self._dns_lookups)
+        old = {i: st for i, st in self.stats.items() if i in dns_ids}
+        lookups = self._dns_lookups
+        self._dns_lookups = {}
+        self.stats = {i: st for i, st in self.stats.items() if i not in dns_ids}
+        for d in dns_probes:
+            st = old.get(d.id)
+            if st is not None and lookups.get(d.id) == _lookup(d):
+                st.name, st.enabled, st.color = d.name, d.enabled, d.color
+                self.stats[d.id] = st
+                self._dns_lookups[d.id] = lookups[d.id]
+            else:
+                self.last_samples.pop(d.id, None)
+            self.register_dns_target(d)
         live = set(self.stats)
         for tid in [k for k in self.last_samples if k not in live]:
             del self.last_samples[tid]
         self.update_path_flags()
 
     def register_dns_target(self, dns_cfg: DnsProbeConfig):
-        """Initializes tracking stats for a DNS probe."""
+        """Initializes tracking stats for a DNS probe, and records the lookup they measure (kept until the stats
+        start over: a probe round that registers an edited lookup before set_dns_targets runs must not make the old
+        statistics look like the new lookup's)."""
         if dns_cfg.id not in self.stats:
+            self._dns_lookups[dns_cfg.id] = _lookup(dns_cfg)
             self.stats[dns_cfg.id] = TargetStats(
                 target_id=dns_cfg.id,
                 name=dns_cfg.name,
@@ -140,8 +212,8 @@ class NetworkProber:
 
         try:
             backend = self.backend()
-        except IcmpUnavailable as e:
-            return lost(f"ICMP unavailable: {e.reason}")
+        except IcmpUnavailable:
+            return None  # not a loss and not an outage: probing_problem says why nothing is measured
         # IPv6 at all? Asked before a name is looked up: an AAAA record is no use without a route
         literal = _literal_version(target.address)
         if (literal or target.family) == 6 and needs_route_check(target.address) and not self.ipv6.available():
@@ -160,7 +232,11 @@ class NetworkProber:
             if version == 6 and is_no_ipv6_error(e):
                 self.ipv6.no_route(e)
                 return self._flag_ipv6(target, True)
+            if e.errno in (errno.EPERM, errno.EACCES):  # not allowed to send pings: nothing was measured
+                self._send_denied = IcmpUnavailable(f"the system does not let Pengumon send pings ({e})", _send_fix())
+                return None
             return lost(f"ICMP send failed: {e}")
+        self._send_denied = None
         self._flag_ipv6(target, False)
         if result.kind == "reply" and result.rtt_ms is not None:
             return ProbeSample(target_id=target.id, timestamp=ts, success=True, latency_ms=round(result.rtt_ms, 2),
@@ -179,6 +255,11 @@ class NetworkProber:
             stat.ipv6_unavailable = unavailable
         return None
 
+    @property
+    def lookup_timeout(self) -> float:
+        """How long a DNS lookup may take before it counts as lost."""
+        return self.dns_timeout if self.dns_timeout is not None else self.ping_timeout
+
     async def probe_dns(self, dns_cfg: DnsProbeConfig) -> Optional[ProbeSample]:
         """Performs an active DNS resolution and measures query latency. None for a disabled probe."""
         if not dns_cfg.enabled:
@@ -190,7 +271,7 @@ class NetworkProber:
         if HAS_DNSPYTHON and dns_cfg.nameserver:
             try:
                 resolver = dns.asyncresolver.Resolver()
-                resolver.lifetime = self.ping_timeout
+                resolver.lifetime = self.lookup_timeout
                 resolver.nameservers = [dns_cfg.nameserver]
                 answers = await resolver.resolve(dns_cfg.domain, dns_cfg.record_type)
                 latency_ms = round((time.perf_counter() - start_t) * 1000, 2)
@@ -222,13 +303,21 @@ class NetworkProber:
                 )
         else:
             # Standard library socket resolution in separate thread
-            try:
-                def _resolve_sync():
-                    return socket.getaddrinfo(dns_cfg.domain, 80, family=socket.AF_INET)
+            lookup = {"done": False, "stuck": False}
 
+            def _resolve_sync():
+                try:
+                    return socket.getaddrinfo(dns_cfg.domain, 80, family=socket.AF_INET)
+                finally:
+                    with self._stuck_lock:
+                        lookup["done"] = True
+                        if lookup["stuck"]:
+                            self.lookups_stuck -= 1
+
+            try:
                 await asyncio.wait_for(
                     asyncio.to_thread(_resolve_sync),
-                    timeout=self.ping_timeout
+                    timeout=self.lookup_timeout
                 )
                 latency_ms = round((time.perf_counter() - start_t) * 1000, 2)
                 return ProbeSample(
@@ -239,6 +328,10 @@ class NetworkProber:
                     packet_loss_pct=0.0
                 )
             except asyncio.TimeoutError:
+                with self._stuck_lock:
+                    if not lookup["done"]:  # the thread is still in the resolver
+                        lookup["stuck"] = True
+                        self.lookups_stuck += 1
                 return ProbeSample(
                     target_id=dns_cfg.id,
                     timestamp=ts,
@@ -299,8 +392,10 @@ class NetworkProber:
         """Marks the targets that ignore ping (engine.path_rules), from every target's status after this round. It is
         observed only: no setting overrides it."""
         quiet = ignoring_ping(self.stats.values())
+        blind = self.probing_problem() is not None
         for tid, st in self.stats.items():
             st.ignores_ping = tid in quiet
+            st.probing_unavailable = blind
 
     def _update_target_stats(self, sample: ProbeSample):
         """Updates WinMTR-style rolling stats for a target."""
@@ -357,11 +452,15 @@ class NetworkProber:
             # Loss thresholds are fractions, compared strictly: as percentages 0.4 * 100 is 40.00000000000001.
             t = self.status_thresholds
             limits = t.latency_limits(stat.category)
+            warn = self._warn_latency.get(sample.target_id)
+            if warn is not None:  # the hop's own latency level; ISP and custom hops get a latency-only limit
+                limits = (warn, limits[1] if limits else None)
             if loss_rate_recent > t.down_loss_fraction:
                 stat.status = "down"
             elif loss_rate_recent > t.degraded_loss_fraction:
                 stat.status = "degraded"
-            elif limits and ((stat.avg_ms and stat.avg_ms > limits[0]) or (stat.jitter_ms and stat.jitter_ms > limits[1])):
+            elif limits and ((stat.avg_ms and stat.avg_ms > limits[0])
+                             or (limits[1] is not None and stat.jitter_ms and stat.jitter_ms > limits[1])):
                 stat.status = "degraded"
             else:
                 stat.status = "up"

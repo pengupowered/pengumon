@@ -9,8 +9,9 @@ const panelShown = (page, id) => page.$eval(`[data-panel=${id}]`, (e) => !e.hidd
 const storedLayout = (page) => page.evaluate(() => localStorage.getItem("pengumon.layout.v1"));
 
 export const steps = [
-  ["layout dialog: cards without a device are greyed; a moved and a hidden card survive a reload; Reset restores", async ({ USUAL_PANELS, bare, click, count, eq, layoutMounted, ok, openLayout, outDir, page, panelOrder, path, waitCount }) => {
+  ["layout dialog: cards without a device are greyed; a moved and a hidden card survive a reload; Reset restores", async ({ USUAL_PANELS, bare, click, count, dialogKeys, eq, layoutMounted, ok, openLayout, outDir, page, panelOrder, path, waitCount }) => {
     await layoutMounted();
+    await dialogKeys("#headerTools [data-action=openLayoutDialog]", "layoutModal");
     eq("usual order", (await panelOrder()).join(), USUAL_PANELS.join());
     await openLayout();
     eq("one row per available panel", await count("#layoutList .lay-row"), bare ? 8 : 10);
@@ -32,6 +33,10 @@ export const steps = [
     await openLayout();
     eq("the checkbox shows it", await page.$eval("#layoutList [data-arg=services]", (b) => b.checked), false);
     await page.screenshot({ path: path.join(outDir, "layout.png") });
+    // a layout change made in another tab rebuilds the list: the control with focus keeps it
+    await page.focus("#layoutList [data-action=movePanel][data-arg=report][data-arg2=down]");
+    await page.evaluate(() => window.dispatchEvent(new StorageEvent("storage", { key: "pengumon.layout.v1" })));
+    eq("a change from another tab keeps focus", await page.evaluate(() => { const a = document.activeElement; return `${a.dataset.action}|${a.dataset.arg}|${a.dataset.arg2}`; }), "movePanel|report|down");
     await click("[data-action=resetLayout]");
     eq("order after Reset", (await panelOrder()).join(), USUAL_PANELS.join());
     await click("[data-action=closeModal][data-arg=layoutModal]");
