@@ -14,18 +14,49 @@ Pengumon concurrently probes multiple network stages every second and classifies
   - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🔴 Loss
   - DNS Query (`google.com`): 🔴 Fails
   - Diagnosed Root Cause: **Local Wi-Fi / Mesh Drop**
-- **Double NAT / Link Fault**
+- **Gateway Not Answering**
   - Local Mesh (`192.168.1.1`): 🟢 < 2ms
   - Gateway (`192.168.100.1`): 🔴 **High loss / spike**
   - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🔴 Loss
   - DNS Query (`google.com`): 🔴 Fails
-  - Diagnosed Root Cause: **Gateway Link Congestion**
-- **Coax Line Drop**
+  - Diagnosed Root Cause: **the gateway itself** (or the link from the router to it), not the line
+- **Line or First Provider Router**
   - Local Mesh (`192.168.1.1`): 🟢 < 2ms
   - Gateway (`192.168.100.1`): 🟢 < 2ms
+  - ISP hop 1 (the provider's first router): 🔴 **Packet loss / Timeout**
   - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🔴 **Packet loss / Timeout**
   - DNS Query (`google.com`): 🔴 Fails
-  - Diagnosed Root Cause: **ISP Last-Mile Drop (DOCSIS)**
+  - Diagnosed Root Cause: **the line or the provider's first router** (for a cable modem: the coax line or the CMTS)
+
+## Where a fault is placed
+
+The gateway hop (shown as **Gateway**) is the gateway or modem answering on its home-side (LAN) address. Those pings
+reach it through the router and never use the provider's line, so:
+
+- **Loss starting at the gateway** while the router answers is the gateway itself (restarting, overloaded, its
+  firmware or power) or the link from the router to it. Cause code `gateway_unreachable` (kinds `gateway_down`,
+  `gateway_loss`), cause category `gateway`. If the provider supplied the gateway it is still the provider's equipment,
+  but an equipment fault, not a line or signal one; a line fault shows here only when it made the gateway restart.
+- **Loss starting at the provider's first hop** (ISP hop 1) while the gateway answers is the access line (cable, fiber
+  or DSL) or the provider's first router. Cause code `access_line_drop` (kinds `isp_outage`, `isp_loss`), category
+  `line`. The description words the line for its technology (`pengumon.lines`: coax and the CMTS for a DOCSIS modem).
+  Line errors at the same time (bursts of uncorrectable codewords, signal out of range) point to the line itself: the
+  incident inspector and the AI pack say so, the dossier asks for a line check.
+- **Loss only past the first hop** (it answers, the internet does not) is the provider's network beyond it: cause code
+  `internet_backbone_transit_loss` (an `isp_outage` worded as peering or backbone, and `backbone_loss`), category `isp`.
+  Latency across the upstream routes (`upstream_latency`) keeps `access_line_drop`, and its category is `isp`.
+- **Without a gateway target** nothing shows the gateway answering, so loss at the ISP hops names the gateway among the
+  possible causes. **Without a provider hop** an internet outage past the gateway is `access_line_drop`, worded "Line or
+  Provider Outage": the line cannot be told apart from the provider's network.
+
+Loss at one ISP hop that does not carry on (below) and the load rules are unchanged by this placement.
+
+The categories (`router`, `gateway`, `line`, `isp`, `internet`, `dns`, `load`, `service`, `unknown`) are what the
+incident timeline's lanes, the reliability report's downtime by cause, the dossier and the AI pack group by. They come
+from the incident's `kind` where it says enough, else from its cause code, so stored incidents keep their codes and are
+placed again when read: an older gateway incident (`double_nat_congestion`) is in the `gateway` lane, and an older
+`isp_outage` recorded as `access_line_drop` whose description says the public internet timed out while the ISP hop
+answered is read as `isp`.
 - **DNS Resolver Outage**
   - Local Mesh (`192.168.1.1`): 🟢 < 2ms
   - Gateway (`192.168.100.1`): 🟢 < 2ms
@@ -124,7 +155,10 @@ columns; every start fills them for resolved incidents whose raw samples are sti
 `db/incidents.py`).
 
 Faults on the line to the ISP have the cause code `access_line_drop` (any line technology; the description names
-technology-specific causes, e.g. coax and CMTS for a DOCSIS modem). Schema v8 renames the stored
+technology-specific causes, e.g. coax and CMTS for a DOCSIS modem). Loss at the gateway has `gateway_unreachable`
+(older builds raised `double_nat_congestion` for it, which now stands for delay at the gateway only); an older build
+cannot read `gateway_unreachable`, so going back to one after it was recorded needs the pre-deploy database backup.
+Schema v8 renames the stored
 `xfinity_last_mile_coax_drop` incidents to it, and the old name is still read as the new one. An older build cannot
 read the new code, so going back to one after v8 needs the pre-deploy database backup that `scripts/deploy.sh`
 makes. Schema v7 adds a nullable `error_kind` to the modem and router snapshots (older builds work against it).

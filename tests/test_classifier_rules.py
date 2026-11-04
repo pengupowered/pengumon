@@ -50,16 +50,14 @@ CASES = [
     ({"local": 15.0}, "local_loss", "degraded", "warning", "local_wifi_mesh_drop", "Router Packet Loss"),
     ({"local": (0.0, 26.0, None)}, "local_latency", "degraded", "warning", "local_wifi_mesh_drop",
      "Router Latency Spike"),
-    ({"gateway": 40.0}, "gateway_down", "down", "critical", "double_nat_congestion",
-     "Router to Modem Link Failure"),
-    ({"gateway": 15.0}, "gateway_loss", "degraded", "warning", "double_nat_congestion", "Modem Packet Loss"),
+    ({"gateway": 40.0}, "gateway_down", "down", "critical", "gateway_unreachable", "Modem Not Answering"),
+    ({"gateway": 15.0}, "gateway_loss", "degraded", "warning", "gateway_unreachable", "Modem Packet Loss"),
     ({"gateway": (0.0, None, 21.0)}, "gateway_latency", "degraded", "warning", "double_nat_congestion",
      "Modem Latency Delay"),
-    ({"isp": 40.0}, "isp_outage", "down", "critical", "access_line_drop", "ISP Line / Hub Outage"),
-    ({"public": 40.0}, "isp_outage", "down", "critical", "access_line_drop", "ISP Line / Hub Outage"),
-    ({"isp": 15.0}, "isp_loss", "degraded", "warning", "access_line_drop",
-     "ISP Line / Hub Packet Loss"),
-    ({"public": 15.0}, "backbone_loss", "degraded", "warning", "access_line_drop",
+    ({"isp": 40.0}, "isp_outage", "down", "critical", "access_line_drop", "Line or Hub Outage"),
+    ({"public": 40.0}, "isp_outage", "down", "critical", "internet_backbone_transit_loss", "ISP Backbone Outage"),
+    ({"isp": 15.0}, "isp_loss", "degraded", "warning", "access_line_drop", "Line or Hub Packet Loss"),
+    ({"public": 15.0}, "backbone_loss", "degraded", "warning", "internet_backbone_transit_loss",
      "ISP Upstream Backbone Packet Loss"),
     ({"public": (0.0, 81.0, None)}, "upstream_latency", "degraded", "warning", "access_line_drop",
      "ISP Latency Spikes / Jitter"),
@@ -123,24 +121,52 @@ def test_gateway_down_needs_the_local_router_to_answer():
 
 
 def test_isp_outage_detail_switches_at_thirty_percent():
+    """From 30 % loss at the ISP hop it is the line or the provider's first router (access_line_drop); under it, the
+    hop answering and the internet not, the provider's network beyond it (internet_backbone_transit_loss)."""
     docsis = wording("docsis")
-    assert "coaxial line sync drop" in verdict_for(isp=40.0, line=docsis).description
-    assert "coaxial line sync drop" in verdict_for(isp=30.0, public=40.0, line=docsis).description  # via public loss
-    assert "peering or backbone link failure" in verdict_for(isp=29.9, public=40.0).description
-    assert "peering or backbone link failure" in verdict_for(public=40.0).description
+    line_case, via_public = verdict_for(isp=40.0, line=docsis), verdict_for(isp=30.0, public=40.0, line=docsis)
+    for v in (line_case, via_public):
+        assert "the cable line losing signal or sync" in v.description and v.cause == "access_line_drop"
+    for v in (verdict_for(isp=29.9, public=40.0), verdict_for(public=40.0)):
+        assert "peering or backbone link failure" in v.description and v.cause == "internet_backbone_transit_loss"
 
 
 def test_line_faults_are_worded_for_the_line_technology():
     """Cable wording only for a DOCSIS line; without a known technology the description stays generic."""
     assert verdict_for(isp=40.0).description.endswith(
-        "Possible causes: the access line to the ISP going down or an outage at the ISP's first hop.")
+        "Possible causes: the line to the provider going down (lost signal or sync) or an outage at the provider's "
+        "first router.")
     assert verdict_for(isp=40.0, line=wording("docsis")).description.endswith(
-        "Possible causes: a coaxial line sync drop or a CMTS neighborhood outage.")
+        "Possible causes: the cable line losing signal or sync (the coax into the home or the provider's cable plant) "
+        "or an outage at the provider's first router (the CMTS, a neighbourhood outage).")
     assert verdict_for(isp=15.0, line=wording("docsis")).description.endswith(
-        "Possible causes: coaxial RF plant impairment, CMTS node congestion, or the hop deprioritising ping replies.")
+        "Possible causes: cable line (RF) impairment or congestion at the provider's first router (the CMTS node), or "
+        "the hop deprioritising ping replies.")
     assert verdict_for(isp=15.0, line=wording("fiber-not-known")).description.endswith(
-        "Possible causes: access-line impairment, congestion at the ISP's first hop, or the hop deprioritising "
-        "ping replies.")
+        "Possible causes: an impaired line to the provider or congestion at the provider's first router, or the hop "
+        "deprioritising ping replies.")
+
+
+@pytest.mark.parametrize("gateway", [40.0, 15.0])
+def test_loss_starting_at_the_gateway_is_the_gateway_not_the_line(gateway):
+    """The gateway hop is the modem's home-side address: its pings never use the line, so its loss is the gateway's
+    (gateway_unreachable, category gateway) and its words name no line fault."""
+    v = verdict_for(gateway=gateway, line=wording("docsis"))
+    assert v.cause == "gateway_unreachable"
+    assert "the cable modem (gateway) on its home-side address" in v.description
+    assert "do not use the provider's line" in v.description and "coax" not in v.description
+
+
+def test_without_a_gateway_target_the_gateway_stays_a_possible_cause_of_isp_hop_loss():
+    assert "Possible causes: the gateway (modem), not monitored here; the line" in verdict_for(
+        isp=40.0, absent=("gateway",)).description
+    assert "not monitored here" not in verdict_for(isp=40.0).description
+
+
+def test_without_a_provider_hop_an_outage_past_the_gateway_is_not_called_the_backbone():
+    v = verdict_for(public=40.0, absent=("isp",))
+    assert (v.kind, v.cause, v.title) == ("isp_outage", "access_line_drop", "Line or Provider Outage")
+    assert "cannot be told apart from the provider's network" in v.description
 
 
 # --- segments that are not monitored ---------------------------------------------------------------------
@@ -171,7 +197,7 @@ def test_without_a_gateway_target_the_line_diagnosis_names_only_the_router():
     assert v.kind == "isp_outage" and "while the local router answers normally" in v.description
     v = verdict_for(isp=10.0, public=40.0, absent=("gateway",))
     assert v.description.startswith("The local router and Hub answer")
-    assert "while the local router and modem answer normally" in verdict_for(isp=40.0).description
+    assert "while the local router and the gateway answer normally" in verdict_for(isp=40.0).description
 
 
 def test_a_lone_router_that_stops_answering_may_be_the_gateway_itself():

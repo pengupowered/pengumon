@@ -10,7 +10,7 @@ export const steps = [
     eq("96 blocks a day", await page.$eval("#stripsBody .strip", (e) => e.children.length), 96);
     const names = await page.$$eval("#stripsBody .s-name", (els) => els.map((e) => `${e.querySelector("span").textContent}|${e.querySelector("small")?.textContent ?? ""}`));
     eq("rows named as Path health names them, the configured name beside", names.slice(0, 3).join(","),
-      "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+      "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
     await click('[data-action=setUptimeWindow][data-arg="7d"]');
     await until(() => document.getElementById("stripsBody").dataset.blocks === "7");
     await click('[data-action=setUptimeWindow][data-arg="24h"]');
@@ -23,7 +23,7 @@ export const steps = [
       && await page.$$eval("#stripsBody .strip > .cell[data-state=ok]", (els) => els.length > 5));
     await click("#stripsBody .strip .cell.w, #stripsBody .strip .cell.c");
     await until(() => !document.getElementById("incidentWindow").hidden);
-    ok("the window names the row and the block", /Line · \d\d:\d\d/.test(await text("#incidentWindow")));
+    ok("the window names the row and the block", /Gateway · \d\d:\d\d/.test(await text("#incidentWindow")));
     ok("the seeded drop is listed", /Short gateway drop/.test(await text("#incidentsBody")));
     await click("[data-action=clearIncidentWindow]");
     await until(() => document.getElementById("incidentWindow").hidden);

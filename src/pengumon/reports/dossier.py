@@ -2,7 +2,9 @@
 
 Every sentence in the dossier follows from the data in the window: loss figures come from the per-minute
 rollups, RF wording appears only when DOCSIS evidence exists, and the failing hop is named only when its loss
-stands out from the hops before it."""
+stands out from the hops before it. Where loss starts is said in the provider's terms: the gateway is probed on its
+home-side address, which does not use the line, so loss starting there is the gateway's, never called a line fault;
+loss starting at the provider's first router while the gateway answers is the line or that router."""
 
 import time
 from collections import defaultdict
@@ -12,7 +14,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pengumon.lines import docsis
 from pengumon.lines.docsis import channel_finding, is_degraded as _is_degraded, uncorrectable_increase as _uncorrectable_increase
-from pengumon.incidents.taxonomy import current_cause
+from pengumon.analysis.incident import UNREACHABLE_KINDS
+from pengumon.incidents.taxonomy import incident_cause
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.reports.common import (
     _canonical_order, _hop_label, _split_incidents, _targets, find_primary_failing_hop, material_loss_points,
@@ -30,7 +33,8 @@ class DossierFacts:
     excluded: int                              # expected incidents left out of the totals
     busy_pct: float
     under_load: int                            # incidents at or above busy_pct line load
-    by_cause: List[Tuple[str, int, float]]     # (cause, count, minutes), in render order (most frequent first)
+    by_cause: List[Tuple[str, int, float]]     # (cause category, count, minutes), in render order (most frequent
+    #                                            first); CAUSE_WORDS names them
     hop_stats: List[Dict[str, Any]]            # canonical order
     primary: Optional[Dict[str, Any]]          # first hop with elevated loss
     later_lossy: List[Dict[str, Any]]          # hops after `primary` that also lose >= material_loss_points
@@ -47,6 +51,36 @@ class DossierFacts:
     gw_name: str
     ignoring: frozenset = frozenset()          # hops that ignore ping (engine.path_rules): listed, never counted
     material: float = material_loss_points(None)  # percentage points that make a hop's loss material (reports:)
+    primary_place: Optional[str] = None        # where `primary` sits: PLACES key (None: no primary, or another hop)
+    window_readings: int = 0                   # modem readings in the window ...
+    modem_unanswered: int = 0                  # ... and those where the modem could not be reached at all
+
+
+# The incidents' cause categories (incidents.taxonomy) in the provider's terms.
+CAUSE_WORDS = {
+    "router": "home network (router or Wi-Fi)",
+    "gateway": "gateway (modem) not answering on its home side",
+    "line": "line or the provider's first router",
+    "isp": "provider's network beyond its first router",
+    "internet": "public servers only",
+    "dns": "DNS lookups",
+    "load": "busy line",
+    "unknown": "not attributed",
+}
+
+
+def place_of(primary: Optional[Dict[str, Any]], categories: Dict[str, Optional[str]],
+             hop_stats: List[Dict[str, Any]]) -> Optional[str]:
+    """Where the first hop with elevated loss sits: "home" (the router), "gateway" (the gateway's home-side address),
+    "first_isp" (the provider's first hop, so the gateway answered), "isp" (a later provider hop), "internet", or None
+    (no such hop, or a custom or DNS one)."""
+    if primary is None:
+        return None
+    cat = categories.get(primary["target_id"])
+    if cat == "isp":
+        first_isp = next((h for h in hop_stats if categories.get(h["target_id"]) == "isp"), None)
+        return "first_isp" if first_isp is primary else "isp"
+    return {"local": "home", "gateway": "gateway", "public": "internet"}.get(cat)
 
 
 def hop_note(h: Dict[str, Any], primary: Optional[Dict[str, Any]], ignoring=frozenset(),
@@ -61,11 +95,13 @@ def hop_note(h: Dict[str, Any], primary: Optional[Dict[str, Any]], ignoring=froz
 
 
 async def collect_dossier_facts(repository, config, hours: int, now: float, line=None,
-                                ignoring: Iterable[str] = ()) -> DossierFacts:
+                                ignoring: Iterable[str] = (), *, start: Optional[float] = None) -> DossierFacts:
     """`line` is the line device's DocsisHistory (pengumon.lines.docsis); without one the dossier has no modem
-    readings. `ignoring`: the hops that ignore ping now (engine.path_rules); their loss counts in no finding."""
+    readings. `ignoring`: the hops that ignore ping now (engine.path_rules); their loss counts in no finding.
+    `start`: the window begins here instead of `hours` before `now`, and its hop totals stop at `now` (the AI pack's
+    windows end at their own end time)."""
     ignoring = frozenset(ignoring)
-    start_time = now - hours * 3600
+    start_time = now - hours * 3600 if start is None else start
 
     rows = await repository.get_incidents_since(start_time)
     incidents, excluded = _split_incidents(rows)
@@ -80,8 +116,9 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     under_load = sum(1 for r in incidents if (r.get("load_pct") or 0) >= busy_pct)
     by_cause: Dict[str, List[float]] = defaultdict(lambda: [0, 0.0])
     for r in incidents:
-        by_cause[current_cause(r["cause_code"])][0] += 1
-        by_cause[current_cause(r["cause_code"])][1] += lasted(r) / 60.0
+        cause = incident_cause(r.get("kind"), r["cause_code"], r.get("description"))
+        by_cause[cause][0] += 1
+        by_cause[cause][1] += lasted(r) / 60.0
     causes = [(c, n, m) for c, (n, m) in sorted(by_cause.items(), key=lambda kv: -kv[1][0])]
 
     cfg_targets = _targets(config)
@@ -90,7 +127,9 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     categories = {t.id: getattr(t, "category", None) for t in cfg_targets}
     order = _canonical_order(cfg_targets)
 
-    hop_stats = await repository.get_hop_stats(start_time)
+    # end_time is passed only with `start`: a repository that takes none (the characterization fake) is called as before
+    hop_stats = await (repository.get_hop_stats(start_time) if start is None
+                       else repository.get_hop_stats(start_time, now))
     hop_stats.sort(key=lambda h: order.index(h["target_id"]) if h["target_id"] in order else 999)
     material = material_loss_points(config)
     primary = find_primary_failing_hop(hop_stats, ignoring, material)
@@ -136,6 +175,7 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         ignoring=ignoring,
         material=material,
         primary=primary,
+        primary_place=place_of(primary, categories, hop_stats),
         later_lossy=later_lossy,
         labels=labels,
         names=names,
@@ -143,12 +183,42 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         docsis_snapshot=docsis_snapshot,
         snap_ok=snap_ok,
         has_window_snaps=bool(window_snaps),
+        window_readings=len(window_snaps),
+        modem_unanswered=sum(1 for s in window_snaps if s.status == "error"
+                             and (s.error_kind is None or s.error_kind in UNREACHABLE_KINDS)),
         unc_increase=unc_increase,
         degraded=[(c, channel_finding(c)) for c in degraded_channels],
         rf_evidence=rf_evidence,
         local_name=next((t.name for t in cfg_targets if categories.get(t.id) == "local"), "the local router"),
         gw_name=next((t.name for t in cfg_targets if categories.get(t.id) == "gateway"), "the gateway"),
     )
+
+
+# The ticket's sentence after "Loss is first elevated at <hop>: <n>%.", by where that hop sits.
+_TICKET_PLACE = {
+    "gateway": " That is the gateway's home-side address, which does not use the line: the gateway stopped answering "
+               "while the router answered.",
+    "first_isp": " That is the provider's first router; the gateway answered, so the loss starts on the line or at "
+                 "that router.",
+}
+
+
+def _place_text(f: DossierFacts) -> str:
+    """The rest of "- Loss first appears at <hop>": what that place means, without claiming more than it shows."""
+    place = f.primary_place
+    if place == "gateway":
+        return (f", the gateway probed on its home-side address, while {f.local_name} answers. These probes do not "
+                "use the line, so the gateway itself stopped answering (restarting, overloaded, or the link from the "
+                "router to it); a line fault shows here only if it made the gateway restart."
+                + (" The modem's RF signs above are a separate finding." if f.rf_evidence else ""))
+    if place == "first_isp":
+        return (", the provider's first router, while the gateway answers: the line or that router."
+                + (" The modem's RF signs in the same window point to the line itself." if f.rf_evidence else ""))
+    if place == "isp":
+        return ", inside the provider's network past its first router; the hops before it show no comparable loss."
+    if place == "internet":
+        return ", past the provider's routers."
+    return "."
 
 
 def render_dossier_markdown(f: DossierFacts) -> str:
@@ -174,7 +244,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
           f"- **Recorded incidents:** {f.total_incidents}",
           f"- **Cumulative duration:** {f.total_dur_min} minutes ({round(f.total_dur_sec)} seconds)"]
     if f.by_cause:
-        parts = ", ".join(f"{c}: {n} ({m:.1f} min)" for c, n, m in f.by_cause)
+        parts = ", ".join(f"{CAUSE_WORDS.get(c, c)}: {n} ({m:.1f} min)" for c, n, m in f.by_cause)
         L.append(f"- **By cause:** {parts}")
     if f.under_load:
         L.append(f"- {f.under_load} of these occurred while the line was at {f.busy_pct:g}% load or more.")
@@ -220,6 +290,9 @@ def render_dossier_markdown(f: DossierFacts) -> str:
               f"- Uncorrectable codewords since modem boot: {s.uncorrectables_total:,}"]
         if f.has_window_snaps:
             L.append(f"- New uncorrectable codewords recorded in the window: {unc_increase:,}")
+    if f.modem_unanswered:
+        L.append(f"- The modem's status page did not answer in {f.modem_unanswered} of {f.window_readings} readings "
+                 f"in the window.")
 
     if degraded_channels:
         worst = degraded_channels[0]
@@ -251,7 +324,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     else:
         L.append("- No modem data is available, so nothing can be said about the RF side.")
     if primary:
-        L.append(f"- Loss first appears at {f.labels[primary['target_id']]}.")
+        L.append(f"- Loss first appears at {f.labels[primary['target_id']]}{_place_text(f)}")
     else:
         L.append("- The probes did not isolate a single failing hop.")
 
@@ -262,7 +335,8 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     if max_lan_loss is not None:
         L.append(f"Loss to {f.local_name} and {f.gw_name}: at most {max_lan_loss}%.")
     if primary:
-        L.append(f"Loss is first elevated at {f.labels[primary['target_id']]}: {primary['loss_pct']}%.")
+        L.append(f"Loss is first elevated at {f.labels[primary['target_id']]}: {primary['loss_pct']}%."
+                 + _TICKET_PLACE.get(f.primary_place, ""))
     else:
         L.append("No single failing hop could be isolated from the probe data.")
     if rf_evidence:
@@ -273,7 +347,13 @@ def render_dossier_markdown(f: DossierFacts) -> str:
                      f"({len(degraded_channels)} channel(s) in total).")
         if unc_increase > 0:
             L.append(f"Modem: {unc_increase:,} new uncorrectable codewords in the window.")
-        L.append("Request: please check the line (tap, drop, connectors) for RF impairment.")
+        if f.primary_place == "gateway":
+            L.append("Request: please check the gateway, which stopped answering on its home side; the modem's RF "
+                     "readings also justify a line check (tap, drop, connectors).")
+        else:
+            L.append("Request: please check the line (tap, drop, connectors) for RF impairment.")
+    elif f.primary_place == "gateway":
+        L.append("Request: if you supplied this gateway, please check it; it stopped answering on its home side.")
     L += ["```"]
 
     return "\n".join(L)

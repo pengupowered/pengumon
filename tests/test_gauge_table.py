@@ -10,7 +10,8 @@ from pengumon.engine.classifier import OutageClassifier
 from pengumon.engine.prober import NetworkProber
 from pengumon.metrics import render_metrics
 from pengumon.devices.snapshots import RouterMetricsSnapshot
-from pengumon.lines.docsis_model import DocsisSignalSnapshot
+from pengumon.capabilities import BAND_5G, Client, ClientsReading, MeshNode, MeshReading
+from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.observability import export
 from pengumon.observability.export import observe_state
 from pengumon.observability.gauges import GAUGES
@@ -37,8 +38,15 @@ def _populate(app_state):
     app_state.classifier.last_diagnosis.load_pct = 12.0
     app_state.classifier.load = SimpleNamespace(down_mbps=100.0, up_mbps=10.0)
     modem, router = build_modem(password="pw"), build_router()
-    modem.monitor.latest_snapshot = DocsisSignalSnapshot(status="healthy")
-    router.monitor.latest_snapshot = RouterMetricsSnapshot(status="warning")
+    modem.monitor.latest_snapshot = DocsisSignalSnapshot(status="healthy", channels=[
+        DocsisChannel(channel_id=1, direction="downstream", frequency_mhz=600.0, power_dbmv=1.0, snr_db=38.0,
+                      grades={"power": "good"}),
+        DocsisChannel(channel_id=2, direction="upstream", frequency_mhz=30.0, power_dbmv=42.0)])
+    router.monitor.latest_snapshot = RouterMetricsSnapshot(
+        status="warning", wan_rx_rate_mbps=10.0, wan_tx_rate_mbps=1.0, cpu_usage_pct=20.0, mem_usage_pct=50.0)
+    router.monitor.latest_clients = ClientsReading((Client(key="a", connection="wifi", band=BAND_5G, rssi_dbm=-80),))
+    router.monitor.latest_mesh = MeshReading((MeshNode("0000a1", "Hall", online=True, backhaul="wifi",
+                                                       backhaul_rssi_dbm=-60),))
     app_state.devices = DeviceRegistry([modem, router])
     status = SimpleNamespace(ok=True, latency_ms=200.0)
     app_state.service_checker = SimpleNamespace(services=[SimpleNamespace(id="app_a")], status={"app_a": status})

@@ -59,7 +59,7 @@ def test_the_summary_names_what_was_added_removed_renamed_and_what_changed_role_
              ISP.model_copy(update={"address": "198.51.100.10", "category": "gateway"})]
     text, moves = describe_change([GW, ISP, PUB], after)
     assert text == ("Added Modem; removed Public; renamed Gateway to Home gateway; Provider hop 1: address "
-                    "198.51.100.9 → 198.51.100.10; Provider hop 1: role Provider → Line / gateway")
+                    "198.51.100.9 → 198.51.100.10; Provider hop 1: role Provider → Gateway (modem)")
     assert moves == [("isp_1", "198.51.100.9", "198.51.100.10")]
     assert describe_change([GW, ISP], [ISP, GW]) == ("Order changed", [])
     assert describe_change([GW], [GW.model_copy(update={"color": "#112233"})])[0] == "Settings of 1 hop changed"

@@ -215,4 +215,5 @@ class attributes are optional: `url_schemes` (default `("http", "https")`; snmp 
 `default_username` (used when the entry sets no `username`; openwrt has `root`). Add it to `DRIVERS` in
 `drivers/__init__.py`. Its test feeds recorded device answers through an
 `httpx.MockTransport` (see `tests/test_router.py` and `tests/test_driver_http.py`). Scheduling, rates, health,
-storage, logging and tracing come from the shared device runner.
+storage, logging and tracing come from the shared device runner. Its capabilities also bring their sections of the AI
+troubleshooting pack; a driver may add `pack_notes` about itself ([ai-pack.md](ai-pack.md#adding-a-module-developers)).

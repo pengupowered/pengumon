@@ -146,7 +146,7 @@ async def test_report_availability_incidents_and_hours(tmp_path):
     assert report["incidents"]["count"] == 1
     assert report["incidents"]["minutes"] == 1.0
     assert report["incidents"]["excluded_expected"] == 1
-    assert report["incidents"]["by_cause"] == [{"cause_code": "unknown_outage", "count": 1, "minutes": 1.0}]
+    assert report["incidents"]["by_cause"] == [{"cause": "unknown", "count": 1, "minutes": 1.0}]
     assert report["worst_hours"] and report["worst_hours"][0]["loss_pct"] > 0
 
 

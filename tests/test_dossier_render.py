@@ -162,3 +162,19 @@ def test_hop_note():
     assert hop_note(hop("c", lost=5), primary) == "Elevated loss"      # exactly 0.5 %
     assert hop_note(hop("c", lost=4), primary) == "No material loss"
     assert hop_note(hop("b", lost=30), None) == "Elevated loss"
+
+
+def test_the_dossier_says_which_side_stopped_answering_and_never_calls_gateway_loss_a_line_fault():
+    """The gateway is probed on its home-side address, which does not use the line: loss starting there is the
+    gateway's, and the line check is asked for only on the modem's RF signs. Loss starting at the provider's first
+    router while the gateway answers is the line or that router."""
+    gw = hop("gateway", lost=50)
+    at_gateway = render_dossier_markdown(facts(hop_stats=[gw], primary=gw, primary_place="gateway",
+                                               labels={"gateway": "Modem"}, by_cause=[("gateway", 2, 3.0)]))
+    assert "the gateway itself stopped answering" in at_gateway and "not answering on its home side: 2 (3.0 min)" in at_gateway
+    assert "the gateway answered" not in at_gateway and "check the line" not in at_gateway
+    first = hop("isp", lost=50)
+    at_isp = render_dossier_markdown(facts(hop_stats=[first], primary=first, primary_place="first_isp",
+                                           labels={"isp": "Hub"}, rf_evidence=True, unc_increase=40))
+    assert "the provider's first router, while the gateway answers: the line or that router" in at_isp
+    assert "point to the line itself" in at_isp and "Request: please check the line" in at_isp

@@ -63,12 +63,16 @@ async def test_worst_hours_are_the_five_lossiest_with_ties_by_hour_and_none_with
 
 
 async def test_incident_totals_exclude_expected_ones_and_order_causes_by_count_then_name():
-    rows = [{"cause_code": c, "duration_seconds": d, "expected": e} for c, d, e in (
-        ("b", 60.0, 0), ("a", 120.0, 0), ("b", None, 0), ("c", 30.0, 0), ("a", 30.0, 0), ("x", 900.0, 1))]
+    """By cause category, the kind first: an access_line_drop of upstream latency is the provider's network (isp), a
+    gateway incident of an older build (double_nat_congestion) the gateway."""
+    rows = [{"cause_code": c, "kind": k, "duration_seconds": d, "expected": e} for c, k, d, e in (
+        ("double_nat_congestion", "gateway_loss", 60.0, 0), ("access_line_drop", "isp_loss", 120.0, 0),
+        ("gateway_unreachable", "gateway_down", None, 0), ("access_line_drop", "upstream_latency", 30.0, 0),
+        ("access_line_drop", "isp_outage", 30.0, 0), ("dns_resolver_failure", "dns_loss", 900.0, 1))]
     inc = (await build_report(Repo(incidents=rows), None, 1, now=NOW))["incidents"]
     assert inc["count"] == 5 and inc["excluded_expected"] == 1 and inc["minutes"] == 4.0
-    assert inc["by_cause"] == [{"cause_code": "a", "count": 2, "minutes": 2.5}, {"cause_code": "b", "count": 2, "minutes": 1.0},
-                               {"cause_code": "c", "count": 1, "minutes": 0.5}]
+    assert inc["by_cause"] == [{"cause": "gateway", "count": 2, "minutes": 1.0}, {"cause": "line", "count": 2, "minutes": 2.5},
+                               {"cause": "isp", "count": 1, "minutes": 0.5}]
 
 
 async def test_an_open_incident_counts_as_downtime_until_now():

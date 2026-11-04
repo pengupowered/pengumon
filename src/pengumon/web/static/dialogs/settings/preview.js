@@ -70,7 +70,7 @@ export function previewHtml() {
   const job = P.job;
   const days = P.days ?? defaultDays();
   const head = `<div class="set-prev-h"><h3 class="section-t">Preview</h3>
-    <label class="set-days">Preview the last <input class="input num" type="text" inputmode="numeric" id="settingsPreviewDays" value="${days}" size="3" aria-label="Days to replay"> days</label>
+    <label class="set-days">Preview the last <input class="input num" type="text" inputmode="numeric" id="settingsPreviewDays" value="${escapeHtml(days)}" size="3" aria-label="Days to replay"> days</label>
     <button type="button" class="btn sm outline" data-action="settingsPreviewRun" data-needs-edit${P.running ? ' disabled' : ''}>${P.running ? 'Running…' : 'Run preview'}</button>${P.running ? '<button type="button" class="btn sm" data-action="settingsPreviewCancel">Cancel</button>' : ''}</div>`;
   let body = '';
   if (P.error) body = `<div class="result st-crit" id="settingsPreviewResult" role="status"><span>${escapeHtml(P.error)}</span></div>`;
@@ -80,7 +80,7 @@ export function previewHtml() {
   } else if (P.cancelled) {
     body = '<p class="fine top" id="settingsPreviewResult" role="status">Preview cancelled. Nothing was changed.</p>';
   } else if (job && job.state === 'done' && job.draft && job.current) {
-    body = `<div class="result st-${stale() ? 'unknown' : 'good'}${stale() ? ' stale' : ''}" id="settingsPreviewResult" role="status"><span>With these rules the last ${days} day${days === 1 ? '' : 's'} would have had ${counts(job)}.
+    body = `<div class="result st-${stale() ? 'unknown' : 'good'}${stale() ? ' stale' : ''}" id="settingsPreviewResult" role="status"><span>With these rules the last ${escapeHtml(days)} day${days === 1 ? '' : 's'} would have had ${counts(job)}.
       ${stale() ? '<b>Out of date: the draft changed since. Run the preview again.</b>' : ''}</span></div>
       ${recordedNote(job)}${(job.notes || []).map((n) => `<p class="fine">${escapeHtml(n)}</p>`).join('')}${changeList(job)}`;
   } else if (job && (job.state === 'failed' || job.state === 'cancelled')) {

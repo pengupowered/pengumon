@@ -10,7 +10,7 @@ import base64
 import json
 import re
 import time
-from typing import TYPE_CHECKING, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -19,6 +19,7 @@ from pengumon.capabilities import (
     BAND_2G, BAND_5G, BAND_6G, BAND_OTHER, Capability, Client, ClientsReading, DriverError, ErrorKind, MeshNode, MeshReading,
     PollResult, SystemReading, WanCounters,
 )
+from pengumon.capabilities.contrib import DriverNotes
 from pengumon.drivers.common import CPU_MIN_INTERVAL_SECONDS, CpuCounters
 from pengumon.drivers.common import cpu_pct as _cpu_pct
 from pengumon.drivers.http import DeviceHttp, Verify, device_verify
@@ -377,6 +378,25 @@ class AsusWrtDriver:
     options_model = AsusWrtOptions
     # WAN rates for the load-aware classifier need recent counters; one request every 10 s is light for the router.
     default_poll_seconds = 10.0
+    # The AI pack's note on this driver (capabilities/contrib.py). Each statement is established by this file:
+    #  - ASUS router with ASUS firmware (AsusWRT), mesh nodes only on an AiMesh network: the module docstring, :1-2,
+    #    and `label` :375; `{aimesh}` is filled in only when a mesh was seen;
+    #  - counters read every {poll}: the poll interval of the device entry (`default_poll_seconds` :380 when it sets
+    #    none; one request carries every hook, :4-6);
+    #  - client list every {clientlist_interval}, counts in between repeat the last list: `clientlist_interval_seconds`
+    #    :353 and the reuse at :532-533;
+    #  - CPU is the average since the previous reading: `_cpu_percent` :687-688;
+    #  - node names are the alias, else the model: `_parse_mesh_names` :235-247;
+    #  - offline clients the router remembers are not counted: devices/samples.py `client_counts` :18 (online only).
+    # The anonymized text leaves out the vendor, firmware and mesh-network words.
+    pack_notes: ClassVar[DriverNotes] = DriverNotes(
+        full=("Device notes: the router is an ASUS router with ASUS firmware (AsusWRT){aimesh}. Its counters are "
+              "read every {poll}, its client list every {clientlist_interval} (counts in between repeat the last "
+              "list). CPU is the average since the previous reading. Node names are the owner's alias, else the "
+              "model. Clients the router still remembers but are offline are not counted."),
+        anonymized=("Device notes: the router reports WAN counters every {poll} and its client list every "
+                    "{clientlist_interval}; CPU is the average since the previous reading."),
+    )
 
     def __init__(self, url: str, username: str, password: Optional[str], *,
                  clientlist_interval_seconds: float = 60.0, mesh_node_names: bool = True,

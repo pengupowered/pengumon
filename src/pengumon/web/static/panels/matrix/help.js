@@ -10,7 +10,7 @@ const ms = (v, key, fallback) => `${val(v, HOP + key, fallback)} ms`;
 
 registerHelp({
   'hop.category': 'The bold name is the target\'s place in the path, in the words Path health uses: Router is a device on '
-    + 'your own network (category local), Line is your modem or the box your provider gave you (gateway), ISP hop N is a '
+    + 'your own network (category local), Gateway is your modem or the box your provider gave you, probed on its home-side address (gateway), ISP hop N is a '
     + 'router inside your provider\'s network (isp), Internet with an address is a well-known server such as 1.1.1.1 '
     + '(public), and DNS lookup is a name lookup test instead of a ping (dns). A target you added yourself (custom) keeps '
     + 'its name. Under it: the name from your config and the address. A fault is placed at the nearest stage that stops '

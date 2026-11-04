@@ -37,7 +37,7 @@
   "## 1. Summary",
   "- **Recorded incidents:** 4",
   "- **Cumulative duration:** 4.5 minutes (270 seconds)",
-  "- **By cause:** a_cause: 2 (1.5 min), b_cause: 1 (1.0 min), c_cause: 1 (2.0 min)",
+  "- **By cause:** home network (router or Wi-Fi): 2 (1.5 min), gateway (modem) not answering on its home side: 1 (1.0 min), provider's network beyond its first router: 1 (2.0 min)",
   "- 2 of these occurred while the line was at 60% load or more.",
   "- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by 0.5 points or more.",
   "",

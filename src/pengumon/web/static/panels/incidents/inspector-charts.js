@@ -152,7 +152,7 @@ export function renderTracks(data) {
     : null;
 
   const ids = sortTargetsByCanonical(targetSet);
-  const labelOf = shortLabels(targetList()); // the page's short names (Router, Line, ...); the configured one on hover
+  const labelOf = shortLabels(targetList()); // the page's short names (Router, Gateway, ...); the configured one on hover
   const latSets = [];
   const lossSets = [];
   ids.forEach((tid) => {

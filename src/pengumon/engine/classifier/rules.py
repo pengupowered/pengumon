@@ -18,16 +18,22 @@ ISP_HOP_WORDING_LOSS_PCT = 30.0
 def _lan_answers(m: RoundMetrics) -> str:
     """What in the home network was seen answering, for "... while X answer(s) normally"."""
     if m.local.measured and m.gateway.measured:
-        return "the local router and modem answer"
+        return "the local router and the gateway answer"
     if m.gateway.measured:
-        return "the modem answers"
+        return "the gateway answers"
     return "the local router answers"
+
+
+def _past_gateway(m: RoundMetrics, line: LineWording, causes: str) -> str:
+    """The possible causes of loss from the provider's first hop on. Without a gateway target nothing shows the
+    gateway answering, so it stays a possible cause."""
+    return causes if m.gateway.measured else f"{line.gateway}, not monitored here; {causes}"
 
 
 def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream_issue_ts: float,
              line: LineWording = GENERIC) -> Verdict:
-    """Determines the specific root-cause code and explanation. `line` phrases the possible causes of a fault on
-    the access line for its technology (pengumon.lines)."""
+    """Determines the specific root-cause code and explanation. `line` phrases the gateway and the possible causes of
+    a fault on the access line for its technology (pengumon.lines)."""
     local_loss, local_avg_lat, local_jitter = m.local.loss_pct, m.local.avg_latency_ms, m.local.jitter_ms
     gateway_loss, gateway_avg_lat, gateway_jitter = m.gateway.loss_pct, m.gateway.avg_latency_ms, m.gateway.jitter_ms
     isp_loss, isp_avg_lat, isp_jitter = m.isp.loss_pct, m.isp.avg_latency_ms, m.isp.jitter_ms
@@ -76,14 +82,16 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             affected=m.failed_targets,
         )
 
-    # 2. Gateway Link Fault
+    # 2. The gateway (modem), probed on its home-side address. Those probes never use the provider's line, so loss
+    #    here is the gateway itself or the link from the router to it, not the line.
+    gw_side = f"{gw_name} ({gw_addr}), {line.gateway} on its home-side address,"
     if gateway_loss >= down and local_loss < degraded:
         return Verdict(
             kind="gateway_down",
             status="down",
-            cause="double_nat_congestion",
-            title=f"{local_name} to {gw_name} Link Failure",
-            description=f"Packets to {gw_name} ({gw_addr}) are timing out ({gateway_loss}% loss) while {local_name} answers normally. Possible causes: the WAN Ethernet link or the gateway itself.",
+            cause="gateway_unreachable",
+            title=f"{gw_name} Not Answering",
+            description=f"{gw_side} is not answering ({gateway_loss}% of probes lost) while {local_name} answers normally. These probes do not use the provider's line. Possible causes: the gateway itself (restarting, overloaded, its firmware or power) or the link from the router to it.",
             severity="critical",
             affected=m.failed_targets,
         )
@@ -91,9 +99,9 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
         return Verdict(
             kind="gateway_loss",
             status="degraded",
-            cause="double_nat_congestion",
+            cause="gateway_unreachable",
             title=f"{gw_name} Packet Loss",
-            description=f"{gw_name} ({gw_addr}) is dropping {gateway_loss}% of packets while {local_name} answers normally. Possible causes: gateway congestion or a problem on the link to it.",
+            description=f"{gw_side} is dropping {gateway_loss}% of probes while {local_name} answers normally. These probes do not use the provider's line. Possible causes: the gateway itself (overloaded, its firmware or power) or the link from the router to it.",
             severity="warning",
             affected=m.failed_targets,
         )
@@ -103,7 +111,7 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             status="degraded",
             cause="double_nat_congestion",
             title=f"{gw_name} Latency Delay",
-            description=f"Latency to {gw_name} ({gw_addr}) is {gateway_avg_lat}ms (jitter {gateway_jitter}ms). Possible causes: gateway congestion or a busy WAN link.",
+            description=f"Latency to {gw_side} is {gateway_avg_lat}ms (jitter {gateway_jitter}ms). Possible causes: a busy gateway or a busy link from the router to it.",
             severity="warning",
             affected=m.failed_targets,
         )
@@ -124,35 +132,45 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             affected=m.failed_targets,
         )
 
-    # 3. ISP Line / Regional Hub Outage (Local & Gateway healthy, but ISP or Public drops)
+    # 3. Loss from the provider's first hop on while the gateway answers: the line (from the gateway to that hop) or
+    #    the provider's first router. Loss only past it (the ISP hop answers, the internet does not): the provider's
+    #    network beyond, not the line.
     if (isp_loss >= down or public_loss >= down) and local_loss < degraded:
         if isp_loss >= ISP_HOP_WORDING_LOSS_PCT:
-            detail = f"Packets to {isp_name} ({isp_addr}) are timing out ({isp_loss}% loss) while {_lan_answers(m)} normally. Possible causes: {line.outage}."
+            cause, title = "access_line_drop", f"Line or {isp_name} Outage"
+            detail = f"Packets to {isp_name} ({isp_addr}) are timing out ({isp_loss}% loss) while {_lan_answers(m)} normally. Possible causes: {_past_gateway(m, line, line.outage)}."
+        elif not m.isp.measured:
+            # no provider hop to tell the line from what lies beyond it: the line stays first among the causes
+            cause, title = "access_line_drop", "Line or Provider Outage"
+            detail = f"Traffic to the public internet is timing out ({public_loss}% loss) while {_lan_answers(m)} normally. No provider hop is monitored, so the line cannot be told apart from the provider's network. Possible causes: {_past_gateway(m, line, line.outage)}, or a failure further into the provider's network."
         else:
-            subject = "The local modem" if m.gateway.measured else "The local router"
+            cause, title = "internet_backbone_transit_loss", "ISP Backbone Outage"
+            subject = "The gateway" if m.gateway.measured else "The local router"
             detail = f"{subject} and {isp_name} answer, but public internet traffic is timing out ({public_loss}% loss). Possible causes: an ISP peering or backbone link failure."
         return Verdict(
             kind="isp_outage",
             status="down",
-            cause="access_line_drop",
-            title=f"ISP Line / {isp_name} Outage",
+            cause=cause,
+            title=title,
             description=detail,
             severity="critical",
             affected=m.failed_targets,
         )
     if isp_loss >= degraded or public_loss >= degraded:
         if isp_loss >= degraded:
-            kind = "isp_loss"
-            title = f"ISP Line / {isp_name} Packet Loss"
-            detail = f"{isp_name} ({isp_addr}) lost {isp_loss}% of recent probes while {_lan_answers(m)} normally. Possible causes: {line.loss}, or the hop deprioritising ping replies."
+            kind, cause = "isp_loss", "access_line_drop"
+            title = f"Line or {isp_name} Packet Loss"
+            detail = f"{isp_name} ({isp_addr}) lost {isp_loss}% of recent probes while {_lan_answers(m)} normally. Possible causes: {_past_gateway(m, line, line.loss)}, or the hop deprioritising ping replies."
         else:
-            kind = "backbone_loss"
+            kind, cause = "backbone_loss", "internet_backbone_transit_loss"
             title = "ISP Upstream Backbone Packet Loss"
             detail = f"{public_loss}% of probes to public internet targets were lost while the local network and {isp_name} answer normally. Possible causes: ISP upstream peering or backbone congestion."
+            if not m.isp.measured:
+                detail = f"{public_loss}% of probes to public internet targets were lost while the local network answers normally. No provider hop is monitored, so this may also be the line. Possible causes: ISP upstream peering or backbone congestion, or {_past_gateway(m, line, line.loss)}."
         return Verdict(
             kind=kind,
             status="degraded",
-            cause="access_line_drop",
+            cause=cause,
             title=title,
             description=detail,
             severity="warning",
@@ -249,7 +267,7 @@ def apply_load(
             cause="load_induced_latency",
             title="Line Busy: ISP Hops Deprioritise Ping",
             description=(
-                f"{verdict.title} while the line is busy ({load_text}). The LAN, modem and public internet "
+                f"{verdict.title} while the line is busy ({load_text}). The LAN, gateway and public internet "
                 f"answer normally; intermediate ISP routers drop ping replies first under load. Expected, "
                 f"not counted as an incident."
             ),

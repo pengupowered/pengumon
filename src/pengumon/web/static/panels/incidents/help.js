@@ -6,8 +6,10 @@ import { val } from '../../js/settings-values.js';
 
 registerHelp({
   'incident.cause': 'Where the fault sat, as the classifier placed it; the timeline has one lane per cause. Router: your own '
-    + 'router or mesh (Path health\'s Router). Line: the gateway or modem and the line to your provider (Path health\'s Line). '
-    + 'ISP: the provider\'s hops and beyond (ISP hops, backbone). Internet: only the public servers failed. DNS: '
+    + 'router or mesh (Path health\'s Router). Gateway: your gateway or modem stopped answering on its home-side address '
+    + '(Path health\'s Gateway); those pings do not use the line, so it is the gateway itself or the link to it. Line: loss '
+    + 'starts at the provider\'s first router while the gateway answers, so your line or that router. ISP: the provider\'s '
+    + 'network beyond it (backbone, upstream latency). Internet: only the public servers failed. DNS: '
     + 'name lookups failed while pings worked. Load: delay explained by a busy line. The % load chip is the peak WAN load '
     + 'around the event, as a share of the line capacity.',
   'line.load': (v) => 'How busy the internet line is, as a percentage of its capacity, from the router\'s WAN byte counters '

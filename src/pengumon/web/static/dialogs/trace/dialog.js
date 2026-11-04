@@ -15,7 +15,7 @@ const $ = (id) => document.getElementById(id);
 // The path stages a hop can be added as (Path health's words), and the one suggested: the first hop is the router; a
 // private address after it is most often the modem or the provider's box (a cable provider's first router can be one
 // too, hence the choice); a public one is an ISP hop, and the traced host itself the internet.
-const STAGES = [['local', 'Router'], ['gateway', 'Line'], ['isp', 'ISP hop'], ['public', 'Internet'], ['custom', 'Other']];
+const STAGES = [['local', 'Router'], ['gateway', 'Gateway'], ['isp', 'ISP hop'], ['public', 'Internet'], ['custom', 'Other']];
 
 function suggestedStage(h) {
   if (h.hop_number === 1) return 'local';

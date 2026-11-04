@@ -36,6 +36,9 @@ provider a report instead of a hunch.
   expected rather than reported as a fault.
 - **Patterns over time.** Loss by hour of the week, per-target uptime, a reliability report, and an ISP dossier to send
   to support. Click any hour or uptime block to see the incidents in it.
+- **Ask an AI.** One Markdown document of Pengumon's own findings (where problems start, what is normal, what coincided,
+  what it cannot see) with instructions, to paste into any chat model; nothing is sent anywhere by Pengumon. Full,
+  Vague or Anonymized, from the dashboard (or `GET /api/ai-pack`): [the guide](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md).
 - **Your modem and router.** DOCSIS channel levels and codeword errors; router CPU, memory, WAN traffic, connected
   clients and mesh nodes. Drivers are pluggable.
 - **Your own apps too.** HTTP health checks for self-hosted services, with incidents and alerts by [ntfy](https://ntfy.sh) or webhook.
@@ -121,7 +124,8 @@ ignored; a fresh install leaves it out and discovers its path.
 Each hop has a role (**category**) that places it on the path. Any number of each works, and none is required:
 
 - `local`: shown as **Router**; your router or mesh nodes.
-- `gateway`: shown as **Line**; the cable/fiber modem or the provider's box.
+- `gateway`: shown as **Gateway**; the cable/fiber modem or the provider's box, probed on its home-side address (those
+  pings never use the line, so loss there is the gateway's, not the line's).
 - `isp`: shown as **ISP hop 1, 2…**; your provider's routers, in path order.
 - `public`: shown as **Internet**; public resolvers, the figure is their median.
 - `custom`: shown under its own name; anything else worth watching: a NAS, a VPN, a server.
@@ -203,6 +207,7 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
 - [Devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md): The `devices:` list: drivers, capabilities, TLS, credentials, writing a driver
 - [Diagnosis](https://github.com/pengupowered/pengumon/blob/main/docs/diagnosis.md): How outages are classified: load-aware rules, incident kinds and causes
 - [Dashboard](https://github.com/pengupowered/pengumon/blob/main/docs/dashboard.md): The panels, the path chain, layout, themes, the phone view
+- [Ask AI](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md): The troubleshooting pack for a chat assistant: what it holds, the three detail levels, device modules
 - [Clients](https://github.com/pengupowered/pengumon/blob/main/docs/clients.md): Connected clients and mesh nodes, privacy settings, what is stored
 - [Services](https://github.com/pengupowered/pengumon/blob/main/docs/services.md): Health checks for your own apps and their notifications
 - [Webhooks](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md): Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets

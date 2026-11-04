@@ -36,7 +36,7 @@ export const steps = [
     ok(`rows stay small (${Math.max(...heights).toFixed(0)} px)`, Math.max(...heights) <= 44);
     await page.evaluate(() => [...document.querySelectorAll("#incidentsBody tr")].find((tr) => tr.textContent.includes("Short gateway drop")).querySelector(".when").click());
     await waitText("#inspCauseTitle", /^Short gateway drop$/);
-    ok("the description is in the inspector", /seeded/.test(await page.$eval("#inspCauseDesc", (e) => e.textContent)));
+    ok("the description is in the inspector", /home-side address/.test(await page.$eval("#inspCauseDesc", (e) => e.textContent)));
     await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
     await until(() => !document.getElementById("incidentInspectorModal").classList.contains("active"));
   }],
@@ -46,14 +46,14 @@ export const steps = [
     ok("lanes by cause", (await count("#incidentTimeline .tl-lane")) >= 1);
   }],
 
-  ["lanes use Path health's words: Router, Line, ISP, Internet, DNS, Load, Service; the cause help explains them", async ({ eq, ok, page, until }) => {
+  ["lanes use Path health's words: Router, Gateway, Line, ISP, Internet, DNS, Load, Service; the cause help explains them", async ({ eq, ok, page, until }) => {
     const r = await page.evaluate(async () => {
       const main = [...document.scripts].find((s) => s.type === "module").src;
       const m = await import(main.replace(/js\/main\.js$/, "panels/incidents/incidents.js"));
-      return { lanes: m.CAUSES.map(([k, w]) => `${k}=${w}`).join(","), words: ["router", "line", "isp"].map((c) => m.causeOf({ cause: c })).join(">") };
+      return { lanes: m.CAUSES.map(([k, w]) => `${k}=${w}`).join(","), words: ["router", "gateway", "line", "isp"].map((c) => m.causeOf({ cause: c })).join(">") };
     });
-    eq("lane keys and words", r.lanes, "router=Router,line=Line,isp=ISP,internet=Internet,dns=DNS,load=Load,service=Service,unknown=Other");
-    eq("the server's router, line and isp categories", r.words, "Router>Line>ISP");
+    eq("lane keys and words", r.lanes, "router=Router,gateway=Gateway,line=Line,isp=ISP,internet=Internet,dns=DNS,load=Load,service=Service,unknown=Other");
+    eq("the server's router, gateway, line and isp categories", r.words, "Router>Gateway>Line>ISP");
     await until(() => document.querySelectorAll("#incidentTimeline .tl-l").length >= 1);
     ok("no lane is still called Home", !/Home/.test(await page.$eval("#incidentTimeline", (e) => e.textContent)));
   }],
@@ -83,7 +83,7 @@ export const steps = [
     eq("hop rows", await count("#inspHopTableBody tr"), 3);
     const names = await page.$$eval("#inspHopTableBody tr td:first-child .primary", (els) => els.map((e) => `${e.textContent.trim()}|${e.title}`));
     eq("canonical hop order, the page's short names, the configured name on hover", names.join(","),
-      "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+      "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
     eq("path trace rows", await count("#inspPathTraceBody tr"), 2);
     eq("path trace shown", await shown("#inspPathTraceContainer"), true);
     eq("docsis card shown", await shown("#inspDocsisCard"), true);
@@ -109,6 +109,33 @@ export const steps = [
     const n = await chartLabels("incidentZoomChart");
     ok(`bucketed labels ${n}`, n > 100 && n <= 1900);
     await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+  }],
+
+  ["inspector: a gateway verdict is not blamed on the line; a line verdict reads the line's errors (desktop and phone)", async ({ click, eq, inspectNamed, noSideScroll, ok, page, phone, snap, text, waitText }) => {
+    // the seed: the gateway drop has uncorrectable errors in its window, the line incident none
+    const look = async (title, file) => {
+      await inspectNamed(title);
+      await waitText("#inspCauseTitle", new RegExp(`^${title}$`));
+      await waitText("#inspDocsisDesc", /\S/);
+      const seen = { desc: await text("#inspCauseDesc"), line: await text("#inspDocsisDesc"), evidence: await text("#inspEvidence") };
+      ok(`${title}: no sideways scroll`, await noSideScroll("incidentInspectorModal"));
+      await snap(file);
+      await page.$eval("#inspDocsisCard", (e) => e.scrollIntoView({ block: "center" }));
+      await snap(file.replace(".png", "-line-card.png"));
+      await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+      return seen;
+    };
+    for (const [suffix, run] of [["desktop", (fn) => fn()], ["phone", phone]]) {
+      await run(async () => {
+        const gw = await look("Short gateway drop", `verdict-gateway-${suffix}.png`);
+        ok(`gateway: the verdict says its probes do not use the line (${gw.desc})`, /do not use the provider's line/.test(gw.desc));
+        ok(`gateway: the line's errors are not said to explain it (${gw.line})`, /does not use the line, so these errors do not explain it/.test(gw.line) && !/fits this packet loss/.test(gw.line));
+        ok(`gateway: the evidence names the gateway (${gw.evidence})`, /Gateway/.test(gw.evidence));
+        const line = await look("Line or ISP Hub Packet Loss", `verdict-line-${suffix}.png`);
+        ok(`line: the clean line places it past the modem (${line.line})`, /The line was clean/.test(line.line) && /provider's first router/.test(line.line));
+        eq("line: the verdict keeps its words", /the local router and the gateway answer normally/.test(line.desc), true);
+      });
+    }
   }],
 
   ["inspector: verdict, lanes per hop, what happened, synced tracks, evidence, hop figures", async ({ count, dialogShot, eq, hasChart, inspectNamed, modalOpen, ok, page, setTheme, tabStaysIn, text, until, waitText }) => {
@@ -142,9 +169,9 @@ export const steps = [
       return { none: none.join(","), lines: lines.join(" | "), latLines: latLines.join(" | "), gaps: lat.data.datasets.every((d) => d.spanGaps === false) };
     });
     eq("every probe round has a reading from the hops that never lost one", tracks.none, "0,0");
-    ok(`the loss tooltip names only the hop that lost, by its short name (${tracks.lines})`, /^Line lost 100%$/.test(tracks.lines));
+    ok(`the loss tooltip names only the hop that lost, by its short name (${tracks.lines})`, /^Gateway lost 100%$/.test(tracks.lines));
     ok(`the latency tooltip: router answered, gateway lost, internet answered (${tracks.latLines})`,
-      /^Router: \d+\.\d+ ms \| Line: lost \| Internet: \d+\.\d+ ms$/.test(tracks.latLines));
+      /^Router: \d+\.\d+ ms \| Gateway: lost \| Internet: \d+\.\d+ ms$/.test(tracks.latLines));
     // every label in the inspector names a hop as the rest of the page does, the configured name only on hover
     const labels = await page.evaluate(() => ({
       lanes: [...document.querySelectorAll("#inspLanes .lane-n")].map((e) => `${e.textContent}|${e.title}`).join(","),
@@ -152,10 +179,10 @@ export const steps = [
       legend: [...document.querySelectorAll("#inspLatLegend > span")].map((e) => `${e.textContent}|${e.title}`).join(","),
       text: ["#inspChips", "#inspEvents", "#inspEvidence"].map((s) => document.querySelector(s).textContent).join(" ")
     }));
-    eq("lanes", labels.lanes, "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
-    ok(`a lane's tooltip (${labels.tip})`, /^Line · /.test(labels.tip));
-    eq("chart legend", labels.legend, "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
-    ok(`no configured name in the chips, events or evidence: ${labels.text}`, !/Hop \d:|Public:/.test(labels.text) && /First lost probes at Line/.test(labels.text));
+    eq("lanes", labels.lanes, "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+    ok(`a lane's tooltip (${labels.tip})`, /^Gateway · /.test(labels.tip));
+    eq("chart legend", labels.legend, "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+    ok(`no configured name in the chips, events or evidence: ${labels.text}`, !/Hop \d:|Public:/.test(labels.text) && /First lost probes at Gateway/.test(labels.text));
     eq("a lost probe breaks the latency line", tracks.gaps, true);
     eq("keyboard focus starts on close", await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Close");
     await dialogShot("inspector-dark");

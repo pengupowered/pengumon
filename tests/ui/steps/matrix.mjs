@@ -74,7 +74,7 @@ export const steps = [
   ["rows are named as Path health names them; min, avg and max cover the last 60 probes; help sits in the column headers", async ({ count, eq, nextMessages, ok, page, until }) => {
     await until(() => /ms$/.test(document.querySelector("#hopMatrixBody tr:first-child [data-f=rangeText]")?.textContent ?? ""));
     const labels = await page.$$eval("#hopMatrixBody [data-f=label]", (els) => els.map((e) => e.textContent).join(","));
-    eq("short names", labels, "Router,Line,Internet,DNS lookup 1,DNS lookup 2");
+    eq("short names", labels, "Router,Gateway,Internet,DNS lookup 1,DNS lookup 2");
     const rows = await page.evaluate(() => {
       return [...document.querySelectorAll("#hopMatrixBody tr")].map((tr) => tr.querySelector("[data-f=rangeText]").textContent);
     });

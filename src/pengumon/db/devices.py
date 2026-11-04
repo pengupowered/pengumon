@@ -1,10 +1,29 @@
 """Device and line samples (schema v9) per device id, and the WAN rates read from them."""
 
 import math
+from bisect import bisect_left, bisect_right
 from dataclasses import astuple
 from typing import List, Optional, Tuple
 
 from pengumon.db.samples import DEVICE_SAMPLE_COLUMNS, LINE_SAMPLE_COLUMNS, DeviceSample, LineSample
+
+
+class PackSamples:
+    """The device polls of a window as one tuple per column (time order), for the AI pack: the columns its
+    contributions read and nothing else (no device id, error message, model or client_count). A week of polls is 60k
+    rows; column tuples are built in C and walked with zip, where a row object per poll cost more than the rules."""
+    COLUMNS = ("ts", "status", "error_kind", "wan_rx_bytes", "wan_tx_bytes", "wan_rx_mbps", "wan_tx_mbps", "cpu_pct",
+               "mem_pct", "clients_online", "clients_wired", "clients_wifi_2g", "clients_wifi_5g", "clients_wifi_other")
+    __slots__ = COLUMNS
+
+    def __init__(self, rows: List[tuple]):
+        columns = list(zip(*rows)) if rows else [()] * len(self.COLUMNS)
+        for name, column in zip(self.COLUMNS, columns):
+            setattr(self, name, column)
+
+    def span(self, start: float, end: float) -> Tuple[int, int]:
+        """The index range [lo, hi) of the polls with start <= ts <= end."""
+        return bisect_left(self.ts, start), bisect_right(self.ts, end)
 
 
 class DeviceQueries:
@@ -36,6 +55,17 @@ class DeviceQueries:
                 (device_id, start_time - padding_seconds, end_time + padding_seconds),
             ) as cursor:
                 return [DeviceSample(*r) for r in await cursor.fetchall()]
+
+    async def get_device_pack_samples(self, device_id: str, start_time: float, end_time: float,
+                                      padding_seconds: float = 0.0) -> PackSamples:
+        """get_device_samples for the AI pack: the same polls in the same order, only the PackSamples columns."""
+        async with self._db.read() as db:
+            async with db.execute(
+                f"SELECT {', '.join(PackSamples.COLUMNS)} FROM device_samples "
+                "WHERE device_id = ? AND ts >= ? AND ts <= ? ORDER BY ts",
+                (device_id, start_time - padding_seconds, end_time + padding_seconds),
+            ) as cursor:
+                return PackSamples(await cursor.fetchall())
 
     async def get_latest_device_sample(self, device_id: str) -> Optional[DeviceSample]:
         async with self._db.read() as db:

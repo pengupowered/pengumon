@@ -174,7 +174,7 @@ function build(targets) {
   const refs = { cols: [], links: [], leaves: new Map(), pills: [] };
   const specs = [];
   if (internetOf(targets)) specs.push({ id: 'internet', ic: 'globe', kind: 'Internet', name: 'Public targets' });
-  if (lineDevice()) specs.push({ id: 'line', ic: 'modem', kind: 'Line', name: deviceLabel(lineDevice()) });
+  if (lineDevice()) specs.push({ id: 'line', ic: 'modem', kind: 'Gateway', name: deviceLabel(lineDevice()) });
   if (routerDevice() || hopOf(targets, 'local')) {
     specs.push({ id: 'router', ic: 'router', kind: 'Router', name: routerDevice() ? deviceLabel(routerDevice()) : 'Local router' });
   }

@@ -7,12 +7,13 @@ every DOCSIS modem and lives in pengumon.lines.docsis.
 
 import re
 import time
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, Optional
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
 from pengumon.capabilities import Capability, DriverError, LineReading, PollResult
+from pengumon.capabilities.contrib import DriverNotes
 from pengumon.drivers.http import DeviceHttp, Verify, device_verify
 from pengumon.lines.docsis_model import DocsisChannel
 from pengumon.observability import get_logger
@@ -47,6 +48,19 @@ class XfinityXbDriver:
     # slowly. Each poll costs two or three requests, one of them a login.
     default_poll_seconds = 1800.0
     min_poll_seconds = 600.0
+    # The AI pack's note on this driver (capabilities/contrib.py). Each statement is established by this file:
+    #  - "Xfinity gateway (XB6, XB7 or XB8)": the module docstring, :1 and `label` :43;
+    #  - read never more often than every {min_poll} (`min_poll_seconds` :50); how often it was read is the DOCSIS
+    #    section's, from the stored readings, so the pack states the interval once;
+    #  - slow web page, some units fail or reboot when read often: the comment at :47-48.
+    # No claim about who supplies the gateway or whether it routes (nothing here says). The anonymized text leaves
+    # out the vendor and model words, which would name the provider.
+    pack_notes: ClassVar[DriverNotes] = DriverNotes(
+        full=("Device notes: the modem is an Xfinity gateway (XB6, XB7 or XB8). Pengumon reads its status page never "
+              "more often than every {min_poll}, because the gateway's web page is slow and some units fail or reboot "
+              "when it is read often."),
+        anonymized="Device notes: the modem is a cable gateway, read never more often than every {min_poll}.",
+    )
 
     def __init__(self, url: str, username: str, password: Optional[str], *,
                  client: Optional[httpx.AsyncClient] = None, verify: Verify = True,

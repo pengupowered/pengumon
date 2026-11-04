@@ -40,15 +40,15 @@ export async function loadReport(days) {
   }
 }
 
-// The classifier's cause codes in the words the rest of the page uses (Path health: Router, Line, ISP, Internet).
-// Display text only; an unknown code is shown as it is.
+// The cause categories (the server's `cause`, the incident lanes' words: Router, Gateway, Line, ISP, ...) with what
+// each means. Gateway: the gateway (modem) on its home-side address, which does not use the line; Line: loss from the
+// provider's first router on while the gateway answers. Display text only; an unknown category is shown as it is.
 const CAUSE_TEXT = {
-  local_wifi_mesh_drop: 'Router: home network', local_switch_cable_fault: 'Router: cabling',
-  double_nat_congestion: 'Line: gateway', access_line_drop: 'ISP: access line', internet_backbone_transit_loss: 'ISP: backbone',
-  target_specific_outage: 'Internet: one server', dns_resolver_failure: 'DNS', unknown_outage: 'Unknown',
-  load_induced_latency: 'Busy line', service_unavailable: 'Host service'
+  router: 'Router: home network', gateway: 'Gateway (modem)', line: 'Line or first ISP router',
+  isp: 'ISP: beyond its first router', internet: 'Internet servers', dns: 'DNS', load: 'Busy line', service: 'Host service',
+  unknown: 'Unknown'
 };
-const causeText = (code) => CAUSE_TEXT[code] || code.replace(/_/g, ' ');
+const causeText = (cause) => CAUSE_TEXT[cause] || String(cause || 'unknown').replace(/_/g, ' ');
 
 // The headline is the internet as seen through the public targets (the median of their availability; the last hop
 // when there is no public target); days are bars of what that figure lost (a clean day has no bar, so a bad day stands
@@ -76,7 +76,7 @@ function renderReport(out, report) {
   const totalMin = inc.by_cause.reduce((a, c) => a + c.minutes, 0) || 1;
   const causes = inc.by_cause.slice(0, 5).map((c) => {
     const share = Math.round((c.minutes / totalMin) * 100);
-    return `<li title="${escapeHtml(c.cause_code)}"><span>${escapeHtml(causeText(c.cause_code))}</span><span class="cbar"><i style="width:${share}%"></i></span><b class="num">${share}%</b></li>`;
+    return `<li title="${escapeHtml(c.cause)}"><span>${escapeHtml(causeText(c.cause))}</span><span class="cbar"><i style="width:${share}%"></i></span><b class="num">${share}%</b></li>`;
   }).join('');
   const dayName = (d) => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short' });
   const dayBars = days.map((d, i) => {

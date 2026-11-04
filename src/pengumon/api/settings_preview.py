@@ -36,7 +36,7 @@ async def start_preview(body: PreviewRequest, state: StateDep) -> Dict[str, str]
     try:
         spec, key = build_spec(state, body.values, body.days, time.time())
     except PreviewInvalid as e:
-        return JSONResponse(status_code=422, content={"detail": str(e), "errors": e.errors})
+        return JSONResponse(status_code=422, content={"detail": e.message, "errors": e.errors})
     await state.repository.flush_samples()  # the replay reads the file: what the probe loop still buffers is not in it
     try:
         job = jobs.start(key, spec)

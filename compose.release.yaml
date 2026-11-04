@@ -22,7 +22,7 @@
 # To upgrade, change the tag below to the new version and run `docker compose up -d` again.
 services:
   pengumon:
-    image: ghcr.io/pengupowered/pengumon:0.21.0
+    image: ghcr.io/pengupowered/pengumon:0.22.0
     container_name: pengumon
     restart: always
     network_mode: host

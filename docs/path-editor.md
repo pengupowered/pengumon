@@ -38,10 +38,10 @@ Likely, IPv6, ...).
 
 **The controls**:
 
-- **Name**: type over it. Path health shows a short label (Router, Line, ISP hop 2, Internet) with this name under it.
+- **Name**: type over it. Path health shows a short label (Router, Gateway, ISP hop 2, Internet) with this name under it.
   If names start with "Hop 1:", "Hop 2:" (older configs numbered them), the editor offers **Drop the prefixes**; the
   new names are kept when you apply.
-- **Role**: Your network, Line / gateway, Provider, Internet, DNS server or Other. A line under the menu says what the
+- **Role**: Your network, Gateway (modem), Provider, Internet, DNS server or Other. A line under the menu says what the
   role changes: where an outage is placed ([diagnosis.md](diagnosis.md)) and what the provider dossier says. *Other* is
   for anything that is not a stage of the path (a NAS, a VPN endpoint, a server): it is probed and charted but never
   blamed for an outage.
@@ -55,12 +55,12 @@ Likely, IPv6, ...).
 id, so its history stays with it; its live figures start over at the new address. The hop's history (click it on Path
 health or in Hop details) marks the moment: "Address changed: old → new" on its charts and its 24-hour strip.
 
-**The device** (only on hops whose role is Your network or Line / gateway) names the configured device this hop is,
+**The device** (only on hops whose role is Your network or Gateway (modem)) names the configured device this hop is,
 with its own current status as its card shows it: "Readings from: ASUS router · RT-AX88U · Healthy · CPU 12% · 23
 clients", or for a modem "Xfinity gateway · modem · Line up · SNR 35.9 dB · 32 channels". Pengumon reads that device
 directly (devices are set up on the Settings page, see [devices.md](devices.md)); its details are in the Router or Line
 panel, which the link under the device line opens (it closes the editor, and asks first if you changed something).
-The hop's own figures are still its ping. Path health's Router and Line nodes name the device in their tooltip.
+The hop's own figures are still its ping. Path health's Router and Gateway nodes name the device in their tooltip.
 
 **Change** picks another device or *No device*; **Connect** links the device discovery suggests, or the only one
 configured, and opens its sign-in; with several devices it asks which. A hop is linked by itself when exactly one

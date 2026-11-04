@@ -1,0 +1,52 @@
+<!-- Ask AI: the troubleshooting pack as Markdown, to paste into any chat assistant -->
+<div class="modal" id="aiPackModal" role="dialog" aria-modal="true" aria-labelledby="aiPackTitle">
+  <div class="modal-content" style="--w: 880px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-sparkle"/></svg><h2 class="modal-t" id="aiPackTitle">Ask AI</h2>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="aiPackModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b" id="aiPackBody">
+      <p class="fine top">Pengumon writes a summary of what it measured, with questions for the AI. Copy it and paste it into ChatGPT, Gemini, Claude or any other assistant. Pengumon sends nothing anywhere itself.</p>
+      <div class="ai-pick">
+        <label class="ai-field"><span>What to cover</span>
+          <select class="input" id="aiPackWindow" data-change="aiPackChange">
+            <option value="1h">Past hour</option>
+            <option value="24h" selected>Past 24 hours</option>
+            <option value="7d">Past 7 days</option>
+            <option value="incident" id="aiPackIncidentOption" hidden disabled>This incident, with an hour either side</option>
+          </select></label>
+        <label class="ai-field"><span>How long</span>
+          <select class="input" id="aiPackForm" data-change="aiPackChange">
+            <option value="short" selected>Short</option>
+            <option value="detailed">With more examples</option>
+          </select></label>
+      </div>
+      <fieldset class="ai-levels">
+        <legend>How much to share</legend>
+        <label class="ai-level"><input type="radio" name="aiPackLevel" value="full" checked data-change="aiPackChange"><span class="ai-level-t">Full</span>
+          <span class="ai-level-d">Everything Pengumon knows, as the dashboard shows it: the names and addresses of your own routers and devices, your provider's name and its routers, incident titles, and exact dates and times.</span></label>
+        <label class="ai-level"><input type="radio" name="aiPackLevel" value="vague" data-change="aiPackChange"><span class="ai-level-t">Vague</span>
+          <span class="ai-level-d">Your own routers, devices and addresses become roles such as "Router" or "Mesh node 2". Your provider's name, its routers and the dates and times stay. Names are swept out of incident titles.</span></label>
+        <label class="ai-level"><input type="radio" name="aiPackLevel" value="anonymized" data-change="aiPackChange"><span class="ai-level-t">Anonymized</span>
+          <span class="ai-level-d">Roles and numbers only. The provider, addresses, names, device models and titles are replaced by roles and general words, and times become "Day 1" and the clock.</span></label>
+        <p class="fine ai-never">At every level the pack leaves out Wi-Fi client lists, incident descriptions, error messages and passwords.</p>
+      </fieldset>
+      <section class="ai-preview" aria-labelledby="aiPreviewT">
+        <div class="ai-preview-h"><h3 class="section-t" id="aiPreviewT">Preview: exactly what Copy and Download give</h3>
+          <span class="fine ai-size" id="aiPackSize"></span></div>
+        <p class="fine ai-counts" id="aiPackCounts" hidden></p>
+        <textarea class="input export-text ai-text" id="aiPackText" rows="14" readonly spellcheck="false" aria-label="The pack as Markdown" aria-busy="false"></textarea>
+        <p class="fine" id="aiPackIncludes" hidden></p>
+      </section>
+      <details class="ai-who" id="aiPackWho">
+        <summary>Who is who</summary>
+        <p class="fine">The key to the roles in the pack. It stays on this screen and is never in the pack.</p>
+        <dl class="ai-who-l" id="aiPackWhoList"></dl>
+      </details>
+    </div>
+    <footer class="modal-f">
+      <p class="ai-msg" id="aiPackNote" role="status" aria-live="polite"></p>
+      <div class="left"><button type="button" class="btn primary" id="aiPackCopy" data-action="aiPackCopy" disabled><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
+        <button type="button" class="btn outline" id="aiPackDownload" data-action="aiPackDownload" disabled><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download .md</button></div>
+      <button type="button" class="btn" data-action="closeModal" data-arg="aiPackModal">Done</button>
+    </footer>
+  </div>
+</div>

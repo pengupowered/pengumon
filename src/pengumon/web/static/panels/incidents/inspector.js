@@ -21,7 +21,7 @@ const lostOf = (h) => Math.max(0, h.sent - h.received);
 const lossText = (h) => (lostOf(h) > 0 && h.loss_pct < 0.1 ? '<0.1%' : `${h.loss_pct}%`);
 let lastWindow = null;
 
-// A target as the rest of the page names it (Router, Line, ISP hop N, Internet ...: path.js shortLabels), its configured
+// A target as the rest of the page names it (Router, Gateway, ISP hop N, Internet ...: path.js shortLabels), its configured
 // name in the tooltip. Refreshed per inspection, so a target added since the page loaded is named too.
 let labels = {};
 const shortOf = (tid) => labels[tid] || getTargetInfo(tid).name;
@@ -127,9 +127,10 @@ function renderEvidence(data, inc, hops) {
   if (corr) {
     const snap = corr.nearest_snapshot;
     const inWindow = snap && (data.docsis_snapshots || []).some((s) => s.timestamp === snap.timestamp);
-    items.push(corr.gateway_offline ? ['crit', 'Line', 'the modem did not answer during the incident']
+    items.push(corr.gateway_offline ? ['crit', 'Gateway', 'the modem did not answer during the incident']
       : !snap || !inWindow ? ['unknown', 'Line', 'no modem reading inside the window']
-        : corr.rf_correlated ? ['crit', 'Line', `uncorrectable errors burst (+${(corr.active_errors_in_window || 0).toLocaleString()})`]
+        // at the gateway's home-side address the line's errors are a finding of their own, not the incident's cause
+        : corr.rf_correlated ? [inc.cause === 'gateway' ? 'warn' : 'crit', 'Line', `uncorrectable errors burst (+${(corr.active_errors_in_window || 0).toLocaleString()})`]
           : ['good', 'Line', 'no uncorrectable errors during the window']);
   }
   items.push(inc.load_suspect ? ['unknown', 'Line load', 'load: not a valid figure']
@@ -165,7 +166,20 @@ function renderTrace(inc) {
 }
 
 // ---------- The line during the incident (the modem's reading next to the incident) ----------
+// What the line's errors, or their absence, say about where the incident sat (its cause category, incidents.taxonomy).
+// The Gateway hop is the modem's home-side address, which does not use the line: errors on the line do not explain
+// loss there unless the modem restarted. Loss from the provider's first router on (Line) with errors at the same time
+// points to the line itself; without them it is the line or that router.
+const ERRORS_MEAN = {
+  gateway: 'The loss started at the gateway\'s home-side address, which does not use the line, so these errors do not explain it unless the modem restarted; they are worth a line check of their own.',
+  line: 'The loss started at the provider\'s first router while the gateway answered; errors at the same time point to your cable line itself.'
+};
+const CLEAN_MEANS = {
+  gateway: 'The loss sat at the gateway itself (its home-side address), not on the line.',
+  line: 'The loss started past the modem: the provider\'s first router, or the line in a way these counters do not show.'
+};
 function renderLine(data) {
+  const cause = data.incident && data.incident.cause;
   const card = $('inspDocsisCard');
   const corr = data.docsis_correlation;
   card.hidden = !corr;
@@ -188,10 +202,10 @@ function renderLine(data) {
     [level, word] = ['unknown', 'No reading'];
     html = '<strong>No modem reading for this incident:</strong> no modem poll was recorded in or near this window, so the line cannot be judged either way.';
   } else if (corr.rf_correlated) {
-    [level, word] = ['crit', 'Errors during the incident'];
-    html = `<strong>Uncorrectable errors on the line:</strong> ${(corr.active_errors_in_window || 0).toLocaleString()} uncorrectable codewords were counted during this incident. Noise on the cable plant fits this packet loss.`;
+    [level, word] = [cause === 'gateway' ? 'warn' : 'crit', 'Errors during the incident'];
+    html = `<strong>Uncorrectable errors on the line:</strong> ${(corr.active_errors_in_window || 0).toLocaleString()} uncorrectable codewords were counted during this incident. ${escapeHtml(ERRORS_MEAN[cause] || 'Noise on the cable plant fits this packet loss.')}`;
   } else {
-    html = `<strong>The line was clean:</strong> no uncorrectable errors were counted during this incident${has(snap.downstream_snr_avg) ? `, and the downstream SNR was ${snap.downstream_snr_avg} dB` : ''}. The loss lies beyond the modem.`;
+    html = `<strong>The line was clean:</strong> no uncorrectable errors were counted during this incident${has(snap.downstream_snr_avg) ? `, and the downstream SNR was ${snap.downstream_snr_avg} dB` : ''}. ${escapeHtml(CLEAN_MEANS[cause] || 'The loss lies beyond the modem.')}`;
   }
   setBadge($('inspDocsisBadge'), level, word);
   $('inspDocsisDesc').innerHTML = html;
@@ -230,6 +244,7 @@ export async function inspectIncident(incidentId) {
   $('inspEvents').innerHTML = '';
   $('inspEvidence').innerHTML = '';
   $('inspHopTableBody').innerHTML = '<tr><td colspan="7" class="muted">Loading hop impact...</td></tr>';
+  $('btnInspAskAi').dataset.arg = String(incidentId); // Ask AI covers this incident
   try {
     const res = await fetch(`/api/incidents/${incidentId}/inspect`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

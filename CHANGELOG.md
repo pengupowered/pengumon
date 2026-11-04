@@ -5,6 +5,47 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-04
+### Added
+- **Ask AI** (header, and the incident inspector): one Markdown text to paste into ChatGPT, Gemini, Claude or any
+  other assistant, which cannot see your network itself. Pengumon writes what it measured and works out, not raw data:
+  each hop's normal and how far it strayed, where along the path problems start (loss that carries on to every later
+  hop, or stays at one router that only ignores pings), patterns (time of day, how often, how long), what coincided
+  (line errors, a modem or router restart, a busy line, Wi-Fi clients dropping, route or settings changes), its own
+  verdict and a rule-based confidence per incident, minute-by-minute close-ups of the most significant ones, and what
+  it cannot see. With instructions and plain questions for the assistant. About 3 to 5 thousand tokens, even for a week.
+  - Past hour, 24 hours or 7 days, or one incident; "Short" or "With more examples".
+  - **Full**, **Vague** (your own routers, devices and addresses become roles such as "Router") or **Anonymized**
+    (roles and numbers only, no names, brands or dates). Never included at any level: Wi-Fi client lists, incident
+    descriptions, error messages, passwords. A "Who is who" key in the dialog (never in the text) maps the roles back.
+  - A preview of exactly what Copy and Download give. Pengumon sends nothing anywhere. Also `GET /api/ai-pack`.
+  - Tested by giving real packs to three AI models and grading their answers: times are in your own time zone (with
+    the clock changes marked), the assistant is told what the measurements already rule out (so it does not ask about
+    them) and which check only you can do (the gateway's own event log), and it asks only for what would change its
+    answer.
+- **Per-device modules:** each kind of device brings its own part of the pack (how to read its readings, its findings,
+  the events that can explain an incident) and only when you have it: the cable line (DOCSIS signal and codewords),
+  line load, the router, Wi-Fi and mesh, with notes for the Xfinity gateway and AsusWRT. A new driver gets this by
+  implementing a small interface.
+- **Device telemetry** over OpenTelemetry: the cable line's power and SNR, its error and restart counters, WAN rates,
+  router CPU and memory and restarts, clients by connection and band, Wi-Fi signal, mesh nodes. Summaries, not one
+  series per channel or client. Four Grafana rows in `docs/grafana/pengumon.json`, one per kind of device, that stay
+  empty when you don't have it.
+
+### Changed
+- **Where a fault is, named by where loss starts.** The hop that was called "Line" on the path is the **Gateway**
+  (your modem or gateway, pinged on its home-side address: those pings do not use the provider's line). Loss that
+  starts there is now "Gateway or its link not answering" (the gateway itself, or the cable from the router to it),
+  no longer a line fault; loss that starts at the provider's first router while the gateway answers is "Line or the
+  provider's first router"; loss beyond it is the provider's network. The dashboard, alerts, the ISP dossier (which
+  now tells the provider which side stopped answering and asks for a gateway check where that is the evidence) and the
+  AI pack all use the same words. Stored incidents keep their codes and are shown in the right place; webhooks gain
+  the cause `gateway_unreachable` (docs/webhooks.md lists every cause). Going back to an older version after a
+  gateway incident was recorded needs the backup taken before the upgrade.
+
+### Fixed
+- Settings: an invalid value in the preview's days box was put back into the page as markup; it is shown as text.
+
 ## [0.21.0] - 2026-11-03
 
 ### Added
@@ -336,7 +377,9 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.20.2...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/pengupowered/pengumon/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/pengupowered/pengumon/compare/v0.20.2...v0.21.0
 [0.20.2]: https://github.com/pengupowered/pengumon/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/pengupowered/pengumon/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/pengupowered/pengumon/compare/v0.19.0...v0.20.0

@@ -57,8 +57,9 @@ class Incident(BaseModel):
     @computed_field
     @property
     def cause(self) -> str:
-        """The cause category for the timeline lanes (CAUSE_CATEGORIES), derived from kind and cause_code."""
-        return incident_cause(self.kind, self.cause_code)
+        """The cause category for the timeline lanes (CAUSE_CATEGORIES), derived from kind and cause_code (and, for an
+        older isp_outage, its description: incidents.taxonomy.incident_cause)."""
+        return incident_cause(self.kind, self.cause_code, self.description)
 
 
 class SystemDiagnosis(BaseModel):

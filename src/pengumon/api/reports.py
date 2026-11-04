@@ -1,14 +1,17 @@
 """The reliability report, the loss-by-hour grid and the uptime strips (built in pengumon.reports)."""
 
-from typing import Literal
+import asyncio
+from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from pengumon.api.common import StateDep
+from pengumon.api.common import StateDep, json_response
 from pengumon.engine.path_rules import ignoring_ping_ids
+from pengumon.observability.telemetry import ai_pack_exports, api_rate_limited
 from pengumon.reports.loss_grid import build_loss_grid
 from pengumon.reports.reliability import build_report
 from pengumon.reports.uptime import build_uptime
+from pengumon.security import rate_limit
 
 router = APIRouter(prefix="/api")
 
@@ -51,3 +54,45 @@ async def get_uptime(
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
     return await build_uptime(state.repository, state.config, window, tz_offset_minutes=tz_offset_minutes)
+
+
+_pack_building = asyncio.Lock()  # one pack at a time: a build reads the whole window and every module's history
+
+
+@router.get("/ai-pack", dependencies=[Depends(rate_limit("ai_pack", 6, 60))])
+async def get_ai_pack(
+    state: StateDep,
+    scope: Literal["window", "incident"] = Query("window"),
+    hours: int = Query(24, ge=1, le=168, description="the window for scope=window: 1, 24 or 168 in the dashboard"),
+    incident_id: Optional[int] = Query(None, ge=1, description="required for scope=incident, refused otherwise"),
+    level: Literal["full", "vague", "anonymized"] = Query("full"),
+    detail: Literal["short", "detailed"] = Query("short"),
+    tz_offset_minutes: int = Query(0, ge=-840, le=840),
+    tz: Optional[str] = Query(None, max_length=64, pattern=r"^[A-Za-z0-9_+\-/]+$",
+                              description="the viewer's IANA zone (America/New_York), when Settings has none"),
+):
+    """The AI troubleshooting pack: one Markdown document to paste into a chat model, built from the stored history.
+    `markdown` is the exact text; `modules` says which module sections it includes (id, title, chars, budget_chars,
+    trimmed) and `roles` is the "who is who" key (never part of the markdown). Anyone who may view the dashboard may
+    ask for any level, Full included. Rate limited (6 a minute) and one build at a time (429 while another runs).
+    Times are in the zone set in Settings (general.timezone), else in `tz`, else at `tz_offset_minutes`, else UTC; a
+    `tz` the server does not know is ignored."""
+    if not state.repository:
+        raise HTTPException(status_code=503, detail="Repository not initialized")
+    if (scope == "incident") != (incident_id is not None):
+        raise HTTPException(status_code=422, detail="incident_id goes with scope=incident, and only with it")
+    if incident_id is not None and await state.repository.get_incident_by_id(incident_id) is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if _pack_building.locked():
+        api_rate_limited.add(1, {"bucket": "ai_pack_busy"})
+        raise HTTPException(status_code=429, detail="Another pack is being built; try again in a few seconds")
+    from pengumon.reports.ai_pack import build_ai_pack  # A2's module, imported when asked: nothing loads without it
+
+    async with _pack_building:
+        pack = await build_ai_pack(
+            state.repository, state.config, scope=scope, hours=hours, incident_id=incident_id, level=level,
+            detail=detail, devices=tuple(state.config.devices) if state.config else (), live=state.devices,
+            ignoring=ignoring_ping_ids(state.prober), tz_offset_minutes=tz_offset_minutes, prober=state.prober,
+            tz_name=tz)
+    ai_pack_exports.add(1, {"level": level, "scope": scope})
+    return json_response(pack)

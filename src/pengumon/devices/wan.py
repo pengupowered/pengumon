@@ -36,6 +36,7 @@ class WanRates:
         self._clock = clock
         self._prev: Optional[Tuple[float, int, int]] = None  # (ts, rx_bytes, tx_bytes)
         self._rates: Deque[Rate] = deque()
+        self.resets = 0  # counters seen going backwards without wrapping (a router restart); the monitor counts them
 
     def update(self, ts: float, counters: Optional[WanCounters]) -> Tuple[Optional[float], Optional[float]]:
         """(rx_mbps, tx_mbps) since the previous reading, or (None, None) when there is no rate to report. The
@@ -56,6 +57,7 @@ class WanRates:
         delta_rx = _delta(counters.rx_bytes, prev_rx, counters.counter_bits)
         delta_tx = _delta(counters.tx_bytes, prev_tx, counters.counter_bits)
         if delta_rx is None or delta_tx is None:
+            self.resets += 1
             return None, None
         dt = ts - prev_ts
         rx = round((delta_rx * 8.0) / (dt * 1_000_000.0), 2)

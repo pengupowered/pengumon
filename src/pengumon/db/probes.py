@@ -351,18 +351,20 @@ class ProbeQueries:
             for target, sent, received, avg_ms, min_ms, max_ms, jitter in rows
         ])
 
-    async def get_hop_stats(self, start_time: float) -> List[Dict[str, Any]]:
-        """Per-target probe totals since start_time, from the per-minute rollups."""
+    async def get_hop_stats(self, start_time: float, end_time: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Per-target probe totals since start_time (up to end_time when given: whole minutes, as get_rollup_stats),
+        from the per-minute rollups."""
         await self.flush_samples()
+        until, bound = ("", ()) if end_time is None else (" AND minute <= ?", (int(end_time // 60),))
         async with self._db.read() as db:
             async with db.execute(
-                """
+                f"""
                 SELECT target, SUM(n), SUM(n) - SUM(ok), SUM(lat_sum) / SUM(ok), MAX(lat_max)
                 FROM rollup_1m
-                WHERE minute >= ?
+                WHERE minute >= ?{until}
                 GROUP BY target
                 """,
-                (int(start_time // 60),),
+                (int(start_time // 60), *bound),
             ) as cursor:
                 rows = await cursor.fetchall()
         return self.shown([

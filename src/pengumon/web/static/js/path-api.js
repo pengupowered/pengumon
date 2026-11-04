@@ -6,7 +6,7 @@ import { statusOf } from './device-panel.js';
 // The roles a hop can have (TargetConfig.category), in the editor's plain words, nearest first.
 export const ROLES = [
   ['local', 'Your network'],
-  ['gateway', 'Line / gateway'],
+  ['gateway', 'Gateway (modem)'],
   ['isp', 'Provider'],
   ['public', 'Internet'],
   ['dns', 'DNS server'],
@@ -21,7 +21,7 @@ export const ROLE_HINT = {
 // What each role changes, in one plain line, shown where the role is picked (the classifier's rules: docs/diagnosis.md).
 export const ROLE_EFFECT = {
   local: 'If this stops answering, the outage is placed in your home network (router or Wi-Fi), not on your provider; the provider dossier quotes its loss to show your own network is fine.',
-  gateway: 'Loss here while your router is fine is blamed on the line to your provider (the dossier\'s line fault); loss at the router before it is yours.',
+  gateway: 'Probed on its home-side address, so these pings never use the line: loss here while your router is fine is placed at the gateway itself (or the link to it), not on the line; loss at the router before it is yours.',
   isp: 'Loss only here, while later hops answer, is not counted as packet loss (provider routers deprioritise ping); loss that carries on to the internet is your provider\'s.',
   public: 'Every stage before it fine but this failing is an internet outage; the Internet figure on Path health is the median of these servers.',
   dns: 'Failures here are reported as a DNS problem, not as loss on the path.',
@@ -40,7 +40,7 @@ export function deviceHost(d) {
   }
 }
 
-// The roles whose hops can be a configured device (engine/device_links.py): your network and the line / gateway.
+// The roles whose hops can be a configured device (engine/device_links.py): your network and the gateway.
 export const DEVICE_ROLES = ['local', 'gateway'];
 
 // "Hop 3: Provider router" -> "Provider router": the numbered prefix older configs carry (Path health numbers hops).

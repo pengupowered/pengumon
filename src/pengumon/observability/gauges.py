@@ -164,8 +164,8 @@ GAUGES: List[Gauge] = [
           _per_target(lambda s: _STATUS_VALUE.get(s.status, 2)), otel_drop=("name",)),
     Gauge("pengumon_system_status", "pengumon.system.status", "{state}",
           "1 for the current overall status, 0 for the others.", _system_status),
-    Gauge("pengumon_line_load_percent", None, "%", "Current WAN load, percent of line capacity.", _line_load),
-    Gauge("pengumon_line_capacity_mbps", None, "Mbit/s", "Line capacity in use for load calculations.",
+    Gauge("pengumon_line_load_percent", "pengumon.line.load", "%", "Current WAN load, percent of line capacity.", _line_load),
+    Gauge("pengumon_line_capacity_mbps", "pengumon.line.capacity", "Mbit/s", "Line capacity in use for load calculations.",
           _line_capacity),
     Gauge("pengumon_incident_active", "pengumon.incident.active", "{state}", "1 while an incident is open.",
           _incident_active),
@@ -210,3 +210,9 @@ GAUGES: List[Gauge] = [
           "Alerts waiting for their time (the delay setting or the end of quiet hours).", _alerts_held),
     Gauge("pengumon_build_info", None, "1", "Version of this build.", _build_info),
 ]
+
+
+# The gauges of the device modules (cable line, line load, router, Wi-Fi and mesh) live in their own table.
+from pengumon.observability.module_gauges import MODULE_GAUGES  # noqa: E402  (it needs Gauge, defined above)
+
+GAUGES += MODULE_GAUGES

@@ -12,7 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 TELEMETRY = ROOT / "src" / "pengumon" / "observability" / "telemetry.py"
 DOC = (ROOT / "docs" / "telemetry.md").read_text(encoding="utf-8")
 DASHBOARD = ROOT / "docs" / "grafana" / "pengumon.json"
-UNIT_WORDS = {"s": "seconds", "By": "bytes"}  # what the Prometheus names add for a unit (others add nothing)
+# what the Prometheus names add for a unit (others add nothing; a unit in braces is dropped)
+UNIT_WORDS = {"s": "seconds", "By": "bytes", "%": "percent", "Mbit/s": "Mbit_per_second", "dBmV": "dBmV", "dB": "dB",
+              "dBm": "dBm"}
 
 
 def _prometheus_name(otel_name: str, unit: str, kind: str) -> str:
@@ -74,7 +76,7 @@ def test_the_dashboard_queries_only_metrics_pengumon_exports():
     wrong = set()
     for panel in _dashboard()["panels"]:
         for target in panel.get("targets", []):
-            for token in re.findall(r"\bpengumon_[a-z0-9_]+", target.get("expr", "")):
+            for token in re.findall(r"\bpengumon_[A-Za-z0-9_]+", target.get("expr", "")):
                 if token not in known:
                     wrong.add(token)
     assert wrong == set()
@@ -88,6 +90,8 @@ def test_the_dashboard_panels_are_well_formed():
     rows = {p["title"] for p in panels if p["type"] == "row"}
     assert {"pengumon itself", "Storage", "Dashboard clients", "Devices", "Discovery and alerts",
             "Settings and preview"} <= rows
+    assert {"Cable line: $dev_cable", "WAN and line load: $dev_wan", "Router: $dev_router",
+            "Wi-Fi and mesh: $dev_wifi"} <= rows
     for panel in panels:  # nothing overlaps: a panel starts below or beside the others
         box = panel["gridPos"]
         assert box["x"] + box["w"] <= 24 and box["w"] > 0 and box["h"] > 0
@@ -111,8 +115,8 @@ def test_every_dashboard_query_is_scoped_to_the_chosen_service():
     """The `service` variable (an OTEL_SERVICE_NAME; default pengumon) picks one instance: a second instance, or a
     test run exporting as another service, never mixes into the panels."""
     dashboard = _dashboard()
-    (variable,) = dashboard["templating"]["list"]
-    assert variable["name"] == "service" and variable["current"]["value"] == "pengumon"
+    (variable,) = [v for v in dashboard["templating"]["list"] if v["name"] == "service"]  # (the others list devices)
+    assert variable["current"]["value"] == "pengumon"
     metric = re.compile(r"\b(?:pengumon|http_server)_\w+(\{[^}]*\})?")
     for panel in dashboard["panels"]:
         for target in panel.get("targets", []):
@@ -134,3 +138,11 @@ def test_no_dashboard_query_needs_a_prometheus_feature_flag():
         for target in panel.get("targets", []):
             query = target.get("expr", "")
             assert not re.search(r"\b(anchored|smoothed)\b", query), f"{panel['title']}: {query}"
+
+
+def test_no_time_series_panel_replaces_missing_values():
+    """A time series' `noValue` is drawn as a value: "" became a flat 0 before a device's first reading (an SNR of
+    0 dB). Missing data must stay a gap."""
+    for panel in _dashboard()["panels"]:
+        if panel.get("type") == "timeseries":
+            assert "noValue" not in panel.get("fieldConfig", {}).get("defaults", {}), panel["title"]

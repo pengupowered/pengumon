@@ -101,6 +101,7 @@ Already there: `pengumon_db_flush_duration_seconds`, `pengumon_db_flush_rows_tot
 | `pengumon_api_answer_size_bytes` | h | `endpoint` | Body bytes of a history answer (not recorded for the bucketed device answer, which FastAPI encodes) |
 | `pengumon_api_answer_capped_total` | c | `endpoint`, `cap` rows, range | Answers that reached the 50 000-row cap, or whose unbucketed range was bucketed (`history`) or cut to 48 h (`device_history`) |
 | `pengumon_api_rate_limited_total` | c | `bucket` | Requests answered 429 by a rate limit |
+| `pengumon_ai_pack_exports_total` | c | `level` full, vague, anonymized; `scope` window, incident | AI troubleshooting packs built through `GET /api/ai-pack` |
 | `pengumon_ws_clients` | g | | Dashboards connected to the live stream |
 | `pengumon_ws_message_size_bytes` | h | | Bytes of one live message (once per message, not per client) |
 | `pengumon_ws_send_duration_seconds` | h | `outcome` sent, failed | Time to send one message to one dashboard |
@@ -118,6 +119,37 @@ Already there: `pengumon_db_flush_duration_seconds`, `pengumon_db_flush_rows_tot
 | `pengumon_task_exits_total` | c | `kind` the coroutine's name, `error` type | Background tasks that died of an exception (any is a bug; the ERROR log has the traceback) |
 
 Already there: `pengumon_device_polls_total`, `pengumon_device_poll_duration_seconds`, `pengumon_device_status`.
+
+**Device modules** (`observability/module_gauges.py`; counters in `devices/monitors.py`). What the cable line, the line
+load, the router and the Wi-Fi and mesh report, per device, so a dashboard shows the readings Pengumon's own pages show.
+A device without a reading yet, or whose last poll failed, adds no sample (the series is absent, not zero), and a service
+without the module exports none of these. Attributes are the device id and small fixed sets: never a channel id, a
+client or node name or an address (a series per channel would be about 120 per modem, and channel ids move when the
+modem re-ranges). The gauges read the monitors' latest state every 30 s; nothing is added to the 1 s probe path. The
+names carry the unit as Prometheus translates it (`dBmV`, `dB`, `dBm`, `Mbit_per_second`, `percent`).
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_line_docsis_power_dBmV` | g | `device`, `direction` downstream, upstream, `stat` min, avg, max | Channel power of the cable line |
+| `pengumon_line_docsis_snr_dB` | g | `device`, `stat` min, avg | Downstream channel SNR |
+| `pengumon_line_docsis_channels` | g | `device`, `direction`, `grade` good, warn, critical | Channels per grade (a channel counts at its worst grade) |
+| `pengumon_line_errors_total` | c | `device`, `kind` uncorrectable, corrected | New codeword errors between two polls (graph `increase()`); the first poll after a start only sets the baseline, and corrected errors are not counted for the first poll after a restart of pengumon |
+| `pengumon_line_restarts_total` | c | `device` | Polls that found an error counter lower than before: the modem restarted |
+| `pengumon_line_load_percent` | g | | Load as a percent of the line capacity (also `pengumon.line.load` over OTLP since 0.22) |
+| `pengumon_line_capacity_mbps` | g | `direction` down, up | Line capacity the load is measured against. In the Prometheus text at `/metrics` it keeps this name; over OTLP it is `pengumon.line.capacity` and Prometheus shows `pengumon_line_capacity_Mbit_per_second` |
+| `pengumon_wan_rate_Mbit_per_second` | g | `device`, `direction` down, up | WAN rate of the router |
+| `pengumon_router_restarts_total` | c | `device` | Polls that found a WAN byte counter lower than before without wrapping: the router restarted |
+| `pengumon_router_cpu_percent`, `pengumon_router_memory_percent` | g | `device` | Router CPU and memory use |
+| `pengumon_clients` | g | `device`, `connection` wired, wifi, `band` 2g, 5g, 6g, other, none (wired) | Online clients |
+| `pengumon_clients_wifi_signal_dBm` | g | `device`, `band`, `stat` p10, median | Signal of the online Wi-Fi clients (p10: the weakest tenth, nearest rank) |
+| `pengumon_clients_wifi_weak` | g | `device`, `band` | Online Wi-Fi clients at or below -75 dBm |
+| `pengumon_mesh_nodes` | g | `device`, `state` online, offline, unknown | Mesh nodes by state |
+| `pengumon_mesh_node_clients` | g | `device`, `stat` min, max | The fewest and the most clients on one node |
+| `pengumon_mesh_backhaul_signal_dBm` | g | `device`, `stat` min | The weakest Wi-Fi backhaul link |
+
+The first four of the gauges and the counters appear only for a modem or router that offers the capability; the client and
+mesh gauges only after the router has read its client list. The Prometheus text at `/metrics` has all of them under the
+same names.
 
 **Discovery, route changes, traceroute, alerts**
 
@@ -161,7 +193,10 @@ Prometheus, Loki and Tempo datasources whose uids are `prometheus`, `loki` and `
 defaults). Import it (Dashboards > New > Import), or provision it from a file. It holds no address or name of your
 network. Rows: the network probes, modem and router polling, host services, **pengumon itself** (round time, memory,
 CPU, threads, descriptors, tasks, loop lag, round work, late rounds, stuck DNS lookups), **Storage**, **Dashboard
-clients**, **Devices**, **Discovery and alerts**, **Settings and preview**, then logs and traces. Add a link to your
+clients**, **Devices**, **Discovery and alerts**, **Settings and preview**, then logs and traces. Four more rows show the
+device modules (**Cable line**, **WAN and line load**, **Router**, **Wi-Fi and mesh**, before "pengumon itself"): each
+is driven by a hidden variable that lists the devices reporting the module and repeats once per device, so a service
+without the module shows no row. Modem restarts are marked on every time-series panel. Add a link to your
 pengumon page under Dashboard settings > Links.
 
 The queries use only plain PromQL, so they run on a stock Prometheus with no feature flag (an earlier version used the

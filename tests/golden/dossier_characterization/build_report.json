@@ -74,19 +74,19 @@
   "incidents": {
    "by_cause": [
     {
-     "cause_code": "isp_loss",
+     "cause": "line",
      "count": 2,
      "minutes": 3.0
     },
     {
-     "cause_code": "a_cause",
-     "count": 1,
-     "minutes": 60.0
-    },
-    {
-     "cause_code": "dns_resolver_failure",
+     "cause": "dns",
      "count": 1,
      "minutes": 5.0
+    },
+    {
+     "cause": "unknown",
+     "count": 1,
+     "minutes": 60.0
     }
    ],
    "count": 4,

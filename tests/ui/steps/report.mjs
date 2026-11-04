@@ -10,7 +10,7 @@ export const steps = [
     ok("hop rows", (await count("#reportOutput .rep-hops tbody tr")) >= 3);
     const hops = await page.$$eval("#reportOutput .rep-hops tbody td.lead .primary", (els) => els.slice(0, 3).map((e) => `${e.textContent}|${e.title}`).join(","));
     eq("hops as the rest of the page names them, the configured name on hover", hops,
-      "Router|Hop 1: Local Router (LAN),Line|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
+      "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
     ok("a bar per day with data", (await count("#reportOutput .days .day")) >= 1);
     ok("the bars are what was lost per day, with the worst day named", /Lost per day/i.test(await text("#reportOutput .rep-days")) && /Worst: |No probe lost/.test(await text("#reportOutput .rep-days .rep-note")));
     const causes = await page.$$eval("#reportOutput .causes li span:first-child", (els) => els.map((e) => e.textContent));

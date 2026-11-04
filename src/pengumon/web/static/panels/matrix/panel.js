@@ -1,6 +1,6 @@
 // Hop details: one row per target (loss, latency range, last, jitter, totals, the last 60 probes), from the `targets` topic.
 // Every figure but "Lost since start" covers the same window, the last 60 probes; each row is named the way the path
-// health chain names it (Router, Line, ISP hop N, Internet <address>, DNS lookup N) with the configured name under it,
+// health chain names it (Router, Gateway, ISP hop N, Internet <address>, DNS lookup N) with the configured name under it,
 // and the address only when that name does not already say it. The columns have fixed widths (panel.css), so a figure
 // that changes width (LOST, a large jitter) does not move the others.
 

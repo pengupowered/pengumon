@@ -55,6 +55,9 @@ api_answer_capped = meter.create_counter(
                 "range: an unbucketed range was bucketed or shortened)")
 api_rate_limited = meter.create_counter(
     "pengumon.api.rate_limited", unit="{request}", description="Requests refused with 429 by a rate limit, by bucket")
+ai_pack_exports = meter.create_counter(
+    "pengumon.ai_pack.exports", unit="{pack}",
+    description="AI troubleshooting packs built through the API, by detail level and scope")
 ws_message_size = meter.create_histogram(
     "pengumon.ws.message.size", unit="By", description="Bytes of one live message, as sent to every dashboard",
     explicit_bucket_boundaries_advisory=[1e3, 2.5e3, 5e3, 1e4, 2.5e4, 5e4, 1e5, 2.5e5, 5e5, 1e6])
@@ -163,6 +166,15 @@ probes = meter.create_counter(
     "pengumon.probes", unit="{probe}", description="Probes sent, by target and result (answered or lost)")
 incidents_started = meter.create_counter(
     "pengumon.incidents.started", unit="{incident}", description="Network incidents opened, by kind and severity")
+line_errors = meter.create_counter(
+    "pengumon.line.errors", unit="{codeword}",
+    description="New codeword errors on the access line between two polls, by device and kind (uncorrectable, corrected)")
+line_restarts = meter.create_counter(
+    "pengumon.line.restarts", unit="{restart}",
+    description="Polls that found a line error counter lower than before: the modem restarted, by device")
+router_restarts = meter.create_counter(
+    "pengumon.router.restarts", unit="{restart}",
+    description="Polls that found a WAN byte counter lower than before without wrapping: the router restarted, by device")
 
 
 def record_probes(samples: Iterable[Any], categories: Mapping[str, str]) -> None:

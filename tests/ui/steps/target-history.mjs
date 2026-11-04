@@ -43,7 +43,7 @@ export const steps = [
   }],
 
   ["target detail dialog: stats, latency chart with band, loss, 24 h strip; five ranges; Live refreshes; Escape closes", async ({ click, count, eq, ok, page, shots, until }) => {
-    await click('#pathChain .node[data-node^="Line"]');
+    await click('#pathChain .node[data-node^="Gateway"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
     eq("five ranges", await count("#targetHistRanges button"), 5);
     eq("ranges", await page.$$eval("#targetHistRanges button", (b) => b.map((x) => x.textContent).join(",")), "Live,15 m,1 h,24 h,7 d");

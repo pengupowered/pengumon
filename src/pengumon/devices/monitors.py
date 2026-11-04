@@ -26,6 +26,7 @@ from pengumon.lines.docsis import (
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.lines.docsis_model import DocsisSignalSnapshot
 from pengumon.observability import StateLog, get_logger
+from pengumon.observability.telemetry import line_errors, line_restarts, router_restarts
 
 # The router levels in force (the Settings page's router_levels: section, pengumon.devices.levels): one object for
 # the whole process, read at every grading; `use_levels` copies the configured ones into it in place.
@@ -101,6 +102,7 @@ class LineMonitor:
         self._role = role
         self._errors = DocsisErrorTracker()
         self._probe_loss = None
+        self._seen: Optional[tuple] = None  # (uncorrectable, corrected) totals of the last good reading, for the counters
         self._store = _Store("modem snapshots", repository.insert_line_sample if repository is not None else None,
                              line_sample, device_id)
 
@@ -150,6 +152,7 @@ class LineMonitor:
         self.latest_snapshot = snapshot
         if snapshot.status not in ("error", "unconfigured"):
             self._errors.seed(snapshot)
+            self._seen = (snapshot.uncorrectables_total, None)  # corrected totals are not stored: no baseline
         return sample.ts
 
     async def on_error(self, ts: float, error: DriverError) -> DocsisSignalSnapshot:
@@ -159,6 +162,23 @@ class LineMonitor:
         await self._store(self.latest_snapshot)
         return self.latest_snapshot
 
+    def _count_errors(self, snapshot: DocsisSignalSnapshot) -> None:
+        """Counts the codewords that went wrong since the previous good reading (pengumon.line.errors), and a restart
+        when a total went backwards (pengumon.line.restarts). The first reading only sets the baseline."""
+        downstream = [c for c in snapshot.channels if c.direction == "downstream"]
+        now = (snapshot.uncorrectables_total, sum(c.correcteds or 0 for c in downstream))
+        before, self._seen = self._seen, now
+        if before is None or not self.device_id:
+            return
+        attributes = {"device": self.device_id}
+        if (now[0] < before[0]) or (before[1] is not None and now[1] < before[1]):
+            line_restarts.add(1, attributes)
+            return
+        if now[0] > before[0]:
+            line_errors.add(now[0] - before[0], {**attributes, "kind": "uncorrectable"})
+        if before[1] is not None and now[1] > before[1]:
+            line_errors.add(now[1] - before[1], {**attributes, "kind": "corrected"})
+
     async def on_result(self, ts: float, result: PollResult) -> DocsisSignalSnapshot:
         reading = result.readings.get(Capability.ACCESS_LINE)
         if not isinstance(reading, LineReading):
@@ -167,6 +187,7 @@ class LineMonitor:
         if reading.technology != "docsis":  # the only line technology judged so far (pengumon.lines)
             return await self.on_error(ts, DriverError("unsupported", f"no rules for {reading.technology} lines"))
         self.latest_snapshot = self._errors.apply(summarize(reading.channels, ts))
+        self._count_errors(self.latest_snapshot)
         await self._cross_check(self.latest_snapshot)
         await self._store(self.latest_snapshot)
         return self.latest_snapshot
@@ -244,7 +265,10 @@ class RouterMonitor:
             reasons = "; ".join(result.missing.values()) or "the router reported nothing"
             return await self.on_error(ts, DriverError("protocol", reasons))
         system = system if isinstance(system, SystemReading) else SystemReading()
+        resets = self.wan.resets
         rx, tx = self.wan.update(ts, counters)
+        if self.wan.resets > resets and self.device_id:
+            router_restarts.add(self.wan.resets - resets, {"device": self.device_id})
         rx_pct, tx_pct = self._load_pct(rx, tx)
         clients = result.readings.get(Capability.CLIENT_INVENTORY)
         mesh = result.readings.get(Capability.MESH)

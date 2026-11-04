@@ -75,15 +75,31 @@ async def seed(db_path: str, now: float) -> None:
     await repo.flush_samples()
 
     def incident(title, begin, seconds, **kw):
-        return Incident(start_time=begin, end_time=begin + seconds, duration_seconds=seconds, cause_code="unknown_outage",
-                        title=title, description=f"{title} (seeded)", severity=kw.pop("severity", "warning"), resolved=True, **kw)
+        return Incident(start_time=begin, end_time=begin + seconds, duration_seconds=seconds,
+                        cause_code=kw.pop("cause_code", "unknown_outage"), title=title,
+                        description=kw.pop("description", f"{title} (seeded)"), severity=kw.pop("severity", "warning"),
+                        resolved=True, **kw)
 
     long_id = await repo.create_incident(incident("Long evening outage", now - 7900, 7200.0, severity="critical"))
     # detected 3 s after the gateway's probes start failing and closed 8 s after they answer again, as the classifier does:
     # the app's start reads the loss span (about 90 s) from the probes, the recorded 98 s stay the incident's duration
-    short_id = await repo.create_incident(incident("Short gateway drop", now - 2997, 98.0, affected_targets=["isp_gateway"]))
+    # a gateway verdict as the classifier words it: the gateway's home-side address, which does not use the line
+    short_id = await repo.create_incident(incident(
+        "Short gateway drop", now - 2997, 98.0, affected_targets=["isp_gateway"], kind="gateway_loss",
+        cause_code="gateway_unreachable",
+        description="Hop 2: ISP Modem / Gateway (192.168.100.1), the cable modem (gateway) on its home-side address, is "
+                    "dropping 50.0% of probes while Hop 1: Local Router (LAN) answers normally. These probes do not use "
+                    "the provider's line. Possible causes: the gateway itself (overloaded, its firmware or power) or the "
+                    "link from the router to it."))
     await repo.create_incident(incident("Busy line slowdown", now - 2000, 120.0, load_pct=96.0, expected=True))
     for i in range(12):
+        if i == 1:  # a line verdict: loss from the provider's first router on while the gateway answers
+            await repo.create_incident(incident(
+                "Line or ISP Hub Packet Loss", now - 1800 + i * 60, 20.0, kind="isp_loss", cause_code="access_line_drop",
+                description="ISP Hub (198.51.100.1) lost 40.0% of recent probes while the local router and the gateway "
+                            "answer normally. Possible causes: cable line (RF) impairment or congestion at the provider's "
+                            "first router (the CMTS node), or the hop deprioritising ping replies."))
+            continue
         await repo.create_incident(incident(f"Seeded blip {i + 1}", now - 1800 + i * 60, 20.0))
     await repo.create_incident(Incident(
         start_time=now - 4000, end_time=now - 3900, duration_seconds=100.0, cause_code="service_unavailable",

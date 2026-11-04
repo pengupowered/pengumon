@@ -121,7 +121,7 @@ async def test_real_loss_under_heavy_load_is_an_incident_with_its_load(tmp_path,
     diagnosis = await run_rounds(classifier, stats_with(**PUBLIC_LOSS), 3)
 
     assert diagnosis.status == "degraded"
-    assert diagnosis.cause_code == "access_line_drop"
+    assert diagnosis.cause_code == "internet_backbone_transit_loss"  # public loss only: the provider's network
     assert diagnosis.load_pct == 95.4
     assert diagnosis.description.endswith(
         "During heavy load (95%): download 954 Mbps, 95% of the configured 1000 Mbps capacity."

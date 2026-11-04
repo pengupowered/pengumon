@@ -286,6 +286,7 @@ async def test_the_api_refuses_what_the_preview_cannot_replay_in_the_error_shape
         assert res.status_code == 422 and res.json()["errors"][0]["where"] == "values.database.retention_days"
         res = await ac.post("/api/settings/preview", json={"values": {}, "days": 30})
         assert res.status_code == 422 and res.json()["errors"][0]["where"] == "days"
+        assert res.json()["detail"] == res.json()["errors"][0]["message"]  # the plain sentence, nothing else
         res = await ac.post("/api/settings/preview", json={"values": {"classifier.busy_load_pct": 1}})
         assert res.status_code == 422
         res = await ac.post("/api/settings/preview", json={"values": {}, "extra": 1})

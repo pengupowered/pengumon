@@ -1380,13 +1380,1073 @@
     },
     {
       "type": "row",
+      "title": "Cable line: $dev_cable",
+      "collapsed": false,
+      "panels": [],
+      "repeat": "dev_cable",
+      "id": 66,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Power, by direction",
+      "description": "Channel power of the cable line: the lowest, average and highest channel, downstream and upstream. A channel outside the good range is graded in Pengumon (Settings, line levels).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_line_docsis_power_dBmV{job=\"$service\", device=~\"$dev_cable\"}",
+          "legendFormat": "{{direction}} {{stat}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 67,
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Downstream SNR",
+      "description": "Signal-to-noise ratio of the downstream channels: the lowest and the average.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_line_docsis_snr_dB{job=\"$service\", device=~\"$dev_cable\"}",
+          "legendFormat": "{{stat}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dB",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 68,
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Channels, by grade",
+      "description": "How many channels are good, warn or critical (a channel counts at its worst grade). Per-channel detail is in Pengumon's channel history.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (direction, grade) (pengumon_line_docsis_channels{job=\"$service\", device=~\"$dev_cable\"})",
+          "legendFormat": "{{direction}} {{grade}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 69,
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Codeword errors, by kind",
+      "description": "New corrected and uncorrectable codewords between polls. Corrected errors are normal in small numbers; uncorrectable ones lose data.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (kind) (increase(pengumon_line_errors_total{job=\"$service\", device=~\"$dev_cable\"}[$__interval]))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 70,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 16,
+        "h": 8
+      },
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "title": "Modem restarts",
+      "description": "Polls that found an error counter lower than before: the modem restarted. Also marked on every panel of the dashboard.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(pengumon_line_restarts_total{job=\"$service\", device=~\"$dev_cable\"}[$__interval]))",
+          "legendFormat": "restarts",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 71,
+      "gridPos": {
+        "x": 16,
+        "y": 52,
+        "w": 8,
+        "h": 8
+      },
+      "interval": "1m"
+    },
+    {
+      "type": "row",
+      "title": "WAN and line load: $dev_wan",
+      "collapsed": false,
+      "panels": [],
+      "repeat": "dev_wan",
+      "id": 72,
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "WAN rate",
+      "description": "The router's WAN rate, download and upload.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_wan_rate_Mbit_per_second{job=\"$service\", device=~\"$dev_wan\"}",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Mbits",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 73,
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Line load, against the capacity",
+      "description": "Load as a percent of the line capacity in use (learned or configured). The line figures are the same for every router.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_line_load_percent{job=\"$service\"}",
+          "legendFormat": "load",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 74,
+      "gridPos": {
+        "x": 8,
+        "y": 61,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Line capacity in use",
+      "description": "The capacity the load is measured against, download and upload.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_line_capacity_Mbit_per_second{job=\"$service\"}",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Mbits",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 75,
+      "gridPos": {
+        "x": 16,
+        "y": 61,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Router restarts",
+      "description": "Polls that found a WAN byte counter lower than before without wrapping: the router restarted.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(pengumon_router_restarts_total{job=\"$service\", device=~\"$dev_wan\"}[$__interval]))",
+          "legendFormat": "restarts",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 76,
+      "gridPos": {
+        "x": 0,
+        "y": 69,
+        "w": 8,
+        "h": 8
+      },
+      "interval": "1m"
+    },
+    {
+      "type": "row",
+      "title": "Router: $dev_router",
+      "collapsed": false,
+      "panels": [],
+      "repeat": "dev_router",
+      "id": 77,
+      "gridPos": {
+        "x": 0,
+        "y": 77,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU",
+      "description": "Router CPU use.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_router_cpu_percent{job=\"$service\", device=~\"$dev_router\"}",
+          "legendFormat": "cpu",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 78,
+      "gridPos": {
+        "x": 0,
+        "y": 78,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory",
+      "description": "Router memory use.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_router_memory_percent{job=\"$service\", device=~\"$dev_router\"}",
+          "legendFormat": "memory",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 79,
+      "gridPos": {
+        "x": 12,
+        "y": 78,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Wi-Fi and mesh: $dev_wifi",
+      "collapsed": false,
+      "panels": [],
+      "repeat": "dev_wifi",
+      "id": 80,
+      "gridPos": {
+        "x": 0,
+        "y": 86,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Clients, by band",
+      "description": "Online clients: wired, and Wi-Fi by band.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (connection, band) (pengumon_clients{job=\"$service\", device=~\"$dev_wifi\"})",
+          "legendFormat": "{{connection}} {{band}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 81,
+      "gridPos": {
+        "x": 0,
+        "y": 87,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Weak Wi-Fi clients",
+      "description": "Online Wi-Fi clients at or below -75 dBm, by band.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (band) (pengumon_clients_wifi_weak{job=\"$service\", device=~\"$dev_wifi\"})",
+          "legendFormat": "{{band}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 82,
+      "gridPos": {
+        "x": 8,
+        "y": 87,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Wi-Fi signal",
+      "description": "Signal of online Wi-Fi clients: the weakest tenth (p10) and the median, by band.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_clients_wifi_signal_dBm{job=\"$service\", device=~\"$dev_wifi\"}",
+          "legendFormat": "{{band}} {{stat}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 83,
+      "gridPos": {
+        "x": 16,
+        "y": 87,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mesh nodes, by state",
+      "description": "Mesh nodes online, offline, or not reported.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (state) (pengumon_mesh_nodes{job=\"$service\", device=~\"$dev_wifi\"})",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 84,
+      "gridPos": {
+        "x": 0,
+        "y": 95,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Clients per node",
+      "description": "The fewest and the most clients on one mesh node.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_mesh_node_clients{job=\"$service\", device=~\"$dev_wifi\"}",
+          "legendFormat": "{{stat}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 85,
+      "gridPos": {
+        "x": 8,
+        "y": 95,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Weakest Wi-Fi backhaul",
+      "description": "Signal of the weakest mesh node that connects over Wi-Fi.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_mesh_backhaul_signal_dBm{job=\"$service\", device=~\"$dev_wifi\"}",
+          "legendFormat": "{{stat}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 86,
+      "gridPos": {
+        "x": 16,
+        "y": 95,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
       "title": "pengumon itself",
       "collapsed": false,
       "panels": [],
       "id": 23,
       "gridPos": {
         "x": 0,
-        "y": 43,
+        "y": 103,
         "w": 24,
         "h": 1
       }
@@ -1470,7 +2530,7 @@
       "id": 24,
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 104,
         "w": 6,
         "h": 8
       }
@@ -1559,7 +2619,7 @@
       "id": 25,
       "gridPos": {
         "x": 6,
-        "y": 44,
+        "y": 104,
         "w": 6,
         "h": 8
       }
@@ -1618,7 +2678,7 @@
       "id": 26,
       "gridPos": {
         "x": 12,
-        "y": 44,
+        "y": 104,
         "w": 6,
         "h": 8
       }
@@ -1677,7 +2737,7 @@
       "id": 27,
       "gridPos": {
         "x": 18,
-        "y": 44,
+        "y": 104,
         "w": 6,
         "h": 8
       }
@@ -1737,7 +2797,7 @@
       "id": 33,
       "gridPos": {
         "x": 0,
-        "y": 52,
+        "y": 112,
         "w": 6,
         "h": 8
       }
@@ -1797,7 +2857,7 @@
       "id": 34,
       "gridPos": {
         "x": 6,
-        "y": 52,
+        "y": 112,
         "w": 6,
         "h": 8
       }
@@ -1875,7 +2935,7 @@
       "id": 35,
       "gridPos": {
         "x": 12,
-        "y": 52,
+        "y": 112,
         "w": 6,
         "h": 8
       }
@@ -1960,7 +3020,7 @@
       "id": 36,
       "gridPos": {
         "x": 18,
-        "y": 52,
+        "y": 112,
         "w": 6,
         "h": 8
       }
@@ -2020,7 +3080,7 @@
       "id": 37,
       "gridPos": {
         "x": 0,
-        "y": 60,
+        "y": 120,
         "w": 8,
         "h": 8
       }
@@ -2089,7 +3149,7 @@
       "id": 38,
       "gridPos": {
         "x": 8,
-        "y": 60,
+        "y": 120,
         "w": 8,
         "h": 8
       }
@@ -2149,7 +3209,7 @@
       "id": 39,
       "gridPos": {
         "x": 16,
-        "y": 60,
+        "y": 120,
         "w": 8,
         "h": 8
       }
@@ -2162,7 +3222,7 @@
       "id": 40,
       "gridPos": {
         "x": 0,
-        "y": 68,
+        "y": 128,
         "w": 24,
         "h": 1
       }
@@ -2248,7 +3308,7 @@
       "id": 41,
       "gridPos": {
         "x": 0,
-        "y": 69,
+        "y": 129,
         "w": 6,
         "h": 8
       }
@@ -2308,7 +3368,7 @@
       "id": 42,
       "gridPos": {
         "x": 6,
-        "y": 69,
+        "y": 129,
         "w": 6,
         "h": 8
       }
@@ -2368,7 +3428,7 @@
       "id": 43,
       "gridPos": {
         "x": 12,
-        "y": 69,
+        "y": 129,
         "w": 6,
         "h": 8
       }
@@ -2437,7 +3497,7 @@
       "id": 44,
       "gridPos": {
         "x": 18,
-        "y": 69,
+        "y": 129,
         "w": 6,
         "h": 8
       }
@@ -2450,7 +3510,7 @@
       "id": 45,
       "gridPos": {
         "x": 0,
-        "y": 77,
+        "y": 137,
         "w": 24,
         "h": 1
       }
@@ -2510,7 +3570,7 @@
       "id": 46,
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 138,
         "w": 6,
         "h": 8
       }
@@ -2596,7 +3656,7 @@
       "id": 47,
       "gridPos": {
         "x": 6,
-        "y": 78,
+        "y": 138,
         "w": 6,
         "h": 8
       }
@@ -2656,7 +3716,7 @@
       "id": 48,
       "gridPos": {
         "x": 12,
-        "y": 78,
+        "y": 138,
         "w": 6,
         "h": 8
       }
@@ -2716,7 +3776,7 @@
       "id": 49,
       "gridPos": {
         "x": 18,
-        "y": 78,
+        "y": 138,
         "w": 6,
         "h": 8
       }
@@ -2802,7 +3862,7 @@
       "id": 50,
       "gridPos": {
         "x": 0,
-        "y": 86,
+        "y": 146,
         "w": 12,
         "h": 8
       }
@@ -2862,7 +3922,7 @@
       "id": 51,
       "gridPos": {
         "x": 12,
-        "y": 86,
+        "y": 146,
         "w": 12,
         "h": 8
       }
@@ -2875,7 +3935,7 @@
       "id": 52,
       "gridPos": {
         "x": 0,
-        "y": 94,
+        "y": 154,
         "w": 24,
         "h": 1
       }
@@ -2935,7 +3995,7 @@
       "id": 53,
       "gridPos": {
         "x": 0,
-        "y": 95,
+        "y": 155,
         "w": 8,
         "h": 8
       }
@@ -3021,7 +4081,7 @@
       "id": 54,
       "gridPos": {
         "x": 8,
-        "y": 95,
+        "y": 155,
         "w": 8,
         "h": 8
       }
@@ -3099,7 +4159,7 @@
       "id": 55,
       "gridPos": {
         "x": 16,
-        "y": 95,
+        "y": 155,
         "w": 8,
         "h": 8
       }
@@ -3112,7 +4172,7 @@
       "id": 56,
       "gridPos": {
         "x": 0,
-        "y": 103,
+        "y": 163,
         "w": 24,
         "h": 1
       }
@@ -3172,7 +4232,7 @@
       "id": 57,
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 164,
         "w": 8,
         "h": 8
       }
@@ -3241,7 +4301,7 @@
       "id": 58,
       "gridPos": {
         "x": 8,
-        "y": 104,
+        "y": 164,
         "w": 8,
         "h": 8
       }
@@ -3310,7 +4370,7 @@
       "id": 59,
       "gridPos": {
         "x": 16,
-        "y": 104,
+        "y": 164,
         "w": 8,
         "h": 8
       }
@@ -3370,7 +4430,7 @@
       "id": 60,
       "gridPos": {
         "x": 0,
-        "y": 112,
+        "y": 172,
         "w": 12,
         "h": 8
       }
@@ -3456,7 +4516,7 @@
       "id": 61,
       "gridPos": {
         "x": 12,
-        "y": 112,
+        "y": 172,
         "w": 12,
         "h": 8
       }
@@ -3469,7 +4529,7 @@
       "id": 62,
       "gridPos": {
         "x": 0,
-        "y": 120,
+        "y": 180,
         "w": 24,
         "h": 1
       }
@@ -3538,7 +4598,7 @@
       "id": 63,
       "gridPos": {
         "x": 0,
-        "y": 121,
+        "y": 181,
         "w": 8,
         "h": 8
       }
@@ -3598,7 +4658,7 @@
       "id": 64,
       "gridPos": {
         "x": 8,
-        "y": 121,
+        "y": 181,
         "w": 8,
         "h": 8
       }
@@ -3709,7 +4769,7 @@
       "id": 65,
       "gridPos": {
         "x": 16,
-        "y": 121,
+        "y": 181,
         "w": 8,
         "h": 8
       }
@@ -3722,7 +4782,7 @@
       "id": 28,
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 189,
         "w": 24,
         "h": 1
       }
@@ -3755,7 +4815,7 @@
       "id": 29,
       "gridPos": {
         "x": 0,
-        "y": 130,
+        "y": 190,
         "w": 12,
         "h": 10
       }
@@ -3788,7 +4848,7 @@
       "id": 30,
       "gridPos": {
         "x": 12,
-        "y": 130,
+        "y": 190,
         "w": 12,
         "h": 10
       }
@@ -3817,7 +4877,7 @@
       "id": 31,
       "gridPos": {
         "x": 0,
-        "y": 140,
+        "y": 200,
         "w": 12,
         "h": 10
       }
@@ -3846,7 +4906,7 @@
       "id": 32,
       "gridPos": {
         "x": 12,
-        "y": 140,
+        "y": 200,
         "w": 12,
         "h": 10
       }
@@ -3876,6 +4936,123 @@
         "includeAll": false,
         "multi": false,
         "description": "The OTEL_SERVICE_NAME of the pengumon instance to show (default pengumon)"
+      },
+      {
+        "name": "dev_cable",
+        "label": "Cable line",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(pengumon_line_docsis_snr_dB{job=\"$service\"}, device)",
+          "refId": "dev_cable"
+        },
+        "definition": "label_values(pengumon_line_docsis_snr_dB{job=\"$service\"}, device)",
+        "refresh": 2,
+        "sort": 1,
+        "hide": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "description": "The devices that report this module; its row repeats for each (no device, no row)"
+      },
+      {
+        "name": "dev_wan",
+        "label": "WAN",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(pengumon_wan_rate_Mbit_per_second{job=\"$service\"}, device)",
+          "refId": "dev_wan"
+        },
+        "definition": "label_values(pengumon_wan_rate_Mbit_per_second{job=\"$service\"}, device)",
+        "refresh": 2,
+        "sort": 1,
+        "hide": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "description": "The devices that report this module; its row repeats for each (no device, no row)"
+      },
+      {
+        "name": "dev_router",
+        "label": "Router",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(pengumon_router_cpu_percent{job=\"$service\"}, device)",
+          "refId": "dev_router"
+        },
+        "definition": "label_values(pengumon_router_cpu_percent{job=\"$service\"}, device)",
+        "refresh": 2,
+        "sort": 1,
+        "hide": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "description": "The devices that report this module; its row repeats for each (no device, no row)"
+      },
+      {
+        "name": "dev_wifi",
+        "label": "Wi-Fi",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(pengumon_clients{job=\"$service\"}, device)",
+          "refId": "dev_wifi"
+        },
+        "definition": "label_values(pengumon_clients{job=\"$service\"}, device)",
+        "refresh": 2,
+        "sort": 1,
+        "hide": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "description": "The devices that report this module; its row repeats for each (no device, no row)"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Modem restarts",
+        "enable": true,
+        "iconColor": "orange",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "expr": "sum(increase(pengumon_line_restarts_total{job=\"$service\"}[1m])) > 0",
+        "step": "1m",
+        "titleFormat": "Modem restarted",
+        "textFormat": "an error counter went backwards"
       }
     ]
   }

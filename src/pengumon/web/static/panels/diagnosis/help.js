@@ -5,7 +5,8 @@ import { registerHelp } from '../../js/help.js';
 
 registerHelp({
   'diagnosis': 'The classifier\'s one-line verdict, recomputed continuously from the last 10 probes of every target. It '
-    + 'weighs which categories are failing: for example, if your router answers but the hops beyond it do not, the '
-    + 'problem is in the line or the ISP. Healthy means every hop is within '
+    + 'weighs which categories are failing: for example, if your router and gateway answer but the provider\'s first '
+    + 'router does not, the problem is your line or that router; if the gateway itself stops answering, it is the '
+    + 'gateway, not the line. Healthy means every hop is within '
     + 'its loss and latency limits. A fault that lasts long enough is saved to the incident log below.'
 });

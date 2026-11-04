@@ -236,9 +236,11 @@ function emptyWindowText() {
 }
 
 // Where an incident's fault sat (the server's `cause` category), as a word, in the timeline's lane order. The words
-// are Path health's: Router (local probes), Line (the gateway / modem), ISP (the provider's hops and beyond).
-export const CAUSES = [['router', 'Router'], ['line', 'Line'], ['isp', 'ISP'], ['internet', 'Internet'], ['dns', 'DNS'],
-  ['load', 'Load'], ['service', 'Service'], ['unknown', 'Other']];
+// are Path health's: Router (local probes), Gateway (the gateway / modem on its home-side address, which does not use
+// the line), Line (loss from the provider's first router on while the gateway answers: the line or that router), ISP
+// (the provider's network beyond it).
+export const CAUSES = [['router', 'Router'], ['gateway', 'Gateway'], ['line', 'Line'], ['isp', 'ISP'], ['internet', 'Internet'],
+  ['dns', 'DNS'], ['load', 'Load'], ['service', 'Service'], ['unknown', 'Other']];
 const CAUSE_WORD = Object.fromEntries(CAUSES);
 export const causeOf = (inc) => CAUSE_WORD[inc.cause] || 'Other';
 

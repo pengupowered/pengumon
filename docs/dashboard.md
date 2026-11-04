@@ -14,7 +14,7 @@ Left to right:
   title follow it. Until the first message it is grey and says "Connecting"; the page never shows green before data.
 - **Live indicator**: "Live · 1 s" while the socket is open, "Reconnecting" when it is not.
 - **LAN address chip** (when the server knows its LAN URL) with a copy button.
-- **Tools**: Trace (route trace), Dossier (ISP outage dossier), Alerts (browser notifications on or off), Target (add a
+- **Tools**: Trace (route trace), Dossier (ISP outage dossier), **Ask AI** (an icon: the troubleshooting pack, below), Alerts (browser notifications on or off), Target (add a
   probe target), **Settings** (every setting of Pengumon), **Layout** (panel arrangement), theme toggle, and a **Grafana** menu with links to the dashboards
   when `PENGUMON_GRAFANA_URL` is set (partial `templates/features/grafana.html`; without it the button is not rendered).
   On a phone the tools collapse into a "more" menu that copies them.
@@ -70,7 +70,7 @@ variant).
 
 **Path health** is the hero. It shows the verdict, then the chain this host, router, line, every ISP hop, internet,
 built from the configured targets' categories (DNS probes stand in when there is no public target). Each node has a
-short label (Router, Line, ISP hop 1, Internet) with the configured target name as a second line (whole in the tooltip),
+short label (Router, Gateway, ISP hop 1, Internet) with the configured target name as a second line (whole in the tooltip),
 the median of the last probes, loss, jitter and a sparkline; each link shows the latency the segment adds. A node opens
 that target's history. The Internet node (several public servers) and a folded run of ISP hops open the history of all
 their targets together, titled as the node is ("Internet · median of 3 public servers", "ISP · 9 hops"): **All** draws a
@@ -107,11 +107,11 @@ and "not probed" in Hop details, and that line where its Uptime strip and histor
 then, counts in no figure and opens nothing, and a redundant group (the public servers) is judged by the members it
 does probe. The page reads both flags through `static/js/path.js` `quietTargets` (target id to its words).
 
-The same short labels name a target everywhere else (`static/js/path.js` `shortLabels`): Router, Line, ISP hop N,
+The same short labels name a target everywhere else (`static/js/path.js` `shortLabels`): Router, Gateway, ISP hop N,
 Internet (with its address when there are several public servers), DNS lookup N, a custom target by its name; the
 configured name is the secondary text.
 
-**Latency** draws three path series by default: Router (worst local target), Line (worst gateway target) and Internet
+**Latency** draws three path series by default: Router (worst local target), Gateway (worst gateway target) and Internet
 (median of the public servers of the IPv4 group; DNS lookups stand in when there is none). When discovery or the path editor put IPv6 servers in their own group (`internet_v6`), they are a fourth line, "Internet (IPv6)", as Path health shows them as their own node. The legend names each series' targets, the
 tooltip gives every member's own value, and a note says what the view leaves out. **Each target** draws one thin line
 per pinged target (ISP hops included, DNS lookups not: they time a lookup, not a round trip) in the colours Hop details
@@ -197,7 +197,7 @@ Wider than 720 px there is no bar and every shown panel appears.
 
 - Owned by a panel (extra `*.html` in its folder): **Local network** (SVG topology, filter chips, clients table) and
   **Router history** (router), **Channels** with a per-channel history (line, DOCSIS only), **Inspector** (incidents).
-- Standalone (`static/dialogs/<id>/`): **add-target**, **alerts**, **device-setup** (credentials and a test poll for a
+- Standalone (`static/dialogs/<id>/`): **add-target**, **ai-pack**, **alerts**, **device-setup** (credentials and a test poll for a
   device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **settings**, **path-editor** (the probe path:
   Path health's Edit, first-run review, Rediscover, Export / Import), **target-history**, **trace**.
 
@@ -285,3 +285,19 @@ and import only core files; a folder imports only `static/js` and its own files,
 handlers or scripts; every delegated action in the markup is registered (once); every `getElementById` literal exists;
 no vendor names or fixed hosts; device templates carry no ids (one card per device); help keys exist and are used;
 tabs are named consistently. Add a smoke step to `tests/ui/smoke.mjs` for what a person does with the panel.
+
+## Ask AI (the troubleshooting pack)
+
+The sparkle button in the header, the inspector's **Ask AI** (that incident, with an hour on each side) and a button in the
+dossier open one dialog that shows the pack (`GET /api/ai-pack`) as Markdown, to copy into any chat assistant. Pengumon calls
+no AI itself. What the pack holds and what each level shares: [ai-pack.md](ai-pack.md).
+- **What to cover:** the past hour, 24 hours or 7 days, or the incident the dialog was opened from.
+- **How long:** Short, or With more examples.
+- **How much to share:** Full (the default every time it opens), Vague or Anonymized; each says in the dialog what it includes. Anyone
+  who can view the dashboard may use every level.
+- **Preview** is exactly what Copy and Download .md give, with a token estimate (about characters / 4) and the modules included.
+  While a new preview loads, the earlier text stays, dimmed, and Copy and Download are off so a pack made for other choices is
+  never copied. A change waits 0.6 s before it asks (the route allows 6 a minute); a busy answer (429) retries by itself.
+  The pack's times are in the zone set in Settings, else in the browser's own zone (the dialog sends it), else UTC.
+- **Who is who** (folded away) is the key to the roles; it is never in the pack.
+- Messages (copied, busy, errors, the plain-HTTP download note) are in the dialog's footer, always in view.

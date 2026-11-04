@@ -234,9 +234,9 @@ const review = (arg, title, text) => `<div class="result st-unknown">${icon('pat
 // The device linked to each hop (the path editor's device line), for a node's tooltip: "Readings from: <label> ·
 // Healthy · CPU 12%", from the device's latest reading (js/device-feed.js, the device cards' feed).
 const hopDevices = new Map();
-const NODE_ROLE = { Router: 'local', Line: 'gateway' };
+const NODE_ROLE = { Router: 'local', Gateway: 'gateway' };
 function deviceTip(n, base) {
-  // the Router and Line nodes stand for every hop of their role; the others for their own target
+  // the Router and Gateway nodes stand for every hop of their role; the others for their own target
   const members = NODE_ROLE[n.kind] && lastTargets ? lastTargets.filter((t) => t.category === NODE_ROLE[n.kind]).map((t) => t.target_id) : [n.target];
   const ids = [...new Set(members.map((m) => hopDevices.get(m)).filter(Boolean))];
   const lines = ids.map((id) => state.devices.find((d) => d.id === id)).filter(Boolean).map((device) => {

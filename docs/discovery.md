@@ -1,7 +1,7 @@
 # Network discovery
 
 Discovery finds the path from this host to the internet and proposes it as the probe path: each hop with a role
-(Your network, Line / gateway, Provider, Internet), how sure it is (**Sure**, **Likely** or **Unsure**, in the API
+(Your network, Gateway (modem), Provider, Internet), how sure it is (**Sure**, **Likely** or **Unsure**, in the API
 `high`, `likely`, `unknown`) and the reasons for it. It only proposes. The path editor shows the draft, and nothing
 changes until you press Apply there. It runs
 
@@ -89,7 +89,7 @@ An address that is a hop of the traced path is skipped, and so is one on this ho
 path's first private hop: a device there sits beside your router, not in front of it). So is a configured device's
 host: its driver already reads it, at its own pace, and discovery sends it nothing here. Each other one gets one echo
 request and one GET of `/` over HTTP (no HTTPS retry, no redirect). One that answers either is proposed as a
-**Line / gateway** hop right after your network's hops, with the reason "answers on your network but isn't on the
+**Gateway (modem)** hop right after your network's hops, with the reason "answers on your network but isn't on the
 traced path (a modem in bridge mode, or an ISP gateway)" and the confidence **Likely**. One at 192.168.100.1 is named
 Cable modem, the others Gateway. Only these private addresses are ever asked.
 
@@ -157,7 +157,7 @@ are wrongly placed, change the role or the order yourself: discovery is a good f
 **Rediscover** with it on; press Rediscover once if you are happy to send the public hop addresses to Team Cymru. Discovery
 cannot see a router that does not answer the trace; add such a hop by its address.
 
-Roles: the first home hop is "Your network" (`local`, named Router). A later home hop at the edge is "Line / gateway"
+Roles: the first home hop is "Your network" (`local`, named Router). A later home hop at the edge is "Gateway (modem)"
 (`gateway`) when it is on another private network than the hop before it, or its page is an ISP gateway's. A gateway
 address off the traced path that answers (see above) is proposed as a `gateway` hop at the edge. Provider hops are `isp` ("Provider hop 2 (example.net)"),
 internet hops `public`, and the three servers are proposed as one node, group `internet`. The IPv4 path is the main chain. When this host has IPv6, the same three resolvers over IPv6 (2606:4700:4700::1111, 2001:4860:4860::8888, 2620:fe::fe; `family: 6`, ids `cloudflare_dns_v6`, `google_dns_v6`, `quad9_dns_v6`) are proposed as a second node, group `internet_v6` (“Internet (IPv6)”), with the evidence “this host has IPv6” and whether the IPv6 trace reached Cloudflare. The IPv6 path's own hops are not added. Without IPv6 there is no such group, and a note says why.

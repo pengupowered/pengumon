@@ -1,5 +1,5 @@
 // The probe path in the latency chart's terms: three series in path order (four with IPv6 servers), each from the targets
-// of its categories. Router: the worst local target; line: the worst gateway target; internet: the median of the public
+// of its categories. Router: the worst local target; gateway: the worst gateway target; internet: the median of the public
 // targets outside the IPv6 group (DNS lookups stand in when there is none); "Internet (IPv6)": the median of the IPv6
 // group, as its own line like Path health's own node. ISP hops and DNS stay out of the path series (at most three lines cross, as the
 // design asks); the chart's "Each target" view, hop details and target history show every target.
@@ -10,7 +10,7 @@ export const V6_GROUP = 'internet_v6';
 
 export const SERIES = [
   { id: 'path_router', name: 'Router', cats: ['local'], color: '--s1', combine: 'worst' },
-  { id: 'path_line', name: 'Line', cats: ['gateway'], color: '--s3', combine: 'worst' },
+  { id: 'path_line', name: 'Gateway', cats: ['gateway'], color: '--s3', combine: 'worst' },
   { id: 'path_internet', name: 'Internet', cats: ['public'], fallback: ['dns'], color: '--s2', combine: 'median' },
   // the IPv6 servers discovery proposes as their own group: a line of their own, as Path health has a node of their own
   { id: 'path_internet_v6', name: 'Internet (IPv6)', cats: ['public'], group: V6_GROUP, color: '--s4', combine: 'median' }
@@ -51,11 +51,11 @@ export function combine(series, values) {
   return answered.length === values.length ? Math.max(...answered) : null; // worst: a loss shows as a gap
 }
 
-// The short name every panel gives a target, in the path health chain's words: Router, Line, ISP hop N, Internet (with
-// the address when there are several public servers, the Internet figure being their median), DNS lookup N; a custom target keeps its
+// The short name every panel gives a target, in the path health chain's words: Router, Gateway (the gateway or modem
+// on its home-side address), ISP hop N, Internet (with the address when there are several public servers, the Internet figure being their median), DNS lookup N; a custom target keeps its
 // configured name. A number is added only when a category has several targets. The configured name stays the
 // secondary text. From [{id, category, name, address, enabled}] in path order: { targetId: label }.
-const SHORT = { local: 'Router', gateway: 'Line', isp: 'ISP hop', dns: 'DNS lookup' };
+const SHORT = { local: 'Router', gateway: 'Gateway', isp: 'ISP hop', dns: 'DNS lookup' };
 
 export function shortLabels(targets) {
   const live = targets.filter((t) => t.enabled !== false);
@@ -149,7 +149,7 @@ export const quietKey = (quiet) => (quiet instanceof Map ? [...quiet].map(([id, 
 // ---------- the path's nodes (Path health's chain, and the figure a target history opened from a node shows) ----------
 const STAGES = [
   { cats: ['local'], kind: 'Router', icon: 'router' },
-  { cats: ['gateway'], kind: 'Line', icon: 'modem' },
+  { cats: ['gateway'], kind: 'Gateway', icon: 'modem' },
   { cats: ['isp'], kind: 'ISP', icon: 'isp', each: true },
   { cats: ['public'], kind: 'Internet', icon: 'globe', fallback: ['dns'], redundant: true }
 ];

@@ -124,7 +124,7 @@ export const steps = [
     await until(() => document.querySelector("#topologyBody .topo-wide .tgo .tc .tname")?.textContent);
     await until(() => /ms/.test(document.querySelector("#topologyBody .topo-wide .tn .tsub")?.textContent ?? ""));
     const t = await topo(page);
-    eq("chain", t.kinds.join(">"), "INTERNET>LINE>ROUTER");
+    eq("chain", t.kinds.join(">"), "INTERNET>GATEWAY>ROUTER");
     ok(`modem is named by its host (${t.names[1]})`, /192\.168\.99\.1/.test(t.names[1]));
     eq("router is named by its model", t.names[2], "Example Router");
     eq("mesh nodes", t.leaves.join(" | "), "Hall: 2 clients | Study: 1 client | Garage: 0 clients");

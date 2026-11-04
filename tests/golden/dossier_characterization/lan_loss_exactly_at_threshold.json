@@ -57,13 +57,14 @@
   "",
   "## 4. What the data shows",
   "- No modem data is available, so nothing can be said about the RF side.",
-  "- Loss first appears at Modem Gateway (192.168.100.1).",
+  "- Loss first appears at Modem Gateway (192.168.100.1), the gateway probed on its home-side address, while Local Router answers. These probes do not use the line, so the gateway itself stopped answering (restarting, overloaded, or the link from the router to it); a line fault shows here only if it made the gateway restart.",
   "",
   "## 5. Summary for a support ticket",
   "```text",
   "Over the past 24 hours Pengumon recorded 0 incidents totalling 0.0 minutes.",
   "Loss to Local Router and Modem Gateway: at most 0.5%.",
-  "Loss is first elevated at Modem Gateway (192.168.100.1): 0.5%.",
+  "Loss is first elevated at Modem Gateway (192.168.100.1): 0.5%. That is the gateway's home-side address, which does not use the line: the gateway stopped answering while the router answered.",
+  "Request: if you supplied this gateway, please check it; it stopped answering on its home side.",
   "```"
  ],
  "payload": {

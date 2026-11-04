@@ -74,11 +74,15 @@ export const steps = [
   }, { variants: ALL_VARIANTS }],
 
   ["lan pill shows the access URL and copies it", async ({ click, eq, ok, page, text, until }) => {
+    // wide enough for the chip in any browser's fonts (where it fits or moves to the menu is sign-out.mjs's header-fit step)
+    const viewport = page.viewport();
+    await page.setViewport({ ...viewport, width: 1700 });
     await until(() => getComputedStyle(document.getElementById("lanPill")).display !== "none");
     ok("lan url (the address, without the scheme; the link has it whole)", /^[^/]+:\d+$/.test(await text("#lanUrlLink")) && /^http:\/\/.+:\d+$/.test(await page.$eval("#lanUrlLink", (a) => a.href.replace(/\/$/, ""))));
     await click("#btnCopyLan");
     await until(() => document.getElementById("btnCopyLan").dataset.copied === "1");
     eq("clipboard", await page.evaluate(() => window.__clip()), await page.$eval("#lanUrlLink", (a) => a.title));
+    await page.setViewport(viewport);
   }],
 
   ["desktop layout: no tab bar and every card shown", async ({ LINE, ROUTER, eq, ok, visible }) => {

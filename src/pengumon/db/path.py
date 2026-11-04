@@ -33,7 +33,7 @@ SUMMARY_MAX = 300
 ADDRESS_CHANGED = "address_changed"
 
 # The roles in the words the path editor uses for them.
-ROLE_WORDS = {"local": "Your network", "gateway": "Line / gateway", "isp": "Provider", "public": "Internet",
+ROLE_WORDS = {"local": "Your network", "gateway": "Gateway (modem)", "isp": "Provider", "public": "Internet",
               "dns": "DNS", "custom": "Custom"}
 
 

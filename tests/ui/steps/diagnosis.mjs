@@ -28,19 +28,19 @@ export const steps = [
   ["path health: verdict, one node per path stage with median, loss and a sparkline, header pill with numbers", async ({ click, count, eq, ok, page, text, until, waitCount }) => {
     await waitCount("#pathChain .node[data-node]", 3); // router (local), line (gateway), internet (public); the DNS probes stay out
     const kinds = await page.$$eval("#pathChain .node .node-kind", (els) => els.map((e) => e.textContent).join(">"));
-    eq("path order", kinds, "Router>Line>Internet");
+    eq("path order", kinds, "Router>Gateway>Internet");
     eq("origin marker, no status on it", await page.$eval("#pathChain .origin", (e) => `${e.querySelector(".origin-t").textContent}|${e.querySelector(".node-st, .badge") === null}`), "This host|true");
     await until(() => /^\d+(\.\d+)?ms$/.test(document.querySelector("#pathChain .node[data-node] .node-val")?.textContent ?? ""));
     await until(() => document.querySelectorAll("#pathChain .node[data-node] svg.spark path").length >= 6);
     eq("verdict badge", (await text("#statusBadge")).trim(), "Healthy");
     ok("status pill", /ms to internet/.test(await text("#statusPill")));
     eq("deltas on the links", await count("#pathChain .link .delta"), 3);
-    await click('#pathChain .node[data-node^="Line"]');
+    await click('#pathChain .node[data-node^="Gateway"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
     ok("the gateway's history", /ISP Modem/.test(await text("#targetHistTitle")));
     eq("opened on Live, the range of the node's figure", await page.$eval('#targetHistRanges button[data-arg="300"]', (b) => b.getAttribute("aria-pressed")), "true");
     await until(() => {
-      const v = document.querySelector('#pathChain .node[data-node^="Line"] .node-val').textContent.replace(/ms$/, "");
+      const v = document.querySelector('#pathChain .node[data-node^="Gateway"] .node-val').textContent.replace(/ms$/, "");
       return document.getElementById("targetHistNow").textContent.startsWith(`On the path now: ${v} ms (the median of its last 60 probes). The figures above cover the last 5 min.`);
     });
     await click("[data-action=closeModal][data-arg=targetHistModal]");
@@ -65,7 +65,7 @@ export const steps = [
       await layoutSettled();
       const m = await measurePath(page);
       eq(`${w}: hop nodes`, m.count, 6);
-      eq(`${w}: labels`, m.kinds.map((k) => k.text).join(">"), "Router>Line>ISP hop 1>ISP hop 2>ISP hop 3>Internet · 3");
+      eq(`${w}: labels`, m.kinds.map((k) => k.text).join(">"), "Router>Gateway>ISP hop 1>ISP hop 2>ISP hop 3>Internet · 3");
       ok(`${w}: a label is cut: ${JSON.stringify(m.kinds)}`, m.kinds.every((k) => !k.cut));
       ok(`${w}: the chain overflows sideways`, !m.chainOverflows);
       ok(`${w}: the configured name is not in the tooltip`, m.named);
@@ -148,7 +148,7 @@ export const steps = [
     await mutate(9);
     await until(() => document.querySelector('#pathChain .node[data-node="ISP:run"]'));
     const long = await chain();
-    eq("nine ISP hops fold into one node", long.kinds.join(">"), "Router>Line>ISP · 9>Internet");
+    eq("nine ISP hops fold into one node", long.kinds.join(">"), "Router>Gateway>ISP · 9>Internet");
     ok("nothing overflows or is cut", !long.overflow && !long.cut);
     ok("the folded node says what it holds", /9 hops, 8 answer · 1 ignores ping/.test(await text('#pathChain .node[data-node="ISP:run"] .node-name')));
     ok("the header pill counts no loss from the hop that ignores ping", !/loss/.test(await text("#statusPillMetrics")));

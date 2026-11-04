@@ -64,7 +64,8 @@ class PreviewInvalid(Exception):
     dicts ({where, message})."""
 
     def __init__(self, errors: List[Dict[str, str]]):
-        super().__init__(errors[0]["message"] if errors else "invalid preview request")
+        self.message = errors[0]["message"] if errors else "invalid preview request"  # a plain sentence for the page
+        super().__init__(self.message)
         self.errors = errors
 
 

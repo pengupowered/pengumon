@@ -120,7 +120,18 @@ meaning (`version` rises if that ever has to happen).
 - `event`: `incident_started`, `incident_resolved`, `service_down`, `service_up`, `path_changed`, `test`
 - `severity`: `info`, `warning` or `critical` (the incident's; resolved, back and test are `info`, an app that is down `warning`)
 - `title`, `message`: The text ntfy shows
-- `incident_id`, `cause`: The incident (network incidents only; `null` otherwise). The same id is in the dashboard
+- `incident_id`, `cause`: The incident (network incidents only; `null` otherwise). The same id is in the dashboard.
+  `cause` is one of these codes (more may be added, none changes meaning):
+  - `local_wifi_mesh_drop`, `local_switch_cable_fault`: the router or mesh, Wi-Fi or cabling at home
+  - `gateway_unreachable`: the gateway (modem) stopped answering on its home-side address while the router answered;
+    those probes do not use the line, so it is the gateway itself or the link to it (older versions sent
+    `double_nat_congestion` for this)
+  - `double_nat_congestion`: delay at the gateway
+  - `access_line_drop`: loss from the provider's first hop on while the gateway answers: the line or the provider's
+    first router; also latency across the provider's hops
+  - `internet_backbone_transit_loss`: the provider's first hop answers, the internet does not: its network beyond
+  - `target_specific_outage`, `unknown_outage`: internet servers only, or a fault that cannot be placed
+  - `dns_resolver_failure`: name lookups fail while pings work
 - `service_id`: The `service_checks` id, for `service_down` and `service_up`
 - `started_at`, `ended_at`: UTC, ISO 8601; `ended_at` is `null` until it has ended. For services, the start is when the checks began failing
 - `duration_seconds`, `load_pct`: When known, else `null`

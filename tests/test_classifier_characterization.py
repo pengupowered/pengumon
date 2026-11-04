@@ -314,11 +314,12 @@ EXPECTED_TITLES = {
     "Local Router Disconnect",
     "Local Router Packet Loss",
     "Local Router Latency Spike",
-    "Local Router to Modem Gateway Link Failure",
+    "Modem Gateway Not Answering",
     "Modem Gateway Packet Loss",
     "Modem Gateway Latency Delay",
-    "ISP Line / ISP Hub A Outage",
-    "ISP Line / ISP Hub A Packet Loss",
+    "Line or ISP Hub A Outage",
+    "Line or ISP Hub A Packet Loss",
+    "ISP Backbone Outage",
     "ISP Upstream Backbone Packet Loss",
     "ISP Latency Spikes / Jitter",
     "DNS Resolution Outage",
@@ -532,7 +533,7 @@ async def build_golden(monkeypatch, tap=None):
 async def test_scenario_reaches_every_verdict_and_state_path(monkeypatch):
     golden, titles, descriptions = await build_golden(monkeypatch)
     assert EXPECTED_TITLES <= titles, sorted(EXPECTED_TITLES - titles)
-    assert any("coaxial line sync drop" in d for d in descriptions)
+    assert any("the cable line losing signal or sync" in d for d in descriptions)
     assert any("peering or backbone link failure" in d for d in descriptions)
     assert any("33.33333333333333%" in d for run in CONFIG_NAMES for d in golden[run]["texts"])  # unrounded fallback loss
     for name in ("default", "two_failures"):
@@ -556,6 +557,18 @@ def _old_load_explainable(title):
 def _old_isp_line(title):
     """Frozen copy of the title rule the classifier used for the intermediate-hop rule."""
     return title.startswith("ISP Line /")
+
+
+def _old_title(title):
+    """The title an older build gave this verdict (the fault-placement wording renamed these), so the frozen rules
+    above still judge it: the kinds must keep the old control flow."""
+    if title.startswith("Line or ") and title != "Line or Provider Outage":
+        return "ISP Line / " + title[len("Line or "):]
+    if title == "ISP Backbone Outage":
+        return "ISP Line / ISP Hub A Outage"
+    if title.endswith(" Not Answering"):
+        return "Local Router to " + title[:-len(" Not Answering")] + " Link Failure"
+    return title
 
 
 NON_LEGACY_KINDS = {
@@ -582,10 +595,12 @@ async def test_verdict_kinds_reproduce_the_title_rules(monkeypatch):
     assert verdicts
     titles_by_kind = {}
     for verdict in verdicts:
-        assert (verdict.kind in ISP_LINE_KINDS) == _old_isp_line(verdict.title), verdict
-        assert (verdict.kind in LOAD_EXPLAINABLE_KINDS) == _old_load_explainable(verdict.title), verdict
-        titles_by_kind.setdefault(verdict.kind, set()).add(verdict.title)
-    # A kind names a title template, not a particular rendering: the names inside the title vary by target,
-    # but this scenario uses one set of names per kind.
+        assert (verdict.kind in ISP_LINE_KINDS) == _old_isp_line(_old_title(verdict.title)), verdict
+        assert (verdict.kind in LOAD_EXPLAINABLE_KINDS) == _old_load_explainable(_old_title(verdict.title)), verdict
+        titles_by_kind.setdefault((verdict.kind, verdict.cause), set()).add(verdict.title)
+    # A kind and cause name a title template, not a particular rendering: the names inside the title vary by target,
+    # but this scenario uses one set of names per kind. isp_outage has two: the line (or the provider's first router)
+    # and the provider's network beyond it.
     assert all(len(titles) == 1 for titles in titles_by_kind.values()), titles_by_kind
+    titles_by_kind = {kind: titles for (kind, _), titles in titles_by_kind.items()}
     assert set(titles_by_kind) == NON_LEGACY_KINDS, sorted(NON_LEGACY_KINDS ^ set(titles_by_kind))

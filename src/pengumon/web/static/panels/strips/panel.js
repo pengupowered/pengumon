@@ -1,7 +1,7 @@
 // Uptime: one strip per target in path order (GET /api/uptime): 96 blocks of 15 minutes, or days, each ok, degraded,
 // outage, busy (explained by line load) or no data, with the availability over the window. A name opens the target's
 // history; every block lists the incidents of its time in the Incidents panel (showIncidentWindow, panels/incidents),
-// which says so when there are none. Refreshed every five minutes. Rows are named as Path health names them (Router, Line, ISP hop N, Internet
+// which says so when there are none. Refreshed every five minutes. Rows are named as Path health names them (Router, Gateway, ISP hop N, Internet
 // <address>, DNS lookup N), with the configured name beside it. A hop that ignores ping (no reply while a later hop answers:
 // path.js quietTargets, from the live `targets` topic) gets no blocks, only the words Path health gives it: its strip
 // would be one long outage that is none, and it neither counts as an outage nor opens incidents. So does an IPv6 target

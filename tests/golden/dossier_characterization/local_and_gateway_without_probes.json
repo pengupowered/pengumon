@@ -55,12 +55,12 @@
   "",
   "## 4. What the data shows",
   "- No modem data is available, so nothing can be said about the RF side.",
-  "- Loss first appears at ISP Hub (198.51.100.5).",
+  "- Loss first appears at ISP Hub (198.51.100.5), the provider's first router, while the gateway answers: the line or that router.",
   "",
   "## 5. Summary for a support ticket",
   "```text",
   "Over the past 24 hours Pengumon recorded 0 incidents totalling 0.0 minutes.",
-  "Loss is first elevated at ISP Hub (198.51.100.5): 2.0%.",
+  "Loss is first elevated at ISP Hub (198.51.100.5): 2.0%. That is the provider's first router; the gateway answered, so the loss starts on the line or at that router.",
   "```"
  ],
  "payload": {

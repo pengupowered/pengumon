@@ -210,6 +210,13 @@ export const steps = [
     await ctx.click("#settingsPreview [data-action=settingsPreviewCancel]");
     await until(() => /Preview cancelled/.test(document.getElementById("settingsPreview").textContent));
     ok("and can be run again", await page.$eval("#settingsPreview [data-action=settingsPreviewRun]", (b) => !b.disabled));
+    // what is typed in the days box comes back as text, never as markup (CodeQL: DOM text reinterpreted as HTML)
+    const typed = '7"><b id="pvInjected">x</b>';
+    await page.$eval("#settingsPreviewDays", (e, v) => { e.value = v; }, typed);
+    await ctx.click("#settingsPreview [data-action=settingsPreviewRun]");
+    await until(() => /Enter a whole number of days/.test(document.getElementById("settingsPreview").textContent));
+    eq("no element made from the typed text", await page.evaluate(() => !!document.getElementById("pvInjected")), false);
+    eq("the box shows what was typed", await page.$eval("#settingsPreviewDays", (e) => e.value), typed);
     await settingsDiscard(ctx);
     eq("the panel is gone with the draft", await page.$eval("#settingsPreview", (e) => e.hidden), true);
   }],

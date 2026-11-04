@@ -57,10 +57,16 @@ def hops(**losses):
     return [hop(t, lost=int(losses.get(t, 0) * 10)) for t in ("router", "gateway", "isp", "cloudflare", "dns_google")]
 
 
+# the kind the classifier gives each cause code here (the dossier and the report group by the category of both)
+KIND_OF = {"access_line_drop": "isp_loss", "xfinity_last_mile_coax_drop": "isp_loss", "gateway_unreachable": "gateway_loss",
+           "local_wifi_mesh_drop": "local_loss", "dns_resolver_failure": "dns_loss", "load_induced_latency": "busy_latency",
+           "internet_backbone_transit_loss": "backbone_loss"}
+
+
 def incident_row(cause="unknown_outage", duration=60.0, expected=False, load=None):
     return {"id": 1, "start_time": NOW - 3600, "end_time": None, "duration_seconds": duration, "cause_code": cause,
             "title": "t", "description": "d", "severity": "warning", "affected_targets": "[]", "load_pct": load,
-            "expected": 1 if expected else 0, "kind": "isp_loss"}
+            "expected": 1 if expected else 0, "kind": KIND_OF.get(cause)}
 
 
 def ch(i, direction="downstream", power=1.0, snr=38.0, unc=0, freq=600.0, mod="QAM256", cor=100, recent=0):
@@ -142,8 +148,8 @@ def quiet_week():
 
 @scenario
 def excluded_and_under_load():
-    rows = [incident_row("isp_loss", 120.0, load=75.0), incident_row("local_wifi_mesh_drop", None, load=70.0),
-            incident_row("isp_loss", 30.5, load=None), incident_row("dns_resolver_failure", 600.0, load=12.0),
+    rows = [incident_row("access_line_drop", 120.0, load=75.0), incident_row("local_wifi_mesh_drop", None, load=70.0),
+            incident_row("access_line_drop", 30.5, load=None), incident_row("dns_resolver_failure", 600.0, load=12.0),
             incident_row("load_induced_latency", 900.0, expected=True, load=95.0),
             incident_row("load_induced_latency", 15.0, expected=True)]
     return cfg(busy=70.0), FakeRepository(incidents=rows, hop_stats=hops()), 24
@@ -151,8 +157,9 @@ def excluded_and_under_load():
 
 @scenario
 def default_busy_threshold_and_cause_ties():
-    rows = [incident_row("b_cause", 60.0, load=60.0), incident_row("a_cause", 60.0, load=59.9),
-            incident_row("c_cause", 120.0, load=None), incident_row("a_cause", 30.0, load=100.0)]
+    rows = [incident_row("gateway_unreachable", 60.0, load=60.0), incident_row("local_wifi_mesh_drop", 60.0, load=59.9),
+            incident_row("internet_backbone_transit_loss", 120.0, load=None),
+            incident_row("local_wifi_mesh_drop", 30.0, load=100.0)]
     return cfg(), FakeRepository(incidents=rows, hop_stats=hops()), 6
 
 
@@ -318,7 +325,7 @@ async def run_dossier(name: str) -> dict:
 
 def report_scenario():
     repo = FakeRepository(
-        incidents=[incident_row("isp_loss", 120.0), incident_row("isp_loss", 60.0), incident_row("dns_resolver_failure", 300.0),
+        incidents=[incident_row("access_line_drop", 120.0), incident_row("access_line_drop", 60.0), incident_row("dns_resolver_failure", 300.0),
                    incident_row("load_induced_latency", 900.0, expected=True), incident_row("a_cause", None)],
         daily=[{"target_id": t, "day": d, "sent": s, "ok": ok} for t, d, s, ok in (
             ("isp", "2025-10-07", 86400, 86000), ("router", "2025-10-07", 86400, 86400), ("isp", "2025-10-08", 43200, 43200),

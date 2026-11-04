@@ -57,7 +57,7 @@ export const steps = [
   ["the legend says what each line is, the chart fills its card, the loss lane says when it is empty", async ({ eq, ok, page, text, until }) => {
     await until(() => /Router/.test(document.getElementById("latencyLegend").textContent));
     const legend = await text("#latencyLegend");
-    ok(`Router and Line name their target: ${legend}`, /Router\s*Hop 1: Local Router \(LAN\)/.test(legend) && /Line\s*Hop 2: ISP Modem \/ Gateway/.test(legend));
+    ok(`Router and Gateway name their target: ${legend}`, /Router\s*Hop 1: Local Router \(LAN\)/.test(legend) && /Gateway\s*Hop 2: ISP Modem \/ Gateway/.test(legend));
     ok(`Internet names its one public target: ${legend}`, /Internet\s*Public: Cloudflare Anycast/.test(legend));
     ok("a note says what the path view leaves out", (await text("#latencyNote")).length > 20);
     // no blank band under the charts: the plot and the loss lane reach the bottom of the card body
@@ -80,7 +80,7 @@ export const steps = [
     const ids = await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.map((d) => d.id).filter((i) => i.startsWith("t:")).join());
     eq("one line per ping target, DNS lookups left out", ids, "t:local_router,t:isp_gateway,t:cloudflare_dns");
     eq("pressed", await page.$eval('#latencyViewButtons button[data-arg="targets"]', (b) => b.getAttribute("aria-pressed")), "true");
-    ok("legend uses the short names", /Router.*Line.*Internet/.test(await text("#latencyLegend")));
+    ok("legend uses the short names", /Router.*Gateway.*Internet/.test(await text("#latencyLegend")));
     await click('#latencyViewButtons button[data-arg="path"]');
     await until(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.some((d) => d.id === "path_internet"));
   }],
