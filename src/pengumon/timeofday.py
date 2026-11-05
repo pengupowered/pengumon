@@ -1,5 +1,7 @@
 """Wall-clock helpers for a configured time zone: quiet hours and the daily route check are read in
-`general.timezone`, not in UTC. Pure: every function takes the epoch seconds it is asked about, so tests drive time.
+`general.timezone`, not in UTC; the dashboard's reports and the AI pack put days and hours in viewer_zone's (the
+setting, else the viewer's browser). Pure: every function takes the epoch seconds it is asked about, so tests drive
+time.
 
 The zone is an IANA name (zoneinfo, the system's zone data; the image carries it), "UTC" or a fixed offset "+01:00".
 Rules at a daylight-saving change: a time of day is compared as the wall clock shows it, so a window "22:00-07:00"
@@ -9,15 +11,27 @@ the skipped hour started; a wall time that happens twice (autumn) counts at both
 first 01:30 when it began before, and at the second when it began after the clocks went back).
 """
 
+import logging
 from datetime import datetime, time as dtime, timedelta, timezone, tzinfo
-from typing import Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from zoneinfo import ZoneInfo
 
+_log = logging.getLogger("pengumon.timeofday")
+_warned: Set[str] = set()  # zones already reported as unusable, so the warning comes once per name
+
+
+def _unusable(name: str) -> tzinfo:
+    if name not in _warned:
+        _warned.add(name)
+        _log.warning(f"The time zone {name!r} cannot be loaded; UTC is used instead (quiet hours, the daily route "
+                     "check and report days follow UTC until the zone is fixed in Settings)")
+    return timezone.utc
+
 
 def zone(name: Optional[str]) -> tzinfo:
-    """The tzinfo for `name` ("UTC", "+HH:MM" / "-HH:MM" or an IANA name); UTC when it cannot be loaded (the setting
-    is validated on save, so this only matters for a zone file that vanished since)."""
+    """The tzinfo for `name` ("UTC", "+HH:MM" / "-HH:MM" or an IANA name); UTC when it cannot be loaded, with one
+    warning per name (the setting is validated on save, so this only matters for a zone file that vanished since)."""
     name = (name or "UTC").strip()
     if name == "UTC":
         return timezone.utc
@@ -26,11 +40,97 @@ def zone(name: Optional[str]) -> tzinfo:
             sign = -1 if name[0] == "-" else 1
             return timezone(sign * timedelta(hours=int(name[1:3]), minutes=int(name[4:6])))
         except ValueError:
-            return timezone.utc
+            return _unusable(name)
     try:
         return ZoneInfo(name)
     except Exception:
-        return timezone.utc
+        return _unusable(name)
+
+
+# The names a UTC clock goes by: a Settings zone that is one of them is the container's default, not the household's.
+UTC_NAMES = frozenset({"UTC", "UCT", "GMT", "GMT0", "GMT+0", "GMT-0", "Greenwich", "Universal", "Zulu", "+00:00",
+                       "-00:00", "Etc/UTC", "Etc/UCT", "Etc/GMT", "Etc/GMT0", "Etc/GMT+0", "Etc/GMT-0", "Etc/Greenwich",
+                       "Etc/Universal", "Etc/Zulu"})
+
+
+def viewer_zone(config, tz_name: Optional[str] = None, tz_offset_minutes: int = 0) -> Tuple[tzinfo, str, str]:
+    """(tzinfo, kind, name) the dashboard's reports and the AI pack put days and hours in. In this order: the zone set
+    in Settings (general.timezone), when it is not UTC (the default in a container that runs in UTC); the IANA zone
+    the caller names (the viewer's browser); a fixed offset the caller gives (minutes east of UTC); else UTC.
+    kind: named (follows daylight saving) | offset | utc."""
+    from pengumon.settings.general import known_zone
+    setting = (getattr(getattr(config, "general", None), "timezone", None) or "").strip()
+    if setting and setting not in UTC_NAMES:
+        if setting[:1] in "+-":
+            return zone(setting), "offset", f"UTC{setting}"
+        if known_zone(setting):
+            return zone(setting), "named", setting
+    name = (tz_name or "").strip()
+    if name and name not in UTC_NAMES and known_zone(name):
+        return zone(name), "named", name
+    if tz_offset_minutes:
+        return timezone(timedelta(minutes=tz_offset_minutes)), "offset", ""
+    return timezone.utc, "utc", "UTC"
+
+
+def utc_offset(epoch: float, tz: tzinfo) -> int:
+    """Seconds east of UTC the clock in `tz` is at `epoch`."""
+    return int(datetime.fromtimestamp(epoch, tz).utcoffset().total_seconds())
+
+
+def clock_changes(tz: tzinfo, start: float, end: float) -> List[Tuple[float, float, float]]:
+    """The daylight-saving changes of `tz` in [start, end]: (the first second of the new offset, the offset before,
+    the offset after), offsets in seconds. A fixed offset has none."""
+    if isinstance(tz, timezone):
+        return []
+
+    def offset(t: float) -> float:
+        return (datetime.fromtimestamp(t, tz).utcoffset() or timedelta(0)).total_seconds()
+
+    out = []
+    t, before = int(start), offset(int(start))
+    while t < end:
+        nxt = int(min(end, t + 3600))
+        after = offset(nxt)
+        if after != before:
+            lo, hi = t, nxt           # the offset at lo is the old one, at hi the new one
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                lo, hi = (mid, hi) if offset(mid) == before else (lo, mid)
+            out.append((float(hi), before, after))
+            before = after
+        t = nxt if nxt > t else t + 1
+    return out
+
+
+def local_midnight(day, tz: tzinfo) -> float:
+    """The epoch at which the date `day` begins on the clock in `tz` (a midnight the clocks skip: the first instant
+    after it)."""
+    return local_hour_start(day, 0, tz)
+
+
+def local_hour_start(day, hour: int, tz: tzinfo) -> float:
+    """The epoch at which the clock in `tz` first reads `hour`:00 on the date `day`: the first of the two in the hour
+    the clocks go back; in the hour they skip, the instant they jump (so that hour lasts no time). Hour 24 is the next
+    day's midnight."""
+    naive = datetime.combine(day, dtime(0, 0)) + timedelta(hours=hour)
+    found = sorted({naive.replace(tzinfo=tz, fold=fold).timestamp() for fold in (0, 1)})
+    if datetime.fromtimestamp(found[0], tz).replace(tzinfo=None) != naive:  # the clock skips that time
+        return _gap_end(found[0], found[-1], tz)
+    return found[0]
+
+
+def zone_name(tz: tzinfo) -> str:
+    """The name of `tz` as a browser's Intl.DateTimeFormat takes it (timeZone): the IANA name, "UTC", or a fixed
+    offset "+05:30"."""
+    key = getattr(tz, "key", None)
+    if key:
+        return key
+    minutes = int((tz.utcoffset(None) or timedelta(0)).total_seconds() // 60)
+    if not minutes:
+        return "UTC"
+    hours, rest = divmod(abs(minutes), 60)
+    return f"{'-' if minutes < 0 else '+'}{hours:02d}:{rest:02d}"
 
 
 def minutes_of(hhmm: str) -> int:
@@ -95,8 +195,3 @@ def window_end(epoch: float, start: str, end: str, tz: tzinfo) -> Optional[float
 def clock_text(epoch: float, tz: tzinfo) -> str:
     """"03:12" as the wall clock in `tz` showed it."""
     return datetime.fromtimestamp(epoch, tz).strftime("%H:%M")
-
-
-def day_and_clock(epoch: float, tz: tzinfo) -> Tuple[str, str]:
-    local = datetime.fromtimestamp(epoch, tz)
-    return local.strftime("%Y-%m-%d"), local.strftime("%H:%M")

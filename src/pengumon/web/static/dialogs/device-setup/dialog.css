@@ -1,5 +1,6 @@
-/* Dialog device-setup: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Dialog device-setup: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* Device setup */
 .setup-src { margin-top: calc(-1 * var(--sp-2)); }
+.setup-src p { margin: var(--sp-2) 0 0; }
 #setupResult:empty { display: none; }
 #deviceSetupForm .input[readonly] { color: var(--ink-3); background: var(--surface-2); }

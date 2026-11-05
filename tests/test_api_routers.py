@@ -3,7 +3,8 @@
 import ast
 from pathlib import Path
 
-from pengumon.api import ROUTERS, router as router_module
+from pengumon.api import router as router_module
+from pengumon.api.router import ROUTERS
 from pengumon.main import app
 
 

@@ -19,6 +19,7 @@ export const steps = [
   ["device setup dialog: credential sources, refused and unreachable results, the password is never echoed", async ({ ROUTER, click, eq, ok, page, shots, text, until, waitText }) => {
     await click(`${ROUTER} [data-action=openDeviceSetup]`);
     await until(() => document.getElementById("deviceSetupModal").classList.contains("active"));
+    ok("the title names the device and the subtitle says what it is", /^Set up Example Router$/.test(await text("#setupTitle")) && /router/i.test(await text("#setupMeta")) && !/_/.test(await text("#setupMeta")));
     ok("sources note", /PENGUMON_DEVICE_[A-Z0-9_]+_PASSWORD/.test(await text("#setupSource")) && /secret file/.test(await text("#setupSource")));
     eq("password field", await page.$eval("#setupPassword", (i) => i.type), "password");
     await click("#btnShowPassword");
@@ -26,11 +27,11 @@ export const steps = [
     await click("#btnShowPassword");
     // The server's answers to the credentials call, played by the page: a refused sign-in, a silent device, and a saved one
     // that an environment variable outranks. The real call (success) was exercised by the step before.
-    const answer = (body) => page.evaluate((b) => {
+    const answer = (body, status = 200) => page.evaluate((b, st) => {
       window.__realFetch = window.__realFetch || window.fetch;
       window.fetch = (url, opts) => (opts && opts.method === "POST" && String(url).endsWith("/credentials")
-        ? Promise.resolve(new Response(JSON.stringify(b), { status: 200 })) : window.__realFetch(url, opts));
-    }, body);
+        ? Promise.resolve(new Response(JSON.stringify(b), { status: st })) : window.__realFetch(url, opts));
+    }, body, status);
     const submit = async () => {
       await page.$eval("#setupPassword", (i) => { i.value = ""; });
       await page.type("#setupPassword", "hunter2-not-echoed");
@@ -44,6 +45,14 @@ export const steps = [
     await answer({ success: false, error_kind: "timeout", snapshot: { status: "error", error_message: "No answer from 192.0.2.10 after 10 s." } });
     await submit();
     await waitText("#setupResult", /Device unreachable/);
+    await answer({ detail: "Too many requests; try again in 40s." }, 429); // the credentials route allows 5 a minute
+    await submit();
+    await waitText("#setupResult", /Too many tries/);
+    ok("a rate limit is not a refused password", !/refused/.test(await text("#setupResult")));
+    await answer({ detail: "The secrets file (secrets.json) is damaged, so it was not overwritten and nothing was saved." }, 500);
+    await submit();
+    await waitText("#setupResult", /secrets file .* is damaged/);
+    ok("a server refusal is shown as it is, not as a refused sign-in", !/refused/.test(await text("#setupResult")));
     await answer({ success: true, overridden_by: "environment PENGUMON_DEVICE_ROUTER_PASSWORD", snapshot: null });
     await submit();
     await waitText("#setupResult", /Success.*ranks above/s);

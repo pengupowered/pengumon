@@ -179,6 +179,8 @@ try {
     $ListenPort = 8000
     if ($Port -gt 0) { $ListenPort = $Port }
     if ($NoService) {
+        Say "To type just 'pengumon' in a new terminal, add its folder to your PATH once (no administrator needed):"
+        Say "  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$(Split-Path $Pengumon)', 'User')"
         Say "No service installed. Start it with: $Pengumon run"
         return
     }

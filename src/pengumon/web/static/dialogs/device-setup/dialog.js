@@ -24,20 +24,22 @@ function result(level, html) {
 export function openDeviceSetup(id) {
   device = state.devices.find((d) => d.id === id) || null;
   if (!device) return;
-  const name = deviceName(device);
+  const [kind, ...rest] = String(device.label || '').split(' · '); // "<what it is> · <its name>"
+  const given = rest.join(' · ');
+  const name = /^[a-z]+$/.test(given) ? `the ${given}` : (given || deviceName(device)); // "modem" reads "the modem"; a model name stands alone
   $('setupTitle').textContent = `Set up ${name}`;
-  $('setupMeta').textContent = device.driver || '';
+  $('setupMeta').textContent = rest.length ? kind : '';
   const reads = device.offers.map((c) => READS[c]).filter(Boolean);
-  $('setupLead').textContent = `pengumon signs in to ${name}'s admin page to read ${reads.length ? reads.join(', ') : 'its status'}. `
-    + 'The password is stored on this host only, in local storage that is not in git, and is never sent anywhere else.';
+  $('setupLead').textContent = `Pengumon signs in to ${name}'s admin page to read ${reads.length ? reads.join(', ') : 'its status'}. `
+    + 'The password is kept on this computer only, in Pengumon\'s data folder, and is never sent anywhere else.';
   $('setupAddress').value = device.url || device.host || '';
-  $('setupAddressHint').textContent = `From Settings > Devices (${device.id})`;
+  $('setupAddressHint').textContent = 'Set in Settings > Devices and services.';
   const err = $('setupError');
   err.hidden = !device.error_message;
   if (device.error_message) err.innerHTML = `${icon('lock')}<div><b>${escapeHtml(ERRORS[device.error_kind] || 'The last reading failed')}</b>${escapeHtml(device.error_message)}</div>`;
   const env = device.id.toUpperCase().replace(/-/g, '_');
-  $('setupSource').textContent = `Sign-in source, in order: the environment (PENGUMON_DEVICE_${env}_USERNAME, PENGUMON_DEVICE_${env}_PASSWORD), `
-    + `a secret file (pengumon_${device.id}_password), then what is saved here. The first two win after the next start.`;
+  $('setupSource').textContent = `The sign-in can also come from the environment (PENGUMON_DEVICE_${env}_USERNAME, PENGUMON_DEVICE_${env}_PASSWORD) `
+    + `or a secret file (pengumon_${device.id}_password). Both win over what is saved here, from the next start.`;
   const pw = $('setupPassword');
   pw.value = '';
   pw.type = 'password';
@@ -70,16 +72,21 @@ async function save(ev) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: $('setupUsername').value.trim() || 'admin', password: $('setupPassword').value })
     });
-    const body = await res.json();
-    if (res.ok && body.success) {
+    const body = await res.json().catch(() => ({})); // a proxy's error page is not JSON
+    if (res.status === 429) {
+      result('warn', '<b>Too many tries.</b> Wait a minute, then try again. Nothing was changed.');
+    } else if (res.ok && body.success) {
       const note = body.overridden_by ? ` Saved, but ${escapeHtml(body.overridden_by)} ranks above it: that one applies after the next start.` : '';
       const every = device.poll_interval_seconds ? `within ${device.poll_interval_seconds} s` : 'within one poll interval';
       result('good', `<b>Success: signed in and saved.</b> Readings resume ${every}.${note}`);
       $('setupPassword').value = '';
       if (body.snapshot) publishDevice(device.id, body.snapshot);
       setTimeout(() => closeModal('deviceSetupModal'), 1500);
+    } else if (!res.ok && !body.error_kind && !body.snapshot) {
+      // not a sign-in result (a damaged secrets file, a proxy's page): the server's own sentence, as it is
+      result('crit', typeof body.detail === 'string' ? escapeHtml(body.detail) : `<b>The test failed.</b> The server answered HTTP ${res.status}.`);
     } else {
-      const why = body.snapshot && body.snapshot.error_message ? body.snapshot.error_message : (body.detail || 'Check the password.');
+      const why = body.snapshot && body.snapshot.error_message ? body.snapshot.error_message : (typeof body.detail === 'string' ? body.detail : 'Check the password.');
       if (body.error_kind === 'unreachable' || body.error_kind === 'timeout') {
         result('warn', `<b>Device unreachable.</b> ${escapeHtml(why)} The password was stored; it is tried again at the next poll.`);
       } else if (body.error_kind === 'auth' || !body.error_kind) {

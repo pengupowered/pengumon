@@ -84,11 +84,11 @@ def test_a_failed_open_is_retried_only_after_a_while(monkeypatch):
     for _ in range(3):
         with pytest.raises(IcmpUnavailable):
             icmp_select.shared_backend()
-    assert len(attempts) == 1 and icmp_select.shared_failure().fix == "the fix"
+    assert len(attempts) == 1 and icmp_select._failure.fix == "the fix"
     now[0] += icmp_select.RETRY_SECONDS + 1
     monkeypatch.setattr(icmp_select, "open_backend", lambda: FakeBackend())
     assert icmp_select.shared_backend().name == "fake"
-    assert icmp_select.shared_failure() is None
+    assert icmp_select._failure is None
 
 
 def test_resolution_wording():

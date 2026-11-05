@@ -1,4 +1,4 @@
-/* Panel incidents: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel incidents: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* ---------- Incidents ---------- */
 .tl { position: relative; margin-bottom: var(--sp-4); padding-bottom: 2px; }
 .tl-lane { display: grid; grid-template-columns: 64px 1fr; align-items: center; height: 24px; }
@@ -33,7 +33,6 @@
   .tl-lane, .tl-axis { grid-template-columns: 50px 1fr; }
 }
 .tl-bar.busy { --st: var(--busy); }
-.load-flag { color: var(--ink-3); text-decoration: line-through; }
 .tl-now { left: calc(64px + (100% - 64px) * var(--now, 1)); }
 @media (max-width: 720px) { .tl-now { left: calc(50px + (100% - 50px) * var(--now, 1)) !important; } }
 

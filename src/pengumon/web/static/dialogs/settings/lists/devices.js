@@ -13,6 +13,7 @@
 // in secrets.json. The id of a saved device is read-only (its history and sign-in are kept under it); to change it,
 // remove the device and add it again. Nothing is applied until the page saves.
 
+import { registerActions } from '../../../js/dispatch.js';
 import { state } from '../../../js/state.js';
 import { escapeHtml, icon } from '../../../js/util.js';
 
@@ -38,6 +39,15 @@ function fromSaved(raw) {
 
 function hostOf(url) {
   try { return new URL(url).hostname || url; } catch { return url || ''; }
+}
+
+// The device as a person names it: its display name, else what it is and where ("Cable modem · 192.0.2.1"), never
+// its id (the id is in the form, for experts).
+function nameOf(item) {
+  if (item.model && item.model.trim()) return item.model.trim().replace(/_/g, ' ');
+  const kind = driverOf(item).label || 'Device';
+  const host = hostOf((item.url || '').trim());
+  return host ? `${kind} · ${host}` : kind;
 }
 
 function suggestId(driver) {
@@ -89,8 +99,8 @@ function optionControl(item, opt) {
   if (opt.type === 'map') {
     const rows = Object.entries(current || {});
     return `<div class="dv-map" ${common}>${rows.map(([k, v], n) => `<div class="dv-map-row"><input class="input" data-map-k="${n}" value="${e(k)}" placeholder="Key" aria-label="Key"><input class="input" data-map-v="${n}" value="${e(v)}" placeholder="Value" aria-label="Value">`
-      + `<button type="button" class="btn sm icon" data-act="map-del" data-opt="${e(opt.name)}" data-n="${n}" aria-label="Remove this entry" data-needs-edit>${icon('close')}</button></div>`).join('')}`
-      + `<button type="button" class="btn sm" data-act="map-add" data-opt="${e(opt.name)}" data-needs-edit>${icon('plus')}Add an entry</button></div>`;
+      + `<button type="button" class="btn sm icon" data-action="settingsDeviceAct" data-act="map-del" data-opt="${e(opt.name)}" data-n="${n}" aria-label="Remove this entry" data-needs-edit>${icon('close')}</button></div>`).join('')}`
+      + `<button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="map-add" data-opt="${e(opt.name)}" data-needs-edit>${icon('plus')}Add an entry</button></div>`;
   }
   if (opt.type === 'choice' && opt.choices) {
     return `<select class="input" ${common}>${opt.choices.map((c) => `<option value="${e(c)}"${String(current === undefined ? opt.default : current) === String(c) ? ' selected' : ''}>${e(c)}</option>`).join('')}</select>`;
@@ -98,9 +108,9 @@ function optionControl(item, opt) {
   if (opt.type === 'number' || opt.type === 'integer') {
     const min = opt.min !== null && opt.min !== undefined ? ` min="${opt.min}"` : '';
     const max = opt.max !== null && opt.max !== undefined ? ` max="${opt.max}"` : '';
-    return `<input class="input" type="number" inputmode="decimal" step="${opt.type === 'integer' ? 1 : 'any'}"${min}${max} ${common} value="${current === undefined || current === null ? '' : e(current)}" placeholder="${opt.default === null || opt.default === undefined ? '' : `Default ${e(opt.default)}`}">`;
+    return `<input class="input" type="number" inputmode="decimal" step="${opt.type === 'integer' ? 1 : 'any'}"${min}${max} ${common} value="${current === undefined || current === null ? '' : e(current)}" placeholder="${opt.default === null || opt.default === undefined ? '' : `Standard: ${e(opt.default)}`}">`;
   }
-  return `<input class="input" type="text" ${common} value="${current === undefined || current === null ? '' : e(current)}" placeholder="${opt.default === null || opt.default === undefined ? '' : `Default ${e(opt.default)}`}">`;
+  return `<input class="input" type="text" ${common} value="${current === undefined || current === null ? '' : e(current)}" placeholder="${opt.default === null || opt.default === undefined ? '' : `Standard: ${e(opt.default)}`}">`;
 }
 
 const OPTION_LABEL = (name) => name.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
@@ -118,7 +128,7 @@ function optionsMarkup(item) {
 
 function formMarkup(item) {
   const d = driverOf(item);
-  const floor = d.min_poll_seconds > 0 ? ` and at least ${e(d.min_poll_seconds)} s (a lower value is raised to it)` : '';
+  const floor = d.min_poll_seconds > 0 ? ` At least ${e(d.min_poll_seconds)} s: a lower value is raised to it.` : '';
   const driverSelect = `<select class="input" data-f="driver">${Object.keys(drivers).sort().map((k) => `<option value="${e(k)}"${k === item.driver ? ' selected' : ''}>${e(drivers[k].label || k)}</option>`).join('')}</select>`;
   const placeholder = (d.url_schemes || ['http']).includes('snmp') ? 'snmp://192.0.2.1' : 'http://192.0.2.1';
   return `<div class="dv-form">`
@@ -129,8 +139,8 @@ function formMarkup(item) {
       `Must start with ${(d.url_schemes || ['http', 'https']).map((s) => `${e(s)}://`).join(' or ')}. No user name or password: the sign-in is entered with Set up.`)
     + field(item, 'model', 'Display name', `<input class="input" data-f="model" value="${e(item.model || '')}" maxlength="100" placeholder="Optional">`, 'Shown on the device card when the device does not report a model.')
     + field(item, 'username', 'User name', `<input class="input" data-f="username" value="${e(item.username || '')}" maxlength="64" placeholder="${e(d.default_username || 'admin')}" autocomplete="off">`)
-    + field(item, 'poll_interval_seconds', 'Poll every (seconds)', `<input class="input" type="number" inputmode="decimal" min="0" step="any" data-f="poll_interval_seconds" value="${item.poll_interval_seconds === null || item.poll_interval_seconds === undefined ? '' : e(item.poll_interval_seconds)}" placeholder="Default ${e(d.default_poll_seconds)}">`,
-      `Default ${e(d.default_poll_seconds)} s${floor}.`)
+    + field(item, 'poll_interval_seconds', 'Poll every (seconds)', `<input class="input" type="number" inputmode="decimal" min="0" step="any" data-f="poll_interval_seconds" value="${item.poll_interval_seconds === null || item.poll_interval_seconds === undefined ? '' : e(item.poll_interval_seconds)}" placeholder="Standard: ${e(d.default_poll_seconds)}">`,
+      `Standard: ${e(d.default_poll_seconds)} s.${floor}`)
     + `<div class="field dv-f dv-check"><label><input type="checkbox" data-f="enabled"${item.enabled === false ? '' : ' checked'}><span>Poll this device</span></label><span class="hint">Switched off, it stays listed and says so.</span></div>`
     + `<fieldset class="dv-opts"><legend>Certificate (https addresses)</legend>`
     + `<div class="field dv-f dv-check"><label><input type="checkbox" data-f="tls.verify"${item.tls.verify === false ? '' : ' checked'}><span>Check the device's certificate</span></label><span class="hint">Turn off for a certificate the device made itself.</span></div>`
@@ -143,9 +153,12 @@ function formMarkup(item) {
 function summaryMarkup(item) {
   const d = driverOf(item);
   const live = (state.devices || []).find((x) => x.id === item.id);
-  const chips = [`<span class="chip">${e(d.label || item.driver)}</span>`];
-  const host = hostOf(item.url);
-  if (host) chips.push(`<span class="chip mono">${e(host)}</span>`);
+  const chips = [];
+  if (item.model && item.model.trim()) { // the title is the display name: what it is and where go in chips
+    chips.push(`<span class="chip">${e(d.label || item.driver)}</span>`);
+    const host = hostOf(item.url);
+    if (host) chips.push(`<span class="chip mono">${e(host)}</span>`);
+  }
   if (item.enabled === false) chips.push('<span class="chip">Disabled</span>');
   if (!item._saved) chips.push('<span class="chip st st-warn">New</span>');
   else if (live && live.has_credentials === false && item.enabled !== false) chips.push('<span class="chip st st-warn">Not set up</span>');
@@ -156,19 +169,18 @@ function cardMarkup(item, index) {
   const expanded = open.has(item._key);
   const failure = (ctx.itemErrors || {})[item.id];
   const local = Object.values(localProblems(item)).length || Object.keys(serverErrors[item._key] || {}).length;
-  const title = item.model || item.id || 'New device';
   return `<li class="dv-card${expanded ? ' open' : ''}${local ? ' bad' : ''}" data-key="${e(item._key)}">`
-    + `<div class="dv-head"><button type="button" class="dv-toggle" data-act="toggle" aria-expanded="${expanded}" aria-controls="dv-body-${e(item._key)}">${icon('chevron')}<span class="dv-title">${e(title)}</span>${item.model && item.id ? `<span class="dv-id mono">${e(item.id)}</span>` : ''}</button>`
+    + `<div class="dv-head"><button type="button" class="dv-toggle" data-action="settingsDeviceAct" data-act="toggle" aria-expanded="${expanded}" aria-controls="dv-body-${e(item._key)}">${icon('chevron')}<span class="dv-title">${e(nameOf(item))}</span></button>`
     + `<span class="dv-chips">${summaryMarkup(item)}</span>`
-    + `<span class="dv-tools"><button type="button" class="btn sm icon" data-act="up" aria-label="Move up"${index === 0 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button>`
-    + `<button type="button" class="btn sm icon dv-down" data-act="down" aria-label="Move down"${index === items.length - 1 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button></span></div>`
+    + `<span class="dv-tools"><button type="button" class="btn sm icon" data-action="settingsDeviceAct" data-act="up" aria-label="Move ${e(nameOf(item))} up"${index === 0 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button>`
+    + `<button type="button" class="btn sm icon dv-down" data-action="settingsDeviceAct" data-act="down" aria-label="Move ${e(nameOf(item))} down"${index === items.length - 1 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button></span></div>`
     + (failure ? `<div class="dv-fail" role="alert">${icon('warn')}<span>${e(failure)}</span></div>` : '')
     + (local ? `<div class="dv-fail" role="alert">${icon('warn')}<span>${e(Object.values(localProblems(item))[0] || Object.values(serverErrors[item._key])[0])}</span></div>` : '')
     + `<div class="dv-body" id="dv-body-${e(item._key)}"${expanded ? '' : ' hidden'}>${expanded ? formMarkup(item) : ''}`
     + `<div class="dv-actions">`
-    + (item._saved ? `<button type="button" class="btn sm" data-act="setup" data-needs-edit>${icon('lock')}Set up the sign-in</button>`
+    + (item._saved ? `<button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="setup" data-needs-edit>${icon('lock')}Set up the sign-in</button>`
       : '<span class="hint">Save first, then use Set up to enter the device\'s password.</span>')
-    + `<button type="button" class="btn sm danger" data-act="remove" data-needs-edit>Remove</button></div></div></li>`;
+    + `<button type="button" class="btn sm danger" data-action="settingsDeviceAct" data-act="remove" data-needs-edit>Remove</button></div></div></li>`;
 }
 
 // What Save does to the path hops that read this device (the path editor's "device" link): they are unlinked, not deleted.
@@ -190,11 +202,11 @@ async function findHops(item) {
 function draw() {
   if (!root) return;
   const removedMarkup = removed.length
-    ? `<ul class="dv-removed">${removed.map((r, n) => `<li><span><b class="mono">${e(r.id)}</b> will be removed when you save. Its stored readings stay until retention removes them. ${hopsText(r)}</span> <button type="button" class="btn sm" data-act="undo" data-n="${n}" data-needs-edit>Undo</button></li>`).join('')}</ul>` : '';
+    ? `<ul class="dv-removed">${removed.map((r, n) => `<li><span><b>${e(nameOf(r))}</b> will be removed when you save. Its stored readings stay until retention removes them. ${hopsText(r)}</span> <button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="undo" data-n="${n}" data-needs-edit>Undo</button></li>`).join('')}</ul>` : '';
   root.innerHTML = `<div class="dv"><ul class="dv-list">${items.map(cardMarkup).join('')}</ul>`
     + (items.length ? '' : '<p class="empty compact">No devices yet. Pengumon then monitors only the probes of the path.</p>')
     + removedMarkup
-    + `<div class="dv-add"><button type="button" class="btn" data-act="add" data-needs-edit>${icon('plus')}Add a device</button></div></div>`;
+    + `<div class="dv-add"><button type="button" class="btn" data-action="settingsDeviceAct" data-act="add" data-needs-edit>${icon('plus')}Add a device</button></div></div>`;
   if (!ctx.canEdit()) {
     root.querySelectorAll('input, select, button[data-needs-edit]').forEach((el) => { if (el.dataset.act !== 'toggle') el.disabled = true; });
   }
@@ -211,7 +223,7 @@ function refreshCard(item) {
   const card = root.querySelector(`.dv-card[data-key="${item._key}"]`);
   if (!card) return;
   card.querySelector('.dv-chips').innerHTML = summaryMarkup(item);
-  card.querySelector('.dv-title').textContent = item.model || item.id || 'New device';
+  card.querySelector('.dv-title').textContent = nameOf(item);
   card.classList.toggle('bad', !!Object.keys(localProblems(item)).length);
   card.querySelectorAll('[data-err]').forEach((el) => {
     const message = problemOf(item, el.dataset.err);
@@ -261,9 +273,8 @@ function move(item, by) {
   ctx.markDirty();
 }
 
-function onClick(ev) {
-  const el = ev.target.closest('[data-act]');
-  if (!el || el.disabled || !root.contains(el)) return;
+function onClick(el) {
+  if (!root || el.disabled || !root.contains(el)) return;
   const act = el.dataset.act;
   const item = itemOf(el);
   if (act === 'toggle' && item) {
@@ -302,6 +313,10 @@ function onClick(ev) {
   }
 }
 
+// The buttons of a card (Add, Remove, Move, Undo, Set up the sign-in, map entries) name `data-action="settingsDeviceAct"` and what
+// they do in data-act.
+registerActions('click', { settingsDeviceAct: (el) => onClick(el) });
+
 // ---- the module ----
 
 function cleaned(item) {
@@ -336,10 +351,9 @@ export default {
     open = new Set();
     serverErrors = {};
     root.classList.add('dv-root');
-    if (!root.dataset.dvBound) {  // one listener pair per container, however often the list is drawn again
+    if (!root.dataset.dvBound) {  // one input/change listener pair per container, however often the list is drawn again
       root.addEventListener('input', onInput);
       root.addEventListener('change', onInput);
-      root.addEventListener('click', onClick);
       root.dataset.dvBound = '1';
     }
     draw();

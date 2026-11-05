@@ -2,15 +2,20 @@
 
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from datetime import timezone, tzinfo
+from typing import Any, Dict, Iterable, List, Optional
 
 from pengumon.incidents.taxonomy import incident_cause
 from pengumon.reports.common import _canonical_order, _split_incidents, _targets
+from pengumon.reports.queries import daily_availability, hourly_loss
+from pengumon.timeofday import utc_offset
 
 
-async def build_report(repository, config, days: int, now: Optional[float] = None,
-                       tz_offset_minutes: int = 0) -> Dict[str, Any]:
-    """tz_offset_minutes (minutes east of UTC) decides where day and hour buckets start; the container runs in UTC."""
+async def build_report(repository, config, days: int, now: Optional[float] = None, tz: tzinfo = timezone.utc,
+                       ignoring: Iterable[str] = ()) -> Dict[str, Any]:
+    """The last `days` days. Day and hour buckets are the clock's in `tz` (timeofday.viewer_zone; the container runs
+    in UTC). Loss by hour is the loss grid's rule: the hops that ignore ping (`ignoring`) and the hops removed from the
+    path are left out. tz_offset_minutes: the zone's offset now."""
     now = now or time.time()
     start_time = now - days * 86400
 
@@ -20,7 +25,7 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
 
     per_hop: Dict[str, Dict[str, List[int]]] = defaultdict(dict)
     all_days = set()
-    for r in await repository.get_daily_availability(start_time, tz_offset_minutes):
+    for r in await daily_availability(repository, start_time, tz, now=now):
         per_hop[r["target_id"]][r["day"]] = [r["sent"], r["ok"]]
         all_days.add(r["day"])
     day_list = sorted(all_days)
@@ -58,13 +63,13 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
     hourly = [
         {"hour": h["hour"], "sent": h["sent"], "lost": h["lost"],
          "loss_pct": round(h["lost"] * 100.0 / h["sent"], 3) if h["sent"] else 0.0}
-        for h in await repository.get_hourly_loss(start_time, tz_offset_minutes)
+        for h in await hourly_loss(repository, start_time, tz, ignoring, now=now)
     ]
     worst_hours = [h for h in sorted(hourly, key=lambda h: (-h["loss_pct"], h["hour"])) if h["lost"] > 0][:5]
 
     return {
         "days": days,
-        "tz_offset_minutes": tz_offset_minutes,
+        "tz_offset_minutes": utc_offset(now, tz) // 60,
         "generated_at": now,
         "availability": {"days": day_list, "hops": hops},
         "incidents": {

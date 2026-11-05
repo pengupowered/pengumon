@@ -4,11 +4,8 @@ test_grades, test_router, test_uptime and the report golden all run at the defau
 
 from types import SimpleNamespace
 
-import pytest
-
 from pengumon.analysis.incident import HopImpact, docsis_correlation
 from pengumon.config import AppConfig
-from pengumon.devices import monitors
 from pengumon.devices.levels import RouterLevelsConfig
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.grades import CRITICAL, GOOD, WARN
@@ -26,14 +23,6 @@ from test_dossier_render import facts, healthy_snapshot
 from test_grades import router_result
 
 
-@pytest.fixture(autouse=True)
-def restore_levels():
-    line, router = docsis.LEVELS.model_copy(), monitors.LEVELS.model_copy()
-    yield
-    docsis.use_levels(line)
-    monitors.use_levels(router)
-
-
 def channel(direction="downstream", power=1.0, snr=38.0, unc=0):
     return DocsisChannel(channel_id=1, direction=direction, frequency_mhz=600.0, power_dbmv=power, snr_db=snr,
                          uncorrectables=unc)
@@ -41,76 +30,65 @@ def channel(direction="downstream", power=1.0, snr=38.0, unc=0):
 
 # --- DOCSIS -------------------------------------------------------------------------------------------------------------
 
-def test_use_levels_copies_in_place():
-    held = docsis.LEVELS
-    docsis.use_levels(LineSignalConfig(ds_snr_warning_db=36.0))
-    assert docsis.LEVELS is held and held.ds_snr_warning_db == 36.0
-
-
 def test_the_snapshot_status_and_grades_follow_the_levels():
     reading = [channel(power=3.0, snr=34.0), channel("upstream", power=46.0)]
     assert docsis.summarize(reading, 1.0).status == "healthy"
-    docsis.use_levels(LineSignalConfig(ds_snr_warning_db=35.0, ds_snr_critical_db=31.0))
-    snapshot = docsis.summarize(reading, 1.0)
+    snapshot = docsis.summarize(reading, 1.0, LineSignalConfig(ds_snr_warning_db=35.0, ds_snr_critical_db=31.0))
     assert snapshot.status == "warning" and snapshot.grades["ds_snr"] == WARN
-    docsis.use_levels(LineSignalConfig(us_power_warning_dbmv=44.0, us_power_critical_dbmv=45.0))
-    snapshot = docsis.summarize(reading, 1.0)
+    snapshot = docsis.summarize(reading, 1.0, LineSignalConfig(us_power_warning_dbmv=44.0, us_power_critical_dbmv=45.0))
     assert snapshot.status == "critical" and snapshot.grades["us_power"] == CRITICAL
     assert snapshot.channels[1].grades["power"] == CRITICAL
-    docsis.use_levels(LineSignalConfig(ds_power_warning_abs_dbmv=2.0))
-    assert docsis.summarize(reading, 1.0).grades["ds_power"] == WARN
+    assert docsis.summarize(reading, 1.0, LineSignalConfig(ds_power_warning_abs_dbmv=2.0)).grades["ds_power"] == WARN
 
 
 def test_the_ranges_follow_the_levels():
-    docsis.use_levels(LineSignalConfig(ds_power_warning_abs_dbmv=6.0, uncorrectable_warning_per_minute=30.0))
-    ranges = docsis.ranges()
+    ranges = docsis.ranges(LineSignalConfig(ds_power_warning_abs_dbmv=6.0, uncorrectable_warning_per_minute=30.0))
     assert ranges["ds_power"].as_dict()["good_low"] == -6.0 and ranges["ds_power"].as_dict()["good_high"] == 6.0
     assert ranges["uncorrectables"].as_dict()["good_high"] == 30.0
 
 
 def test_judge_errors_follows_the_levels():
     assert docsis.judge_errors(100, 60.0, None, False)[0] == WARN      # 100 a minute: from 60 warn
-    docsis.use_levels(LineSignalConfig(uncorrectable_warning_per_minute=200.0, uncorrectable_critical_per_minute=300.0))
-    assert docsis.judge_errors(100, 60.0, None, False)[0] == GOOD
-    assert docsis.judge_errors(301, 60.0, None, False)[0] == CRITICAL
+    rate = LineSignalConfig(uncorrectable_warning_per_minute=200.0, uncorrectable_critical_per_minute=300.0)
+    assert docsis.judge_errors(100, 60.0, None, False, rate)[0] == GOOD
+    assert docsis.judge_errors(301, 60.0, None, False, rate)[0] == CRITICAL
     assert docsis.judge_errors(5, 60.0, 5e-6, False)[0] == WARN        # ratio from 1e-6 warns
-    docsis.use_levels(LineSignalConfig(uncorrectable_ratio_warning=1e-5, uncorrectable_ratio_critical=1e-3))
-    grade, note = docsis.judge_errors(5, 60.0, 5e-6, False)
+    ratio = LineSignalConfig(uncorrectable_ratio_warning=1e-5, uncorrectable_ratio_critical=1e-3)
+    grade, note = docsis.judge_errors(5, 60.0, 5e-6, False, ratio)
     assert grade == GOOD and "1e-05" in note
-    assert docsis.judge_errors(5, 60.0, 5e-4, False)[0] == WARN      # critical only from 1e-3 now (default 1e-4)
-    assert docsis.judge_errors(5, 60.0, 2e-3, False)[0] == CRITICAL
+    assert docsis.judge_errors(5, 60.0, 5e-4, False, ratio)[0] == WARN      # critical only from 1e-3 (default 1e-4)
+    assert docsis.judge_errors(5, 60.0, 2e-3, False, ratio)[0] == CRITICAL
 
 
 def test_the_dossier_channel_rules_follow_the_levels():
     weak = channel("upstream", power=37.0)
     assert docsis.is_degraded(weak) and docsis.channel_finding(weak) == "Low upstream power"
-    docsis.use_levels(LineSignalConfig(us_power_low_warning_dbmv=36.0, us_power_low_critical_dbmv=34.0))
-    assert not docsis.is_degraded(weak)
-    snr = channel(snr=34.0)
-    docsis.use_levels(LineSignalConfig(ds_snr_warning_db=35.0, ds_snr_critical_db=31.0))
-    assert docsis.is_degraded(snr) and docsis.channel_finding(snr) == "Low SNR"
+    assert not docsis.is_degraded(weak, LineSignalConfig(us_power_low_warning_dbmv=36.0, us_power_low_critical_dbmv=34.0))
+    snr, levels = channel(snr=34.0), LineSignalConfig(ds_snr_warning_db=35.0, ds_snr_critical_db=31.0)
+    assert docsis.is_degraded(snr, levels) and docsis.channel_finding(snr, levels) == "Low SNR"
 
 
 def test_the_dossier_quotes_the_warning_levels_in_force():
     text = render_dossier_markdown(facts(docsis_snapshot=healthy_snapshot(), snap_ok=True))
     assert "(typical range -8 to +8)" in text and "(typically above 33)" in text and "(typically 38 to 49)" in text
-    docsis.use_levels(LineSignalConfig(ds_power_warning_abs_dbmv=6.5, ds_snr_warning_db=35.0, ds_snr_critical_db=31.0,
-                                       us_power_low_warning_dbmv=37.0, us_power_warning_dbmv=47.0))
-    text = render_dossier_markdown(facts(docsis_snapshot=healthy_snapshot(), snap_ok=True))
+    levels = LineSignalConfig(ds_power_warning_abs_dbmv=6.5, ds_snr_warning_db=35.0, ds_snr_critical_db=31.0,
+                              us_power_low_warning_dbmv=37.0, us_power_warning_dbmv=47.0)
+    text = render_dossier_markdown(facts(docsis_snapshot=healthy_snapshot(), snap_ok=True, line_levels=levels))
     assert "(typical range -6.5 to +6.5)" in text and "(typically above 35)" in text and "(typically 37 to 47)" in text
 
 
 # --- the router ---------------------------------------------------------------------------------------------------------
 
 async def test_the_router_grades_follow_the_levels_and_the_busy_level_live():
-    busy = {"pct": 60.0}
+    busy, config = {"pct": 60.0}, AppConfig()
     monitor = build_router().monitor
     monitor.watch_load(SimpleNamespace(down_mbps=1000.0, up_mbps=40.0), lambda: busy["pct"])
+    monitor.watch_levels(config)
     await monitor.on_result(1000.0, router_result(cpu=80.0, rx_bytes=0, tx_bytes=0))
     # 10 s later: download 300 Mbps (30 %) and upload 30 Mbps (75 %)
     snapshot = await monitor.on_result(1010.0, router_result(cpu=80.0, rx_bytes=375_000_000, tx_bytes=37_500_000))
     assert (snapshot.grades["cpu"], snapshot.grades["wan_tx"]) == (GOOD, WARN)
-    monitors.use_levels(RouterLevelsConfig(cpu_warning_pct=70.0, wan_critical_pct=74.0))
+    config.router_levels = RouterLevelsConfig(cpu_warning_pct=70.0, wan_critical_pct=74.0)  # a save: read at the next poll
     busy["pct"] = 80.0  # the classifier's busy level changed: the callable reads it at the next poll
     snapshot = await monitor.on_result(1020.0, router_result(cpu=80.0, rx_bytes=750_000_000, tx_bytes=75_000_000))
     assert (snapshot.grades["cpu"], snapshot.grades["wan_tx"]) == (WARN, CRITICAL)
@@ -119,9 +97,10 @@ async def test_the_router_grades_follow_the_levels_and_the_busy_level_live():
 
 
 async def test_the_router_memory_levels_follow_the_settings():
-    monitor = build_router().monitor
+    monitor, config = build_router().monitor, AppConfig()
+    monitor.watch_levels(config)
     assert (await monitor.on_result(1000.0, router_result(mem=90.0))).grades["mem"] == WARN
-    monitors.use_levels(RouterLevelsConfig(mem_warning_pct=91.0, mem_critical_pct=92.0))
+    config.router_levels.mem_warning_pct, config.router_levels.mem_critical_pct = 91.0, 92.0  # in place, as a save
     assert (await monitor.on_result(1010.0, router_result(mem=90.0))).grades["mem"] == GOOD
     assert (await monitor.on_result(1020.0, router_result(mem=92.5))).grades["mem"] == CRITICAL
 

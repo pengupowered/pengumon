@@ -150,7 +150,7 @@ async def built_pack(tmp_path, monkeypatch, level: str) -> dict:
     from pengumon.config import AppConfig
     from pengumon.db.repository import DatabaseRepository
     from pengumon.models.probes import TargetConfig
-    from pengumon.reports.ai_pack import build_ai_pack
+    from pengumon.reports.contributions import build_ai_pack
 
     config = AppConfig(targets=BUILT_TARGETS, dns_probes=[], devices=[
         {"id": "modem", "driver": "xfinity_xb", "url": "http://canary-modem.lan", "model": "Example-Cable 3.1"},

@@ -8,7 +8,7 @@ import time
 import aiosqlite
 import pytest
 
-from pengumon.api.ws import ConnectionManager
+from pengumon.live.ws import ConnectionManager
 from pengumon.db.repository import DatabaseRepository
 from pengumon.devices.samples import device_sample
 from pengumon.devices.snapshots import RouterMetricsSnapshot
@@ -17,14 +17,6 @@ from pengumon.live.message import LiveStreamMessage
 from pengumon.models.probes import ProbeSample
 
 DAY = 86400
-
-
-@pytest.fixture
-async def repo(tmp_path):
-    r = DatabaseRepository(db_path=str(tmp_path / "budget.db"))
-    await r.initialize()
-    yield r
-    await r.close()
 
 
 # --- retention -----------------------------------------------------------------------------------

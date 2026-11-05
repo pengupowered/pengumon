@@ -11,7 +11,7 @@ registerHelp({
     + 'the last 7 days, with a floor of 10 Mbps, and only once 6 hours of samples exist ("learned"). Thin dashed lines on '
     + 'the router history WAN chart show it. A learned value is too low on a line that never gets fully used.',
   'router.cpu': (v) => 'How busy the router\'s processor was, in percent, averaged over its cores. The router only gives '
-    + 'counters that count up since its boot, so pengumon works the percentage out from the difference '
+    + 'counters that count up since its boot, so Pengumon works the percentage out from the difference '
     + 'between two readings. The first reading after a start has none. Above ' + val(v, 'router_levels.cpu_warning_pct', 90) + '% it is graded warning: a '
     + 'router that busy adds delay for the whole network.',
   'router.mem': (v) => 'How much of the router\'s memory is in use. Above ' + val(v, 'router_levels.mem_warning_pct', 85) + '% it is graded warning and above '
@@ -26,7 +26,7 @@ registerHelp({
   'router.clients': 'The number of devices the router currently counts as connected, wired and Wi-Fi. Where the router '
     + 'can list them, this opens the Clients list.',
   'router.history': (v) => 'CPU and memory, WAN rates and the number of clients over 1 hour to ' + val(v, 'database.retention_days', 7) + ' days (how long readings are kept), from the router readings '
-    + 'saved every 10 s. Longer ranges are averaged into buckets (solid lines are the average, dashed '
+    + 'saved every 10 s. Longer ranges are averaged into time slices (solid lines are the average, dashed '
     + 'lines the peak). Use it to see whether a slowdown lined up with a busy line or a loaded router.',
   'clients.band': 'How the device is connected: wired, or Wi-Fi on the 2.4, 5 or 6 GHz band. 2.4 GHz reaches farther but '
     + 'is slower and more crowded; 5 and 6 GHz are faster at a shorter range.',

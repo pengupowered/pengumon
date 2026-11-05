@@ -104,6 +104,26 @@ if [ $running = 1 ]; then
     run chmod -R go-rwx "$BACKUPS/$STAMP"
 fi
 
+# ---- the host's time zone, for the container (docker-compose.yml passes TZ) ----
+# The image runs in UTC; without this, quiet hours and the daily route check would follow UTC, not the household's
+# clock. A TZ already set to a zone name wins; else the zone /etc/localtime links to; else timedatectl's.
+host_zone() {
+    local z="${TZ:-}"
+    z="${z#:}"
+    case "$z" in ""|/*|*..*) z="" ;; esac
+    if [ -z "$z" ] && [ -L /etc/localtime ]; then
+        z="$(readlink /etc/localtime)"
+        case "$z" in *zoneinfo/*) z="${z#*zoneinfo/}"; z="${z#posix/}" ;; *) z="" ;; esac
+    fi
+    if [ -z "$z" ] && command -v timedatectl >/dev/null 2>&1; then
+        z="$(timedatectl show -p Timezone --value 2>/dev/null)"
+    fi
+    printf '%s' "$z"
+}
+TZ="$(host_zone)"
+export TZ
+step "Time zone for the container: ${TZ:-UTC (not found on the host)}"
+
 # ---- build and recreate ----
 if [ $NO_BUILD = 0 ]; then
     step "Building $IMAGE"

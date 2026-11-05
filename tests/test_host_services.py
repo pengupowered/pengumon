@@ -11,15 +11,17 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from pengumon import __version__  # noqa: F401
-from pengumon.api.ws import ConnectionManager
+from pengumon.live.ws import ConnectionManager
 from pengumon.config import AppConfig
 from pengumon.services.settings import ServiceCheckConfig, ServiceChecksConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.services.checker import SERVICE_KIND, ServiceChecker, classify_error, display_url
 from pengumon.main import app, security_config
-from pengumon.metrics import render_metrics
+from pengumon.observability.prometheus import render_metrics
 from pengumon.incidents.model import Incident, SystemDiagnosis
-from pengumon.notify import Notifier
+from pengumon.notify.notifier import Notifier
+
+from device_helpers import Clock
 
 URL = "http://127.0.0.1:9000/api/health"
 SVC = ServiceCheckConfig(id="app_a", name="App A", url=URL, open_url="http://host.lan:9000/",
@@ -81,14 +83,6 @@ def test_display_url_drops_scheme_credentials_and_query():
 
 
 # --- the checker: states, latency, http errors, the grace period -----------------------------------------------------
-
-class Clock:
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self):
-        return self.now
-
 
 class Script:
     """MockTransport handler: a queue of status codes or exceptions (instances or classes) for all urls."""
@@ -177,7 +171,9 @@ async def test_client_setup_failure_is_kind_config(tmp_path):
     bad = ServiceCheckConfig(id="tls", name="TLS", url="https://127.0.0.1:1/h", ca_file=str(tmp_path / "missing.pem"))
     checker = ServiceChecker(ServiceChecksConfig(services=[bad]), repo)
     await checker.poll()
-    assert checker.status["tls"].error.kind == "config"
+    error = checker.status["tls"].error
+    assert error.kind == "config"
+    assert "missing.pem" in error.message and "Error" not in error.message  # a sentence, not the exception
 
 
 async def test_no_announcement_before_the_grace_period_and_one_after(tmp_path):

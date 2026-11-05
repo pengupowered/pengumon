@@ -20,24 +20,20 @@ from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.devices.samples import device_sample, mesh_counts
 from pengumon.devices.wan import Rate, WanRates
 from pengumon.grades import GOOD, WARN, Range, known_grades
+from pengumon.lines import docsis
 from pengumon.lines.docsis import (
     TECHNOLOGY, DocsisErrorTracker, grade_snapshot, line_sample, snapshot_from_sample, summarize,
 )
+from pengumon.lines.levels import LineSignalConfig
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.lines.docsis_model import DocsisSignalSnapshot
 from pengumon.observability import StateLog, get_logger
 from pengumon.observability.telemetry import line_errors, line_restarts, router_restarts
 
-# The router levels in force (the Settings page's router_levels: section, pengumon.devices.levels): one object for
-# the whole process, read at every grading; `use_levels` copies the configured ones into it in place.
-LEVELS = RouterLevelsConfig()
+# The router levels (the Settings page's router_levels: section, pengumon.devices.levels) a monitor grades by until
+# watch_levels hands it the live config; never changed.
+DEFAULT_LEVELS = RouterLevelsConfig()
 DEFAULT_BUSY_LOAD_PCT = ClassifierConfig.model_fields["busy_load_pct"].default  # until watch_load says otherwise
-
-
-def use_levels(levels: RouterLevelsConfig) -> None:
-    """Makes `levels` the ones in force: copied into LEVELS field by field, in one synchronous step."""
-    for name in type(LEVELS).model_fields:
-        setattr(LEVELS, name, getattr(levels, name))
 
 
 def router_ranges(levels: RouterLevelsConfig, busy_load_pct: float) -> Dict[str, Range]:
@@ -101,10 +97,21 @@ class LineMonitor:
         self._messages = messages
         self._role = role
         self._errors = DocsisErrorTracker()
+        self._config = None  # the live config whose line_signal section it grades by (watch_levels)
         self._probe_loss = None
         self._seen: Optional[tuple] = None  # (uncorrectable, corrected) totals of the last good reading, for the counters
         self._store = _Store("modem snapshots", repository.insert_line_sample if repository is not None else None,
                              line_sample, device_id)
+
+    def watch_levels(self, config) -> None:
+        """Grades by `config.line_signal` as it is at each poll (the live config: a saved level applies at the next
+        poll, with no applier)."""
+        self._config = config
+
+    @property
+    def levels(self) -> LineSignalConfig:
+        """The line levels in force now (the defaults until watch_levels)."""
+        return getattr(self._config, "line_signal", None) or docsis.DEFAULT_LEVELS
 
     def watch_probes(self, probe_loss: Callable[[float, float], Awaitable[Optional[bool]]]) -> None:
         """Cross-checks new line errors against the probes: `probe_loss(start, end)` says whether the probes to the
@@ -147,7 +154,7 @@ class LineMonitor:
         sample = await self._repository.get_latest_line_sample(self.device_id)
         if sample is None or sample.technology != TECHNOLOGY or sample.ts < oldest_ts:
             return None
-        snapshot = grade_snapshot(snapshot_from_sample(sample))
+        snapshot = grade_snapshot(snapshot_from_sample(sample), self.levels)
         snapshot.error_message = sample.error_message
         self.latest_snapshot = snapshot
         if snapshot.status not in ("error", "unconfigured"):
@@ -186,7 +193,8 @@ class LineMonitor:
             return await self.on_error(ts, DriverError("protocol", reason))
         if reading.technology != "docsis":  # the only line technology judged so far (pengumon.lines)
             return await self.on_error(ts, DriverError("unsupported", f"no rules for {reading.technology} lines"))
-        self.latest_snapshot = self._errors.apply(summarize(reading.channels, ts))
+        levels = self.levels
+        self.latest_snapshot = self._errors.apply(summarize(reading.channels, ts, levels), levels)
         self._count_errors(self.latest_snapshot)
         await self._cross_check(self.latest_snapshot)
         await self._store(self.latest_snapshot)
@@ -216,6 +224,12 @@ class RouterMonitor:
                                   lambda device_id, counts: counts, device_id)
         self._load = None  # the LineLoad whose capacity the WAN rates are graded against (see watch_load)
         self._busy: Callable[[], float] = lambda: DEFAULT_BUSY_LOAD_PCT
+        self._config = None  # the live config whose router_levels section it grades by (watch_levels)
+
+    def watch_levels(self, config) -> None:
+        """Grades by `config.router_levels` as it is at each poll (the live config: a saved level applies at the next
+        poll, with no applier)."""
+        self._config = config
 
     def watch_load(self, line_load, busy_load_pct: Callable[[], float]) -> None:
         """Grades the WAN rates as a share of the line capacity `line_load` knows (learned or configured, so it can
@@ -227,7 +241,7 @@ class RouterMonitor:
     @property
     def ranges(self) -> Dict[str, Range]:
         """The ranges in force now (router levels and busy threshold as they are at this moment)."""
-        return router_ranges(LEVELS, self._busy())
+        return router_ranges(getattr(self._config, "router_levels", None) or DEFAULT_LEVELS, self._busy())
 
     def recent_rates(self) -> List[Rate]:
         return self.wan.recent_rates()

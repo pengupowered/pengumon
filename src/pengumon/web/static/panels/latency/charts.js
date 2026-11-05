@@ -11,7 +11,7 @@
 // The live feed appends a point per message (charts.js); the history views replace it (history.js).
 
 import { maxLivePoints, state } from '../../js/state.js';
-import { escapeHtml, getTargetInfo, targetList } from '../../js/util.js';
+import { escapeHtml, formatClock, formatMs, getTargetInfo, targetList } from '../../js/util.js';
 import { SERIES, combine, memberNames, seriesMembers, shortLabels } from '../../js/path.js';
 import { token } from '../../js/chart-theme.js';
 import { primaryDevice } from '../../js/devices.js';
@@ -29,14 +29,7 @@ let noPings = false; // the live targets say this host cannot send pings (probin
 let incidents = []; // [{start, end, level, label}] for the shaded windows
 
 const has = (v) => v !== null && v !== undefined;
-// One formatter per format, made on first use: with options, every toLocaleTimeString call built a new Intl.DateTimeFormat,
-// and the chart relabels up to 240 points on every message.
-const CLOCK = { hm: null, hms: null };
-const clock = (ts, seconds) => {
-  const k = seconds ? 'hms' : 'hm';
-  CLOCK[k] ||= new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) });
-  return CLOCK[k].format(ts * 1000);
-};
+const clock = (ts, seconds) => formatClock(ts * 1000, false, !!seconds); // util's formatters are made once; the chart relabels up to 240 points on every message
 
 export function resetView() {
   view.times = [];
@@ -101,7 +94,14 @@ const pathPlugin = {
       ends.push({ label: d.pathLabel, color: d.borderColor, x: meta.data[k].x, y: meta.data[k].y, y0: meta.data[k].y });
     });
     ends.sort((p, q) => p.y - q.y);
+    // spread the names at least 14 px apart: downwards from the top one, then back up from the bottom edge, so a group of
+    // lines that coincide near the floor of the chart (a healthy line) does not push the last name over the time axis
     for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 14) ends[k].y = ends[k - 1].y + 14;
+    const floor = a.bottom - 7;
+    if (ends.length && ends[ends.length - 1].y > floor) {
+      ends[ends.length - 1].y = floor;
+      for (let k = ends.length - 2; k >= 0 && ends[k].y > ends[k + 1].y - 14; k--) ends[k].y = ends[k + 1].y - 14;
+    }
     const load = chart.scales.yLoad;
     const labelX = (load && load.options.display ? load.right : a.right) + 8;
     ctx.save();
@@ -122,7 +122,7 @@ const pathPlugin = {
   }
 };
 
-const fmtMs = (v) => (has(v) ? `${v.toFixed(1)} ms` : 'no reply');
+const fmtMs = (v) => formatMs(v, { unit: true, empty: 'no reply', tenths: true });
 
 function datasets() {
   const sets = [];

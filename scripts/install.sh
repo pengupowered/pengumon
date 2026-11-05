@@ -215,6 +215,10 @@ if [ "$UNINSTALL" = 1 ]; then
         fi
         root "$PENGUMON" service uninstall "$SCOPE_FLAG" || true
         root rm -rf "$APP"
+        # the command link a --user install made (only if it still points at this install)
+        if [ "$SCOPE" = user ] && [ -L "$HOME/.local/bin/pengumon" ] && [ "$(readlink "$HOME/.local/bin/pengumon")" = "$PENGUMON" ]; then
+            rm -f "$HOME/.local/bin/pengumon"
+        fi
         # The folder of systemd drop-ins ("Opening the dashboard", step 3) holds the access token: it goes with the service.
         if [ "$OS" = Linux ]; then
             if [ "$SCOPE" = system ]; then DROPIN="/etc/systemd/system/pengumon.service.d"
@@ -346,6 +350,34 @@ uvr pip install --python "$VENV/bin/python" --no-deps --compile-bytecode "$WORK/
 "$PENGUMON" version > /dev/null || die "the installed pengumon does not start"
 say "Installed $("$PENGUMON" version)."
 
+# ---- the command ------------------------------------------------------------------------------------------------------
+
+# A --user install puts `pengumon` on the PATH the way uv does: a link in ~/.local/bin. (A system install lives in
+# /opt or /usr/local/pengumon and is run by its service; use the full path there.) CMD is what the messages tell you to type.
+CMD="$PENGUMON"
+if [ "$SCOPE" = user ]; then
+    LINK_DIR="$HOME/.local/bin"
+    LINK="$LINK_DIR/pengumon"
+    if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$PENGUMON" ]; then
+        CMD=pengumon
+    elif [ -e "$LINK" ] || [ -L "$LINK" ]; then
+        say "$LINK already exists and is not this install, so it was left alone. This install is $PENGUMON."
+    elif mkdir -p "$LINK_DIR" && ln -s "$PENGUMON" "$LINK"; then
+        say "Linked $LINK to this install."
+        CMD=pengumon
+    else
+        say "Could not link $LINK. This install is $PENGUMON."
+    fi
+    if [ "$CMD" = pengumon ]; then
+        case ":$PATH:" in
+            *":$LINK_DIR:"*) ;;
+            *) say "$LINK_DIR is not on your PATH yet, so a new terminal will not find 'pengumon'. Add this line to your shell profile (~/.profile or ~/.zshrc):"
+               say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+               CMD="$PENGUMON" ;;
+        esac
+    fi
+fi
+
 # ---- service ------------------------------------------------------------------------------------------------------------
 
 answers() {
@@ -354,7 +386,7 @@ answers() {
 }
 LISTEN_PORT="${PORT:-8000}"
 if [ "$SERVICE" = 0 ]; then
-    say "No service installed. Start it with: $PENGUMON run"
+    say "No service installed. Start it with: $CMD run"
     exit 0
 fi
 
@@ -404,4 +436,4 @@ if [ "$BROWSER" = 1 ]; then
         say "Open $URL in a browser (on this computer, or through an SSH tunnel)."
     fi
 fi
-say "Check it any time with: $PENGUMON service status"
+say "Check it any time with: $CMD service status"

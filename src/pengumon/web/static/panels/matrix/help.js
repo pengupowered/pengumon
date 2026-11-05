@@ -16,7 +16,7 @@ registerHelp({
     + 'its name. Under it: the name from your config and the address. A fault is placed at the nearest stage that stops '
     + 'answering, which is how the banner can tell your router from your provider.',
   'hop.loss': (v) => 'The share of the last 60 probes that got no answer (about the last minute: probes go out once a second). The '
-    + 'Lost since start column counts every probe since pengumon started. Normal is 0%. A hop shows amber above ' + pct(v, 'degraded_loss_fraction', 0.1) + ' and red above ' + pct(v, 'down_loss_fraction', 0.4)
+    + 'Lost since start column counts every probe since Pengumon started. Normal is 0%. A hop shows amber above ' + pct(v, 'degraded_loss_fraction', 0.1) + ' and red above ' + pct(v, 'down_loss_fraction', 0.4)
     + ' of its last 10 probes lost. Some ISP routers drop probes aimed at themselves while still forwarding traffic, so loss on '
     + 'a middle hop alone is not a fault if the hops after it are clean.',
   'hop.latency': (v) => 'Round-trip time in milliseconds: how long a probe takes to reach the target and come back. Min, Avg and '

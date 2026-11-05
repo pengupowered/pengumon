@@ -17,7 +17,7 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "pengumon"
 # What main.py may import besides the component modules: the app frame (FastAPI, config loading, middleware, the
 # static files and page, the core API, logging and telemetry). A feature wired into main.py directly fails here.
 FRAME_MODULES = {
-    "pengumon", "pengumon.__version__", "pengumon.api.router", "pengumon.api.state", "pengumon.components", "pengumon.config",
+    "pengumon", "pengumon.__version__", "pengumon.api.router", "pengumon.state", "pengumon.components", "pengumon.config",
     "pengumon.observability", "pengumon.observability.export", "pengumon.observability.telemetry",
     "pengumon.paths", "pengumon.security", "pengumon.web",
 }
@@ -85,7 +85,7 @@ def test_the_list_starts_with_the_storage_the_settings_and_the_devices():
     names = [m.__name__.removeprefix("pengumon.") for m in main.COMPONENTS]
     assert names[:3] == ["db.storage", "settings.component", "devices.component"]
     assert names.index("engine.line_load") < names.index("engine.classifier.component")
-    assert names.index("notify") < min(names.index("engine.classifier.component"), names.index("services.component"))
+    assert names.index("notify.component") < min(names.index("engine.classifier.component"), names.index("services.component"))
     assert names.index("db.retention") < names.index("engine.line_load")  # clean up before the backfills read
 
 
@@ -150,7 +150,7 @@ class _FakeModule:
 async def test_a_component_added_to_the_list_is_registered_started_and_stopped(tmp_path, monkeypatch):
     """Adding a feature is one more entry in COMPONENTS: it registers after the classifier, starts, and stops first,
     after every task has ended."""
-    from pengumon.api.state import STATE_ATTR
+    from pengumon.state import STATE_ATTR
     events = []
     monkeypatch.setenv("PENGUMON_CONFIG", _config_file(tmp_path))
     _quiet_workers(monkeypatch)
@@ -221,7 +221,7 @@ async def test_shutdown_order(tmp_path, monkeypatch):
     from pengumon.db.repository import DatabaseRepository
     from pengumon.devices.registry import DeviceRegistry
     from pengumon.engine.classifier import OutageClassifier
-    from pengumon.notify import Notifier
+    from pengumon.notify.notifier import Notifier
     from pengumon.services.checker import ServiceChecker
 
     events = []

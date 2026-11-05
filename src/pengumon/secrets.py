@@ -138,7 +138,7 @@ class SecretStore:
     def data(self) -> dict:
         """The parsed file, read on first use; {} when it is missing or unusable (logged, without its content)."""
         if self._data is None:
-            self._data = self._convert(_read_store(self.path))
+            self._data = self._convert(_read_store(self.path)[0])
         return self._data
 
     def _convert(self, data: dict) -> dict:
@@ -157,7 +157,8 @@ class SecretStore:
         return converted
 
     def write(self, updates: dict) -> None:
-        """Merges `updates` into the file and into what data() returns."""
+        """Merges `updates` into the file and into what data() returns. Raises SecretsFileUnusable (nothing
+        written) when the file on disk cannot be read or parsed."""
         self.data()  # converted before the merge, so the write never brings back what the conversion removed
         update_secrets(updates, self.path)
         _merge(self.data(), json.loads(json.dumps(updates)))
@@ -179,14 +180,15 @@ class SecretStore:
 
     def change(self, updates: dict, removals: Sequence[Tuple[str, ...]] = ()) -> None:
         """Merges `updates` and removes `removals` (paths; a parent left empty goes too) in one atomic write of the
-        file, then updates what data() returns. Nothing is written when neither changes anything."""
+        file, then updates what data() returns. Nothing is written when neither changes anything, nor when the file
+        on disk cannot be read or parsed (SecretsFileUnusable)."""
         memory = json.loads(json.dumps(self.data()))  # converted before the change, as in write()
         _merge(memory, json.loads(json.dumps(updates)))
         for path in removals:
             _remove_path(memory, tuple(path))
         if memory == self.data():
             return
-        on_disk = _read_store(self.path) if self.path.exists() else {}
+        on_disk = _read_for_write(self.path)
         _merge(on_disk, json.loads(json.dumps(updates)))
         for path in removals:
             _remove_path(on_disk, tuple(path))
@@ -308,25 +310,41 @@ def _text(value) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
-def _read_store(path: Path) -> Dict:
-    """secrets.json, parsed; {} when it is missing or unreadable (logged, without its content)."""
+# What the page says when a save is refused for that reason (the log line names the path and the problem).
+SECRETS_FILE_DAMAGED = ("The secrets file (secrets.json) is damaged, so it was not overwritten and nothing was saved. "
+                        "Fix the file, or move it away to start over, then save again.")
+
+
+class SecretsFileUnusable(OSError):
+    """secrets.json exists but cannot be read or parsed, so a write would erase what it holds: nothing was written.
+    An OSError, so every caller that handles a failed write refuses the save; the message never holds the content."""
+
+    def __init__(self, path: Path, problem: str):
+        super().__init__(f"{path} {problem}; it was not overwritten")
+        self.path, self.problem = path, problem
+
+
+def _read_store(path: Path) -> Tuple[Dict, Optional[str]]:
+    """(secrets.json parsed, None), or ({}, problem) when the file exists but cannot be read or parsed ("is not valid
+    JSON"); ({}, None) when it is missing. The one reader of the file: the store's first read and every write use it.
+    Problems are logged with the path, never the content."""
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {}
-    except OSError as e:
+        return {}, None
+    except (OSError, UnicodeDecodeError) as e:
         _log.warning("Credentials file could not be read; credentials stored there are not used", path=str(path),
                      error=type(e).__name__)
-        return {}
+        return {}, "could not be read"
     try:
         data = json.loads(raw)
     except ValueError as e:
         _log.warning("Credentials file is not valid JSON; credentials stored there are not used", path=str(path),
                      error=f"{type(e).__name__} at line {getattr(e, 'lineno', '?')}")
-        return {}
+        return {}, "is not valid JSON"
     if not isinstance(data, dict):
         _log.warning("Credentials file is not a JSON object; credentials stored there are not used", path=str(path))
-        return {}
+        return {}, "is not a JSON object"
     try:
         # Windows has no permission bits (st_mode is 0o666 or 0o444); the profile's ACL protects the file there
         mode = stat.S_IMODE(path.stat().st_mode) if sys.platform != "win32" else 0
@@ -335,6 +353,17 @@ def _read_store(path: Path) -> Dict:
     if mode & 0o077:
         _log.warning(f"Credentials file is readable by other users (mode {mode:04o}); pengumon writes it 0600",
                      path=str(path))
+    return data, None
+
+
+def _read_for_write(path: Path) -> Dict:
+    """secrets.json as it is on disk now, to merge a change into ({} when missing). Raises SecretsFileUnusable when
+    the file exists but cannot be read or parsed: a write would replace every credential in it."""
+    data, problem = _read_store(path)
+    if problem is not None:
+        _log.error(f"Credentials file {problem}: nothing was saved, so the credentials in it are kept. Fix the file "
+                   "(or move it away to start over), then save again", path=str(path))
+        raise SecretsFileUnusable(path, problem)
     return data
 
 
@@ -345,8 +374,8 @@ def _read_store(path: Path) -> Dict:
 # webhook's address; it can hold a token) and "webhook_header.<name>" (a header secret, the existing webhooks.<name>;
 # PENGUMON_WEBHOOK_SECRET_<NAME> and /run/secrets/pengumon_webhook_<name> win, as resolve_webhook_secret reads them).
 
-SLOT_NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")  # a header secret's name (notify_settings._SECRET_NAME)
-WEBHOOK_SLOT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # a webhook id (notify_settings.WEBHOOK_ID)
+SLOT_NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")  # a header secret's name (notify.settings._SECRET_NAME)
+WEBHOOK_SLOT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # a webhook id (notify.settings.WEBHOOK_ID)
 
 
 def slot_path(slot: str) -> Optional[Tuple[str, ...]]:
@@ -419,15 +448,10 @@ def _merge(into: dict, updates: dict) -> None:
 
 
 def update_secrets(updates: dict, path: Optional[Path] = None) -> None:
-    """Merges `updates` into the credentials file (write_secrets)."""
+    """Merges `updates` into the credentials file (write_secrets). Raises SecretsFileUnusable, writing nothing, when
+    the file exists but cannot be read or parsed."""
     path = Path(path) if path else SECRETS_PATH
-    data: dict = {}
-    if path.exists():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            data = loaded if isinstance(loaded, dict) else {}
-        except Exception:
-            pass
+    data = _read_for_write(path)
     _merge(data, updates)
     write_secrets(data, path)
 

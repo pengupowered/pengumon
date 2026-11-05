@@ -150,6 +150,7 @@ class ServiceChecker:
         self._timer = timer
         self._client_factory = client_factory
         self._clients: Dict[str, httpx.AsyncClient] = {}
+        self._setup_logged: set = set()  # services whose client setup failure is already in the log
         self.status: Dict[str, ServiceStatus] = {}
         self._applied = self._snapshot()
 
@@ -172,6 +173,7 @@ class ServiceChecker:
         reset = [sid for sid, old in previous.items()
                  if sid not in current or any(old[f] != current[sid][f] for f in self._CHECK_FIELDS)]
         for sid in reset:
+            self._setup_logged.discard(sid)
             client = self._clients.pop(sid, None)
             if client is not None:
                 await client.aclose()
@@ -205,8 +207,16 @@ class ServiceChecker:
             try:
                 client = self._clients[service.id] = self._client_factory(service)
             except Exception as e:  # e.g. a missing or unreadable ca_file, retried at the next check
-                return ServiceError("config", f"client setup failed (ca_file {service.ca_file}): "
-                                              f"{type(e).__name__}: {e}"), None, None
+                if service.id not in self._setup_logged:  # the page gets a sentence; the cause is logged once
+                    self._setup_logged.add(service.id)
+                    logger.warning(f"Service {service.id}: the HTTP client could not be set up "
+                                   f"(ca_file {service.ca_file}): {type(e).__name__}: {e}")
+                if service.ca_file:
+                    message = (f"The certificate file {service.ca_file} cannot be read. "
+                               "Check the path in Settings > Devices and services.")
+                else:
+                    message = "The check could not be set up. See the log for the reason."
+                return ServiceError("config", message), None, None
         started = self._timer()
         try:
             response = await client.get(service.url)

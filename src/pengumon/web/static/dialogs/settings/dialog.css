@@ -8,6 +8,14 @@
 .set-confirm[hidden] { display: none; }
 .set-confirm-b { display: inline-flex; gap: var(--sp-2); }
 
+/* ---- the search box above the sections ---- */
+.set-search { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-4); flex-wrap: wrap; }
+.set-search svg.i { color: var(--ink-3); flex: none; }
+.set-search .input { flex: 1 1 260px; min-width: 0; }
+.set-search .fine { flex: 1 1 100%; margin: 0; min-height: 1.2em; }
+.set-search .fine:empty { display: none; }
+.set-sec[hidden], .set-adv[hidden], .set-group[hidden], .set-list[hidden], .set-row[hidden], .set-list-box[hidden] { display: none; }
+
 /* ---- the frame: a rail of sections beside the sections; a jump list instead of the rail on a phone ---- */
 .set-wrap { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
 .set-rail { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -20,11 +28,14 @@
 .set-fs { border: 0; margin: 0; padding: 0; min-width: 0; }
 .set-sec, .set-adv { padding-bottom: var(--sp-6); scroll-margin-top: var(--sp-3); }
 .set-sec + .set-sec, .set-sec + .set-adv, .set-adv + .set-sec { border-top: 1px solid var(--line); padding-top: var(--sp-5); }
-.set-adv > summary { cursor: pointer; display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; list-style: none; margin-bottom: var(--sp-3); }
+.set-adv > summary { cursor: pointer; display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; list-style: none; margin-bottom: var(--sp-3); }
 .set-adv > summary::-webkit-details-marker { display: none; }
 .set-adv > summary .section-t { margin-bottom: 0; }
-.set-adv > summary::before { content: "\25B8"; color: var(--ink-3); }
-.set-adv[open] > summary::before { content: "\25BE"; }
+/* disclosures (Advanced, the list cards) use the app's chevron, which points down: closed, it is turned to point right */
+.set-chev { flex: none; color: var(--ink-3); transform: rotate(-90deg); transition: transform var(--t-fast) var(--ease); }
+.set-adv[open] > summary > .set-chev, .set-card[open] > summary > .set-chev { transform: none; }
+@media (prefers-reduced-motion: reduce) { .set-chev { transition: none; } }
+/* headings: the section (h3 .section-t), a group or a list of its own (h4 .set-group-t), a list inside a group (h5 .set-sub) */
 .set-group { margin-bottom: var(--sp-5); }
 .set-group-t { font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; margin: var(--sp-4) 0 var(--sp-2); }
 
@@ -36,18 +47,28 @@
 .set-row.flash { animation: set-flash 1.2s ease-out; }
 @keyframes set-flash { from { background: var(--accent-bg); } to { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .set-row.flash { animation: none; outline: 2px solid var(--accent); } }
-.set-main { display: flex; align-items: center; gap: var(--sp-2) var(--sp-4); flex-wrap: wrap; justify-content: space-between; }
-.set-label { flex: 1 1 260px; min-width: 0; font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--ink-1); }
-.set-rel { flex: 1 1 100%; order: 3; font-size: var(--fs-xs); color: var(--ink-3); }
-.set-input { flex: 0 1 260px; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); }
-.set-input .input { min-width: 0; }
-.set-input .input.num { text-align: right; max-width: 150px; margin-left: auto; }
-.set-unit { flex: none; min-width: 3.2em; font-size: var(--fs-sm); color: var(--ink-3); }
+/* Two columns in every row: the label and its help on the left; the control, and under it the standard value, the
+   badges and Reset, in one column of the same width and left edge in every row. Per kind of control: text, choice
+   lists and the time zone fill the column; numbers and times are 11em wide with the unit after them; switches and
+   button groups sit at its left edge. */
+#settingsModal { --set-col: 300px; }
+.set-main { display: grid; grid-template-columns: minmax(0, 1fr) var(--set-col); gap: var(--sp-1) var(--sp-4); align-items: center; }
+.set-label { grid-column: 1; grid-row: 1; min-width: 0; font-size: var(--fs-md); font-weight: var(--fw-medium); color: var(--ink-1); }
+.set-rel { grid-column: 1; grid-row: 2; font-size: var(--fs-xs); color: var(--ink-3); }
+.set-input { grid-column: 2; grid-row: 1 / span 2; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.set-input > .input { flex: 1 1 auto; width: 100%; min-width: 0; }
+.set-input > .input.num, .set-input > .input[type=time] { flex: 0 0 11em; width: 11em; }
+.set-input > .input.num { text-align: right; }
+.set-input .seg { flex: none; max-width: 100%; flex-wrap: wrap; }
+.set-unit { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); color: var(--ink-3); }
+.set-input-layout { flex-direction: column; align-items: flex-start; }
 .set-layout { font-size: var(--fs-sm); color: var(--ink-2); overflow-wrap: anywhere; }
-.set-meta { margin-top: 4px; font-size: var(--fs-xs); color: var(--ink-3); display: flex; gap: 4px var(--sp-3); flex-wrap: wrap; align-items: center; overflow-wrap: anywhere; }
-.set-effect { flex: 1 1 280px; min-width: 0; }
+.set-meta { margin-top: 4px; font-size: var(--fs-xs); color: var(--ink-3); display: grid; grid-template-columns: minmax(0, 1fr) var(--set-col); gap: 4px var(--sp-4); align-items: start; overflow-wrap: anywhere; }
+.set-effect { grid-column: 1; min-width: 0; }
+.set-side { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--sp-2); min-width: 0; }
+.set-extra { flex: 1 1 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .set-def { color: var(--ink-2); }
-.set-warn { flex: 1 1 100%; color: var(--warn); }
+.set-warn { grid-column: 1 / -1; color: var(--warn); }
 .set-msg { margin: 4px 0 0; font-size: var(--fs-xs); color: var(--crit); }
 .set-msg:empty { display: none; }
 .set-lnk { background: none; border: 0; padding: 0; font: inherit; font-size: var(--fs-xs); color: var(--accent); cursor: pointer; text-decoration: underline; }
@@ -60,25 +81,26 @@
 #settingsModal .seg button:disabled { opacity: .55; cursor: not-allowed; }
 
 /* ---- secrets ---- */
-.set-slot .set-secret-state { flex-wrap: wrap; justify-content: flex-end; }
+.set-slot .set-secret-state { flex-wrap: wrap; }
 .set-secret-edit { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
 .set-secret-edit .input { flex: 1 1 auto; }
 .set-sub { font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--ink-2); margin: var(--sp-3) 0 var(--sp-1); }
 .set-hdr-row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 .set-hdr-row .set-row { flex: 1 1 280px; border-top: 0; padding: var(--sp-1) 0; }
+.set-card .set-main { --set-col: 240px; }
 .set-hdr-add { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); flex-wrap: wrap; }
 .set-hdr-add .input { flex: 1 1 200px; width: auto; }
 
 /* ---- list editors: cards ---- */
 .set-list { margin: var(--sp-4) 0; }
-.set-list-h { display: flex; align-items: baseline; gap: var(--sp-3); justify-content: space-between; margin-bottom: var(--sp-2); }
-.set-list-h h4 { font-size: var(--fs-md); font-weight: var(--fw-semi); }
+.set-list-h { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.set-list-h .set-group-t, .set-list-h .set-sub { margin: 0; }
+.set-list-h .set-lnk { margin-left: auto; }
+.set-list-h:empty { display: none; }
 .set-card { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); margin-bottom: var(--sp-2); min-width: 0; }
 .set-card > summary { display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; padding: var(--sp-3) var(--sp-4); cursor: pointer; list-style: none; }
 .set-card > summary::-webkit-details-marker { display: none; }
-.set-card > summary::before { content: "\25B8"; color: var(--ink-3); }
-.set-card[open] > summary::before { content: "\25BE"; }
-.set-card-t { font-weight: var(--fw-semi); overflow-wrap: anywhere; }
+.set-card-t { flex: 0 1 auto; max-width: calc(100% - 3em); min-width: 0; font-weight: var(--fw-semi); overflow-wrap: anywhere; } /* a long name wraps beside the chevron */
 .set-card-s { color: var(--ink-3); font-size: var(--fs-sm); overflow-wrap: anywhere; min-width: 0; flex: 1 1 120px; }
 .set-card-b { padding: 0 var(--sp-4) var(--sp-4); }
 .set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-3); }
@@ -120,15 +142,18 @@
   .set-wrap { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
   .set-rail { display: none; }
   .set-jump { display: flex; }
-  .set-main { flex-direction: column; align-items: stretch; }
-  .set-label { flex-basis: auto; }
-  .set-input { flex: 1 1 auto; width: 100%; }
-  .set-input .input.num { max-width: none; flex: 1 1 auto; }
-  .set-input .seg { flex-wrap: wrap; }
+  .set-main, .set-meta { grid-template-columns: minmax(0, 1fr); }
+  .set-label, .set-rel, .set-input, .set-effect, .set-side, .set-warn { grid-column: 1; grid-row: auto; }
   .set-confirm { padding: var(--sp-3) var(--sp-4); }
-  #settingsModal .modal-f .left { display: flex; flex-wrap: wrap; }
-  #settingsModal .modal-f .left .btn { flex: 1 1 auto; }
-  #settingsModal #btnSettingsSave { flex: 1 1 100%; order: 9; }
+  /* one footer row: Export, Import and Versions show their icon only (their names are in aria-label and title) */
+  #settingsModal .modal-f { flex-wrap: nowrap; gap: var(--sp-1); padding-inline: var(--sp-3); }
+  #settingsModal .modal-f .left { display: flex; gap: 0; flex: 0 0 auto; width: auto; margin-right: auto; }
+  #settingsModal .modal-f .left .fl { display: none; }
+  #settingsModal .modal-f .btn { flex: 0 0 auto; padding-inline: var(--sp-2); }
+  #settingsModal .modal-f .left .btn { padding-inline: 6px; }
+  #settingsModal #btnSettingsPreview span { display: none; }
+  #settingsModal #btnSettingsSave { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+  #settingsModal #btnSettingsSave span { overflow: hidden; text-overflow: ellipsis; }
   .set-card-f { justify-content: stretch; flex-wrap: wrap; }
   .set-about { grid-template-columns: minmax(0, 1fr); }
 }

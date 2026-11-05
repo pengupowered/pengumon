@@ -1,7 +1,7 @@
 /* The app layer over the design system (tokens.css, components.css, page.css: ported from the redesign mockup).
    Holds what the app has and the mockup does not: panel groups (one <section data-panel> per panel, one card per
-   instance inside it), the modal as a div toggled by .active (util.js openModal), the classes modules still emit
-   (badge-healthy ..., seg buttons with .active), and the views not redesigned yet. Reads tokens only. */
+   instance inside it), the modal as a div toggled by .active (util.js openModal), the segmented control's
+   .active, and the views not redesigned yet. Reads tokens only. */
 
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 
@@ -43,15 +43,7 @@
 .menu.fixed { position: fixed; }
 .live-live i { background: var(--good); }
 
-/* ---------- Status vocabulary for the classes the modules emit ---------- */
-.badge-healthy, .badge-up { --st: var(--good); --st-bg: var(--good-bg); }
-.badge-degraded, .badge-warning { --st: var(--warn); --st-bg: var(--warn-bg); }
-.badge-down, .badge-critical, .badge-error { --st: var(--crit); --st-bg: var(--crit-bg); }
-.badge-busy { --st: var(--busy); --st-bg: var(--busy-bg); }
-.badge-secondary, .badge-unknown { --st: var(--unknown); --st-bg: var(--unknown-bg); }
-.loss-zero { color: var(--good); }
-.loss-some { color: var(--warn); }
-.loss-high { color: var(--crit); }
+/* ---------- Ink colours ---------- */
 .ink-good { color: var(--good); } .ink-warn { color: var(--warn); } .ink-crit { color: var(--crit); } .ink-muted { color: var(--ink-3); }
 
 /* Segmented control: modules mark the current button with .active (kept), new markup with aria-pressed */

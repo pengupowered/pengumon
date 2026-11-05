@@ -18,31 +18,49 @@ from pengumon.models.probes import TargetConfig
 logger = logging.getLogger("pengumon.netinfo")
 
 
-def get_lan_ips() -> List[str]:
-    """Discovers non-loopback IPv4 addresses assigned to physical LAN interfaces."""
+HOSTNAME_LOOKUP_SECONDS = 1.0
+
+
+def _hostname_ips(timeout: float = HOSTNAME_LOOKUP_SECONDS) -> List[str]:
+    """The IPv4 addresses this host's name resolves to, given up after `timeout` seconds. On macOS a host name with
+    no DNS entry is looked up over mDNS, which can block for a minute; the lookup cannot be cancelled, so it runs in
+    a daemon thread that is left to finish on its own."""
+    found: List[List[str]] = []
+
+    def run() -> None:
+        try:
+            found.append([info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)])
+        except OSError as e:
+            logger.debug(f"Hostname addrinfo lookup failed: {e}")
+
+    thread = threading.Thread(target=run, name="pengumon-hostname-lookup", daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if not found:
+        if thread.is_alive():
+            logger.debug(f"Hostname addrinfo lookup gave no answer within {timeout:g} s")
+        return []
+    return found[0]
+
+
+def get_lan_ips(hostname_ips: Callable[[], List[str]] = _hostname_ips) -> List[str]:
+    """This host's non-loopback IPv4 LAN addresses: the one it sends from to the internet (a UDP connect() picks the
+    route and source address without sending anything), else, where there is no route, the addresses its host name
+    resolves to (`hostname_ips`), private ranges first. ["127.0.0.1"] when neither finds one."""
     ips = set()
     try:
-        # Standard UDP socket trick to discover primary outbound interface
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0.5)
-        # 1.1.1.1 is used as dummy target without sending actual packets
         s.connect(("1.1.1.1", 80))
         primary_ip = s.getsockname()[0]
         s.close()
         if not primary_ip.startswith("127."):
             ips.add(primary_ip)
-    except Exception as e:
+    except OSError as e:
         logger.debug(f"Primary socket IP discovery failed: {e}")
 
-    try:
-        # Fallback host name resolution
-        hostname = socket.gethostname()
-        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
-            ip = info[4][0]
-            if not ip.startswith("127."):
-                ips.add(ip)
-    except Exception as e:
-        logger.debug(f"Hostname addrinfo lookup failed: {e}")
+    if not ips:
+        ips.update(ip for ip in hostname_ips() if not ip.startswith("127."))
 
     # Prioritize private subnet ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
     sorted_ips = sorted(

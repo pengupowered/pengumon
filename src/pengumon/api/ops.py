@@ -11,7 +11,7 @@ from pengumon import __version__
 from pengumon.api.common import StateDep
 from pengumon.engine.mtr import MtrEngine, TracerouteHop
 from pengumon.engine.netinfo import get_lan_ips
-from pengumon.metrics import render_metrics
+from pengumon.observability.prometheus import render_metrics
 from pengumon.incidents.model import SystemDiagnosis
 from pengumon.models.probes import TracerouteRequest
 from pengumon.security import can_edit, rate_limit, session_status

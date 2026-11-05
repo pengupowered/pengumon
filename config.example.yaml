@@ -1,9 +1,9 @@
-# Pengumon configuration example. Copy it to config.yaml (git-ignored):
+# Pengumon configuration example. This file seeds the FIRST start only. Copy it to config.yaml (git-ignored):
 #   cp config.example.yaml config.yaml
-# Settings live on the dashboard's Settings page. This file only sets the listen address, the port, the database path and
-# the probe interval, and it is read once more for the bootstrap of the first import: on the first start Pengumon copies
-# what the sections below say into the Settings page. After that, edits to the rest of this file are ignored and the
-# startup log says so; change them on the Settings page. Details: docs/configuration.md.
+# Settings live on the dashboard's Settings page. Only the listen address, the port, the database path and the probe
+# interval are still read from this file on every start. Everything else below is copied into the Settings page once,
+# on the first start; after that, edits to it are ignored and the startup log says so. Change those on the Settings
+# page. You can delete everything but the lines you need. Details: docs/configuration.md.
 # The addresses are placeholders: common LAN defaults, and RFC 5737 documentation ranges for the ISP hops and DNS.
 
 server:
@@ -15,7 +15,6 @@ server:
 prober:
   interval_seconds: 1.0
   timeout_seconds: 1.0
-  ping_count_per_probe: 1
 
 # The probe path (targets) lives in the database and is edited in the dashboard (Path health > Edit). This list is
 # imported once, with its ids, on the first start of a database that has no path yet; after that it is ignored (the
@@ -141,7 +140,7 @@ service_checks:
 # data/secrets.json {"webhooks": {"<name>": "..."}}, so the token stays out of this file. Examples, payloads and a
 # test with curl in docs/webhooks.md.
 notifications:
-  public_url: null    # e.g. "http://pengu.lan:8000": the dashboard link in json, Slack and Discord messages
+  public_url: null    # e.g. "http://pengumon.example:8000": the dashboard link in json, Slack and Discord messages
   webhooks: []
   # webhooks:
   #   - name: "home-assistant"
@@ -174,7 +173,8 @@ privacy:
 
 # The modem and router read over HTTP (or SNMP). The ids are also the keys of their stored history and of their
 # credentials (PENGUMON_DEVICE_<ID>_USERNAME / _PASSWORD, /run/secrets/pengumon_<id>_password, or the dashboard
-# settings). The two below are examples, commented out so a new install starts with no devices: to use one, remove
+# settings). The four below (modem, router, openwrt, snmp) are examples, commented out so a new install starts with
+# no devices: to use one, remove
 # the leading "# " of the `devices:` line and of the device's lines, and fill in your address. The first start imports
 # the list into Settings > Devices (you can also add devices there at any time).
 # Drivers (xfinity_xb, asuswrt, openwrt, snmp), their options, TLS and credentials: docs/devices.md.
@@ -193,25 +193,26 @@ privacy:
 #       # mesh_node_labels:
 #       #   "02:00:00:00:11:22": "Hall"
 #       #   "334455": "Study"
-  # An OpenWrt router instead (ubus over HTTP; the user needs the rpcd ACL in docs/devices.md):
-  # - id: router
-  #   driver: openwrt
-  #   url: "https://192.168.1.1"
-  #   username: root                    # the default for openwrt; better a read-only rpcd user (docs/devices.md)
-  #   options:
-  #     wan_interface: wan              # the logical interface carrying internet traffic (default "wan")
-  #     clientlist_interval_seconds: 60
-  # Any SNMPv2c device (a router, a switch's uplink, a NAS): the community string is its password.
-  # - id: switch
-  #   driver: snmp
-  #   url: "snmp://192.168.1.2"         # UDP 161; snmp://host:port for another port
-  #   options:
-  #     wan_interface: "eth1"           # ifName or ifDescr; unset: the interface of the default route
-  #     timeout_seconds: 2
-  #     retries: 1
+#   # An OpenWrt router instead (ubus over HTTP; the user needs the rpcd ACL in docs/devices.md):
+#   - id: router
+#     driver: openwrt
+#     url: "https://192.168.1.1"
+#     username: root                    # the default for openwrt; better a read-only rpcd user (docs/devices.md)
+#     options:
+#       wan_interface: wan              # the logical interface carrying internet traffic (default "wan")
+#       clientlist_interval_seconds: 60
+#   # Any SNMPv2c device (a router, a switch's uplink, a NAS): the community string is its password.
+#   - id: switch
+#     driver: snmp
+#     url: "snmp://192.168.1.2"         # UDP 161; snmp://host:port for another port
+#     options:
+#       wan_interface: "eth1"           # ifName or ifDescr; unset: the interface of the default route
+#       timeout_seconds: 2
+#       retries: 1
 
 # The cards of the dashboard, for every browser: which come first and which are hidden. The ids are the panel folder
-# names (docs/dashboard.md); an unknown id stops the start with a message that lists the valid ones. Cards left out of
+# names (docs/dashboard.md); an unknown id is refused on the Settings page with a message that lists the valid ones (in
+# this file it is logged and the default kept; the start goes on). Cards left out of
 # `order` follow in their usual order. Each browser can override this with the "Layout" button on the page (kept in
 # that browser only).
 dashboard:

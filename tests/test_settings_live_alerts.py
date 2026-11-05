@@ -8,16 +8,16 @@ import time
 import httpx
 import pytest
 
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.components import Context
 from pengumon.config import AppConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.engine.discovery import component as discovery_component
 from pengumon.engine.discovery.drift import DAY_SECONDS, DriftChecker
 from pengumon.main import app
-from pengumon.notify import Notifier, build_channels
-from pengumon.notify import register as register_notify
-from pengumon.notify_settings import NotificationsConfig, WebhookConfig, WebhookItem
+from pengumon.notify.notifier import Notifier, build_channels
+from pengumon.notify.component import register as register_notify
+from pengumon.notify.settings import NotificationsConfig, WebhookConfig, WebhookItem
 from pengumon.secrets import SecretStore
 from pengumon.services import component as services_component
 from pengumon.services.checker import ServiceChecker

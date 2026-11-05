@@ -1,20 +1,18 @@
-/* Panel strips: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel strips: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* ---------- Uptime strips ---------- */
 .strips { display: grid; grid-template-columns: minmax(110px, 160px) minmax(0, 1fr) 62px 62px; align-items: center; column-gap: var(--sp-3); row-gap: 7px; font-size: var(--fs-sm); }
 .s-hd { font-size: var(--fs-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-semi); }
-.s-hd.r, .s-pct, .s-p95 { text-align: right; }
+.s-hd.r, .s-pct { text-align: right; }
 .s-name { border: 0; background: none; text-align: left; cursor: pointer; display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--ink-2); padding: 0; }
 .s-name span { white-space: nowrap; color: var(--ink-1); font-weight: var(--fw-medium); flex: none; }
 .s-name small { color: var(--ink-3); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .s-name:hover span { color: var(--ink-1); text-decoration: underline; }
 .s-pct { color: var(--ink-1); font-weight: var(--fw-semi); }
-.s-p95 { color: var(--ink-3); }
 .s-axis { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
 .strip-legend { margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px dashed var(--line); }
 .strip-legend .grow { text-align: right; }
 @container (max-width: 560px) {
   .strips { grid-template-columns: 92px minmax(0, 1fr) 54px; }
-  .strips .s-p95 { display: none; }
   .s-name small { display: none; }
   .strip-legend .grow { text-align: left; white-space: normal; }
 }

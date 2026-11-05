@@ -324,6 +324,40 @@ export const steps = [
     await until(() => history.state && history.state.here); // back on the entry the editor was opened from: no dead Back press is left
   }],
 
+  ["path editor: loading an earlier path over edits asks first; Keep editing keeps the draft, Replace loads the path", async ({ click, eq, ok, page, text, until, waitText }) => {
+    const versions = await page.evaluate(async () => (await (await fetch("/api/path/versions")).json()));
+    await openEditor({ click, until });
+    await until(() => !document.getElementById("pathVersions").hidden);
+    const meta = () => page.$eval("#pathEditorMeta", (e) => e.textContent);
+    // no edit yet: Load replaces the draft at once, as before (the step above); here an edit comes first
+    await page.$eval("#pathEditorHops .pe-hop:first-child .pe-name", (i) => { i.value = ""; i.focus(); });
+    await page.keyboard.type("Edited name");
+    await click("#pathVersionList [data-action=loadPathVersion]");
+    await waitText("#pathEditorNote", /Replace the draft with revision \d+\?/);
+    eq("the draft is still the live path's", await meta(), "nothing changes until Apply");
+    eq("Keep editing has the focus", await page.evaluate(() => document.activeElement.dataset.action), "keepPathDraft");
+    await page.keyboard.press("Enter"); // keyboard only: Enter on Keep editing
+    await until(() => document.getElementById("pathEditorNote").textContent === "");
+    eq("the edit is still there", await page.$eval("#pathEditorHops .pe-hop:first-child .pe-name", (i) => i.value), "Edited name");
+    eq("still the live path's draft", await meta(), "nothing changes until Apply");
+    // Escape on the question is Keep editing too, and the editor stays open
+    await click("#pathVersionList [data-action=loadPathVersion]");
+    await waitText("#pathEditorNote", /Replace the draft/);
+    await page.keyboard.press("Escape");
+    await until(() => document.getElementById("pathEditorNote").textContent === "");
+    ok("Escape on the question leaves the editor open", await page.evaluate(() => document.getElementById("pathEditorModal").classList.contains("active")));
+    // Replace the draft: the earlier path is the draft now
+    await click("#pathVersionList [data-action=loadPathVersion]");
+    await waitText("#pathEditorNote", /Replace the draft/);
+    await click("[data-action=replacePathDraft]");
+    await waitText("#pathEditorMeta", /revision \d+ as a draft/);
+    ok("the edit is gone with the replaced draft", !(await page.$$eval("#pathEditorHops .pe-name", (els) => els.some((e) => e.value === "Edited name"))));
+    ok(`a version was loaded (${versions.length} kept)`, /as a draft/.test(await meta()));
+    await click("[data-action=cancelPathEditor]");
+    await click("[data-action=discardPathEditor]");
+    await until(() => !document.getElementById("pathEditorModal").classList.contains("active"));
+  }],
+
   ["path editor: a stale revision says so and applies nothing; Load the current path starts over", async ({ click, eq, ok, page, until, waitText }) => {
     const before = await livePath(page);
     await openEditor({ click, until });

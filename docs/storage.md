@@ -1,8 +1,33 @@
 # Storage
 
-## Storage layout and the 0.2.0 migration
+## Schema versions
 
-The schema is versioned (`PRAGMA user_version`, one module per version in `db/migrations/`, named `v<NNN>_<what>.py` and found automatically; a new schema change is a new file, and a test checks the versions are unique and contiguous). Version 2, introduced in 0.2.0:
+The schema is versioned (`PRAGMA user_version`, one module per version in `db/migrations/`, named `v<NNN>_<what>.py`
+and found automatically; a new schema change is a new file, and a test checks the versions are unique and contiguous).
+Back up the data before upgrading ([install.md](install.md#upgrade) does it for the install scripts); an older build
+cannot read a newer schema, and going back needs that backup.
+
+| Version | What it adds |
+| --- | --- |
+| v1 | The pre-versioning schema (the baseline) |
+| v2 | `samples` and `rollup_1m` instead of `probe_samples`; incident load columns (the 0.2.0 migration, below) |
+| v3 | Targets added from the dashboard (`custom_targets`) |
+| v4 | `meta`, key/value state such as the one-time backfill markers |
+| v5 | Whether each DOCSIS snapshot read the event log; event-log rows stored once |
+| v6 | The incident `kind`, filled once from the old titles ([diagnosis.md](diagnosis.md)); new incidents written by an older build would have no `kind` |
+| v7 | A nullable `error_kind` on the modem and router snapshots (older builds work against it) |
+| v8 | The vendor-neutral `cause_code`; stored `xfinity_last_mile_coax_drop` incidents become `access_line_drop` |
+| v9 | Device readings keyed by device id (`device_samples`, `line_samples`); a one-time copy (below) |
+| v10 | Client counts over time ([clients.md](clients.md)) |
+| v11 | Per-minute latency percentiles in `rollup_1m` |
+| v12 | The loss span of an incident (`loss_start`, `loss_seconds`), filled at each start for resolved incidents whose raw samples are kept |
+| v13 | The probe path in the database (`path_targets`) |
+| v14 | The applied versions of the path (`path_versions`) and its events (`path_events`) |
+| v15 | The settings store (`settings_values`, `settings_items`, `settings_versions`) |
+
+## The 0.2.0 migration (schema v2)
+
+Version 2, introduced in 0.2.0:
 
 * `samples(ts, target, ok, latency_ms, jitter_ms, error)` - raw probes, `WITHOUT ROWID`, clustered by time,
   no secondary index. `targets(id, key)` maps the integer ids to target keys. Packet loss is derived from `ok`.

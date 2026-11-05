@@ -11,7 +11,6 @@ are counts only.
 """
 
 import hashlib
-import math
 import secrets
 import time
 from typing import Any, Dict, List, Optional
@@ -20,9 +19,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from pengumon.api.common import StateDep, device_or_404
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.capabilities import BAND_2G, BAND_5G, BAND_OTHER, Capability, Client, ClientsReading, MeshReading
 from pengumon.devices.device import Device
+from pengumon.grades import signal_grade
+from pengumon.devices.samples import bucket_width
 from pengumon.devices.summary import mesh_nodes, summarize_clients
 from pengumon.security import can_edit, rate_limit
 
@@ -62,22 +63,6 @@ def privacy_hint(request: Request, state: AppState, mode: str) -> Optional[str]:
     if configured == "masked":
         return MASKED_HINT
     return VIEWER_HINT if _token_set(request) and not can_edit(request) else HINT
-
-
-# A Wi-Fi signal in dBm as a word, the number of bars (of 4) and a grade: the thresholds UniFi uses.
-SIGNAL_LEVELS = ((-60, "Excellent", 4, "good"), (-67, "Good", 3, "good"), (-75, "Fair", 2, "warn"))
-SIGNAL_WEAK = ("Weak", 1, "critical")
-
-
-def signal_grade(dbm: Optional[int]) -> Optional[Dict[str, Any]]:
-    """The word, bars and grade (good / warn / critical, as in pengumon.grades) of a signal; None without one."""
-    if dbm is None:
-        return None
-    for above, word, bars, grade in SIGNAL_LEVELS:
-        if dbm > above:
-            return {"word": word, "bars": bars, "grade": grade}
-    word, bars, grade = SIGNAL_WEAK
-    return {"word": word, "bars": bars, "grade": grade}
 
 
 def _suffix(mac: Optional[str]) -> str:
@@ -144,9 +129,8 @@ async def get_clients(device_id: str, request: Request, state: StateDep):
 
 def bucket_seconds(start: float, end: float) -> int:
     """The bucket for a range: at most MAX_HISTORY_POINTS of them even when the range starts and ends part way into a
-    bucket, whole minutes once buckets are a minute or more."""
-    raw = max(1, math.ceil((end - start) / (MAX_HISTORY_POINTS - 1)))
-    return raw if raw < 60 else math.ceil(raw / 60) * 60
+    bucket (one point to spare), whole seconds below a minute, whole minutes from there (the router history's rule)."""
+    return bucket_width(end - start, max_points=MAX_HISTORY_POINTS - 1, sub_minute_unit=1)
 
 
 @router.get("/devices/{device_id}/clients/history", dependencies=[Depends(_RATE)])

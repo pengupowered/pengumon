@@ -152,10 +152,11 @@ described in [docs/devices.md](https://github.com/pengupowered/pengumon/blob/mai
 ## Alerts
 
 Pengumon can tell you when an incident starts and ends, and when one of your own apps stops answering. Expected
-conditions (busy line) never alert, a cause alerts at most once every 5 minutes, and a slow receiver cannot delay the
+conditions (busy line) never alert, a cause is not repeated within a set time ([when alerts go out](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md#when-alerts-go-out)), and a slow receiver cannot delay the
 probes. Two channels, either or both:
 
-- **ntfy.** Set `PENGUMON_NOTIFY_URL` (and `PENGUMON_NOTIFY_TOKEN` for a protected server) in `.env`.
+- **ntfy.** Enter the topic address (and the token for a protected server) on the **Settings** page, Alerts. The
+  variables `PENGUMON_NOTIFY_URL` and `PENGUMON_NOTIFY_TOKEN` still win when set (for a container, put them in `.env`).
 - **Webhooks.** Add them on the **Settings** page: Discord, Slack, or JSON for Home Assistant and your own scripts.
   Tokens go in headers, which may name a secret instead of holding it. The URL is kept out of the settings, in
   `secrets.json`.
@@ -200,11 +201,11 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
 ## Documentation
 
 - [Install](https://github.com/pengupowered/pengumon/blob/main/docs/install.md): Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download
-- [Configuration](https://github.com/pengupowered/pengumon/blob/main/docs/configuration.md): The probe path (targets), DNS lookups, thresholds, retention, line capacity, the classifier
+- [Configuration](https://github.com/pengupowered/pengumon/blob/main/docs/configuration.md): Where the files live, the listen address, the first-start import, environment variables; the settings themselves are on the Settings page
 - [Probing](https://github.com/pengupowered/pengumon/blob/main/docs/probing.md): Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step
 - [Path editor](https://github.com/pengupowered/pengumon/blob/main/docs/path-editor.md): Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17
 - [Discovery](https://github.com/pengupowered/pengumon/blob/main/docs/discovery.md): Finding the path and who operates each hop: what is sent where, how roles are judged
-- [Devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md): The `devices:` list: drivers, capabilities, TLS, credentials, writing a driver
+- [Devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md): Modems and routers on the Settings page: drivers, capabilities, TLS, credentials, writing a driver
 - [Diagnosis](https://github.com/pengupowered/pengumon/blob/main/docs/diagnosis.md): How outages are classified: load-aware rules, incident kinds and causes
 - [Dashboard](https://github.com/pengupowered/pengumon/blob/main/docs/dashboard.md): The panels, the path chain, layout, themes, the phone view
 - [Ask AI](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md): The troubleshooting pack for a chat assistant: what it holds, the three detail levels, device modules

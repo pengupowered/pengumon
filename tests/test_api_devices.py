@@ -185,24 +185,6 @@ async def test_credentials_for_an_unknown_device_write_nothing(app_state, monkey
     assert written == []
 
 
-# --- the old endpoints are gone -------------------------------------------------------------------------------------
-
-@pytest.mark.parametrize("path", ("/api/modem/status", "/api/router/status", "/api/router/history"))
-async def test_the_old_modem_and_router_endpoints_are_gone(app_state, path):
-    app_state.devices = _generic_registry()
-    async with _client() as ac:
-        assert (await ac.get(path)).status_code == 404
-
-
-@pytest.mark.parametrize("path", ("/api/modem/credentials", "/api/router/credentials"))
-async def test_the_old_credentials_endpoints_are_gone(app_state, path):
-    app_state.devices = _generic_registry()
-    app_state.secret_store = RecordingStore([])
-    async with _client() as ac:
-        assert (await ac.post(path, json={"password": "a"})).status_code == 404
-    assert not secrets_module.SECRETS_PATH.exists()
-
-
 async def test_the_device_routes_answer_for_the_owners_devices(app_state):
     """A disabled modem still shows its "disabled" text; credentials go to devices.<id>."""
     app_state.devices = DeviceRegistry([build_modem(enabled=False),

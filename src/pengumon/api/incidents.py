@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, Query
 
 from pengumon.analysis.incident import inspect_incident as run_inspection
 from pengumon.api.common import StateDep
+from pengumon.api.reports import TzName, TzOffset
 from pengumon.capabilities import Capability
+from pengumon.devices.samples import line_history, router_history
 from pengumon.engine.path_rules import ignoring_ping_ids
 from pengumon.incidents.model import Incident
 from pengumon.reports.dossier import build_dossier
@@ -63,15 +65,19 @@ async def inspect_incident(incident_id: int, state: StateDep):
     line = state.devices.primary(Capability.ACCESS_LINE) if state.devices is not None else None
     poll = line.interval_seconds if line else None  # a line reading this close to the window still counts
     reach = {"snapshot_reach_seconds": poll} if poll else {}
-    inspection = await run_inspection(state.repository, targets, incident, **reach, line=state.line_history(),
-                                      router=state.router_history(), classifier=getattr(cfg, "classifier", None))
+    inspection = await run_inspection(state.repository, targets, incident, **reach,
+                                      line=line_history(state.devices, state.repository),
+                                      router=router_history(state.devices, state.repository),
+                                      classifier=getattr(cfg, "classifier", None))
     return inspection.to_response()
 
 
 @router.get("/incidents/dossier")
-async def get_escalation_dossier(state: StateDep, hours: int = Query(24, ge=1, le=720)):
+async def get_escalation_dossier(state: StateDep, hours: int = Query(24, ge=1, le=720), tz: TzName = None,
+                                 tz_offset_minutes: TzOffset = 0):
     """Evidence report for an ISP support ticket or complaint; every statement is derived from the data."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
-    return await build_dossier(state.repository, state.config, hours, line=state.line_history(),
-                              ignoring=ignoring_ping_ids(state.prober))
+    return await build_dossier(state.repository, state.config, hours, line=line_history(state.devices, state.repository),
+                              ignoring=ignoring_ping_ids(state.prober), tz_name=tz,
+                               tz_offset_minutes=tz_offset_minutes)

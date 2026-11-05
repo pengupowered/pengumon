@@ -1,5 +1,7 @@
-"""What a configured device brings to the AI troubleshooting pack: the module-contribution interface, its registry and
-the activation from the configured devices.
+"""What a configured device brings to the AI troubleshooting pack: the module-contribution contract (the interface, the
+types it uses and small helpers the contributions share). It imports nothing of pengumon, so the implementations
+(lines/docsis_contrib.py, devices/contrib.py) and the drivers (`pack_notes`) can import it at module level. The
+registry of the built-in contributions and their activation from the configured devices are reports/contributions.py.
 
 A contribution is a line technology (DOCSIS) or a capability (line load, router, Wi-Fi and mesh) that has something to
 say to the pack: the prompt text that explains its readings to a model, a small pack section, coincidence events the
@@ -14,8 +16,9 @@ the string of the level chosen. A role key stands in the text as it is written h
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import (
-    TYPE_CHECKING, Any, Callable, ClassVar, Dict, FrozenSet, Iterable, List, Literal, Mapping, Optional, Protocol, Sequence, Tuple,
+    TYPE_CHECKING, Any, Callable, ClassVar, Dict, FrozenSet, List, Literal, Mapping, Optional, Protocol, Sequence, Tuple,
 )
 from urllib.parse import urlsplit
 
@@ -166,24 +169,6 @@ def duration_words(seconds: float) -> str:
     return f"{minutes:g} minutes"
 
 
-def devices_with(devices: Iterable["DeviceConfig"], capability=None, technology: Optional[str] = None
-                 ) -> List["DeviceConfig"]:
-    """The configured devices whose driver offers `capability` (and, when given, has that line technology), enabled
-    ones first, then disabled ones, each in config order: the history of a device switched off still counts."""
-    from pengumon.drivers import DRIVERS
-    found = []
-    for cfg in devices:
-        driver = DRIVERS.get(cfg.driver)
-        if driver is None:
-            continue
-        if capability is not None and capability not in driver.offers:
-            continue
-        if technology is not None and getattr(driver, "line_technology", None) != technology:
-            continue
-        found.append(cfg)
-    return [c for c in found if c.enabled] + [c for c in found if not c.enabled]
-
-
 def median(values: Sequence[float]) -> Optional[float]:
     ordered = sorted(values)
     n = len(ordered)
@@ -195,7 +180,6 @@ def median(values: Sequence[float]) -> Optional[float]:
 def day_key(ts: float, tz_offset_minutes: int = 0, tz=None) -> str:
     """The local day (YYYY-MM-DD) of a time: in the zone `tz` (a tzinfo) when given, else in a fixed offset from
     UTC."""
-    from datetime import datetime, timedelta, timezone
     if tz is not None:
         return datetime.fromtimestamp(ts, tz).strftime("%Y-%m-%d")
     return (datetime.fromtimestamp(ts, timezone.utc) + timedelta(minutes=tz_offset_minutes)).strftime("%Y-%m-%d")
@@ -211,77 +195,3 @@ def render_section(section: ModuleSection) -> str:
         lines.append("|" + "---|" * len(header))
         lines += ["| " + " | ".join(row) + " |" for row in rows]
     return "\n".join(lines)
-
-
-# --- registry and activation ----------------------------------------------------------------------------------------
-
-def technology_contributions() -> Dict[str, type]:
-    from pengumon.lines import CONTRIBUTIONS
-    return dict(CONTRIBUTIONS)
-
-
-def capability_contributions() -> Tuple[Tuple[Tuple[Any, ...], type], ...]:
-    """(the capabilities that activate it (any of), the contribution class), in the order the pack shows them."""
-    from pengumon.devices.contrib import CAPABILITY_CONTRIBUTIONS
-    return CAPABILITY_CONTRIBUTIONS
-
-
-def all_contributions() -> Tuple[type, ...]:
-    """Every registered contribution class: technology ones first, then capability ones."""
-    return tuple(technology_contributions().values()) + tuple(cls for _, cls in capability_contributions())
-
-
-def all_driver_notes() -> Dict[str, DriverNotes]:
-    """driver name -> its pack_notes, for the drivers that have them."""
-    from pengumon.drivers import DRIVERS
-    return {name: d.pack_notes for name, d in DRIVERS.items() if getattr(d, "pack_notes", None) is not None}
-
-
-@dataclass(frozen=True)
-class Activation:
-    contributions: Tuple[Any, ...]                       # instances, in pack order
-    notes: Tuple[Tuple["DeviceConfig", DriverNotes], ...]  # (device, its driver's notes), config order, once per driver
-
-
-def activate(config) -> Activation:
-    """The contributions and driver notes the configured devices bring (disabled devices count too)."""
-    from pengumon.capabilities import Capability
-    from pengumon.drivers import DRIVERS
-    active: List[Any] = []
-    devices = list(config.devices)
-    technologies = {getattr(DRIVERS[c.driver], "line_technology", None) for c in devices
-                    if Capability.ACCESS_LINE in DRIVERS[c.driver].offers}
-    for technology, cls in technology_contributions().items():
-        if technology in technologies:
-            active.append(cls())
-    for capabilities, cls in capability_contributions():
-        if any(cap in DRIVERS[c.driver].offers for c in devices for cap in capabilities):
-            active.append(cls())
-    notes, seen = [], set()
-    for cfg in devices:
-        pack_notes = getattr(DRIVERS[cfg.driver], "pack_notes", None)
-        if pack_notes is not None and cfg.driver not in seen:
-            seen.add(cfg.driver)
-            notes.append((cfg, pack_notes))
-    return Activation(tuple(active), tuple(notes))
-
-
-def driver_note(cfg: "DeviceConfig", notes: DriverNotes, detail: str, *, mesh: bool = False) -> Optional[str]:
-    """The note for one device at a detail level, its placeholders filled from the device's configuration. `mesh`:
-    a mesh was seen (the `{aimesh}` clause). Anonymized uses the `anonymized` text, or no note."""
-    from pengumon.drivers import DRIVERS
-    driver = DRIVERS[cfg.driver]
-    text = notes.anonymized if detail == "anonymized" else notes.full
-    if text is None:
-        return None
-    options = driver.options_model.model_validate(cfg.options)
-    poll = effective_poll_seconds(cfg, driver)
-    min_poll = float(getattr(driver, "min_poll_seconds", driver.default_poll_seconds))
-    return text.format(
-        poll=duration_words(poll),
-        min_poll=duration_words(min_poll),
-        poll_limit=(" (as often as Pengumon allows for it)" if poll <= min_poll
-                    else f" (never more often than every {duration_words(min_poll)})"),
-        clientlist_interval=duration_words(float(getattr(options, "clientlist_interval_seconds", 0.0) or 0.0)),
-        aimesh=", on an AiMesh network" if mesh else "",
-    )

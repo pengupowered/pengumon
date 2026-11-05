@@ -203,10 +203,7 @@ button.cell:hover, button.cell:focus-visible { outline: 2px solid var(--ink-1); 
 .chart text { font-family: var(--font); font-size: var(--fs-xs); fill: var(--ink-3); font-variant-numeric: tabular-nums; }
 .chart .grid { stroke: var(--line); stroke-width: 1; }
 .chart .base { stroke: var(--line-strong); stroke-width: 1; }
-.chart .dlabel { fill: var(--ink-2); font-weight: var(--fw-semi); }
-.chart .xhair { stroke: var(--ink-3); stroke-width: 1; pointer-events: none; }
 .chart .hit { fill: transparent; cursor: crosshair; }
-.chart .inc-lbl { font-weight: var(--fw-semi); }
 .legend { display: flex; gap: 6px var(--sp-4); flex-wrap: wrap; font-size: var(--fs-xs); color: var(--ink-2); align-items: center; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 
@@ -302,7 +299,6 @@ dialog.modal::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .modal-b { padding: var(--sp-5); overflow: auto; flex: 1; container-type: inline-size; overscroll-behavior: contain; }
 .modal-f { padding: var(--sp-3) var(--sp-5); border-top: 1px solid var(--line); display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap; align-items: center; }
 .modal-f .left { margin-right: auto; display: flex; gap: var(--sp-2); }
-.sheet-grab { display: none; }
 .section-t { font-size: var(--fs-md); font-weight: var(--fw-semi); display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); flex-wrap: wrap; }
 .section-t .muted { font-weight: 400; font-size: var(--fs-sm); }
 .section-t .tools { margin-left: auto; display: flex; gap: var(--sp-2); }
@@ -370,7 +366,6 @@ dialog.modal::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     border-radius: 18px 18px 0 0; box-shadow: var(--shadow-sheet);
   }
   dialog.modal[open] { animation: sheet var(--t-med) var(--ease); }
-  .sheet-grab { display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: 8px auto 0; flex: none; }
   .modal-h { padding: var(--sp-2) var(--sp-3) var(--sp-3) var(--sp-4); row-gap: var(--sp-2); }
   .modal-h .tools { order: 5; flex-basis: 100%; margin-left: 0; }
   .modal-h .m-close, .modal-h .tools + .m-close { margin-left: auto; }

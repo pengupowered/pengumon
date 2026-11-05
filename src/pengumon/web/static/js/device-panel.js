@@ -2,12 +2,12 @@
 // error block with what to do, the "reading N min old" chip when the readings stop, and when it was read. Used by
 // panels/line.js and panels/router.js; nothing here knows a technology or a vendor.
 
-import { escapeHtml, icon, setBadge, setText } from './util.js';
+import { escapeHtml, formatClock, icon, setBadge, setText } from './util.js';
 import { relayout } from './layout.js';
 
 const STALE_FACTOR = 3; // a reading older than three poll intervals (at least 2 min) is stale
 
-const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const clock = (ts) => formatClock(ts * 1000);
 
 function ago(seconds) {
   if (seconds < 90) return `${Math.round(seconds)} s`;

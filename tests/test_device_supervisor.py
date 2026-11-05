@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.capabilities import Capability
 from pengumon.components import Context
 from pengumon.config import AppConfig
@@ -105,7 +105,7 @@ async def test_a_build_that_fails_leaves_the_device_out_and_names_why(supervisor
     result = await supervisor.apply([MODEM, bad])
     registry = supervisor.registry
     assert [d.id for d in registry] == ["modem"]
-    assert "tls.ca_file '/nope.pem' cannot be used" in registry.errors["router"]
+    assert "CA file '/nope.pem' cannot be used" in registry.errors["router"]
     assert result.errors == registry.errors and result.removed == [] and result.changed == []
     assert "Device router cannot run" in caplog.text
     assert "router" not in supervisor._tasks
@@ -252,7 +252,7 @@ async def test_validate_dry_builds_and_refuses_a_missing_ca_file_per_item():
     bad = {**_raw(ROUTER), "url": "https://192.0.2.1", "tls": {"verify": True, "ca_file": "/nope.pem"}}
     problems = await validate_devices([_raw(MODEM), bad])
     assert [w for w, _ in problems] == ["devices.router"]
-    assert "tls.ca_file '/nope.pem' cannot be used" in problems[0][1]
+    assert "CA file '/nope.pem' cannot be used" in problems[0][1]
 
 
 async def test_validate_refuses_duplicate_ids_and_a_bad_option():

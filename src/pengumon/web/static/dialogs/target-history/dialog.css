@@ -1,4 +1,4 @@
-/* Dialog target-history: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Dialog target-history: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* Target */
 .tgt-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--sp-4); }
 @container (max-width: 640px) { .tgt-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

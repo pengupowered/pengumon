@@ -1,5 +1,5 @@
 """The dashboard page (/) and the favicon. The page is the template web/templates/index.html, which includes the
-panels and dialogs that pengumon.ui discovers."""
+panels and dialogs that pengumon.web.ui discovers."""
 
 import json
 from functools import lru_cache
@@ -8,14 +8,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from pengumon.api.state import get_state
+from pengumon.state import get_state
 from pengumon.observability import grafana
-from pengumon.ui import ui as discovered_ui
+from pengumon.web.ui import ui as discovered_ui
 from pengumon.web.assets import ASSET_VERSIONS, STATIC_DIR, TEMPLATES_DIR
 from pengumon.web.settings import DashboardConfig
 
 router = APIRouter()
-# the page's own templates, and the panel and dialog folders (pengumon.ui) whose partials it includes
+# the page's own templates, and the panel and dialog folders (pengumon.web.ui) whose partials it includes
 templates = Jinja2Templates(directory=[str(TEMPLATES_DIR), str(STATIC_DIR)])
 
 

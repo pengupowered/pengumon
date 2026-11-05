@@ -50,7 +50,7 @@ export async function initTargets() {
             token = slot < SLOTS ? `--s${++slot}` : (free || '--ink-3');
             mine.add(token);
           }
-          targetMeta[tid] = { name: t.name || tid, category: t.category, address: t.address || '', enabled: t.enabled !== false, group: t.group || '',
+          targetMeta[tid] = { name: t.name || tid, category: t.category, address: t.address || '', enabled: t.enabled !== false, group: t.group || '', shortLabel: t.short_label || '',
             get color() { return t.color || tokenColor(token); } };
           if (!canonicalTargetOrder.includes(tid)) canonicalTargetOrder.push(tid);
         });
@@ -116,11 +116,59 @@ export function cloneTemplate(templateId) {
 // A device as people know it: its model from the config, else its host, else its id.
 export const deviceName = (d) => (d.model ? String(d.model).replace(/_/g, ' ') : (d.host || d.id));
 
-// A clock time for chart axes; with the date for ranges over a day.
-export function formatClock(ms, withDate) {
-  const d = new Date(ms);
-  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return withDate ? `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${hm}` : hm;
+// A clock time (hours and minutes, with seconds on request) in the viewer's locale; with the date for ranges over a day.
+// The formatters are made once: toLocaleTimeString with options built a new Intl.DateTimeFormat on every call, and a
+// chart relabels hundreds of points on every message.
+const CLOCK = {};
+const clockFormat = (key, options) => (CLOCK[key] ||= new Intl.DateTimeFormat([], options));
+export function formatClock(ms, withDate = false, seconds = false) {
+  const hm = clockFormat(seconds ? 'hms' : 'hm', seconds ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' }).format(ms);
+  return withDate ? `${clockFormat('day', { month: 'short', day: 'numeric' }).format(ms)} ${hm}` : hm;
+}
+
+// Epoch seconds -> text on the clock a report answer was cut on (data.zone: the zone set in Settings, else this
+// browser's), which need not be this browser's. A zone this browser cannot name (a fixed offset, in an older one):
+// shifted by data.tz_offset_minutes and read as UTC.
+export function zonedFormat(data, opts) {
+  try {
+    const f = new Intl.DateTimeFormat([], { ...opts, timeZone: data.zone || undefined });
+    return (ts) => f.format(ts * 1000);
+  } catch {
+    const f = new Intl.DateTimeFormat([], { ...opts, timeZone: 'UTC' });
+    return (ts) => f.format((ts + (data.tz_offset_minutes || 0) * 60) * 1000);
+  }
+}
+
+// A round-trip time in ms: a tenth below 100, whole above (`tenths`: always a tenth); `unit` adds " ms". No number: `empty`.
+export function formatMs(v, { unit = false, empty = '–', tenths = false } = {}) {
+  if (v === null || v === undefined || !Number.isFinite(+v)) return empty;
+  const text = v >= 100 && !tenths ? String(Math.round(v)) : (+v).toFixed(1);
+  return unit ? `${text} ms` : text;
+}
+
+// The middle of the numbers in `values` (null and undefined skipped), the mean of the two middle ones when there is an even
+// number (as Python's statistics.median); null for none.
+export function median(values) {
+  const v = values.filter((x) => x !== null && x !== undefined).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+// An id-safe word from free text: lower case, runs of other characters as one underscore, none at the ends.
+export const slug = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+// The viewer's time zone for the routes that cut days and hours (/api/report, /api/report/loss-grid, /api/uptime,
+// /api/ai-pack): `tz`, the browser's IANA zone, which follows daylight saving, and `tz_offset_minutes`, minutes east of UTC
+// now, for a browser without one. The server uses the zone set in Settings first. URLSearchParams: `${zoneParams()}` in a
+// URL, or copied into another one.
+export function zoneParams() {
+  const p = new URLSearchParams({ tz_offset_minutes: String(-new Date().getTimezoneOffset()) });
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (zone) p.set('tz', zone);
+  } catch { /* no Intl time zones: the offset alone */ }
+  return p;
 }
 
 // A live target's latest probe: its newest round trip, or null when that probe got no answer. Not last_ms, which keeps the
@@ -137,12 +185,14 @@ export function percentText(v, digits = 2) {
   return `${text}%`;
 }
 
+// Set the text / the class of an element (none: nothing) only when it changed. `setClass` also serves SVG elements (their className is not a
+// string, so the class attribute is set).
 export function setText(el, text) {
-  if (el.textContent !== text) el.textContent = text;
+  if (el && el.textContent !== text) el.textContent = text;
 }
 
 export function setClass(el, cls) {
-  if (el.className !== cls) el.className = cls;
+  if (el && el.getAttribute('class') !== cls) el.setAttribute('class', cls);
 }
 
 const openers = new Map(); // modal id -> the element that had focus when it opened, which gets it back on close
@@ -164,6 +214,8 @@ export function closeModal(id) {
 
 // Keyboard for a dialog: focus moves into it when it opens (to the first match of `firstFocus`, else the close button),
 // Tab stays inside it and Escape closes it. Call it before openModal; calling it again only updates `firstFocus`.
+// `onEscape(ev)` replaces the closing (a dialog that asks first, or has an inner state to leave); `onClose()` runs when the
+// dialog goes from open to closed, by any way.
 // One listener on the document serves every dialog, so Escape works wherever focus is (a click on plain text leaves it on
 // the body) and acts on the topmost open dialog only: the one that opened last (a dossier on top of the incident inspector).
 const keyboard = new WeakMap();
@@ -181,11 +233,12 @@ function bindKeys() {
     if (!modal || ev.defaultPrevented) return;
     if (ev.key === 'Escape') {
       ev.preventDefault();
-      closeModal(modal.id);
+      const own = keyboard.get(modal);
+      if (own && own.onEscape) own.onEscape(ev); else closeModal(modal.id);
       return;
     }
     if (ev.key !== 'Tab') return;
-    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
+    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
     if (!items.length) return;
     const first = items[0];
     const last = items[items.length - 1];
@@ -195,19 +248,23 @@ function bindKeys() {
     else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
   });
 }
-export function keepKeyboard(modal, firstFocus) {
+export function keepKeyboard(modal, firstFocus, { onEscape, onClose } = {}) {
   if (keyboard.has(modal)) { keyboard.get(modal).first = firstFocus; return; }
-  const state = { first: firstFocus };
+  const state = { first: firstFocus, onEscape, onClose, open: false };
   keyboard.set(modal, state);
   bindKeys();
   const sync = () => {
     const at = stack.indexOf(modal);
     if (modal.classList.contains('active')) {
+      state.open = true;
       if (at < 0) stack.push(modal);
       if (!modal.contains(document.activeElement)) {
         ((state.first && modal.querySelector(state.first)) || modal.querySelector('.m-close')).focus();
       }
-    } else if (at >= 0) stack.splice(at, 1);
+    } else {
+      if (at >= 0) stack.splice(at, 1);
+      if (state.open) { state.open = false; if (state.onClose) state.onClose(); }
+    }
   };
   new MutationObserver(sync).observe(modal, { attributes: true, attributeFilter: ['class'] });
   sync(); // the dialog may be open already
@@ -257,6 +314,43 @@ export function exportViewHtml({ prefix, intro, text, href, file }) {
       <a class="btn sm" href="${href}" download="${file}"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download file</a>
       <span class="fine" id="${prefix}ExportNote" role="status"></span></p>
     ${window.isSecureContext ? '' : '<p class="fine">This page is served over plain HTTP, so Chrome may block the download as insecure. Copy works on every connection.</p>'}`;
+}
+
+// Shows or hides a dialog's Export view (button #<prefix>Export, section #<prefix>ExportView).
+export function showExport(prefix, on) {
+  const view = document.getElementById(`${prefix}ExportView`);
+  document.getElementById(`${prefix}Export`).setAttribute('aria-expanded', String(on));
+  view.hidden = !on;
+  if (!on) view.innerHTML = '';
+}
+
+// The Export button: opens the view with the YAML of `url` (Loading... first), or closes it. `what` names the thing in the
+// error ("The path could not be exported (500)"). The view is brought into view and gets the focus, as the dialog's body
+// scrolls under its header.
+export async function exportToggle(prefix, { url, what, intro, file }) {
+  const box = document.getElementById(`${prefix}ExportView`);
+  const on = box.hidden;
+  showExport(prefix, on);
+  if (!on) return;
+  const reveal = () => { box.scrollIntoView({ block: 'start' }); box.focus({ preventScroll: true }); };
+  box.innerHTML = '<p class="fine">Loading…</p>';
+  reveal();
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`The ${what} could not be exported (${res.status}).`);
+    box.innerHTML = exportViewHtml({ prefix, intro, text: await res.text(), href: url, file });
+  } catch (e) {
+    box.innerHTML = `<p class="fine">${escapeHtml(e.message)}</p>`;
+  }
+  reveal();
+}
+
+// Loading something over a draft (an earlier version, a file) throws the draft's edits away: with edits (`dirty`) the dialog
+// asks first, through `ask(text, yesLabel, replace)`; without, `replace()` runs at once. Settings and the path editor ask
+// in their own way, with the same words.
+export function confirmReplaceDraft(dirty, text, replace, ask) {
+  if (!dirty) { replace(); return; }
+  ask(text, 'Replace the draft', replace);
 }
 
 export async function copyExport(prefix) {

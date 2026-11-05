@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, tzinfo
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from pengumon.engine.path_rules import hop_roles
+
 FULL, VAGUE, ANONYMIZED = "full", "vague", "anonymized"
 LEVELS = (FULL, VAGUE, ANONYMIZED)
 NEVER = "never"          # an identifier map value: this value is shown at no level
@@ -32,7 +34,6 @@ GENERIC = "[redacted]"
 
 # Hops whose category puts them in the home: their names, addresses and reverse names are Full only.
 HOME_CATEGORIES = ("local", "gateway", "custom")
-_SHORT = {"local": "Router", "gateway": "Gateway", "isp": "ISP hop", "dns": "DNS lookup"}
 WHAT_IT_IS = {"local": "home router", "gateway": "modem or gateway", "isp": "provider router",
               "public": "public server", "dns": "name lookup", "custom": "other"}
 # Vendor and product words that name the provider or the owner's hardware: removed at Anonymized.
@@ -71,27 +72,6 @@ def _home_name(value: str) -> bool:
 def is_home_hop(hop) -> bool:
     """By category, but also by what the hop points at: a "dns" target on the router's address is a home hop."""
     return hop.category in HOME_CATEGORIES or _home_name(hop.address or "x")
-
-
-def role_labels(hops: Sequence[Any]) -> Dict[str, str]:
-    """Target id -> role string, in path order (the dashboard's shortLabels: a number only where a role has several
-    hops). A custom hop is "Other hop n" instead of its configured name, which is free text."""
-    by_cat: Dict[str, List[Any]] = {}
-    for hop in hops:
-        by_cat.setdefault(hop.category, []).append(hop)
-    out: Dict[str, str] = {}
-    for cat, group in by_cat.items():
-        for n, hop in enumerate(group, 1):
-            many = len(group) > 1
-            if cat == "public":
-                out[hop.id] = f"Internet {n}" if many else "Internet"
-            elif cat == "isp":
-                out[hop.id] = f"ISP hop {n}"
-            elif cat == "custom":
-                out[hop.id] = f"Other hop {n}"
-            else:
-                out[hop.id] = f"{_SHORT[cat]} {n}" if many else _SHORT[cat]
-    return out
 
 
 def module_role_word(key: str) -> str:
@@ -232,7 +212,7 @@ class Redactor:
             raise ValueError(f"unknown detail level {self.level!r}")
         from datetime import timezone
         self.tz = self.tz or timezone.utc
-        self._hop_role = role_labels(self.hops)
+        self._hop_role = hop_roles((h.id, h.category) for h in self.hops)
         self._hop_by_id = {h.id: h for h in self.hops}
         self._apps = {name: f"App {n}" for n, name in enumerate(self.apps, 1)}
         self._sweep = _Sweep(self._sweep_pairs(), skip=self._role_words(), vocabulary=self.vocabulary)

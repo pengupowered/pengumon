@@ -10,10 +10,12 @@ import pytest
 from pengumon.capabilities import Capability, DriverError, SystemReading, WanCounters
 from pengumon.devices.wan import WanRates
 from pengumon.devices.registry import unconfigured_messages
-from pengumon.drivers.asuswrt import CPU_MIN_INTERVAL_SECONDS, AsusWrtDriver, _cpu_pct, _parse_clients, _parse_cpu, _parse_mem, _parse_netdev
+from pengumon.drivers.asuswrt import AsusWrtDriver, _parse_clients, _parse_cpu, _parse_mem, _parse_netdev
+from pengumon.drivers.common import CPU_MIN_INTERVAL_SECONDS
+from pengumon.drivers.common import cpu_pct as _cpu_pct
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 
-from device_helpers import build_router
+from device_helpers import Clock, build_router
 
 
 def test_asus_collector_init_defaults():
@@ -121,14 +123,6 @@ class FakeRouter:
             else:
                 body.update(ANSWERS[h])
         return httpx.Response(200, json=body)
-
-
-class Clock:
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self):
-        return self.now
 
 
 def _collector(router, clock=None, **config):

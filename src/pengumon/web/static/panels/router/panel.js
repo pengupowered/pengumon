@@ -86,7 +86,10 @@ function mountRouter(section, ctx, device) {
   setText(refs.meta, [device.model && device.host ? device.host : null, device.driver].filter(Boolean).join(' · '));
   if (offers('router_system') && !lists) {
     refs.capNoteMissing.hidden = false;
-    refs.capNoteMissing.querySelector('span').textContent = ctx.reason(['clients'], 'Client list');
+    const clients = ctx.features.find((f) => f.feature === 'clients');
+    // "none": no device offers it, here that means this router's driver has no client list
+    refs.capNoteMissing.querySelector('span').textContent = clients && clients.reason_kind === 'none'
+      ? "Client list: this router's driver does not offer one." : ctx.reason(['clients'], 'Client list');
   }
   refs.history.hidden = !(offers('wan_counters') || offers('router_system'));
   refs.history.dataset.arg = device.id;
@@ -174,7 +177,7 @@ export default {
   icon: 'router',
   instances: (ctx) => ctx.devicesOffering('wan_counters', 'router_system').map((d) => ({ key: d.id, device: d })),
   available: (ctx) => ctx.devicesOffering('wan_counters', 'router_system').length > 0,
-  reason: (ctx) => ctx.reason(['router_system', 'line_load'], 'Router telemetry'),
+  reason: (ctx) => ctx.reason(['router_system', 'line_load'], 'Router telemetry', 'Add your router in Settings > Devices and services.'),
   prepare: (ctx) => initTopology(ctx),
   mount: (section, ctx, inst) => mountRouter(section, ctx, inst.device)
 };

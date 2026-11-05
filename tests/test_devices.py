@@ -18,6 +18,8 @@ from pengumon.devices.wan import WanRates
 from pengumon.lines.docsis import line_sample
 from pengumon.lines.docsis_model import DocsisChannel
 
+from device_helpers import Clock
+
 MESSAGES = UnconfiguredMessages(disabled="off in config", missing_credentials="no password yet")
 
 
@@ -109,14 +111,6 @@ class FakeMonitor:
         self.events.append(("result", sorted(c.value for c in result.readings)))
         self.latest_snapshot = ("ok", ts)
         return self.latest_snapshot
-
-
-class Clock:
-    def __init__(self, now=1000.0):
-        self.now = now
-
-    def __call__(self):
-        return self.now
 
 
 @pytest.fixture

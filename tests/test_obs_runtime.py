@@ -9,7 +9,7 @@ import time
 import pytest
 
 import obs_helpers
-from pengumon.api.ws import ConnectionManager
+from pengumon.live.ws import ConnectionManager
 from pengumon.config import AppConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.engine import loop as probe_loop

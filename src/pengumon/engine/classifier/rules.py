@@ -1,7 +1,7 @@
 """The diagnosis rules as pure functions of the round metrics (no clock, no state, no I/O).
 
 Every level comes from the ClassifierConfig (the Settings page's outage rules), except the named internal constants
-below; tests/test_classifier_literals.py fails if a level is written here as a number again."""
+below: a level written here as a number would ignore its setting."""
 
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.classifier.metrics import RoundMetrics

@@ -6,7 +6,6 @@ OutageClassifier's verdicts and incidents from the round metrics, the time and t
 
 from pengumon.engine.classifier import ClassifierCore, OutageClassifier, StepResult
 from pengumon.engine.classifier.metrics import round_metrics
-from pengumon.engine.classifier.verdict import Verdict
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.models.probes import ProbeSample, TargetStats
 
@@ -136,14 +135,3 @@ async def test_an_escalation_callback_that_raises_is_contained():
     assert diagnosis.status == "down" and classifier.active_incident.severity == "critical"
 
 
-def test_the_classifier_exposes_the_cores_state_under_its_old_names():
-    config = ClassifierConfig()
-    classifier = OutageClassifier(config=config)
-    assert classifier.config is config and classifier.core.config is config
-    assert classifier.tracker is classifier.core.tracker and classifier.tracker.config is config
-    classifier.last_upstream_issue_ts = 42.0
-    assert classifier.core.last_upstream_issue_ts == 42.0
-    other = ClassifierConfig(degraded_loss_pct=20.0)
-    classifier.config = other
-    assert classifier.core.config is other and classifier.tracker.config is other
-    assert isinstance(classifier.last_verdict, Verdict)

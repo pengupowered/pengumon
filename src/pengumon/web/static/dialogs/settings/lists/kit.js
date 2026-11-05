@@ -1,12 +1,18 @@
 // What the list editors share: cards (a summary line, "Edit" expands), Add, Remove, Move up/down, a message under the
 // field the server's validation names, and unique ids. An editor is
 //   { id, render(container, items, ctx), collect() -> items, problems(errors) }
-// ctx: { schema, listName, savedIds(), markDirty(), canEdit(), openDeviceSetup(id) }.
+// ctx: { schema, listName, heading ('group' | 'sub' | 'none'), savedIds(), markDirty(), canEdit(), openDeviceSetup(id) }.
 
-import { escapeHtml, icon } from '../../../js/util.js';
+import { registerActions } from '../../../js/dispatch.js';
+import { escapeHtml, icon, slug } from '../../../js/util.js';
 import { clone } from '../model.js';
 
-export const slug = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+export { slug };
+
+// The buttons of a card (Move, Remove, Add, Reset, and an editor's own) name `data-action="settingsListAct"`, the list in
+// data-arg and what they do in data-la; each editor registers its click handler here under its list id.
+const clickers = new Map();
+registerActions('click', { settingsListAct: (el) => { const click = clickers.get(el.dataset.arg); if (click) click(el); } });
 
 // A free id: `base`, then base_2, base_3, ...
 export function freshId(base, taken) {
@@ -16,7 +22,8 @@ export function freshId(base, taken) {
   return id;
 }
 
-// One labelled input of a card. `cfg`: {f, label, kind: text|number|bool|choice|id, choices, nullable, hint, placeholder}.
+// One labelled input of a card. `cfg`: {f, label, kind: text|number|bool|choice|id, choices, labels (choice -> words),
+// nullable, hint, placeholder}.
 export function fieldHtml(cfg, item, index, locked) {
   const id = `lf-${cfg.list}-${index}-${cfg.f}`;
   const v = item[cfg.f];
@@ -27,7 +34,7 @@ export function fieldHtml(cfg, item, index, locked) {
     return `<div class="set-f set-f-bool">${control}<p class="set-msg" data-lmsg="${index}.${cfg.f}" role="alert"></p></div>`;
   }
   if (cfg.kind === 'choice') {
-    control = `<select class="input" ${attrs}>${cfg.choices.map((c) => `<option value="${escapeHtml(c)}"${c === v ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select>`;
+    control = `<select class="input" ${attrs}>${cfg.choices.map((c) => `<option value="${escapeHtml(c)}"${c === v ? ' selected' : ''}>${escapeHtml((cfg.labels && cfg.labels[c]) || c)}</option>`).join('')}</select>`;
   } else {
     const ro = locked ? ' readonly aria-readonly="true"' : '';
     control = `<input class="input${cfg.kind === 'number' ? ' num' : ''}${cfg.mono ? ' mono' : ''}" type="text" ${cfg.kind === 'number' ? 'inputmode="decimal" ' : ''}autocomplete="off" spellcheck="false" ${attrs}${ro} value="${escapeHtml(v ?? '')}" placeholder="${escapeHtml(cfg.placeholder || '')}">`;
@@ -70,23 +77,29 @@ export function makeListEditor(cfg) {
     const bad = Object.keys(errors).some((k) => k.startsWith(`${i}.`)) ? '<span class="chip st st-crit">Needs a fix</span>' : '';
     const flags = (cfg.chips ? cfg.chips(item, i) : '');
     return `<details class="set-card" data-i="${i}" data-id="${escapeHtml(item.id)}"${isOpen ? ' open' : ''}>
-      <summary><span class="set-card-t">${escapeHtml(cfg.title(item) || item.id || 'New')}</span><span class="set-card-s">${escapeHtml(cfg.summary(item) || '')}</span>${off}${flags}${bad}</summary>
+      <summary>${icon('chevron', 'set-chev')}<span class="set-card-t">${escapeHtml(cfg.title(item) || item.id || 'New')}</span><span class="set-card-s">${escapeHtml(cfg.summary(item) || '')}</span>${off}${flags}${bad}</summary>
       <div class="set-card-b">
         <div class="set-grid">${fields}</div>${cfg.extra ? cfg.extra(item, i, ctx) : ''}
         <div class="set-card-f">
-          ${cfg.ordered ? `<button type="button" class="btn icon sm" data-la="up" data-i="${i}" data-needs-edit aria-label="Move ${escapeHtml(item.name || item.id)} up"${i === 0 ? ' disabled' : ''}>${icon('up')}</button>
-          <button type="button" class="btn icon sm set-down" data-la="down" data-i="${i}" data-needs-edit aria-label="Move ${escapeHtml(item.name || item.id)} down"${i === items.length - 1 ? ' disabled' : ''}>${icon('up')}</button>` : ''}
-          <button type="button" class="btn sm danger" data-la="remove" data-i="${i}" data-needs-edit>${icon('close')}Remove</button>
+          ${cfg.ordered ? `<button type="button" class="btn icon sm" data-action="settingsListAct" data-arg="${cfg.id}" data-la="up" data-i="${i}" data-needs-edit aria-label="Move ${escapeHtml(item.name || item.id)} up"${i === 0 ? ' disabled' : ''}>${icon('up')}</button>
+          <button type="button" class="btn icon sm set-down" data-action="settingsListAct" data-arg="${cfg.id}" data-la="down" data-i="${i}" data-needs-edit aria-label="Move ${escapeHtml(item.name || item.id)} down"${i === items.length - 1 ? ' disabled' : ''}>${icon('up')}</button>` : ''}
+          <button type="button" class="btn sm danger" data-action="settingsListAct" data-arg="${cfg.id}" data-la="remove" data-i="${i}" data-needs-edit>${icon('close')}Remove</button>
         </div>
       </div></details>`;
   }
 
+  // The list's name at the level of the place it sits in (see ctx.heading); none where the group above names it.
+  function heading() {
+    if (ctx.heading === 'none') return '';
+    return ctx.heading === 'sub' ? `<h5 class="set-sub">${escapeHtml(cfg.label)}</h5>` : `<h4 class="set-group-t">${escapeHtml(cfg.label)}</h4>`;
+  }
+
   function draw() {
     box.innerHTML = `<div class="set-list" data-list="${cfg.id}">
-      <div class="set-list-h"><h4>${escapeHtml(cfg.label)}</h4>${ctx.listIsSet() && cfg.resetLabel ? `<button type="button" class="set-lnk" data-la="reset" data-needs-edit>${escapeHtml(cfg.resetLabel)}</button>` : ''}</div>
+      <div class="set-list-h">${heading()}${ctx.listIsSet() && cfg.resetLabel ? `<button type="button" class="set-lnk" data-action="settingsListAct" data-arg="${cfg.id}" data-la="reset" data-needs-edit>${escapeHtml(cfg.resetLabel)}</button>` : ''}</div>
       ${cfg.note ? `<p class="fine top">${escapeHtml(cfg.note)}</p>` : ''}
       ${items.length ? items.map(cardHtml).join('') : `<p class="fine top set-empty">${escapeHtml(cfg.empty)}</p>`}
-      <div><button type="button" class="btn sm outline" data-la="add" data-needs-edit>${icon('plus')}<span>${escapeHtml(cfg.addLabel || `Add ${cfg.noun}`)}</span></button></div></div>`;
+      <div><button type="button" class="btn sm outline" data-action="settingsListAct" data-arg="${cfg.id}" data-la="add" data-needs-edit>${icon('plus')}<span>${escapeHtml(cfg.addLabel || `Add ${cfg.noun}`)}</span></button></div></div>`;
     showErrors();
   }
 
@@ -97,9 +110,8 @@ export function makeListEditor(cfg) {
   function wire() {
     if (wired.has(box)) return;
     wired.add(box);
-    box.addEventListener('click', (ev) => {
-      const b = ev.target instanceof Element ? ev.target.closest('[data-la]') : null;
-      if (!b || !ctx.canEdit()) return;
+    clickers.set(cfg.id, (b) => {
+      if (!box.contains(b) || !ctx.canEdit()) return;
       const i = Number(b.dataset.i);
       const act = b.dataset.la;
       if (act === 'add') {

@@ -13,11 +13,11 @@
 // under the charts lists it.
 
 import { registerActions } from '../../js/dispatch.js';
-import { badge, escapeHtml, getTargetInfo, icon, keepKeyboard, openModal } from '../../js/util.js';
+import { badge, escapeHtml, formatClock, formatMs, getTargetInfo, icon, keepKeyboard, median, openModal, zonedFormat, zoneParams } from '../../js/util.js';
 import { token } from '../../js/chart-theme.js';
 import { bus } from '../../js/bus.js';
-import { median as trueMedian, pathNodes, quietTargets } from '../../js/path.js';
-import { fetchPathEvents } from '../../js/path-api.js';
+import { pathNodes, quietTargets } from '../../js/path.js';
+import { ROLE_WORD, fetchPathEvents } from '../../js/path-api.js';
 
 const RANGES = [[300, 'Live', 2], [900, '15 m', 10], [3600, '1 h', 30], [86400, '24 h', 600], [604800, '7 d', 3600]]; // seconds, label, bucket seconds
 const LIVE = 300;
@@ -25,7 +25,6 @@ const CELL = { ok: '', degraded: 'w', outage: 'c', busy: 'b', no_data: 'n' };
 const WORD = { ok: 'no loss', degraded: 'loss or a dead minute', outage: 'outage', busy: 'busy line (expected)', no_data: 'no data' };
 const LEVEL = { ok: 'good', degraded: 'warn', outage: 'crit', busy: 'busy', no_data: 'unknown' };
 const STATE_WORD = { ok: 'Healthy', degraded: 'Degraded', outage: 'Down', busy: 'Busy', no_data: 'No data' };
-const CATEGORY = { local: 'Home network', gateway: 'Gateway', isp: 'ISP hop', public: 'Public internet', dns: 'DNS probe', custom: 'Custom' };
 // What each range's figures cover, said in their labels (a figure without its window cannot be compared with the path's).
 const WINDOW = { 300: 'last 5 min', 900: 'last 15 min', 3600: 'last hour', 86400: 'last 24 h', 604800: 'last 7 days' };
 const win = () => WINDOW[rangeSeconds];
@@ -127,12 +126,7 @@ function ensureModal() {
   return modal;
 }
 
-function clock(ms) {
-  const d = new Date(ms);
-  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (rangeSeconds === LIVE) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  return rangeSeconds > 86400 ? `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${hm}` : hm;
-}
+const clock = (ms) => (rangeSeconds === LIVE ? formatClock(ms, false, true) : formatClock(ms, rangeSeconds > 86400));
 
 // The address changes of the target shown (chart.pgMarks: [{x: ms, text}]): a dashed line each, labelled on the latency
 // chart (chart.pgMarkLabels).
@@ -198,9 +192,7 @@ function markRange() {
   });
 }
 
-const tz = () => -new Date().getTimezoneOffset(); // minutes east of UTC, as the API takes it
 const num = (v) => typeof v === 'number' && Number.isFinite(v);
-const median = (xs) => { const v = xs.filter(num).sort((a, b) => a - b); return v.length ? v[Math.floor((v.length - 1) / 2)] : null; };
 const fmt = (v, digits = 1) => (num(v) ? v.toFixed(digits) : '–');
 
 function setStats(cells, names = labels()) {
@@ -212,15 +204,17 @@ function setStats(cells, names = labels()) {
 const unit = (v, u, digits = 1) => (num(v) ? `${fmt(v, digits)}<small>${u}</small>` : '–');
 const stateBadge = (cell) => (cell ? badge(LEVEL[cell] || 'unknown', STATE_WORD[cell] || 'No data') : '–');
 
-function stripTime(data, i) {
-  const t = new Date((data.start + i * data.block_seconds) * 1000);
-  const hm = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return `${hm(t)}–${hm(new Date(t.getTime() + data.block_seconds * 1000))}`;
+// Block times on the clock the server cut the blocks on (their bounds and zone: /api/uptime), one formatter per strip.
+const stripClock = (data) => zonedFormat(data, { hour: '2-digit', minute: '2-digit' });
+function stripCells(data, t, name) {
+  const hm = stripClock(data);
+  const at = (i) => (data.bounds ? data.bounds[i] : data.start + i * data.block_seconds);
+  return t.cells.map((c, i) => `<i class="${CELL[c] ?? 'n'}" data-tip="${escapeHtml(name)} · ${hm(at(i))}–${hm(at(i + 1))} · ${WORD[c] || c}"></i>`).join('');
 }
-
-const stripCells = (data, t, name) => t.cells.map((c, i) => `<i class="${CELL[c] ?? 'n'}" data-tip="${escapeHtml(name)} · ${stripTime(data, i)} · ${WORD[c] || c}"></i>`).join('');
-const stripClock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-const stripAxis = (data) => `<div class="tgt-axis"><span>${stripClock(data.start)}</span><span>${stripClock((data.start + data.end) / 2)}</span><span>now</span></div>`;
+const stripAxis = (data) => {
+  const hm = stripClock(data);
+  return `<div class="tgt-axis"><span>${hm(data.start)}</span><span>${hm((data.start + data.end) / 2)}</span><span>now</span></div>`;
+};
 
 function stripLabel(t, name) {
   const bad = t.cells.filter((c) => c === 'outage').length;
@@ -307,7 +301,7 @@ async function load() {
   status.textContent = 'Loading...';
   const ids = group && view === 'all' ? group.members.map((m) => m.id) : [group ? view : targetId];
   const q = `${ids.map((i) => `target_ids=${encodeURIComponent(i)}`).join('&')}&start_time=${end - rangeSeconds}&end_time=${end}&bucket_seconds=${bucket}&compact=true`;
-  const uptime = getJson(`/api/uptime?window=24h&tz_offset_minutes=${tz()}`).catch(() => null);
+  const uptime = getJson(`/api/uptime?window=24h&${zoneParams()}`).catch(() => null);
   try {
     const { fields, rows } = await getJson(`/api/history?${q}`);
     if (mine !== seq) return; // a newer request (another range, target or view) owns the charts
@@ -373,7 +367,7 @@ async function showOne(mine, id, rows, c, { end, bucket, uptime, events = Promis
   const quiet = liveQuiet().get(id) || null; // its neutral words, or null
   const strip = renderUptime(up, id, info.name, quiet, marks);
   const mine1 = Array.isArray(list) ? list.find((x) => (x.target_id || x.id) === id) : null;
-  document.getElementById('targetHistMeta').textContent = mine1 ? `${CATEGORY[mine1.category] || mine1.category} · ${mine1.address}` : '';
+  document.getElementById('targetHistMeta').textContent = mine1 ? `${ROLE_WORD[mine1.category] || mine1.category} · ${mine1.address}` : '';
   setStats([
     quiet ? `<span title="${escapeHtml(quiet.why)}">${badge('unknown', quiet.word)}</span>` : stateBadge(strip ? strip.cells[strip.cells.length - 1] : null),
     unit(median(rows.map((r) => r[c.lat])), 'ms'),
@@ -408,7 +402,7 @@ async function showGroup(mine, rows, c, { end, bucket, uptime }) {
   rows.forEach((r) => { if (byId.has(r[c.id])) byId.get(r[c.id]).push(r); });
   const at = new Map(members.map((m) => [m.id, new Map(byId.get(m.id).map((r) => [r[c.t], r[c.lat]]))]));
   const times = [...new Set(rows.map((r) => r[c.t]))].sort((a, b) => a - b);
-  const figure = (ts) => (rule === 'median' ? trueMedian(members.map((m) => at.get(m.id).get(ts)))
+  const figure = (ts) => (rule === 'median' ? median(members.map((m) => at.get(m.id).get(ts)))
     : ([...judged].reverse().map((id) => at.get(id).get(ts)).find(num) ?? null));
   const line = times.map((ts) => ({ x: ts * 1000, y: figure(ts) }));
   const ink = token('--ink-1');
@@ -431,7 +425,7 @@ async function showGroup(mine, rows, c, { end, bucket, uptime }) {
     ? `a line per ${what}, the bold line their median (the figure on the node); loss per ${what} underneath`
     : 'a line per hop, the bold line the last hop that answers (the figure on the node); loss per hop underneath';
   document.getElementById('targetHistUpNote').textContent = `15-minute blocks, a row per ${what}`;
-  document.getElementById('targetHistMeta').textContent = `${CATEGORY[group.category] || group.category} · ${members.length} ${what}s`;
+  document.getElementById('targetHistMeta').textContent = `${ROLE_WORD[group.category] || group.category} · ${members.length} ${what}s`;
   const lost = new Set(judged.flatMap((id) => byId.get(id).filter((r) => r[c.loss] > 0).map((r) => r[c.t]))).size;
   document.getElementById('targetHistStatus').textContent = rows.length
     ? `${times.length} points per line, one per ${per(bucket)}; ${lost} with loss`
@@ -439,9 +433,9 @@ async function showGroup(mine, rows, c, { end, bucket, uptime }) {
 
   // The figures, as the node computes them: the median of the members' own medians, or the last hop that answers; the
   // worst member's loss; the availability as the report takes it (the median of the members), or the worst hop's.
-  const own = (id) => trueMedian(byId.get(id).map((r) => r[c.lat]));
+  const own = (id) => median(byId.get(id).map((r) => r[c.lat]));
   const rep = [...judged].reverse().find((id) => num(own(id)));
-  const mid = rule === 'median' ? trueMedian(members.map((m) => own(m.id))) : (rep ? own(rep) : null);
+  const mid = rule === 'median' ? median(members.map((m) => own(m.id))) : (rep ? own(rep) : null);
   const peaks = line.map((p) => p.y).filter(num);
   const losses = judged.map((id) => lossOf(byId.get(id), c)).filter(num);
   const up = await uptime;
@@ -454,7 +448,7 @@ async function showGroup(mine, rows, c, { end, bucket, uptime }) {
     unit(mid, 'ms'),
     unit(peaks.length ? Math.max(...peaks) : null, 'ms'),
     unit(losses.length ? Math.max(...losses) : null, '%', 2),
-    unit(rule === 'median' ? trueMedian(avail) : (avail.length ? Math.min(...avail) : null), '%', 2)
+    unit(rule === 'median' ? median(avail) : (avail.length ? Math.min(...avail) : null), '%', 2)
   ], ['Status, latest 15 min', `${rule === 'median' ? 'Median' : 'Median, last hop'}, ${win()}`, `Peak, ${figureName.toLowerCase()}, ${win()}`,
     `Loss, worst ${what}, ${win()}`, rule === 'median' ? 'Available, 24 h (median)' : 'Available, 24 h (worst hop)']);
 }
@@ -510,7 +504,6 @@ function parseGroup(text) {
 // function that paints it) for the node the dialog was opened from, a member's as a node of its own would show it
 // (the median of its last 60 probes). Painted under the figures with the window those cover, so the number that was
 // clicked can be found here. Only for a dialog opened from a path node.
-const fmtMs = (v) => (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
 function paintNow() {
   const el = document.getElementById('targetHistNow');
   const modal = document.getElementById('targetHistModal');
@@ -524,13 +517,13 @@ function paintNow() {
   if (member) {
     const t = targets.find((x) => x.target_id === member);
     const recent = t ? (t.recent_latencies || []).slice(-60) : [];
-    ms = recent.length ? trueMedian(recent) : (t && num(t.last_ms) ? t.last_ms : null);
+    ms = recent.length ? median(recent) : (t && num(t.last_ms) ? t.last_ms : null);
   } else {
     const node = pathNodes(targets, { collapseIsp: nodeKey === 'ISP:run' }).find((n) => n.key === nodeKey);
     ms = node ? node.ms : null;
     if (group) what = group.rule === 'median' ? `the median of the ${group.category === 'dns' ? 'lookups' : 'servers'}' last 60 probes` : 'the last hop that answers, the median of its last 60 probes';
   }
-  const text = `${member ? 'This target' : 'On the path'} now: ${num(ms) ? `${fmtMs(ms)} ms` : 'no reply'} (${what}). The figures above cover the ${win()}.`;
+  const text = `${member ? 'This target' : 'On the path'} now: ${num(ms) ? `${formatMs(ms, { unit: true })}` : 'no reply'} (${what}). The figures above cover the ${win()}.`;
   if (el.textContent !== text) el.textContent = text;
 }
 bus.subscribe('targets', paintNow);

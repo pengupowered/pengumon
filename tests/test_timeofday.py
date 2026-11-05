@@ -61,3 +61,9 @@ def test_the_answer_is_always_after_the_instant_asked_about(name):
         after = start + step * 900
         for hhmm in ("00:00", "01:30", "02:00", "02:30", "03:00"):
             assert next_wall_time(after, hhmm, tz) > after
+
+
+def test_a_zone_that_cannot_load_is_utc_with_one_warning(caplog):
+    with caplog.at_level("WARNING", logger="pengumon.timeofday"):
+        assert zone("Example/Nowhere") is timezone.utc and zone("Example/Nowhere") is timezone.utc
+    assert [r.getMessage().count("'Example/Nowhere'") for r in caplog.records] == [1]

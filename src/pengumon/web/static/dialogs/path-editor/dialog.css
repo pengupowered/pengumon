@@ -1,4 +1,4 @@
-/* Dialog path-editor: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Dialog path-editor: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* The device setup dialog a hop's "Connect" opens goes over the editor (both are modals; the editor comes later in the page) */
 #deviceSetupModal.active { z-index: calc(var(--z-modal) + 1); }
 

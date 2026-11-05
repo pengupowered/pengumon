@@ -1,7 +1,8 @@
 """Incidents: create, resolve, annotate, list (cached until one changes) and attach a path trace."""
 
 import json
-from typing import Any, Dict, List, Optional, Sequence
+import logging
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 import aiosqlite
 
@@ -9,6 +10,9 @@ from pengumon.incidents.loss import loss_span, probe_window
 from pengumon.incidents.taxonomy import ISP_LINE_KINDS, kinds_in_scope
 from pengumon.incidents.model import Incident
 from pengumon.models.probes import PathTraceHop
+
+logger = logging.getLogger("pengumon.db")
+_unreadable_traces: Set[int] = set()  # incidents whose stored trace was reported as unreadable (once each)
 
 
 class IncidentQueries:
@@ -119,8 +123,10 @@ class IncidentQueries:
         if r["path_trace"]:
             try:
                 pt = [PathTraceHop(**h) for h in json.loads(r["path_trace"])]
-            except Exception:
-                pass
+            except (ValueError, TypeError):  # not JSON, not a list of hops, or a hop that does not validate
+                if r["id"] not in _unreadable_traces:
+                    _unreadable_traces.add(r["id"])
+                    logger.warning(f"Incident {r['id']}: its stored path trace cannot be read; it is shown without one")
         return Incident(
             id=r["id"],
             start_time=r["start_time"],

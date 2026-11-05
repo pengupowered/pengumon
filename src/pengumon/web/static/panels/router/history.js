@@ -11,6 +11,7 @@ const MAX_POINTS = 360;
 const Y_WIDTH = 54; // every chart gets the same y-axis width, so the three plot areas line up on the shared x axis
 const charts = {};
 let rangeSeconds = 3600;
+const RANGE_NAMES = { 3600: '1 hour', 21600: '6 hours', 86400: '24 hours', 604800: '7 days' };
 let device = null; // the router whose history is open
 let requestSeq = 0;
 let lastBody = null; // the last answer drawn, for a redraw after a theme change
@@ -258,7 +259,8 @@ async function load() {
     if (seq !== requestSeq) return; // a newer range was chosen meanwhile
     renderRouterHistory(body);
     document.getElementById('routerHistModal').dataset.points = String(body.rows.length);
-    setText(status, body.rows.length ? `${body.rows.length} points, ${body.bucket_seconds >= 60 ? `${body.bucket_seconds / 60} min` : `${body.bucket_seconds} s`} buckets (avg, dashed max)`
+    const slice = body.bucket_seconds >= 60 ? `${body.bucket_seconds / 60} min` : `${body.bucket_seconds} s`;
+    setText(status, body.rows.length ? `${RANGE_NAMES[rangeSeconds] || ''} · averages per ${slice}, dashed line: peak`
       : 'No router samples in this range.');
   } catch (e) {
     if (seq === requestSeq) setText(status, `Could not load router history: ${e.message}`);

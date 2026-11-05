@@ -28,7 +28,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from pengumon.config import AppConfig, load_config, read_config_file
-from pengumon.notify_settings import SECRET_PREFIX
+from pengumon.notify.settings import SECRET_PREFIX
 from pengumon.secrets import SecretStore, resolve_slot
 from pengumon.settings import lenient, registry
 from pengumon.settings.importer import RECOVERY_KEY, get_path, jsonable, present

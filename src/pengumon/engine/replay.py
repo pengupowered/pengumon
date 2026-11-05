@@ -16,7 +16,7 @@ classifier on the characterization scenario):
 * `round_metrics` once per round, shared by both rule sets (it depends on the window only, which is no setting);
 * `ClassifierCore.step` once per round per rule set, each with its own tracker and DNS-cooldown state and no repository;
 * the load constants of engine/load.py, applied to the stored WAN rates of the router;
-* the notifier's `AlertPolicy` (notify_policy.py) to count the alerts each rule set's incidents would have sent.
+* the notifier's `AlertPolicy` (notify/policy.py) to count the alerts each rule set's incidents would have sent.
 
 How the samples become rounds: they are read in ts order, one hour at a time (`samples` is `(ts, target)` WITHOUT
 ROWID, so an hour is one primary-key range). A new round starts when a target id repeats or the time jumps by more than
@@ -36,7 +36,7 @@ import time
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 from urllib.parse import quote
 
@@ -53,8 +53,9 @@ from pengumon.incidents.taxonomy import kinds_in_scope
 from pengumon.lines import wording
 from pengumon.engine.path_rules import ignoring_ping
 from pengumon.models.probes import TargetConfig
-from pengumon.notify_policy import AlertPolicy
-from pengumon.notify_settings import AlertsConfig
+from pengumon.notify.policy import AlertPolicy
+from pengumon.notify.settings import AlertsConfig
+from pengumon.timeofday import zone
 
 GAP_SECONDS = 30.0  # more than this between two rounds: the app was not running
 CHUNK_SECONDS = 3600.0  # the samples are read one hour at a time
@@ -178,21 +179,6 @@ class _RuleSet:
         incident.duration_seconds = round(max(1.0, end - incident.start_time), 1)
         incident.resolved = True
         tracker.active_incident = None
-
-
-def _zone(name: Optional[str]):
-    """A tzinfo for general.timezone (an IANA name, UTC or +HH:MM); UTC when it can't be read."""
-    if name and name[0] in "+-" and len(name) == 6 and name[3] == ":":
-        try:
-            delta = timedelta(hours=int(name[1:3]), minutes=int(name[4:6]))
-            return timezone(-delta if name[0] == "-" else delta)
-        except ValueError:
-            return timezone.utc
-    try:
-        from zoneinfo import ZoneInfo
-        return ZoneInfo(name) if name else timezone.utc
-    except Exception:
-        return timezone.utc
 
 
 def _day(ts: float, tz) -> str:
@@ -347,7 +333,7 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
     targets = [TargetConfig.model_validate(t) for t in spec["targets"]]
     dns_probes = [DnsProbeConfig.model_validate(d) for d in spec.get("dns_probes", [])]
     hop_status = HopStatusConfig.model_validate(spec.get("hop_status") or {})
-    tz = _zone(spec.get("timezone"))
+    tz = zone(spec.get("timezone"))
 
     rates = _read_rates(conn, spec.get("wan_device_id"), start, end)
     rule_sets = [

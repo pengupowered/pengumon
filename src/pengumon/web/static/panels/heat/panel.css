@@ -1,4 +1,4 @@
-/* Panel heat: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel heat: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* ---------- Heatmap panel ---------- */
 .heat-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); }
 .heat-foot .fine { margin: 0; }

@@ -3,7 +3,7 @@
 // the hop figures and the path trace. Every figure and grade is the server's; this file only arranges them.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, getTargetInfo, icon, keepKeyboard, openModal, setBadge, sortTargetsByCanonical, STATUS, targetList } from '../../js/util.js';
+import { closeModal, escapeHtml, formatClock, getTargetInfo, icon, keepKeyboard, openModal, setBadge, sortTargetsByCanonical, STATUS, targetList } from '../../js/util.js';
 import { shortLabels } from '../../js/path.js';
 import { bus } from '../../js/bus.js';
 import { primaryDevice } from '../../js/devices.js';
@@ -13,7 +13,7 @@ import { renderTracks } from './inspector-charts.js';
 const LANE_CELLS = 90;
 const $ = (id) => document.getElementById(id);
 const has = (v) => v !== null && v !== undefined;
-const clock = (ts, seconds = false) => new Date(ts * 1000).toLocaleTimeString([], seconds ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+const clock = (ts, seconds = false) => formatClock(ts * 1000, false, seconds);
 const sign = (s) => `${s < 0 ? '−' : '+'}${formatDuration(Math.abs(Math.round(s)))}`;
 const isLost = (s) => s.success === 0 || (s.packet_loss_pct || 0) > 0 || s.latency_ms === null;
 // A hop lost probes when its counts say so: loss_pct is rounded to 0.1 %, and one lost probe in thousands rounds to 0.

@@ -70,41 +70,10 @@ editor, Rediscover, the first-run view, Export and Import and the upgrade from 0
 
 What config.yaml still does with `targets:`: a first start of a database that has no path yet imports the list once (a
 new install can leave it out and have the path discovered instead); after that the list is ignored and the startup log
-says so. It is an optional fixed list, used on the first start only; `config.example.yaml` has none, so a copy of it gives you discovery. A first import of more than 64 targets keeps the first 64 as the path and the extras as removed hops that you can restore in the editor. The syntax is the one Export writes and Import reads:
-
-```yaml
-targets:                         # imported once on a first start (then edited in the dashboard); in path order
-  - id: "local_router"
-    name: "Hop 1: Local Router (LAN)"
-    category: "local"
-    address: "192.168.1.1"
-    enabled: true
-    color: "#58a6ff"             # optional chart colour (#rrggbb), also on dns_probes; default: the next of eight series colours, then one no other target of its category has
-
-  - id: "isp_gateway"
-    name: "Hop 2: ISP Gateway"
-    category: "gateway"
-    address: "192.168.100.1"
-    enabled: true
-
-  - id: "cloudflare_dns"
-    name: "Public: Cloudflare Anycast"
-    category: "public"
-    address: "1.1.1.1"
-    enabled: true
-
-  - id: "cloudflare_v6"
-    name: "Public: Cloudflare over IPv6"
-    category: "public"
-    address: "one.one.one.one"   # an IPv4 or IPv6 address (fe80::1%eth0 for a link-local one), or a host name
-    family: 6                    # a host name is probed at its IPv4 (4, the default) or IPv6 (6) address
-
-dns_probes:                      # left out: two default lookups; [] : none
-  - id: "dns_system_google"
-    name: "DNS Lookup (google.com)"
-    domain: "google.com"
-    enabled: true
-```
+says so. It is an optional fixed list, used on the first start only; `config.example.yaml` has none, so a copy of it gives you discovery. A first import of more than 64 targets keeps the first 64 as the path and the extras as removed hops that you can restore in the editor. The syntax is the one in [Export and import](path-editor.md#export-and-import) (a `targets:` list, in path order, with an
+optional `dns_probes:` list: left out, two default lookups; `[]`, none).
+A target or DNS lookup may also set `color: "#rrggbb"` for its chart line (default: the next of eight series colours, then
+one no other target of its category has).
 
 Categories place a target on the path: `local` (router or mesh), `gateway` (modem or the provider's box), `isp` (the
 provider's hops, in path order), `public` (servers on the internet; the Internet figure is their median). Any number of
@@ -126,8 +95,8 @@ targets need no route to the internet. [probing.md](probing.md) has the details.
 
 ## The other settings: managed in the dashboard
 
-**Since the settings store (schema v15), the settings below are edited on the Settings page, not in `config.yaml`.**
-At the first start of that version Pengumon imports `config.yaml` once, value for value: every key the file sets is
+**The settings below are edited on the Settings page, not in `config.yaml`.**
+At the first start (of a database that has no stored settings yet) Pengumon imports `config.yaml` once, value for value: every key the file sets is
 stored (even one equal to its default), and every list it has (`devices:`, `service_checks: services:`,
 `notifications: webhooks:`, `dns_probes:`; an empty one too) is stored as set. A value the new ranges refuse is left
 out, keeps its default, and is named in the startup log and on the page's About box (by key, never by value); the start
@@ -155,7 +124,7 @@ imported database.
 Access (the token, sign-in, view only, allowed host names) is set with environment variables, not in `config.yaml`:
 see [Security](security.md).
 
-What the import reads, as it was written in `config.yaml` (start from `config.example.yaml`):
+What the first import reads, in `config.yaml` syntax (start from `config.example.yaml`; Settings > Export writes the same syntax):
 
 ```yaml
 prober:
@@ -174,7 +143,7 @@ prober:
     dns_jitter_ms: 40
 ```
 
-New in 0.2.0 (all optional, shown with example values; the defaults are noted):
+Other keys the first import reads (all optional, shown with example values; the defaults are noted):
 
 ```yaml
 database:

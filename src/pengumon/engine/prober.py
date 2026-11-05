@@ -23,7 +23,7 @@ from pengumon.engine.icmp_base import IcmpBackend, IcmpUnavailable
 from pengumon.engine.icmp_packet import ip_literal
 from pengumon.engine.icmp_select import resolve_address, shared_backend
 from pengumon.engine.netinfo import Ipv6Availability, is_no_ipv6_error, needs_route_check
-from pengumon.engine.path_rules import ignoring_ping
+from pengumon.engine.path_rules import hop_roles, ignoring_ping
 
 
 logger = logging.getLogger("pengumon.prober")
@@ -121,6 +121,7 @@ class NetworkProber:
                 group=target.group,
                 recent_latencies=[],
             )
+            self._label_hops()
         self._families[target.id] = target.family
         if target.warn_latency_ms is not None:
             self._warn_latency[target.id] = target.warn_latency_ms
@@ -152,6 +153,7 @@ class NetworkProber:
         live = set(self.stats)
         for tid in [k for k in self.last_samples if k not in live]:
             del self.last_samples[tid]
+        self._label_hops()
         self.update_path_flags()
 
     def set_dns_targets(self, dns_probes: List[DnsProbeConfig]) -> None:
@@ -177,6 +179,7 @@ class NetworkProber:
         live = set(self.stats)
         for tid in [k for k in self.last_samples if k not in live]:
             del self.last_samples[tid]
+        self._label_hops()
         self.update_path_flags()
 
     def register_dns_target(self, dns_cfg: DnsProbeConfig):
@@ -194,6 +197,14 @@ class NetworkProber:
                 color=dns_cfg.color,
                 recent_latencies=[],
             )
+            self._label_hops()
+
+    def _label_hops(self) -> None:
+        """Each target's short_label, from the switched-on targets in path order. Run when the list changes, never per
+        round."""
+        roles = hop_roles((tid, st.category) for tid, st in self.stats.items() if st.enabled)
+        for tid, st in self.stats.items():
+            st.short_label = roles.get(tid)
 
     async def probe_icmp(self, target: TargetConfig) -> Optional[ProbeSample]:
         """One echo request to the target through the ICMP backend. None for a disabled target, and for an IPv6

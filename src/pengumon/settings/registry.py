@@ -22,7 +22,7 @@ from pengumon.config import AppConfig
 from pengumon.devices.settings import DeviceConfig
 from pengumon.engine.netinfo import default_dns_probes
 from pengumon.engine.prober_settings import DnsProbeConfig
-from pengumon.notify_settings import WebhookItem
+from pengumon.notify.settings import WebhookItem
 from pengumon.services.settings import ServiceCheckConfig
 from pengumon.settings import env as settings_env
 
@@ -138,8 +138,10 @@ class Setting:
     advanced: bool = False
     export: bool = True
     order: int = 0        # place within its section (set from the registry's order)
-    related: Optional[str] = None  # a key shown beside it ("incident rule: 25 ms" next to a hop colour)
+    related: Optional[str] = None  # a key shown beside it (the incident level next to a hop colour), with a link to it
     also_in: Tuple[str, ...] = ()  # other sections that render the same value (asn_lookup: privacy too)
+    choice_labels: Optional[Dict[str, str]] = None  # stored choice -> the words the page shows ("critical": "Outages only")
+    empty: Optional[str] = None  # what an empty (None) value means, in words ("learned from the router's traffic")
 
     def resolve(self) -> Tuple[Type[BaseModel], str, FieldInfo]:
         """(section model, field name, field)."""
@@ -191,6 +193,7 @@ def _s(key: str, label: str, effect: str, group: Optional[str] = None, **kw) -> 
 _ROUNDS = dict(unit="s", rounds=True)
 _MINUTES = dict(unit="min", scale=1 / 60)
 _PCT_OF_FRACTION = dict(unit="%", scale=100.0)
+_PER_MILLION = dict(unit="per million", scale=1e6)  # a tiny ratio (0.000001) shown as "1 per million"
 
 SETTINGS: Tuple[Setting, ...] = tuple(
     _entries("outage", [
@@ -213,8 +216,8 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Average latency to the modem or gateway above this is a fault there.", "Latency spike levels",
            unit="ms"),
         _s("classifier.isp_latency_spike_threshold_ms", "ISP hops",
-           "Average latency to the ISP's hops above this is an ISP fault. Empty: the same as internet.",
-           "Latency spike levels", unit="ms"),
+           "Average latency to the ISP's hops above this is an ISP fault.", "Latency spike levels", unit="ms",
+           empty="same as internet"),
         _s("classifier.public_latency_spike_threshold_ms", "Internet",
            "Average latency to the internet targets above this is a fault upstream.", "Latency spike levels",
            unit="ms"),
@@ -229,9 +232,10 @@ SETTINGS: Tuple[Setting, ...] = tuple(
     ])
     + _entries("alerts", [
         _s("notifications.public_url", "Dashboard address in alerts",
-           "The link alerts carry back to this dashboard. Empty: no link.", "Channels"),
-        _s("alerts.min_severity", "Send", "For network incidents only. Warning: every incident. Critical: outages only; a "
-           "warning that turns critical is sent then. Host app alerts ignore this.", "Rules"),
+           "The link alerts carry back to this dashboard.", "Channels", empty="no link"),
+        _s("alerts.min_severity", "Send alerts for", "For network incidents only. With outages only, a warning that "
+           "turns into an outage is sent when it does. Host app alerts ignore this.", "Rules",
+           choice_labels={"warning": "Every incident", "critical": "Outages only"}),
         _s("alerts.delay_seconds", "Wait before alerting",
            "A network incident shorter than this sends nothing, not even a resolved message.", "Rules", **_MINUTES),
         _s("alerts.repeat_window_seconds", "Don't repeat the same cause within",
@@ -240,7 +244,7 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            **_MINUTES),
         _s("alerts.quiet_hours.enabled", "Quiet hours",
            "Alerts wait for the end of the window; what is still open then goes out once.", "Quiet hours"),
-        _s("alerts.quiet_hours.start", "From", "Start of the window, in the time zone under Display (UTC until you pick one).",
+        _s("alerts.quiet_hours.start", "From", "Start of the window, in the time zone under Display.",
            "Quiet hours"),
         _s("alerts.quiet_hours.end", "Until", "End of the window; it may cross midnight.", "Quiet hours"),
         _s("alerts.quiet_hours.critical_still", "Still send critical incidents",
@@ -251,12 +255,10 @@ SETTINGS: Tuple[Setting, ...] = tuple(
     ])
     + _entries("line", [
         _s("line.isp_name", "ISP name", "Names the outage report for your ISP."),
-        _s("line.down_mbps", "Download speed",
-           "Your plan's speed, which the load is a share of. Empty: learned from the router's traffic.",
-           unit="Mbps"),
-        _s("line.up_mbps", "Upload speed",
-           "Your plan's speed, which the load is a share of. Empty: learned from the router's traffic.",
-           unit="Mbps"),
+        _s("line.down_mbps", "Download speed", "Your plan's speed, which the load is a share of.", unit="Mbps",
+           empty="learned from traffic"),
+        _s("line.up_mbps", "Upload speed", "Your plan's speed, which the load is a share of.", unit="Mbps",
+           empty="learned from traffic"),
         _s("classifier.busy_load_pct", "Busy line from",
            "From this load, latency (and loss seen only at ISP hops) counts as expected, not as a fault.",
            unit="%"),
@@ -265,7 +267,7 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("service_checks.interval_seconds", "Check host apps every",
            "How often each host app's health address is fetched.", "Host app checks", unit="s"),
         _s("service_checks.failures_for_incident", "Failed checks before an incident",
-           "Failed checks in a row before a host app counts as not responding.", "Host app checks"),
+           "Failed checks in a row before a host app counts as not responding.", "Host app checks", unit="checks"),
     ])
     + _entries("probing", [
         _s("classifier.path_trace_target", "Trace to when an incident starts",
@@ -280,8 +282,11 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "cleanup.", unit="days"),
     ])
     + _entries("privacy", [
-        _s("privacy.client_details", "Connected clients' names and addresses",
-           "token: shown only with the access token. full: always. masked: never (vendor and last 4 digits)."),
+        _s("privacy.client_details", "Show connected clients' names and addresses",
+           "Signed-in viewers only: to people signed in with the access token (to no one while no token is set). "
+           "Always: to everyone who can open the page. Never: a client shows as its maker and the last 4 characters "
+           "of its hardware address.",
+           choice_labels={"token": "Signed-in viewers only", "full": "Always", "masked": "Never"}),
     ])
     + _entries("discovery", [
         _s("discovery.background", "Background route checks",
@@ -290,19 +295,23 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Background runs send the public hop addresses to Team Cymru to name their operators.",
            also_in=("privacy",)),
         _s("discovery.daily_check_time", "Daily check at",
-           "In the time zone under Display. Empty: a random minute, picked at each start."),
+           "In the time zone under Display.", empty="a random minute, picked at each start"),
     ])
     + _entries("display", [
-        _s("general.timezone", "Time zone", "Quiet hours and the daily route check use it."),
+        _s("general.timezone", "Time zone",
+           "Quiet hours and the daily route check follow this clock. The reports count their days and hours in it "
+           "too, unless it is UTC: then each browser uses its own zone."),
         _s("display.default_latency_range", "Latency chart opens on",
-           "The range the latency chart shows first. A browser's own choice still wins."),
-        _s("dashboard.order", "Default card order",
-           "The card order every browser starts with; each browser's Layout choice wins."),
-        _s("dashboard.hidden", "Cards hidden by default",
-           "The cards every browser starts without; each browser's Layout choice wins."),
+           "The range the latency chart shows first. A browser's own choice still wins.",
+           choice_labels={"live": "Live", "15m": "15 minutes", "1h": "1 hour", "24h": "24 hours"}),
+        # the page shows these two as one row, "Layout for new browsers" (dialogs/settings/fields.js layoutRowHtml)
+        _s("dashboard.order", "Panel order for new browsers",
+           "The panel order a browser starts with; a browser's own Layout choice wins."),
+        _s("dashboard.hidden", "Hidden panels for new browsers",
+           "The panels a browser starts without; a browser's own Layout choice wins."),
         _s("display.grafana_url", "Grafana address",
-           "Adds Dashboard, Logs and Traces links to the page header, at once. Empty: no links.",
-           env="PENGUMON_GRAFANA_URL"),
+           "Adds Dashboard, Logs and Traces links to the page header, at once.", env="PENGUMON_GRAFANA_URL",
+           empty="no links"),
     ])
     + _entries("advanced", [
         _s("prober.hop_status.down_loss_fraction", "Hop shows down above",
@@ -335,8 +344,8 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("prober.timeout_seconds", "Ping timeout",
            "A ping without an answer in this time counts as lost. At most one probe round.", "Timeouts", unit="s"),
         _s("prober.dns_timeout_seconds", "DNS lookup timeout",
-           "A lookup without an answer in this time counts as lost. Empty: the ping timeout.", "Timeouts",
-           unit="s"),
+           "A lookup without an answer in this time counts as lost.", "Timeouts", unit="s",
+           empty="the ping timeout"),
         _s("uptime.outage_dead_minutes", "Strip outage after",
            "Minutes with every probe lost that make an uptime-strip block an outage.", "Uptime strips",
            unit="min"),
@@ -360,11 +369,12 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Upstream power below this warns.", "Line signal levels", unit="dBmV"),
         _s("line_signal.us_power_low_critical_dbmv", "Upstream power critical below",
            "Upstream power below this is critical.", "Line signal levels", unit="dBmV"),
-        _s("line_signal.uncorrectable_ratio_warning", "Share of lost codewords: warning from",
-           "Share of all codewords lost after error correction from which the line warns.",
-           "Line signal levels"),
-        _s("line_signal.uncorrectable_ratio_critical", "Share of lost codewords: critical from",
-           "Share of all codewords lost from which the line is critical.", "Line signal levels"),
+        _s("line_signal.uncorrectable_ratio_warning", "Lost codewords: warning from",
+           "Codewords lost after error correction, out of every million received, from which the line warns.",
+           "Line signal levels", **_PER_MILLION),
+        _s("line_signal.uncorrectable_ratio_critical", "Lost codewords: critical from",
+           "Codewords lost out of every million received from which the line is critical.", "Line signal levels",
+           **_PER_MILLION),
         _s("line_signal.uncorrectable_warning_per_minute", "Lost codewords a minute: warning from",
            "Without codeword counts: new uncorrectable codewords a minute from which the line warns.",
            "Line signal levels", unit="codewords/min"),
@@ -380,9 +390,11 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("router_levels.wan_critical_pct", "Line load critical above",
            "A line this full is saturated. Must be above the busy line level.", "Router levels", unit="%",
            related="classifier.busy_load_pct"),
-        _s("server.log_level", "Log level", "How much Pengumon logs.", "Logging", env="PENGUMON_LOG_LEVEL"),
+        _s("server.log_level", "Log level", "How much Pengumon writes to its log.", "Logging", env="PENGUMON_LOG_LEVEL",
+           choice_labels={"debug": "Everything (for debugging)", "info": "Normal", "warning": "Warnings and errors",
+                          "error": "Errors only", "critical": "Critical errors only"}),
         _s("server.log_levels", "Per-logger levels",
-           "For debugging one part, e.g. pengumon.devices=debug,uvicorn.access=warning.", "Logging",
+           "For experts debugging one part, e.g. pengumon.devices=debug,uvicorn.access=warning.", "Logging",
            env="PENGUMON_LOG_LEVELS"),
     ])
 )

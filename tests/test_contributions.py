@@ -17,9 +17,8 @@ from pengumon.capabilities import (
     BAND_2G, BAND_5G, Capability, Client, ClientsReading, LineReading, MeshNode, MeshReading, PollResult,
     SystemReading, WanCounters,
 )
-from pengumon.capabilities.contrib import (
-    DETAILS, HINT_ACTIONS, ContribContext, activate, all_contributions, all_driver_notes, driver_note, render_section,
-)
+from pengumon.capabilities.contrib import DETAILS, HINT_ACTIONS, ContribContext, render_section
+from pengumon.reports.contributions import activate, all_contributions, all_driver_notes, driver_note
 from pengumon.config import AppConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.db.samples import DeviceSample, LineSample, MeshCount

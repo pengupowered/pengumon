@@ -27,7 +27,7 @@ export const steps = [
     await waitText(`${ROUTER} [data-f=rx] [data-f=v]`, /^123$/);
     await click(`${second} [data-action=openRouterHistory]`);
     await waitText("#routerHistTitle", /^Second AP history$/);
-    await until(() => /points|No router samples/.test(document.getElementById("routerHistStatus").textContent));
+    await until(() => /averages per|No router samples/.test(document.getElementById("routerHistStatus").textContent));
     await click("[data-action=closeModal][data-arg=routerHistModal]");
     await click(`${second} [data-action=openDeviceSetup]`);
     await waitText("#setupTitle", /^Set up Second AP$/);
@@ -66,7 +66,7 @@ export const steps = [
     const before = await requests();
     await click('#routerHistRanges button[data-arg="86400"]');
     await until((n) => performance.getEntriesByType("resource").filter((e) => e.name.includes("/history?")).length > n, before);
-    await until(() => document.getElementById("routerHistStatus").textContent.includes("points"));
+    await until(() => document.getElementById("routerHistStatus").textContent.includes("24 hours"));
     eq("active range after click", await page.$eval("#routerHistRanges button[aria-pressed=true]", (b) => b.dataset.arg), "86400");
     await click("[data-action=closeModal][data-arg=routerHistModal]");
   }],
@@ -88,6 +88,10 @@ export const steps = [
     await until(() => document.getElementById("networkModal").classList.contains("active"));
     await waitCount("#clientsBody tr", 3); // three online clients; the offline one is hidden by default
     eq("the topology is on top of the clients", await count("#topologyBody .topo-wide .tgo"), 3);
+    // an unrounded figure in the live message (a median or an average comes out like this) reads as one decimal
+    await page.evaluate(() => { window.__smokeMutate = (d) => d.targets.forEach((t) => { if (t.category === "public" || t.category === "gateway") { t.recent_latencies = Array(30).fill(17.69766665802256); t.last_ms = 17.69766665802256; } }); });
+    await until(() => [...document.querySelectorAll("#topologyBody .topo-wide .tsub")].some((e) => /^17\.7 ms$/.test(e.textContent)));
+    await page.evaluate(() => { window.__smokeMutate = null; });
     const chips = await page.$$eval("#clientsChips .clients-chip", (els) => els.map((e) => e.textContent));
     eq("chips", chips.join("|"), "3 online|1 wired|1 on 2.4 GHz|1 on 5 GHz|Hall: 2|Study: 1|Garage: 0");
     const rows = await page.$$eval("#clientsBody tr", (trs) => trs.map((tr) => tr.textContent));

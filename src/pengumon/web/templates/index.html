@@ -59,7 +59,14 @@
   </header>
   <div class="conn-banner" id="connBanner" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-stale"/></svg><span><b>Connection lost.</b> Showing the last data; reconnecting every 2 s.</span></div>
 
-  <!-- Panels: one section per panel folder (static/panels/<id>/panel.html, found by pengumon.ui); layout.js arranges them -->
+  <!-- First run: shown by main.js while no device is configured (the line and router cards have nothing to read yet) -->
+  <aside class="setup-hint" id="setupHint" aria-label="Set up your router or modem" hidden>
+    <svg class="i" aria-hidden="true"><use href="#i-settings"/></svg>
+    <span><b>No router or modem added yet.</b> Add one to see your line signal and router load here.</span>
+    <button type="button" class="btn" data-action="openSettingsAt" data-arg="devices" data-needs-edit>Add a device</button>
+  </aside>
+
+  <!-- Panels: one section per panel folder (static/panels/<id>/panel.html, found by pengumon.web.ui); layout.js arranges them -->
   <main class="page" id="panels" aria-label="Dashboard panels">
     {% for panel in ui.panels %}{% include panel.template %}
     {% endfor %}
@@ -73,7 +80,7 @@
     <button type="button" role="tab" data-action="selectTab" data-arg="incidents" aria-selected="false"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg><span>Incidents</span></button>
   </nav>
 
-  <!-- Dialogs: those the panels own and those of static/dialogs/<id>/ (pengumon.ui) -->
+  <!-- Dialogs: those the panels own and those of static/dialogs/<id>/ (pengumon.web.ui) -->
   {% for dialog in ui.dialog_templates %}{% include dialog %}
   {% endfor %}
   {% include "icons.svg" %}

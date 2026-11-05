@@ -23,20 +23,19 @@ import secrets
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.load_settings import LineConfig
-from pengumon.notify_settings import AlertsConfig
+from pengumon.notify.settings import AlertsConfig
 from pengumon.observability import get_logger
 from pengumon.observability.telemetry import preview_duration, preview_rounds, preview_runs, tracer
 from pengumon.settings import registry
 
-if TYPE_CHECKING:  # the api package imports this module, so these are named lazily
-    from pengumon.api.settings_models import PreviewJob
-    from pengumon.api.state import AppState
+if TYPE_CHECKING:
+    from pengumon.state import AppState
 
 _log = get_logger("pengumon.settings")
 
@@ -51,6 +50,56 @@ STDERR_KEPT = 4000
 REPLAY_COMMAND = (sys.executable, "-m", "pengumon.engine.replay")
 LINE_KEYS = ("line.down_mbps", "line.up_mbps")
 PREFIXES = ("classifier.", "alerts.")
+
+
+# --- the answer's shape (GET /api/settings/preview/{id}; docs/api.md) ------------------------------------------------
+
+class _PreviewModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PreviewCounts(_PreviewModel):
+    incidents: int
+    critical: int
+    warning: int
+    busy_hidden: int
+    total_seconds: float
+    alerts: Optional[int] = None  # incident alerts the notifier's rules would have sent (engine/replay.py)
+
+
+class PreviewWindow(_PreviewModel):
+    start: float
+    end: float
+    rounds: int
+    gaps: List[Dict[str, float]] = Field(default_factory=list)  # [{start, end}]
+
+
+class PreviewChange(_PreviewModel):
+    start: float
+    end: Optional[float]
+    kind: str
+    severity: str
+    in_: Literal["draft", "current", "changed"] = Field(alias="in")
+    was_start: Optional[float] = None  # "changed": the current rules' start, end and severity of the same outage
+    was_end: Optional[float] = None
+    was_severity: Optional[str] = None
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class PreviewJob(_PreviewModel):
+    """POST /api/settings/preview answers {"id": ...}; GET /api/settings/preview/{id} answers this."""
+    id: Optional[str] = None
+    state: Literal["running", "done", "failed", "cancelled"]
+    progress: float = 0.0
+    elapsed_s: float = 0.0
+    error: Optional[str] = None  # "took too long"
+    window: Optional[PreviewWindow] = None
+    current: Optional[PreviewCounts] = None
+    draft: Optional[PreviewCounts] = None
+    recorded: Optional[int] = None
+    changes: List[PreviewChange] = Field(default_factory=list)  # up to 30
+    notes: List[str] = Field(default_factory=list)
 
 
 class PreviewBusy(Exception):
@@ -281,8 +330,7 @@ class PreviewJobs:
 
     # --- the answer --------------------------------------------------------------------------------------------
 
-    def describe(self, job: Job) -> "PreviewJob":
-        from pengumon.api.settings_models import PreviewJob
+    def describe(self, job: Job) -> PreviewJob:
         end = job.finished if job.finished is not None else self.clock()
         fields: Dict[str, Any] = {"id": job.id, "state": job.state, "progress": 1.0 if job.state == "done" else job.progress,
                                   "elapsed_s": round(max(0.0, end - job.started), 1), "error": job.error}

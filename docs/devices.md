@@ -1,6 +1,11 @@
 # Devices (`devices`): modem, gateway, router
 
-Pengumon reads the devices listed under `devices:`. Each entry names a **driver**, which decides what the device can
+Add devices on the **Settings** page (Devices and services): a new device, its driver, address and options, then
+**Set up** for its password. A save applies live ([below](#changing-devices-without-a-restart)). The YAML on this page
+is the syntax that **Settings > Export** writes and **Import** reads; a `config.yaml` with a `devices:` list is read
+only once, on the first start (see [configuration.md](configuration.md)).
+
+Pengumon reads the devices in the `devices` list. Each entry names a **driver**, which decides what the device can
 report (its *capabilities*: `access_line` for the line to the ISP such as DOCSIS levels and errors, `wan_counters`
 for WAN throughput and line load, `router_system` for router CPU, memory and the client count, `client_inventory`
 for the list of connected devices, `mesh` for the mesh nodes and how many clients each carries). Nothing else in the
@@ -21,7 +26,7 @@ devices:
     tls:                         # optional, only used for https:// URLs (and redirects to one)
       verify: true               # default: certifi's CA bundle (or SSL_CERT_FILE / SSL_CERT_DIR); false: no check
       ca_file: /app/certs/router.pem  # optional: verify against this CA (or the device's own certificate)
-    options:                     # driver-specific, checked at startup
+    options:                     # driver-specific, checked when saved
       clientlist_interval_seconds: 60  # asuswrt: the client list (the heaviest answer) is read this often
       # mesh_node_labels:            # asuswrt: name mesh nodes by MAC (or its last six hex digits), see clients.md
       #   "02:00:00:00:11:22": "Hall"
@@ -62,19 +67,20 @@ extensions). A CA file that is missing or unreadable stops the start for an enab
 or plain-HTTP one it is a warning. Certificate fingerprint pinning is not supported yet.
 
 Unknown drivers, duplicate ids, unknown options, a URL with credentials in it or a password in the entry are refused
-at startup with a message naming the entry. Configuration errors never quote the values (a password stays out of
+when you save, with a message naming the entry (in the one-time import of a `config.yaml`, the entry is left out and
+the log says why). Configuration errors never quote the values (a password stays out of
 the log). Several devices of one kind (two routers, two modems) may be enabled: each one's readings are stored under
 its id. The single-device views (the dashboard's modem / line and router panels, the live message, the incident inspector, the
-dossier and the line-load learning) use the first enabled one in config order; when every device of that kind is
+dossier and the line-load learning) use the first enabled one in list order; when every device of that kind is
 switched off (`enabled: false`), the first one still shows its stored history and the line capacity is still learned
 from it. The live line load needs an enabled device.
 
 Without a `devices:` list there are no devices (the probes, incidents and reports work without them). The ids are
-the keys of each device's stored history and credentials: the example `config.yaml` uses `modem` and `router`, the
-ids its history was stored under, so renaming a device starts its history afresh (the old rows are kept until
-retention, and a startup warning names stored ids that are not in the config).
+the keys of each device's stored history and credentials: the example `config.example.yaml` has `modem` and `router`
+(commented out), the ids its history was stored under, so renaming a device starts its history afresh (the old rows are kept until
+retention, and a startup warning names stored ids that are no longer configured).
 
-**Credentials** never go in `config.yaml` or the settings. For each device, the first of these that has a value wins (username and
+**Credentials** never go in the settings or in `config.yaml`. For each device, the first of these that has a value wins (username and
 password separately; `<ID>` is the id in upper case with `-` as `_`):
 
 - Order 1: Password from environment `PENGUMON_DEVICE_<ID>_PASSWORD`. Username from environment `PENGUMON_DEVICE_<ID>_USERNAME`

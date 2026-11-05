@@ -22,13 +22,26 @@ Verify = Union[bool, ssl.SSLContext]
 def tls_verify(tls) -> Verify:
     """httpx's `verify` for `tls:` settings (devices.settings): an SSL context trusting `ca_file` when one is given
     (it still checks the host name against the certificate's subjectAltName), else True (certifi's bundle, or
-    SSL_CERT_FILE / SSL_CERT_DIR) or False (no check). Raises ValueError naming the file when it cannot be used."""
+    SSL_CERT_FILE / SSL_CERT_DIR) or False (no check). Raises ValueError naming the file, and why in plain words,
+    when it cannot be used (the Settings page shows the text)."""
     if tls.ca_file:
         try:
             return ssl.create_default_context(cafile=tls.ca_file)
         except (OSError, ssl.SSLError) as e:
-            raise ValueError(f"tls.ca_file '{tls.ca_file}' cannot be used: {type(e).__name__}: {e}") from None
+            raise ValueError(f"CA file '{tls.ca_file}' cannot be used: {_ca_file_problem(e)}") from None
     return bool(tls.verify)
+
+
+def _ca_file_problem(error: Exception) -> str:
+    if isinstance(error, ssl.SSLError):  # before OSError: SSLError is one
+        return "it holds no certificate in PEM form"
+    if isinstance(error, FileNotFoundError):
+        return "there is no such file"
+    if isinstance(error, IsADirectoryError):
+        return "it is a folder, not a file"
+    if isinstance(error, PermissionError):
+        return "Pengumon is not allowed to read it"
+    return "it cannot be read"
 
 
 def device_verify(cfg) -> Verify:

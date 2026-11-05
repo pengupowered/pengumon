@@ -4,6 +4,23 @@ export const subject = "panel:latency";
 export const variants = ["full"];
 
 export const steps = [
+  ["the theme button recolours charts that are already drawn: grid, axis and tick text follow the page", async ({ click, eq, page, setTheme, until }) => {
+    const colours = () => page.evaluate(() => {
+      const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+      const o = Chart.getChart(document.getElementById("latencyChart")).scales.y.options;
+      const lost = Chart.getChart(document.getElementById("lossChart")).scales.y.options;
+      return { grid: o.grid.color, ticks: o.ticks.color, lossGrid: lost.grid.color, line: css("--line"), ink: css("--ink-3") };
+    });
+    for (const theme of ["light", "dark", "light"]) {
+      await setTheme(theme);
+      const c = await colours();
+      eq(`${theme}: latency grid`, c.grid, c.line);
+      eq(`${theme}: loss lane grid`, c.lossGrid, c.line);
+      eq(`${theme}: tick text`, c.ticks, c.ink);
+    }
+    await setTheme();
+  }],
+
   ["the chart says \"1 ms resolution\" only where the backend times in whole milliseconds", async ({ eq, page, until, variant }) => {
     const coarse = variant === "longpath"; // serve.py's stand-in: windows-icmpapi, 1 ms; otherwise kernel timestamps
     if (coarse) await until(() => !document.getElementById("probeResolution").hidden);

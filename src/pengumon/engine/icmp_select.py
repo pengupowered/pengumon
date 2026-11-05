@@ -68,11 +68,6 @@ def shared_backend() -> IcmpBackend:
     return _shared
 
 
-def shared_failure() -> Optional[IcmpUnavailable]:
-    """Why the shared backend could not be opened the last time it was tried, or None."""
-    return _failure
-
-
 def close_shared_backend() -> None:
     global _shared, _failure
     if _shared is not None:

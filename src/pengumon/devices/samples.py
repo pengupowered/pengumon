@@ -1,15 +1,17 @@
 """Router snapshots and their stored form (pengumon.db.samples.DeviceSample), in one place each way.
 
 `device_sample` is what RouterMonitor stores for a poll; `router_snapshot` and `RouterHistory` turn stored rows back
-into the RouterMetricsSnapshot that /api/devices/{id}/history and the incident inspector answer with.
+into the RouterMetricsSnapshot that /api/devices/{id}/history and the incident inspector answer with;
+`line_history` and `router_history` pick the device whose stored readings the inspector and the dossier read.
 """
 
 import math
 from typing import Dict, List, Optional
 
-from pengumon.capabilities import BAND_2G, BAND_5G, ClientsReading, MeshReading
+from pengumon.capabilities import BAND_2G, BAND_5G, Capability, ClientsReading, MeshReading
 from pengumon.db.samples import DeviceSample, MeshCount
 from pengumon.devices.snapshots import RouterMetricsSnapshot
+from pengumon.lines import docsis
 
 
 def client_counts(reading: ClientsReading) -> Dict[str, int]:
@@ -85,18 +87,41 @@ class RouterHistory:
         return [router_snapshot(s) for s in samples]
 
 
+def line_history(devices, repository) -> Optional[docsis.DocsisHistory]:
+    """The stored readings of the device that reports the access line (DeviceRegistry.primary, so a device
+    switched off in config still shows its history), when that line is DOCSIS: the only technology the inspector
+    and the dossier read so far. None without such a device (or before the registry or repository exist)."""
+    device = devices.primary(Capability.ACCESS_LINE) if devices is not None else None
+    if device is None or repository is None:
+        return None
+    if getattr(device.driver, "line_technology", None) != docsis.TECHNOLOGY:
+        return None
+    return docsis.DocsisHistory(repository, device.id)
+
+
+def router_history(devices, repository) -> Optional[RouterHistory]:
+    """The stored polls of the device the inspector and dossier read (the primary one reporting WAN counters)."""
+    device = devices.primary(Capability.WAN_COUNTERS) if devices is not None else None
+    if device is None or repository is None:
+        return None
+    return RouterHistory(repository, device.id)
+
+
 BUCKET_FIELDS = ("ts", "rx_avg", "rx_max", "tx_avg", "tx_max", "cpu_avg", "cpu_max", "mem_avg", "mem_max",
                  "clients_avg", "clients_max")
 DEFAULT_MAX_POINTS = 400
 MAX_POINTS_LIMIT = 1000
 
 
-def bucket_width(span_seconds: float, bucket_seconds: Optional[int] = None, max_points: Optional[int] = None) -> int:
+def bucket_width(span_seconds: float, bucket_seconds: Optional[int] = None, max_points: Optional[int] = None,
+                 sub_minute_unit: int = 10) -> int:
     """The bucket width for a range: the requested one, widened so the range has at most max_points buckets
-    (DEFAULT_MAX_POINTS), and rounded up to 10 s below a minute, to whole minutes above it."""
+    (DEFAULT_MAX_POINTS), and rounded up to sub_minute_unit seconds below a minute, to whole minutes above it. The
+    rule of both device histories (the router's here, the clients' in api/clients.py); the probe history has its own
+    (db/probes.py get_history_buckets: raw samples or rollups, and a row cap across targets)."""
     points = min(max_points or DEFAULT_MAX_POINTS, MAX_POINTS_LIMIT)
     width = max(int(bucket_seconds or 1), math.ceil(max(span_seconds, 0.0) / points), 1)
-    unit = 10 if width < 60 else 60
+    unit = sub_minute_unit if width < 60 else 60
     return math.ceil(width / unit) * unit
 
 

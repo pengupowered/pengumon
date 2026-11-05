@@ -3,6 +3,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { badge, escapeHtml, icon } from '../../js/util.js';
+import { CAUSES, CAUSE_SHORT } from '../../js/path-api.js';
 import { CAP, hasMore, isLoading, loadAll, loadMore, loadSince, oldestLoaded, totalCounts } from './list.js';
 
 let allRawIncidents = [];
@@ -228,21 +229,15 @@ function emptyWindowText() {
   if (isLoading() && hasMore() && win.start < (oldestLoaded() ?? Infinity)) return ['Loading', 'Looking for older incidents.'];
   const oldest = !hasMore() && allRawIncidents.length >= CAP ? oldestLoaded() : null;
   if (oldest !== null && win.start < oldest) return ['Older than the list', `Only the newest ${CAP} incidents are loaded, and this time is before them.`];
-  if (win.sent === 0 || win.state === 'no_data') return ['No probes in this time', 'Nothing was probed then (pengumon was not running), so there is nothing to list.'];
+  if (win.sent === 0 || win.state === 'no_data') return ['No probes in this time', 'Nothing was probed then (Pengumon was not running), so there is nothing to list.'];
   if (win.sent > 0 && win.lost === 0) return ['Nothing failed in this time', `All ${win.sent.toLocaleString()} probes answered and no incident was open.`];
   if (win.state === 'ok') return ['Nothing failed in this time', 'No incident was open, and this target lost no probes.'];
   const lost = win.lost ? `${win.lost.toLocaleString()} of ${win.sent.toLocaleString()} probes were lost, ` : 'The probes lost here were ';
   return ['No incident in this time', `${lost}too few or too brief to count as an incident (short drops are still in the loss figures).`];
 }
 
-// Where an incident's fault sat (the server's `cause` category), as a word, in the timeline's lane order. The words
-// are Path health's: Router (local probes), Gateway (the gateway / modem on its home-side address, which does not use
-// the line), Line (loss from the provider's first router on while the gateway answers: the line or that router), ISP
-// (the provider's network beyond it).
-export const CAUSES = [['router', 'Router'], ['gateway', 'Gateway'], ['line', 'Line'], ['isp', 'ISP'], ['internet', 'Internet'],
-  ['dns', 'DNS'], ['load', 'Load'], ['service', 'Service'], ['unknown', 'Other']];
-const CAUSE_WORD = Object.fromEntries(CAUSES);
-export const causeOf = (inc) => CAUSE_WORD[inc.cause] || 'Other';
+// Where an incident's fault sat, as a word (js/path-api.js CAUSES, in the timeline's lane order).
+export const causeOf = (inc) => CAUSE_SHORT[inc.cause] || 'Other';
 
 export function levelOfIncident(inc) {
   if (inc.expected) return 'busy';

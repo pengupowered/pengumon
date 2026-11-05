@@ -5,7 +5,7 @@ over the model defaults, the environment overrides on top, copied into the live 
 After that config.yaml is only read for the bootstrap keys (pengumon.config.BOOTSTRAP_KEYS); one log line says how many
 of its settings keys differ from the store.
 
-A save (`apply`): validate the change as a whole candidate config, write the secret slots to secrets.json, commit the
+A save (`apply`): validate the change as a whole candidate config (settings/validate.py), write the secret slots to secrets.json, commit the
 document as the next revision (db/settings.py, with its version), then go live: copy the new effective config into
 the live objects in one synchronous block (so no probe round sees half a change) and call the hub's appliers for
 what running parts keep a copy of. An applier that fails leaves its parts "applies after a restart": the store is the
@@ -17,34 +17,33 @@ URLs, header secrets) live in secrets.json and only their state (set or not, whe
 
 import asyncio
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
-from pengumon.devices.validation import validate_devices
 from pengumon import yamlsafe
 from pengumon.config import BOOTSTRAP_KEYS, AppConfig, read_config_file
 from pengumon.db.settings import SettingsConflict
-from pengumon.notify_settings import SECRET_PREFIX, http_url, webhook_id
+from pengumon.notify.settings import SECRET_PREFIX
 from pengumon.observability import get_logger
 from pengumon.observability.telemetry import settings_imports, settings_saves
-from pengumon.secrets import SECRETS_DIR, SecretStore, resolve_slot, slot_env_var, slot_path
+from pengumon.secrets import SECRETS_DIR, SECRETS_FILE_DAMAGED, SecretsFileUnusable, SecretStore, resolve_slot
 from pengumon.settings import env as settings_env
 from pengumon.settings import lenient, registry
 from pengumon.settings.document import SettingsDocument
 from pengumon.settings.hub import Change, SettingsHub
-from pengumon.settings.importer import get_path, jsonable, present, read_settings, secret_names
+from pengumon.settings.importer import get_path, jsonable, read_settings, secret_names
 from pengumon.settings.plain import plain
+from pengumon.settings.validate import Validation, describe, list_item_id as _item_id
+from pengumon.settings.validate import validate as validate_change
 
 _log = get_logger("pengumon.settings")
 
-SECRET_MAX_CHARS = 4096
-RETENTION_WARN_DAYS = 7
 EXPORT_HEADER = ("# Pengumon settings (Settings > Export). Import them on the Settings page of any install. Secrets\n"
                  "# (ntfy, webhook URLs and header values, device passwords) are not in this file.\n")
 SOURCES = ("save", "restore", "yaml_import")
@@ -61,23 +60,11 @@ class SettingsInvalid(Exception):
 
 
 class SecretsWriteFailed(Exception):
-    """secrets.json could not be written; nothing was committed."""
+    """secrets.json could not be written; nothing was committed. `detail` says why, in words for the page."""
 
-
-@dataclass
-class Validation:
-    errors: List[Dict[str, str]] = field(default_factory=list)
-    warnings: List[Dict[str, str]] = field(default_factory=list)
-    summary: str = ""
-    document: Optional[SettingsDocument] = None  # the document after the change
-    secret_updates: Dict[str, Any] = field(default_factory=dict)
-    secret_removals: List[Tuple[str, ...]] = field(default_factory=list)
-    slots: Set[str] = field(default_factory=set)  # slots written or cleared
-    status: int = 422
-
-    @property
-    def ok(self) -> bool:
-        return not self.errors
+    def __init__(self, detail: str = "The secrets file could not be written; nothing was saved"):
+        super().__init__(detail)
+        self.detail = detail
 
 
 @dataclass
@@ -123,72 +110,6 @@ def _copy_value(owner: Any, name: str, old: Any, new: Any) -> None:
         old[:] = new
     else:
         setattr(owner, name, new)
-
-
-def _shown(setting: registry.Setting, value: Any, round_seconds: float) -> str:
-    """A value as the page shows it, for the version line."""
-    if value is None:
-        return "default" if setting.default() is None else "none"
-    if isinstance(value, bool):
-        return "on" if value else "off"
-    if isinstance(value, (int, float)):
-        number = value * round_seconds if setting.rounds else value * setting.scale
-        text = f"{round(number, 4):g}"
-        return f"{text} {setting.unit}" if setting.unit else text
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value) or "none"
-    text = str(value)
-    return text if len(text) <= 40 else text[:39] + "…"
-
-
-def _item_id(item: dict) -> str:
-    return str(item.get("id") or "")
-
-
-def _describe_list(name: str, old: Optional[List[dict]], new: Optional[List[dict]]) -> Optional[str]:
-    label = registry.LISTS[name].label
-    if new is None:
-        return None if old is None else f"{label} back to the default"
-    before = {_item_id(i): i for i in (old or [])}
-    after = {_item_id(i): i for i in new}
-    added = [i for i in after if i not in before]
-    removed = [i for i in before if i not in after]
-    changed = [i for i in after if i in before and before[i] != after[i]]
-    parts = []
-    if added:
-        parts.append(f"added {', '.join(added)}")
-    if removed:
-        parts.append(f"removed {', '.join(removed)}")
-    if changed:
-        parts.append(f"changed {', '.join(changed)}")
-    if not parts and [i for i in after if i in before] != [i for i in before if i in after]:
-        parts.append("order changed")
-    if not parts and old is None:
-        parts.append("set" if new else "set to none")
-    return f"{label}: {'; '.join(parts)}" if parts else None
-
-
-def describe(old: SettingsDocument, new: SettingsDocument, slots: Iterable[str] = (),
-             round_seconds: float = 1.0) -> str:
-    """The version line of a change: "Loss counts as down from 40 % → 35 %; Webhooks: added home"."""
-    parts: List[str] = []
-    for setting in registry.SETTINGS:
-        before, after = old.values.get(setting.key), new.values.get(setting.key)
-        if (setting.key in old.values) == (setting.key in new.values) and before == after:
-            continue
-        was = _shown(setting, before if setting.key in old.values else setting.default(), round_seconds)
-        now = _shown(setting, after if setting.key in new.values else setting.default(), round_seconds)
-        parts.append(f"{setting.label} {was} → {now}" if was != now else f"{setting.label} {now}")
-    for name in registry.LISTS:
-        text = _describe_list(name, old.lists.get(name), new.lists.get(name))
-        if text:
-            parts.append(text)
-    for slot in sorted(slots):
-        parts.append(f"secret {slot} changed")
-    if not parts:
-        return "No changes"
-    text = "; ".join(parts)
-    return text[0].upper() + text[1:]
 
 
 # --- the manager ---------------------------------------------------------------------------------------------------
@@ -428,251 +349,12 @@ class SettingsManager:
             _log.info(f"config.yaml is ignored for settings (managed in the dashboard since {date}); "
                       f"{len(differing)} key{'s' if len(differing) != 1 else ''} differ: {', '.join(differing)}")
 
-    # --- validating a change -------------------------------------------------------------------------------------
-
-    def _where(self, loc: Tuple[Any, ...], data: dict, error: dict, touched_values: List[str],
-               touched_lists: List[str], document: SettingsDocument) -> List[str]:
-        """Where the page shows a validation error of the candidate config."""
-        text = lenient.path_text(tuple(loc))
-        for name, spec in registry.LISTS.items():
-            parts = tuple(spec.path.split("."))
-            if tuple(loc[:len(parts)]) == parts and len(loc) > len(parts) and isinstance(loc[len(parts)], int):
-                index = loc[len(parts)]
-                rest = ".".join(str(p) for p in loc[len(parts) + 1:])
-                if name == "webhooks":  # the candidate holds only the webhooks with a URL: back to the item's place
-                    sent = get_path_dict(data, spec.path) or []
-                    hook_id = _item_id(sent[index]) if index < len(sent) else ""
-                    if rest == "url":
-                        return [f"secrets.webhook.{hook_id}.url"]
-                    ids = [_item_id(i) for i in document.lists.get("webhooks") or []]
-                    index = ids.index(hook_id) if hook_id in ids else index
-                return [f"lists.{name}[{index}]" + (f".{rest}" if rest else "")]
-            if tuple(loc) == parts:
-                return [f"lists.{name}"]
-        for key in registry.BY_KEY:
-            if text == key or text.startswith(key + "."):
-                return [f"values.{key}"]
-        # a rule across values: the touched values (or list items) whose removal alone clears it
-        candidates = [tuple(k.split(".")) for k in touched_values if present(data, k)]
-        for name in touched_lists:
-            path = tuple(registry.LISTS[name].path.split("."))
-            items = document.lists.get(name) or []
-            candidates += [path + (i,) for i in range(len(items))]
-        found = lenient.culprits(AppConfig, data, error, tuple(loc), candidates)
-        out = []
-        for path in found:
-            if isinstance(path[-1], int):
-                spec = registry.list_spec_for_path(".".join(str(p) for p in path[:-1]))
-                out.append(f"lists.{spec.name}[{path[-1]}]" if spec else f"values.{lenient.path_text(path)}")
-            else:
-                out.append(f"values.{'.'.join(path)}")
-        return out or [f"values.{text}" if text else "values"]
-
-    def _check_secrets(self, secrets: Mapping[str, str], document: SettingsDocument,
-                       out: Validation) -> None:
-        hook_ids = {_item_id(i) for i in document.lists.get("webhooks") or []}
-        for slot, value in secrets.items():
-            where = f"secrets.{slot}"
-            path = slot_path(slot)
-            if path is None:
-                out.errors.append({"where": where, "message": "no such secret"})
-                continue
-            variable = slot_env_var(slot)
-            if variable and settings_env.env_value(variable, self._environ) is not None:
-                out.errors.append({"where": where, "message": f"set by the environment variable {variable}; "
-                                                              "change it there"})
-                out.status = 400
-                continue
-            if not isinstance(value, str):
-                out.errors.append({"where": where, "message": "must be text"})
-                continue
-            value = value.strip()
-            if slot.startswith("webhook.") and slot[len("webhook."):-len(".url")] not in hook_ids and value:
-                out.errors.append({"where": where, "message": "no webhook has this id"})
-                continue
-            if value:
-                if len(value) > SECRET_MAX_CHARS or "\n" in value or "\r" in value:
-                    out.errors.append({"where": where, "message": f"must be one line of at most {SECRET_MAX_CHARS} "
-                                                                  "characters"})
-                    continue
-                if slot.endswith(".url"):
-                    try:
-                        http_url(value, "the address", allow_query=True)
-                    except ValueError as e:
-                        out.errors.append({"where": where, "message": str(e)})
-                        continue
-                set_path_tuple(out.secret_updates, path, value)
-            else:
-                out.secret_removals.append(path)
-            out.slots.add(slot)
-
-    def _check_lists(self, change_lists: Mapping[str, Optional[List[dict]]], document: SettingsDocument,
-                     pending: Mapping[str, str], hop_ids: Set[str], out: Validation) -> None:
-        live_devices = {d.id: d for d in self.config.devices}
-        for name, items in change_lists.items():
-            if items is None:
-                continue
-            ids: Set[str] = set()
-            for i, item in enumerate(items):
-                where = f"lists.{name}[{i}]"
-                item_id = _item_id(item)
-                if item_id and item_id in ids:
-                    out.errors.append({"where": f"{where}.id", "message": "this id is used twice"})
-                ids.add(item_id)
-                if name == "devices" and item_id and item_id not in live_devices:
-                    kept = {_item_id(x) for x in items}
-                    for old in live_devices.values():
-                        if (old.id not in kept and old.driver == item.get("driver")
-                                and old.url == (item.get("url") or "").strip()):
-                            out.errors.append({"where": f"{where}.id", "message": "an id can't be renamed: its "
-                                               f"history and sign-in are kept under the old id ({old.id})"})
-                if name == "services" and item.get("ca_file") and not Path(str(item["ca_file"])).is_file():
-                    out.errors.append({"where": f"{where}.ca_file", "message": "CA file not found"})
-                if name == "dns_probes" and item_id in hop_ids:
-                    out.errors.append({"where": f"{where}.id", "message": "this id is a hop of the probe path (its "
-                                                                          "history is kept under it)"})
-                if name == "webhooks":
-                    for header, text in (item.get("headers") or {}).items():
-                        if not (isinstance(text, str) and text.startswith(SECRET_PREFIX)):
-                            out.errors.append({"where": f"{where}.headers.{header}",
-                                               "message": "a header value is a secret: enter it on the page"})
-                            continue
-                        slot = f"webhook_header.{text[len(SECRET_PREFIX):]}"
-                        if slot in pending:
-                            if not pending[slot]:
-                                out.errors.append({"where": f"secrets.{slot}", "message": "a header secret "
-                                                   "this webhook uses can't be cleared"})
-                        elif self.secret_value(slot) is None:
-                            out.errors.append({"where": f"secrets.{slot}", "message": "this header secret is "
-                                               "not set"})
-
-    def _warnings(self, document: SettingsDocument, out: Validation) -> None:
-        def value(key):
-            return document.values.get(key, registry.get(key).default())
-
-        days = value("database.retention_days")
-        before = self.config.database.retention_days
-        if isinstance(days, int) and days < RETENTION_WARN_DAYS:
-            out.warnings.append({"where": "values.database.retention_days",
-                                 "message": f"retention under {RETENTION_WARN_DAYS} days: line-capacity learning "
-                                            f"needs {RETENTION_WARN_DAYS}"})
-        if isinstance(days, int) and days < before:
-            out.warnings.append({"where": "values.database.retention_days",
-                                 "message": f"lowering raw retention from {before} to {days} days deletes "
-                                            f"{before - days} days of samples at the next hourly cleanup"})
-        if value("privacy.client_details") == "full" and not self._token_set():
-            out.warnings.append({"where": "values.privacy.client_details",
-                                 "message": "client details full: anyone who can reach the port sees client names"})
-
-    @staticmethod
-    def _normalise_webhooks(items: List[dict], current: List[dict]) -> List[dict]:
-        """New webhooks get an id from their name (an item saved before keeps its id)."""
-        taken = {_item_id(i) for i in items if _item_id(i)}
-        out = []
-        for number, item in enumerate(items, start=1):
-            item = dict(item)
-            if not _item_id(item):
-                item["id"] = webhook_id(item.get("name") or f"webhook-{number}", taken)
-                taken.add(item["id"])
-            out.append(item)
-        return out
+    # --- validating a change (settings/validate.py) --------------------------------------------------------------
 
     async def validate(self, values: Mapping[str, Any], lists: Mapping[str, Optional[List[dict]]],
                        secrets: Mapping[str, str] = None) -> Validation:
         """Checks a change against the current state as a whole candidate config; nothing is applied."""
-        secrets = secrets or {}
-        out = Validation()
-        overrides = self.env_overrides()
-        new_values = dict(self._document.values)
-        for key, value in values.items():
-            if key not in registry.BY_KEY:
-                out.errors.append({"where": f"values.{key}", "message": "no such setting"})
-                continue
-            if key in overrides:
-                out.errors.append({"where": f"values.{key}", "message": f"set by the environment variable "
-                                   f"{settings_env.SETTING_ENV[key]}; change it there"})
-                out.status = 400
-                continue
-            if value is None:
-                new_values.pop(key, None)
-            else:
-                new_values[key] = value
-        new_lists = dict(self._document.lists)
-        for name, items in lists.items():
-            if name not in registry.LISTS:
-                out.errors.append({"where": f"lists.{name}", "message": "no such list"})
-                continue
-            if items is not None and not (isinstance(items, list) and all(isinstance(i, dict) for i in items)):
-                out.errors.append({"where": f"lists.{name}", "message": "must be a list of items"})
-                continue
-            if name == "webhooks" and items is not None:
-                items = self._normalise_webhooks(items, self._document.lists.get("webhooks") or [])
-            new_lists[name] = copy.deepcopy(items) if items is not None else None
-        if out.errors:
-            return out
-        # items as their models store them (every field, normalised); a bad item is reported by the full check
-        for name, items in list(new_lists.items()):
-            if items is None or name not in lists:
-                continue
-            model = registry.LISTS[name].item_model
-            normalised = []
-            for item in items:
-                try:
-                    normalised.append(model.model_validate(item).model_dump(mode="json"))
-                except ValidationError:
-                    normalised.append(item)
-            new_lists[name] = normalised
-        document = SettingsDocument(values=new_values, lists={k: v for k, v in new_lists.items() if v is not None})
-        self._check_secrets(secrets, document, out)
-        pending = {slot: (v or "").strip() for slot, v in secrets.items() if isinstance(v, str)}
-
-        def secret(slot: str) -> Optional[str]:
-            if slot in pending:
-                return pending[slot] or None
-            return self.secret_value(slot)
-
-        self._check_lists({n: document.lists.get(n) for n in lists}, document, pending,
-                          await self._hop_ids() if "dns_probes" in lists else set(), out)
-        problems: List[Dict[str, str]] = []
-        data = self._data(document, secret, problems)
-        if "webhooks" in lists or any(slot.startswith("webhook.") for slot in secrets):
-            out.errors += problems
-        try:
-            AppConfig.model_validate(data)
-        except ValidationError as e:
-            for error in e.errors(include_url=False, include_input=False, include_context=False):
-                for where in self._where(tuple(error.get("loc", ())), data, error, list(values),
-                                         list(lists), document):
-                    message = plain(lenient.reason(error), ".".join(str(p) for p in error.get("loc", ()) if isinstance(p, str)))
-                    if {"where": where, "message": message} not in out.errors:
-                        out.errors.append({"where": where, "message": message})
-        if lists.get("devices") is not None and not any(e["where"].startswith("lists.devices") for e in out.errors):
-            # the dry build of every device (what used to stop the start: a bad option, a missing CA file)
-            items = document.lists.get("devices") or []
-            index = {_item_id(item): n for n, item in enumerate(items)}
-            for where, message in await validate_devices(items, self.config.devices):
-                _, _, rest = where.partition(".")
-                item_id, _, field = rest.partition(".")
-                at = f"lists.devices[{index[item_id]}]" if item_id in index else "lists.devices"
-                out.errors.append({"where": at + (f".{field}" if field else ""), "message": message})
-        self._warnings(document, out)
-        # removing a webhook removes its URL and the header secrets no remaining webhook names
-        if "webhooks" in lists:
-            kept = {_item_id(i) for i in document.lists.get("webhooks") or []}
-            named = set(self.slots(document))
-            for item in self._document.lists.get("webhooks") or []:
-                if _item_id(item) in kept:
-                    continue
-                url_slot = f"webhook.{_item_id(item)}.url"
-                out.secret_removals.append(slot_path(url_slot))
-                out.slots.add(url_slot)
-                for slot in self.slots(SettingsDocument(lists={"webhooks": [item]}))[2:]:
-                    if slot.startswith("webhook_header.") and slot not in named:
-                        out.secret_removals.append(slot_path(slot))
-                        out.slots.add(slot)
-        out.document = document
-        out.summary = describe(self._document, document, out.slots, self.round_seconds)
-        return out
+        return await validate_change(self, values, lists, secrets)
 
     # --- saving ------------------------------------------------------------------------------------------------------
 
@@ -712,6 +394,8 @@ class SettingsManager:
             if checked.secret_updates or checked.secret_removals:
                 try:
                     self.secrets.change(checked.secret_updates, checked.secret_removals)
+                except SecretsFileUnusable:  # logged by the store, with what to do
+                    raise SecretsWriteFailed(SECRETS_FILE_DAMAGED) from None
                 except OSError as e:
                     _log.error(f"secrets.json could not be written: {type(e).__name__}; the settings were not saved")
                     raise SecretsWriteFailed() from None
@@ -815,17 +499,3 @@ class SettingsManager:
             else:
                 values[key] = value
         return {"values": values, "lists": dict(result.document.lists), "notes": notes, "kept": kept}
-
-
-def get_path_dict(data: dict, path: str) -> Any:
-    node: Any = data
-    for part in path.split("."):
-        node = node.get(part) if isinstance(node, dict) else None
-    return node
-
-
-def set_path_tuple(data: dict, path: Tuple[str, ...], value: Any) -> None:
-    node = data
-    for part in path[:-1]:
-        node = node.setdefault(part, {})
-    node[path[-1]] = value

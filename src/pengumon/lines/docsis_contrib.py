@@ -9,8 +9,9 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 from pengumon.capabilities import Capability
 from pengumon.capabilities.contrib import (
     ROLE_LINE, ContribContext, DriverNotes, EventKind, ModuleEvent, ModuleSection, RedactionHints, day_key,
-    devices_with, effective_poll_seconds, field_key, host_of, median, plural,
+    effective_poll_seconds, field_key, host_of, median, plural,
 )
+from pengumon.drivers import DRIVERS, devices_with
 from pengumon.grades import GOOD
 from pengumon.lines import docsis
 from pengumon.lines.docsis import (
@@ -65,10 +66,10 @@ class DocsisFacts:
     spacing: Optional[Tuple[float, float, float]] = None   # seconds between the window's readings: median, 10th, 90th %
 
 
-def _finding(channel) -> str:
+def _finding(channel, levels) -> str:
     """channel_finding, saying which count it means: the channel's uncorrectables since the modem started, not the
     new ones of the table's column."""
-    text = channel_finding(channel)
+    text = channel_finding(channel, levels)
     return "High uncorrectable count since the modem started" if text == "High uncorrectable count" else text
 
 
@@ -78,9 +79,9 @@ def _as_shown(channel):
                                       "snr_db": None if channel.snr_db is None else round(channel.snr_db, 1)})
 
 
-def _limit(c) -> Optional[Tuple[str, str]]:
-    """(metric, side) when a shown channel sits exactly at a healthy limit: ("snr", "low"), ("power", "high")..."""
-    lv = docsis.LEVELS
+def _limit(c, lv) -> Optional[Tuple[str, str]]:
+    """(metric, side) when a shown channel sits exactly at a healthy limit of the levels `lv`: ("snr", "low"),
+    ("power", "high")..."""
     if c.direction == "downstream":
         if c.snr_db is not None and c.snr_db == round(lv.ds_snr_warning_db, 1):
             return "snr", "low"
@@ -201,14 +202,12 @@ class DocsisContribution:
         cfgs = devices_with(ctx.devices, Capability.ACCESS_LINE, TECHNOLOGY)
         if not cfgs:
             return None
-        from pengumon.drivers import DRIVERS
         cfg = cfgs[0]
         poll = effective_poll_seconds(cfg, DRIVERS[cfg.driver])
         identifiers = {v: ROLE_LINE for v in (host_of(cfg), cfg.id) if v}
         if cfg.model:
             identifiers.setdefault(cfg.model, field_key("model"))   # kept or dropped by fields["model"]
-        if ctx.config.line_signal != docsis.LEVELS:
-            docsis.use_levels(ctx.config.line_signal)  # offline there is no app to have set the levels in force
+        levels = getattr(ctx.config, "line_signal", None) or docsis.DEFAULT_LEVELS
         # One row of padding on each side tells whether the first reading of the window is a restart or a burst.
         rows = [s for s in await ctx.repository.get_line_samples(cfg.id, ctx.start, ctx.end, padding_seconds=2 * poll)
                 if s.technology == TECHNOLOGY]
@@ -259,10 +258,10 @@ class DocsisContribution:
                     recurring = prev is not None and (prev.errors_recent or 0) > 0
                     # The modem's error-free codeword counts are not stored, so the ratio is unknown here: the
                     # per-minute rule judges (judge_errors).
-                    burst = judge_errors(recent, interval, None, recurring)[0] != GOOD
+                    burst = judge_errors(recent, interval, None, recurring, levels)[0] != GOOD
                     events.append(ModuleEvent("line.error_burst" if burst else "line.errors", counted_from, s.ts,
                                               ROLE_LINE, float(recent)))
-                snapshot = grade_snapshot(snapshot_from_sample(dataclasses.replace(s, detail=None)))
+                snapshot = grade_snapshot(snapshot_from_sample(dataclasses.replace(s, detail=None)), levels)
                 if any(snapshot.grades.get(k, GOOD) != GOOD for k in ("ds_power", "ds_snr", "us_power")):
                     worst = [c.snr_db for c in decode_channels(s.detail) if c.direction == "downstream"
                              and c.snr_db is not None]
@@ -275,8 +274,8 @@ class DocsisContribution:
         at_limit: Tuple[str, ...] = ()
         if last_good is not None:
             shown = [_as_shown(c) for c in decode_channels(last_good.detail)]
-            bad = [c for c in shown if is_degraded(c)]
-            limits = [(c, _limit(c)) for c in shown if not is_degraded(c)]
+            bad = [c for c in shown if is_degraded(c, levels)]
+            limits = [(c, _limit(c, levels)) for c in shown if not is_degraded(c, levels)]
             at_limit = _at_limit([(c, lim) for c, lim in limits if lim],
                                  [s for s in in_window if s.status not in NO_READING_STATUSES])
             bad.sort(key=lambda c: (-c.uncorrectables_recent, c.snr_db if c.snr_db is not None else 99.0))
@@ -284,7 +283,7 @@ class DocsisContribution:
             degraded_rows = tuple(
                 ("DS" if c.direction == "downstream" else "US", f"{c.frequency_mhz:g}", f"{c.power_dbmv:+.1f}",
                  f"{c.snr_db:.1f}" if c.snr_db is not None else "-", f"{c.uncorrectables_recent:,}",
-                 _finding(c)) for c in bad[:TABLE_ROWS])
+                 _finding(c, levels)) for c in bad[:TABLE_ROWS])
         last_row = in_window[-1] if in_window else None
         stat3 = (min(snr), median(snr), max(snr)) if snr else None
         gaps = sorted(b.ts - a.ts for a, b in zip(in_window, in_window[1:]) if b.ts > a.ts)

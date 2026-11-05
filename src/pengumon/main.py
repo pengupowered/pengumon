@@ -12,9 +12,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
-from pengumon import __version__, notify, paths
+from pengumon import __version__, paths
 from pengumon.api.router import metrics_router, router as api_router
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.clients import component as clients
 from pengumon.components import run_components
 from pengumon.config import load_config, load_server_config
@@ -24,6 +24,7 @@ from pengumon.engine import line_load, probing
 from pengumon.engine.classifier import component as classifier
 from pengumon.engine.discovery import component as discovery
 from pengumon.live import component as live
+from pengumon.notify import component as notify
 from pengumon.observability import apply_config_level, get_logger, grafana, setup_logging
 from pengumon.observability import component as runtime
 from pengumon.observability.export import setup_telemetry
@@ -85,7 +86,7 @@ async def _validation_error(request: Request, exc: RequestValidationError):
 
 
 def create_app() -> FastAPI:
-    """The app: middleware, the static files, the core API, each component's router, metrics and the page."""
+    """The app: middleware, the static files, the API, metrics and the page."""
     app = FastAPI(
         title="Pengumon",
         description="Network Diagnostics & Outage Root-Cause Analyzer",
@@ -105,11 +106,7 @@ def create_app() -> FastAPI:
     app.state.security_config = security_config  # the clients API reads whether a token is set (privacy.client_details)
 
     assets.mount_static(app)
-    app.include_router(api_router)
-    # Mounted whether or not the feature is configured: the routes and the OpenAPI schema never depend on config.yaml.
-    for component in COMPONENTS:
-        if getattr(component, "router", None) is not None:
-            app.include_router(component.router)
+    app.include_router(api_router)  # every feature's routes (api/router.py)
     app.include_router(metrics_router)
     app.include_router(pages.router)
     return app

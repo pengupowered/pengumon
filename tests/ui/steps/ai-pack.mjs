@@ -122,6 +122,19 @@ export const steps = [
     await setTheme(null);
   }],
 
+  ["Ask AI: while the first answer is on its way the empty preview says it is being built", async ({ click, eq, ok, page, until }) => {
+    await aiStub(page);
+    await page.evaluate(() => { window.__aiMode = "slow"; });
+    await click("#headerTools [data-action=openAiPackModal]");
+    await until(() => window.__aiRelease);
+    eq("the box says so", await page.$eval("#aiPackText", (t) => `${t.value}|${t.placeholder}`), "|Building the pack...");
+    await page.evaluate(() => window.__aiRelease());
+    await until(() => document.getElementById("aiPackText").value.length > 100);
+    eq("and not any more", await page.$eval("#aiPackText", (t) => t.placeholder), "");
+    await page.evaluate(() => { window.__aiMode = "ok"; });
+    await click("[data-action=closeModal][data-arg=aiPackModal]");
+  }],
+
   ["Ask AI from the incident inspector covers that incident, and closes alone; the dossier points to it", async ({ click, eq, inspectNamed, ok, page, until }) => {
     await aiStub(page);
     await inspectNamed("Short gateway drop");

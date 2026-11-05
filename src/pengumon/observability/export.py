@@ -232,5 +232,5 @@ for _gauge in GAUGES:
 
 
 def observe_state(app_state: Any) -> None:
-    """Points the gauges at the app state (api.state.AppState); None stops them."""
+    """Points the gauges at the app state (pengumon.state.AppState); None stops them."""
     _state["app"] = app_state

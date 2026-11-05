@@ -1,7 +1,7 @@
 """The static files: served under /static/v/<content hash>/ (cached for good) and under plain /static (old URLs).
 
 The hash covers the whole shipped tree, so a redeploy with changed content changes every asset URL and the long
-cache on that prefix can never serve stale files. The panel and dialog folders (pengumon.ui) hold templates and
+cache on that prefix can never serve stale files. The panel and dialog folders (pengumon.web.ui) hold templates and
 manifests next to their assets; those are never served as files.
 """
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 
-from pengumon.ui import NOT_SERVED
+from pengumon.web.ui import NOT_SERVED
 
 WEB_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEB_DIR / "static"

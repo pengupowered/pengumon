@@ -33,7 +33,7 @@ function buildHopRow(t, tbody) {
     <td class="wide"><span class="range" role="img" data-f="range"><i data-f="band"></i><b data-f="mark"></b></span><span class="range-n num" data-f="rangeText"></span></td>
     <td class="r num" data-l="Last"><b data-f="last"></b></td>
     <td class="r num hide-narrow" data-f="jitter"></td>
-    <td class="r num hide-narrow c-total" data-f="total" title="Every probe since pengumon started"></td>
+    <td class="r num hide-narrow c-total" data-f="total" title="Every probe since Pengumon started"></td>
     <td class="hide-narrow spark-td c-spark" data-f="sparkCell"></td>`;
   tr.dataset.action = 'openTargetHistory';
   tr.dataset.arg = t.target_id;

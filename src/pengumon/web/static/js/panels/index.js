@@ -1,4 +1,4 @@
-// The panels and dialogs on this page are the folders the server found (pengumon.ui: static/panels/<id>/ and
+// The panels and dialogs on this page are the folders the server found (pengumon.web.ui: static/panels/<id>/ and
 // static/dialogs/<id>/), listed on <body data-modules>. They are loaded here with dynamic import(): the dialogs first
 // (they register their actions), then the panels in their default order. A panel is one folder whose panel.js
 // default-exports the contract

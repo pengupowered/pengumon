@@ -1,5 +1,5 @@
 """The AI pack's delivery: GET /api/ai-pack (defaults, who may ask, limits, the counter). The pack itself is built by
-pengumon.reports.ai_pack and tested there; here `build_ai_pack` is a stub that records how it was called."""
+pengumon.reports.contributions and tested there; here `build_ai_pack` is a stub that records how it was called."""
 
 import asyncio
 import sys
@@ -22,7 +22,7 @@ TOKEN = "s3cret-token"
 
 @pytest.fixture
 def stub(monkeypatch):
-    """A stand-in `pengumon.reports.ai_pack` that records each call and answers a small pack."""
+    """A stand-in `pengumon.reports.contributions` that records each call and answers a small pack."""
     calls, gate = [], asyncio.Event()
     gate.set()
 
@@ -31,9 +31,9 @@ def stub(monkeypatch):
         await gate.wait()
         return {"markdown": "# Network troubleshooting pack\n", "modules": [], "roles": {}}
 
-    module = types.ModuleType("pengumon.reports.ai_pack")
+    module = types.ModuleType("pengumon.reports.contributions")
     module.build_ai_pack = build_ai_pack
-    monkeypatch.setitem(sys.modules, "pengumon.reports.ai_pack", module)
+    monkeypatch.setitem(sys.modules, "pengumon.reports.contributions", module)
     return SimpleNamespace(calls=calls, gate=gate)
 
 

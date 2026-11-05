@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from pengumon.notify_settings import http_url
+from pengumon.notify.settings import http_url
 
 
 class ServiceCheckConfig(BaseModel):

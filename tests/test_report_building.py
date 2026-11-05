@@ -2,6 +2,9 @@
 
 from types import SimpleNamespace
 
+import pytest
+
+from pengumon.reports import reliability
 from pengumon.reports.reliability import build_report
 
 NOW = 1_760_000_000.0
@@ -11,14 +14,21 @@ class Repo:
     def __init__(self, daily=(), hourly=(), incidents=()):
         self.daily, self.hourly, self.incidents = list(daily), list(hourly), list(incidents)
 
-    async def get_daily_availability(self, start_time, tz_offset_minutes=0):
-        return self.daily
-
-    async def get_hourly_loss(self, start_time, tz_offset_minutes=0):
-        return self.hourly
-
     async def get_incidents_since(self, start_time):
         return self.incidents
+
+
+@pytest.fixture(autouse=True)
+def fixed_rows(monkeypatch):
+    """The report's two rollup queries (pengumon.reports.queries) answer with the Repo's rows."""
+    async def daily(repo, *args, **kwargs):
+        return repo.daily
+
+    async def hourly(repo, *args, **kwargs):
+        return repo.hourly
+
+    monkeypatch.setattr(reliability, "daily_availability", daily)
+    monkeypatch.setattr(reliability, "hourly_loss", hourly)
 
 
 def cfg(*ids):

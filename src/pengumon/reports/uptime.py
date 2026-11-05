@@ -2,12 +2,14 @@
 
 import time
 from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Any, Dict, List, Optional, Tuple
 
 from pengumon.incidents.taxonomy import is_service_kind
 from pengumon.reports.queries import block_stats
 from pengumon.reports.common import _canonical_order, _targets
 from pengumon.reports.settings import UptimeConfig
+from pengumon.timeofday import local_midnight, utc_offset, zone_name
 
 
 UPTIME_WINDOWS = {"24h": (900, 96), "7d": (86400, 7), "30d": (86400, 30)}  # block seconds, number of blocks
@@ -35,22 +37,30 @@ def block_status(sent: int, ok: int, dead_minutes: int, levels: Optional[UptimeC
 
 
 async def build_uptime(repository, config, window: str = "24h", now: Optional[float] = None,
-                       tz_offset_minutes: int = 0) -> Dict[str, Any]:
+                       tz: tzinfo = timezone.utc) -> Dict[str, Any]:
     """Availability strips for every target: `cells` has one status per block, oldest first, ending with the block that
-    contains now ("24h": 96 blocks of 15 min; "7d" and "30d": calendar days in the time zone tz_offset_minutes east of
-    UTC). A cell is ok, degraded, outage, no_data, or busy: a degraded or outage block whose only incidents were
-    explained by heavy line load (expected), so the strip can hatch it instead of colouring it as a fault.
-    availability_pct is probes answered / sent over the whole window (null without probes)."""
+    contains now ("24h": 96 blocks of 15 min; "7d" and "30d": calendar days on the clock in `tz`, 23 or 25 hours long
+    on a day the clocks change). A cell is ok, degraded, outage, no_data, or busy: a degraded or outage block whose
+    only incidents were explained by heavy line load (expected), so the strip can hatch it instead of colouring it as a
+    fault. availability_pct is probes answered / sent over the whole window (null without probes). Block i runs from
+    bounds[i] to bounds[i + 1] (epoch seconds, blocks + 1 of them); zone names the clock the days are cut on and the
+    times are meant to be read in (timeofday.zone_name), tz_offset_minutes its offset now."""
     block_seconds, count = UPTIME_WINDOWS[window]
     now = now or time.time()
-    offset = tz_offset_minutes * 60 if block_seconds == 86400 else 0
-    last = int((now + offset) // block_seconds)
+    cut = tz
+    if block_seconds == 86400:
+        epoch_day = date(1970, 1, 1)
+        last = (datetime.fromtimestamp(now, tz).date() - epoch_day).days
+        bounds = [local_midnight(epoch_day + timedelta(days=k), tz) for k in range(last - count + 1, last + 2)]
+    else:
+        cut = timezone.utc  # 15-minute blocks: every zone's offset is a multiple of 15 minutes
+        last = int(now // block_seconds)
+        bounds = [float(k * block_seconds) for k in range(last - count + 1, last + 2)]
     first = last - count + 1
-    start = first * block_seconds - offset
-    end = (last + 1) * block_seconds - offset
+    start, end = bounds[0], bounds[-1]
 
     by_target: Dict[str, Dict[int, Dict[str, Any]]] = defaultdict(dict)
-    for r in await block_stats(repository, first, last, block_seconds, offset):
+    for r in await block_stats(repository, start, end, block_seconds, cut):
         by_target[r["target_id"]][r["block"]] = r
 
     explained: List[Tuple[float, float]] = []
@@ -77,7 +87,7 @@ async def build_uptime(repository, config, window: str = "24h", now: Optional[fl
             r = blocks.get(k)
             status = block_status(r["sent"], r["ok"], r["dead_minutes"], levels) if r else "no_data"
             if status in ("degraded", "outage"):
-                lo, hi = k * block_seconds - offset, (k + 1) * block_seconds - offset
+                lo, hi = bounds[k - first], bounds[k - first + 1]
                 if overlaps(explained, lo, hi) and not overlaps(faults, lo, hi):
                     status = "busy"
             cells.append(status)
@@ -86,4 +96,5 @@ async def build_uptime(repository, config, window: str = "24h", now: Optional[fl
         targets.append({"target_id": tid, "name": names.get(tid, tid),
                         "availability_pct": round(ok * 100.0 / sent, 3) if sent else None, "cells": cells})
     return {"window": window, "block_seconds": block_seconds, "blocks": count, "start": start, "end": end,
-            "tz_offset_minutes": tz_offset_minutes if offset else 0, "targets": targets}
+            "bounds": [int(b) for b in bounds], "zone": zone_name(tz), "tz_offset_minutes": utc_offset(now, tz) // 60,
+            "targets": targets}

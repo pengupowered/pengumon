@@ -6,17 +6,20 @@ stands out from the hops before it. Where loss starts is said in the provider's 
 home-side address, which does not use the line, so loss starting there is the gateway's, never called a line fault;
 loss starting at the provider's first router while the gateway answers is the line or that router."""
 
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pengumon.lines import docsis
 from pengumon.lines.docsis import channel_finding, is_degraded as _is_degraded, uncorrectable_increase as _uncorrectable_increase
 from pengumon.analysis.incident import UNREACHABLE_KINDS
 from pengumon.incidents.taxonomy import incident_cause
+from pengumon.timeofday import viewer_zone
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
+from pengumon.lines.levels import LineSignalConfig
 from pengumon.reports.common import (
     _canonical_order, _hop_label, _split_incidents, _targets, find_primary_failing_hop, material_loss_points,
 )
@@ -54,6 +57,8 @@ class DossierFacts:
     primary_place: Optional[str] = None        # where `primary` sits: PLACES key (None: no primary, or another hop)
     window_readings: int = 0                   # modem readings in the window ...
     modem_unanswered: int = 0                  # ... and those where the modem could not be reached at all
+    line_levels: Optional[LineSignalConfig] = None  # the config's line levels, "typical" in the text (None: defaults)
+    zone: tzinfo = timezone.utc                # the clock "Generated" is shown on (timeofday.viewer_zone)
 
 
 # The incidents' cause categories (incidents.taxonomy) in the provider's terms.
@@ -95,7 +100,8 @@ def hop_note(h: Dict[str, Any], primary: Optional[Dict[str, Any]], ignoring=froz
 
 
 async def collect_dossier_facts(repository, config, hours: int, now: float, line=None,
-                                ignoring: Iterable[str] = (), *, start: Optional[float] = None) -> DossierFacts:
+                                ignoring: Iterable[str] = (), *, start: Optional[float] = None,
+                                zone: tzinfo = timezone.utc) -> DossierFacts:
     """`line` is the line device's DocsisHistory (pengumon.lines.docsis); without one the dossier has no modem
     readings. `ignoring`: the hops that ignore ping now (engine.path_rules); their loss counts in no finding.
     `start`: the window begins here instead of `hours` before `now`, and its hop totals stop at `now` (the AI pack's
@@ -151,10 +157,11 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     unc_increase = _uncorrectable_increase(window_snaps)
 
     snap_ok = bool(docsis_snapshot and docsis_snapshot.status not in ("unconfigured", "error"))
+    line_levels = getattr(config, "line_signal", None) or docsis.DEFAULT_LEVELS
     degraded_channels = []
     if snap_ok:
         degraded_channels = sorted(
-            (c for c in docsis_snapshot.channels if _is_degraded(c)),
+            (c for c in docsis_snapshot.channels if _is_degraded(c, line_levels)),
             key=lambda c: (c.uncorrectables_recent or 0, c.uncorrectables or 0,
                            -(c.snr_db if c.snr_db is not None else 99.0)),
             reverse=True,
@@ -187,10 +194,12 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         modem_unanswered=sum(1 for s in window_snaps if s.status == "error"
                              and (s.error_kind is None or s.error_kind in UNREACHABLE_KINDS)),
         unc_increase=unc_increase,
-        degraded=[(c, channel_finding(c)) for c in degraded_channels],
+        degraded=[(c, channel_finding(c, line_levels)) for c in degraded_channels],
         rf_evidence=rf_evidence,
         local_name=next((t.name for t in cfg_targets if categories.get(t.id) == "local"), "the local router"),
         gw_name=next((t.name for t in cfg_targets if categories.get(t.id) == "gateway"), "the gateway"),
+        line_levels=line_levels,
+        zone=zone,
     )
 
 
@@ -201,6 +210,30 @@ _TICKET_PLACE = {
     "first_isp": " That is the provider's first router; the gateway answered, so the loss starts on the line or at "
                  "that router.",
 }
+
+
+def _plural(n: int, one: str, many: Optional[str] = None) -> str:
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def _span(seconds: float) -> str:
+    """A duration in words: "none", "45 seconds", "2 minutes 5 seconds", "1 hour 5 minutes"."""
+    total = round(seconds)
+    if total <= 0:
+        return "none"
+    h, rest = divmod(total, 3600)
+    m, sec = divmod(rest, 60)
+    parts = [_plural(h, "hour")] if h else []
+    if m:
+        parts.append(_plural(m, "minute"))
+    if sec and not h:
+        parts.append(_plural(sec, "second"))
+    return " ".join(parts)
+
+
+def _hop_name(name: str) -> str:
+    """A target name without a leading "Hop 3:" (the table's own Hop column carries the number)."""
+    return re.sub(r"^\s*Hop\s+\d+\s*[:\-–]\s*", "", name) or name
 
 
 def _place_text(f: DossierFacts) -> str:
@@ -230,8 +263,8 @@ def render_dossier_markdown(f: DossierFacts) -> str:
 
     L: List[str] = [
         "# Broadband Packet Loss Evidence Report",
-        f"**Generated:** {datetime.fromtimestamp(f.now).strftime('%Y-%m-%d %H:%M:%S')} | "
-        f"**Observation window:** past {hours} hours",
+        f"**Generated:** {datetime.fromtimestamp(f.now, f.zone).strftime('%Y-%m-%d %H:%M:%S %Z')} | "
+        f"**Observation window:** past {_plural(hours, 'hour')}",
     ]
     if max_lan_loss is None:
         L.append("**Local hardware:** no local or gateway probes in this window")
@@ -242,14 +275,14 @@ def render_dossier_markdown(f: DossierFacts) -> str:
 
     L += ["", "## 1. Summary",
           f"- **Recorded incidents:** {f.total_incidents}",
-          f"- **Cumulative duration:** {f.total_dur_min} minutes ({round(f.total_dur_sec)} seconds)"]
+          f"- **Cumulative duration:** {_span(f.total_dur_sec)}"]
     if f.by_cause:
-        parts = ", ".join(f"{CAUSE_WORDS.get(c, c)}: {n} ({m:.1f} min)" for c, n, m in f.by_cause)
+        parts = ", ".join(f"{CAUSE_WORDS.get(c, c)}: {n} ({_span(m * 60)})" for c, n, m in f.by_cause)
         L.append(f"- **By cause:** {parts}")
     if f.under_load:
         L.append(f"- {f.under_load} of these occurred while the line was at {f.busy_pct:g}% load or more.")
     if f.excluded:
-        L.append(f"- {f.excluded} events during heavy line load were excluded (expected).")
+        L.append(f"- {_plural(f.excluded, 'event')} during heavy line load {'was' if f.excluded == 1 else 'were'} excluded (expected).")
     if primary:
         L.append(f"- **First hop with elevated loss:** {f.labels[primary['target_id']]} "
                  f"({primary['loss_pct']}% loss).")
@@ -263,14 +296,14 @@ def render_dossier_markdown(f: DossierFacts) -> str:
           "",
           "| Hop | Target | Sent | Lost | Loss % | Avg RTT | Max RTT | Note |",
           "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"]
-    for h in f.hop_stats:
+    for n, h in enumerate(f.hop_stats, 1):  # the position from the premises outward, not the internal target id
         tid = h["target_id"]
-        L.append(f"| `{tid}` | {f.names.get(tid, tid)} | {h['sent']} | {h['lost']} | {h['loss_pct']}% | "
+        L.append(f"| Hop {n} | {_hop_name(f.names.get(tid, tid))} | {h['sent']} | {h['lost']} | {h['loss_pct']}% | "
                  f"{h['avg_ms']} ms | {h['max_ms']} ms | {hop_note(h, primary, f.ignoring, f.material)} |")
     if primary:
         if f.later_lossy:
             L += ["", f"Loss of {f.material} points or more is also present at later hops "
-                      f"({', '.join(h['target_id'] for h in f.later_lossy)}), so it continues past that point."]
+                      f"({', '.join(f.names.get(h['target_id'], h['target_id']) for h in f.later_lossy)}), so it continues past that point."]
         else:
             L += ["", f"Later hops show no comparable loss. Loss at a single intermediate hop can also be "
                       f"that router rate-limiting or deprioritising ping, rather than traffic being dropped."]
@@ -281,7 +314,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     elif docsis_snapshot.status == "error":
         L.append("- The modem could not be read at the last poll.")
     else:
-        s, lv = docsis_snapshot, docsis.LEVELS  # "typical": the warning levels in force (lines/docsis.py)
+        s, lv = docsis_snapshot, f.line_levels or docsis.DEFAULT_LEVELS  # "typical": the configured warning levels
         L += [f"- Downstream average power: {s.downstream_power_avg} dBmV (typical range "
               f"-{lv.ds_power_warning_abs_dbmv:g} to +{lv.ds_power_warning_abs_dbmv:g})",
               f"- Downstream average SNR: {s.downstream_snr_avg} dB (typically above {lv.ds_snr_warning_db:g})",
@@ -329,8 +362,8 @@ def render_dossier_markdown(f: DossierFacts) -> str:
         L.append("- The probes did not isolate a single failing hop.")
 
     L += ["", "## 5. Summary for a support ticket", "```text",
-          f"Over the past {hours} hours Pengumon recorded {f.total_incidents} incidents totalling {f.total_dur_min} minutes"
-          + (f" ({f.excluded} further events during heavy line load were excluded as expected)." if f.excluded else "."),
+          f"Over the past {_plural(hours, 'hour')} Pengumon recorded {_plural(f.total_incidents, 'incident')} totalling {_span(f.total_dur_sec)}"
+          + (f" ({_plural(f.excluded, 'further event')} during heavy line load {'was' if f.excluded == 1 else 'were'} excluded as expected)." if f.excluded else "."),
           ]
     if max_lan_loss is not None:
         L.append(f"Loss to {f.local_name} and {f.gw_name}: at most {max_lan_loss}%.")
@@ -360,9 +393,12 @@ def render_dossier_markdown(f: DossierFacts) -> str:
 
 
 async def build_dossier(repository, config, hours: int, now: Optional[float] = None, line=None,
-                        ignoring: Iterable[str] = ()) -> Dict[str, Any]:
+                        ignoring: Iterable[str] = (), tz_name: Optional[str] = None,
+                        tz_offset_minutes: int = 0) -> Dict[str, Any]:
+    """`tz_name` / `tz_offset_minutes`: the viewer's zone, the fallbacks of timeofday.viewer_zone (Settings wins)."""
     now = now or time.time()
-    facts = await collect_dossier_facts(repository, config, hours, now, line, ignoring)
+    facts = await collect_dossier_facts(repository, config, hours, now, line, ignoring,
+                                        zone=viewer_zone(config, tz_name, tz_offset_minutes)[0])
     return {
         "observation_hours": hours,
         "total_incidents": facts.total_incidents,

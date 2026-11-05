@@ -2,13 +2,12 @@
 // downloaded. Opened from the header, the incident log and the reliability summary.
 
 import { registerActions } from '../../js/dispatch.js';
-import { copyText, escapeHtml, getTargetInfo, keepKeyboard, openModal } from '../../js/util.js';
+import { copyText, escapeHtml, getTargetInfo, keepKeyboard, openModal, slug, zoneParams } from '../../js/util.js';
 import { renderMarkdown } from './markdown.js';
 
 // The ISP's name from config (line.isp_name); the dossier title and download name follow it.
 export function ispSlug() {
-  const slug = (ispName || 'isp').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  return slug || 'isp';
+  return slug(ispName || 'isp') || 'isp';
 }
 
 export function applyDossierTitle() {
@@ -70,7 +69,7 @@ export async function fetchDossier() {
   out.textContent = '';
 
   try {
-    const res = await fetch(`/api/incidents/dossier?hours=${hours}`);
+    const res = await fetch(`/api/incidents/dossier?hours=${hours}&${zoneParams()}`);
     if (!res.ok) throw new Error('Failed to generate dossier');
     const data = await res.json();
     latestDossierMarkdown = data.formatted_markdown || '';

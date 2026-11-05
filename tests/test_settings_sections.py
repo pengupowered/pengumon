@@ -14,8 +14,8 @@ from pengumon.engine.prober_settings import DnsProbeConfig, HopStatusConfig, Pro
 from pengumon.lines import docsis
 from pengumon.lines.levels import LineSignalConfig
 from pengumon.models.probes import TargetConfig
-from pengumon.notify import MIN_INTERVAL_SECONDS
-from pengumon.notify_settings import AlertsConfig, NotificationsConfig, QuietHours, WebhookConfig, webhook_id
+from pengumon.notify.notifier import MIN_INTERVAL_SECONDS
+from pengumon.notify.settings import AlertsConfig, NotificationsConfig, QuietHours, WebhookConfig, webhook_id
 from pengumon.reports import common as reports_common
 from pengumon.reports import uptime
 from pengumon.reports.settings import ReportsConfig, UptimeConfig
@@ -183,7 +183,7 @@ def test_the_new_defaults_equal_the_constants_the_code_uses_today():
     assert UptimeConfig().degraded_loss_pct == 1.0
     assert ReportsConfig().material_loss_points == 0.5
     # the readers start at the defaults
-    assert docsis.LEVELS == signal and monitors.LEVELS == router
+    assert docsis.DEFAULT_LEVELS == signal and monitors.DEFAULT_LEVELS == router
     assert uptime.block_status(900, 891, 0) == "degraded" and reports_common.material_loss_points(None) == 0.5
     assert AlertsConfig().repeat_window_seconds == MIN_INTERVAL_SECONDS
     classifier = ClassifierConfig()  # the literals of engine/classifier (rules.py, metrics.py, tracker.py)

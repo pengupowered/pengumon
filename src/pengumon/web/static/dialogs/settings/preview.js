@@ -172,5 +172,3 @@ export function cancelPreview() {
   P.cancelled = true;
   render();
 }
-
-export const previewState = P;

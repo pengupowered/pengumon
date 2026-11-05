@@ -22,7 +22,7 @@ from httpx import ASGITransport, AsyncClient
 
 from pengumon.db import probes as probes_module
 from pengumon.db.repository import DatabaseRepository
-from pengumon.api.state import STATE_ATTR, AppState
+from pengumon.state import STATE_ATTR, AppState
 from pengumon.devices.registry import DeviceRegistry
 from pengumon.devices.samples import device_sample
 from pengumon.lines.docsis import line_sample

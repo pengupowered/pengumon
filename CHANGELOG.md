@@ -5,6 +5,60 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-05
+### Fixed
+- **Stored passwords are safe from a damaged `secrets.json`.** If the file could not be read (a typo from a hand
+  edit), the next password saved in Settings replaced it, and every other stored password was lost. Now nothing is
+  written over it: the save is refused with a message that says the file is damaged and how to fix it.
+- **Reports in your time zone, with daylight saving.** The reliability report, "When it breaks" and the uptime strips
+  put days and hours in the zone set in Settings (else your browser's), and a day the clocks change has 23 or 25
+  hours. Before, they used the browser's fixed offset, so a week spanning a clock change was an hour off on one side,
+  and clicking a block after such a day opened the wrong hour.
+- The reliability report's "Loss by hour" counted removed hops and hops that ignore ping as loss; it now leaves them
+  out, as "When it breaks" does.
+- Switching to the dark theme left the charts' grid lines light until the page was reloaded.
+- The device password form showed a rate limit as "Sign-in refused"; it says to wait a minute, and other errors show
+  what the server said.
+- Plain messages instead of Python error names: a host app check or a device whose certificate file cannot be read.
+- The latency chart's line labels no longer run into each other or over the time axis.
+- A stray "Settings import: : not a setting" line in the log of every fresh start.
+- On a Mac whose name has no DNS entry, finding this computer's LAN address could hang for a minute (the name was
+  looked up over mDNS on every request for the dashboard's info). The name is now looked up only when the route
+  gives no address, and given up on after a second.
+- **Quiet hours and the daily route check in your time zone in a container.** The container ran on UTC, so quiet
+  hours from 22:00 began at 17:00 in New York. `scripts/deploy.sh` now passes the host's zone (`TZ`), and the compose
+  files take `TZ`; Settings offers "Use this browser's zone" when they differ.
+
+### Added
+- **Search in Settings:** type to find a setting by its name, help text or key, across every section.
+- A fresh install without devices says how to add your router or modem, with a button to Settings.
+- The path editor asks before an earlier path or an imported file replaces a draft you have edited.
+- `install.sh --user` puts the `pengumon` command in `~/.local/bin` (and says so when that is not on your PATH); the
+  Windows script prints how to add it to your PATH.
+
+### Changed
+- **Settings reads in plain words:** time zones by city ("New York (America/New_York)", UTC not "Etc/UTC"), labels
+  for every choice ("Outages only", "Signed-in viewers only"), one "Standard: ..." line with units under every
+  row, one "Layout for new browsers" row (with Reset) instead of two rows you could not change, related settings
+  named in full, devices by name, aligned controls and one heading style.
+- Plainer dialogs: the device sign-in names the device and says where the password is kept; the dossier gives its
+  time zone, says "1 event" and "none", and no longer doubles hop numbers; rounded latencies in Local network;
+  clearer router history, Trace and Alerts labels.
+- The ISP dossier's hop table numbers the hops ("Hop 3") instead of showing internal ids.
+- The Layout dialog says in plain words why a panel is not available and where to set it up.
+- Settings fits its buttons on one row on a phone; Ask AI shows "Building the pack..." while it works.
+- The target history names a hop's role with the path editor's words (Your network, Gateway (modem), Provider,
+  Internet, DNS server, Other); its median of an even number of values is the mean of the middle two, as elsewhere.
+- Lighter: building an AI pack needs about 20 MB less memory (the pack's text is unchanged); the uptime strips and
+  the path chain redraw only when something they show changed.
+- API: the report routes take `tz` (an IANA zone, as `/api/ai-pack`); `/api/uptime` answers each block's `bounds` and
+  the `zone`, `/api/report/loss-grid` its `day_starts`, `hour_starts` and `zone`; `/api/targets` sends a `short_label`.
+- Docs brought up to date with the Settings page (config.yaml now only seeds the first start), every API route, new
+  screenshots, and a guide to Ask AI (`docs/ai-pack.md`).
+- For developers: the app's core objects left the HTTP layer, every route lives in `api/`, notifications are one
+  package, and shared helpers replace copies in both Python and JavaScript (`docs/architecture.md`, "Where things
+  live").
+
 ## [0.22.0] - 2026-11-04
 ### Added
 - **Ask AI** (header, and the incident inspector): one Markdown text to paste into ChatGPT, Gemini, Claude or any
@@ -13,7 +67,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   hop, or stays at one router that only ignores pings), patterns (time of day, how often, how long), what coincided
   (line errors, a modem or router restart, a busy line, Wi-Fi clients dropping, route or settings changes), its own
   verdict and a rule-based confidence per incident, minute-by-minute close-ups of the most significant ones, and what
-  it cannot see. With instructions and plain questions for the assistant. About 3 to 5 thousand tokens, even for a week.
+  it cannot see. With instructions and plain questions for the assistant. About 5,500 tokens for a week.
   - Past hour, 24 hours or 7 days, or one incident; "Short" or "With more examples".
   - **Full**, **Vague** (your own routers, devices and addresses become roles such as "Router") or **Anonymized**
     (roles and numbers only, no names, brands or dates). Never included at any level: Wi-Fi client lists, incident
@@ -377,7 +431,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/pengupowered/pengumon/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/pengupowered/pengumon/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/pengupowered/pengumon/compare/v0.20.2...v0.21.0
 [0.20.2]: https://github.com/pengupowered/pengumon/compare/v0.20.1...v0.20.2

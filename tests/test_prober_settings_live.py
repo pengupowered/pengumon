@@ -189,14 +189,6 @@ async def test_a_dns_lookup_uses_its_own_timeout_when_set(monkeypatch):
 
 # --- the appliers ------------------------------------------------------------------------------------------------------
 
-@pytest.fixture
-def restore_levels():
-    line, router = docsis.LEVELS.model_copy(), monitors.LEVELS.model_copy()
-    yield
-    docsis.use_levels(line)
-    monitors.use_levels(router)
-
-
 def _wired(config):
     hub = SettingsHub()
     prober = NetworkProber(ping_timeout=config.prober.timeout_seconds, status_thresholds=config.prober.hop_status,
@@ -233,25 +225,31 @@ async def test_a_saved_dns_list_reaches_the_prober():
     assert list(prober.stats) == ["a", "z"] and prober.stats["a"].sent == 4
 
 
-async def test_the_line_and_router_levels_apply_in_place(restore_levels):
+async def test_the_line_and_router_levels_apply_in_place():
+    """The devices' monitors grade by the live config's sections (the supervisor hands it to every device it builds):
+    a save needs no applier, and nothing module-level changes."""
+    from pengumon.devices.component import DeviceSupervisor
+    from pengumon.devices.registry import DeviceRegistry
+    from pengumon.devices.settings import DeviceConfig
+
     config = AppConfig()
-    held_line, held_router = docsis.LEVELS, monitors.LEVELS
-    probing.use_levels(config)
-    hub, _ = _wired(config)
+    registry = DeviceRegistry()
+    DeviceSupervisor(registry, config=config).build_all([
+        DeviceConfig(id="modem", driver="xfinity_xb", url="http://192.0.2.10"),
+        DeviceConfig(id="router", driver="asuswrt", url="http://192.0.2.1")])
     _set(config.line_signal, ds_snr_warning_db=36.0)
     _set(config.router_levels, cpu_warning_pct=70.0)
-    assert await hub.publish(Change.of(keys=["line_signal.ds_snr_warning_db", "router_levels.cpu_warning_pct"])) == []
-    assert docsis.LEVELS is held_line and docsis.LEVELS.ds_snr_warning_db == 36.0
-    assert monitors.LEVELS is held_router and monitors.LEVELS.cpu_warning_pct == 70.0
-    assert docsis.LEVELS is not config.line_signal  # a copy: the live config section is the manager's
+    assert registry.get("modem").monitor.levels.ds_snr_warning_db == 36.0
+    assert registry.get("router").monitor.ranges["cpu"].as_dict()["good_high"] == 70.0
+    assert docsis.DEFAULT_LEVELS.ds_snr_warning_db == 33.0 and monitors.DEFAULT_LEVELS.cpu_warning_pct == 90.0
 
 
 async def test_the_appliers_subscribe_to_what_they_apply():
     config = AppConfig()
     hub, _ = _wired(config)
-    assert hub.names == ["probing.timeouts", "probing.dns_probes", "probing.levels"]
+    assert hub.names == ["probing.timeouts", "probing.dns_probes"]
     assert hub.subscribers(Change.of(keys=["prober.hop_status.local_latency_ms"])) == []  # live through the config
-    assert hub.subscribers(Change.of(keys=["line_signal.ds_snr_critical_db"])) == ["probing.levels"]
+    assert hub.subscribers(Change.of(keys=["line_signal.ds_snr_critical_db"])) == []  # the monitors read the config
 
 
 async def test_the_hop_colours_are_live_through_the_shared_config():
@@ -264,7 +262,7 @@ async def test_the_hop_colours_are_live_through_the_shared_config():
     assert _feed(prober, "lan", [15.0]) == "degraded"
 
 
-async def test_the_probing_component_binds_the_levels_and_subscribes(tmp_path, restore_levels, monkeypatch):
+async def test_the_probing_component_subscribes(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     config = AppConfig(line_signal=LineSignalConfig(ds_snr_warning_db=35.0),
@@ -281,7 +279,7 @@ async def test_the_probing_component_binds_the_levels_and_subscribes(tmp_path, r
     hub = SettingsHub()
     ctx = SimpleNamespace(config=config, state=SimpleNamespace(repository=None), settings=hub)
     await probing.register(ctx)
-    assert docsis.LEVELS.ds_snr_warning_db == 35.0 and monitors.LEVELS.cpu_warning_pct == 75.0
+    assert docsis.DEFAULT_LEVELS.ds_snr_warning_db == 33.0  # the component no longer binds any module-level levels
     assert "probing.timeouts" in hub.names
     assert ctx.state.prober.status_thresholds is config.prober.hop_status
 

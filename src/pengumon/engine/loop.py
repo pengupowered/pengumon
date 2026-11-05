@@ -10,7 +10,7 @@ import asyncio
 import time
 from typing import Iterable, Sequence
 
-from pengumon.api.ws import ws_manager
+from pengumon.live.ws import ws_manager
 from pengumon.components import LivePart
 from pengumon.live.message import LiveStreamMessage
 from pengumon.observability import get_logger

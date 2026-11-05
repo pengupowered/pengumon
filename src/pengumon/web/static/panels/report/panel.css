@@ -1,4 +1,4 @@
-/* Panel report: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel report: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* ---------- Reliability ---------- */
 .rep-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--sp-4); flex-wrap: wrap; }
 .hero-num { font-size: 40px !important; letter-spacing: -.03em; line-height: 1.05; }
@@ -22,5 +22,4 @@
 @media (max-width: 720px) {
   .causes li { grid-template-columns: 96px 1fr 34px; }
 }
-.rep-tables { display: grid; gap: var(--sp-4); margin-top: var(--sp-4); }
 .rep-note { font-size: var(--fs-xs); color: var(--ink-3); margin-top: var(--sp-2); }

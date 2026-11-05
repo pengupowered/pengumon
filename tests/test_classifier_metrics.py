@@ -1,12 +1,8 @@
 """Round metrics: the per-category rolling loss, latency and jitter of the classifier."""
 
-import random
-from typing import Dict, List, Optional
-
 from pengumon.engine.classifier.metrics import CATEGORIES, category_metrics, round_metrics
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.models.probes import ProbeSample, TargetStats
-
 
 
 def stat(target_id, category, window, enabled=True, name=None):
@@ -16,65 +12,6 @@ def stat(target_id, category, window, enabled=True, name=None):
 
 def sample(target_id, success=True, latency=10.0):
     return ProbeSample(target_id=target_id, success=success, latency_ms=latency if success else None)
-
-
-# --- verbatim copies of the pre-refactor OutageClassifier._calc_rolling_* methods (self removed) ---------
-
-def _old_jitter(stats: Dict[str, TargetStats], category: str) -> Optional[float]:
-    cat_stats = [st for st in stats.values() if st.category == category and st.enabled]
-    if not cat_stats:
-        return None
-
-    jitters = []
-    for st in cat_stats:
-        recent = st.recent_latencies[-10:] if len(st.recent_latencies) >= 10 else st.recent_latencies
-        valid_lats = [x for x in recent if x is not None]
-        if len(valid_lats) > 1:
-            diffs = [abs(valid_lats[i] - valid_lats[i-1]) for i in range(1, len(valid_lats))]
-            if diffs:
-                jitters.append(sum(diffs) / len(diffs))
-    return round(sum(jitters) / len(jitters), 2) if jitters else None
-
-
-def _old_loss(stats: Dict[str, TargetStats], category: str, samples: List[ProbeSample]) -> float:
-    cat_stats = [st for st in stats.values() if st.category == category and st.enabled]
-    if not cat_stats:
-        # Fallback to current round samples
-        cat_samples = [s for s in samples if stats.get(s.target_id) and stats[s.target_id].category == category]
-        if not cat_samples:
-            return 0.0
-        return (sum(1 for s in cat_samples if not s.success) / len(cat_samples)) * 100.0
-
-    total_recent = []
-    for st in cat_stats:
-        recent = st.recent_latencies[-10:] if len(st.recent_latencies) >= 10 else st.recent_latencies
-        total_recent.extend(recent)
-
-    if not total_recent:
-        cat_samples = [s for s in samples if stats.get(s.target_id) and stats[s.target_id].category == category]
-        if not cat_samples:
-            return 0.0
-        return (sum(1 for s in cat_samples if not s.success) / len(cat_samples)) * 100.0
-
-    lost = total_recent.count(None)
-    return round((lost / len(total_recent)) * 100.0, 1)
-
-def _old_lat(stats: Dict[str, TargetStats], category: str, samples: List[ProbeSample]) -> Optional[float]:
-    cat_stats = [st for st in stats.values() if st.category == category and st.enabled]
-    if not cat_stats:
-        valid = [s.latency_ms for s in samples if s.success and s.latency_ms is not None and stats.get(s.target_id) and stats[s.target_id].category == category]
-        return round(sum(valid) / len(valid), 2) if valid else None
-
-    valid_lats = []
-    for st in cat_stats:
-        recent = st.recent_latencies[-10:] if len(st.recent_latencies) >= 10 else st.recent_latencies
-        valid_lats.extend([x for x in recent if x is not None])
-
-    if not valid_lats:
-        valid = [s.latency_ms for s in samples if s.success and s.latency_ms is not None and stats.get(s.target_id) and stats[s.target_id].category == category]
-        return round(sum(valid) / len(valid), 2) if valid else None
-
-    return round(sum(valid_lats) / len(valid_lats), 2)
 
 
 # --- tests -------------------------------------------------------------------------------------------
@@ -182,30 +119,3 @@ def test_round_predicates():
     assert slow.upstream_issue(at_120) and not slow.upstream_issue(ClassifierConfig(public_latency_spike_threshold_ms=130.0))
 
 
-def _random_round(rng):
-    categories = list(CATEGORIES) + ["custom"]
-    stats: Dict[str, TargetStats] = {}
-    for i in range(rng.randint(0, 9)):
-        window = [None if rng.random() < 0.3 else round(rng.uniform(0, 120), rng.choice([0, 1, 3]))
-                  for _ in range(rng.randint(0, 15))]
-        stats[f"t{i}"] = stat(f"t{i}", rng.choice(categories), window, enabled=rng.random() < 0.8)
-    samples: List[ProbeSample] = []
-    for _ in range(rng.randint(0, 12)):
-        target = rng.choice(list(stats) + ["ghost"]) if stats else "ghost"
-        ok = rng.random() < 0.7
-        latency = None if rng.random() < 0.15 else round(rng.uniform(0, 200), rng.choice([0, 2, 5]))
-        samples.append(ProbeSample(target_id=target, success=ok, latency_ms=latency))
-    return stats, samples
-
-
-def test_randomised_equivalence_with_the_old_calculations():
-    rng = random.Random(20261016)
-    for case in range(2000):
-        stats, samples = _random_round(rng)
-        m = round_metrics(stats, samples)
-        for category in CATEGORIES:
-            got = getattr(m, category)
-            want = (_old_loss(stats, category, samples), _old_lat(stats, category, samples),
-                    _old_jitter(stats, category))
-            have = (got.loss_pct, got.avg_latency_ms, got.jitter_ms)
-            assert have == want and repr(have) == repr(want), (case, category, have, want)

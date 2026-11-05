@@ -2,24 +2,13 @@
 busy stretches split by a silence, an unanswered poll, a CPU burst, a single high CPU reading and a drop in clients, so a rewrite of how the polls are read keeps the
 same facts. Example values only."""
 
-import pytest
-
 from pengumon.capabilities.contrib import ContribContext
 from pengumon.config import AppConfig
-from pengumon.db.repository import DatabaseRepository
 from pengumon.db.samples import DeviceSample
 from pengumon.devices.contrib import LineLoadContribution, RouterContribution, WifiMeshContribution
 from pengumon.devices.settings import DeviceConfig
 
 T0 = 100000.0
-
-
-@pytest.fixture
-async def repo(tmp_path):
-    r = DatabaseRepository(db_path=str(tmp_path / "pack.db"))
-    await r.initialize()
-    yield r
-    await r.close()
 
 
 def poll(i: int) -> DeviceSample:

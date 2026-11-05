@@ -9,6 +9,12 @@
       <section class="set-preview" id="settingsPreview" aria-label="Preview of the outage rules" hidden></section>
       <section class="set-versions" id="settingsVersions" aria-label="Earlier versions" tabindex="-1" hidden></section>
       <section class="set-versions" id="settingsExportView" aria-label="Export" tabindex="-1" hidden></section>
+      <div class="set-search">
+        <label class="sr-only" for="settingsSearch">Search settings</label>
+        <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+        <input class="input" type="search" id="settingsSearch" placeholder="Search settings (name, help text or key)" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <span class="fine" id="settingsSearchStatus" role="status" aria-live="polite"></span>
+      </div>
       <div class="set-wrap">
         <nav class="set-rail" aria-label="Sections" id="settingsRail"></nav>
         <label class="set-jump" for="settingsJump"><span>Jump to section</span><select class="input" id="settingsJump" data-change="settingsGoto"></select></label>
@@ -21,10 +27,10 @@
     </div>
     <footer class="modal-f">
       <div class="left">
-        <button type="button" class="btn sm" id="settingsExport" data-action="settingsExport" aria-expanded="false" aria-controls="settingsExportView" hidden><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export</button>
-        <button type="button" class="btn sm" data-action="settingsImport" data-needs-edit><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Import</button>
+        <button type="button" class="btn sm" id="settingsExport" data-action="settingsExport" aria-expanded="false" aria-controls="settingsExportView" aria-label="Export" title="Export" hidden><svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span class="fl">Export</span></button>
+        <button type="button" class="btn sm" data-action="settingsImport" data-needs-edit aria-label="Import" title="Import"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span class="fl">Import</span></button>
         <input type="file" id="settingsImportFile" accept=".yaml,.yml,text/yaml,application/yaml" data-change="settingsImportFile" hidden>
-        <button type="button" class="btn sm" id="btnSettingsVersions" data-action="settingsVersions" aria-expanded="false" aria-controls="settingsVersions"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>Versions</button>
+        <button type="button" class="btn sm" id="btnSettingsVersions" data-action="settingsVersions" aria-expanded="false" aria-controls="settingsVersions" aria-label="Versions" title="Earlier versions"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg><span class="fl">Versions</span></button>
       </div>
       <button type="button" class="btn" id="btnSettingsCancel" data-action="settingsCancel">Cancel</button>
       <button type="button" class="btn outline" id="btnSettingsPreview" data-action="settingsPreview" data-needs-edit hidden title="Replay the stored samples with the draft outage and alert rules"><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg><span>Preview</span></button>

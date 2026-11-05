@@ -7,7 +7,7 @@ from pengumon.services.settings import ServiceCheckConfig, ServiceChecksConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.services.checker import ServiceChecker
 from pengumon.incidents.model import Incident
-from pengumon.notify import Notifier
+from pengumon.notify.notifier import Notifier
 from pengumon.reports.common import _split_incidents
 
 

@@ -82,6 +82,8 @@ class SettingSpec(Constraints):
     order: int
     related: Optional[str]
     also_in: List[str]
+    choice_labels: Optional[Dict[str, str]] = None  # stored choice -> the words shown for it
+    empty: Optional[str] = None  # what an empty value means, in words
     default: Any
 
 
@@ -239,52 +241,8 @@ class ImportDraft(_Model):
     kept: List[str] = Field(default_factory=list)  # settings whose value in the file was refused: keep the current one
 
 
-# ---- the outage-rules preview (api/settings_preview.py) ----
+# ---- the outage-rules preview (api/settings_preview.py; its answer, PreviewJob, is in settings/preview.py) ----
 
 class PreviewRequest(_Model):
     values: Dict[str, Any] = Field(default_factory=dict)  # classifier.*, line.down_mbps / up_mbps, alerts.* only
     days: Optional[int] = Field(None, ge=1)  # default min(7, retention_days)
-
-
-class PreviewCounts(_Model):
-    incidents: int
-    critical: int
-    warning: int
-    busy_hidden: int
-    total_seconds: float
-    alerts: Optional[int] = None  # incident alerts the notifier's rules would have sent (engine/replay.py)
-
-
-class PreviewWindow(_Model):
-    start: float
-    end: float
-    rounds: int
-    gaps: List[Dict[str, float]] = Field(default_factory=list)  # [{start, end}]
-
-
-class PreviewChange(_Model):
-    start: float
-    end: Optional[float]
-    kind: str
-    severity: str
-    in_: Literal["draft", "current", "changed"] = Field(alias="in")
-    was_start: Optional[float] = None  # "changed": the current rules' start, end and severity of the same outage
-    was_end: Optional[float] = None
-    was_severity: Optional[str] = None
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-
-class PreviewJob(_Model):
-    """POST /api/settings/preview answers {"id": ...}; GET /api/settings/preview/{id} answers this."""
-    id: Optional[str] = None
-    state: Literal["running", "done", "failed", "cancelled"]
-    progress: float = 0.0
-    elapsed_s: float = 0.0
-    error: Optional[str] = None  # "took too long"
-    window: Optional[PreviewWindow] = None
-    current: Optional[PreviewCounts] = None
-    draft: Optional[PreviewCounts] = None
-    recorded: Optional[int] = None
-    changes: List[PreviewChange] = Field(default_factory=list)  # up to 30
-    notes: List[str] = Field(default_factory=list)

@@ -3,7 +3,7 @@
 Webhooks are a second alert channel next to [ntfy](telemetry.md#-notifications). They receive exactly the alerts ntfy
 does, after the same rules, so you can use either, both, or several webhooks:
 
-- an incident starts (not for expected `busy` conditions), at most one message per cause every 5 minutes (see
+- an incident starts (not for expected `busy` conditions), at most one message per cause within the repeat window (see
   [When alerts go out](#when-alerts-go-out));
 - an announced incident resolves;
 - one of your [own apps](services.md) has failed for `notify_after_seconds`, and when it answers again;
@@ -22,7 +22,7 @@ the first start of 0.21; after that, edits to it are ignored (see [configuration
 
 ```yaml
 notifications:
-  public_url: "http://pengu.lan:8000"   # optional: where people open the dashboard (http or https, no query)
+  public_url: "http://pengumon.example:8000"   # optional: where people open the dashboard (http or https, no query)
   webhooks:
     - name: "home-assistant"            # optional: shown in the Alerts dialog and the log
       url: "http://homeassistant.lan:8123/api/webhook/pengumon-alerts"
@@ -60,7 +60,7 @@ The `alerts:` rules decide when a message leaves, for ntfy and every webhook ali
 alerts:
   min_severity: warning        # warning (default) or critical: send only critical network incidents
   delay_seconds: 0             # wait this long (0-3600) before announcing a network incident
-  repeat_window_seconds: 300   # the same cause is announced at most once in this time (0: every one)
+  repeat_window_seconds: 300   # the same cause is announced at most once in this time (0: every one); default 5 minutes (Settings, Alerts)
   quiet_hours:
     enabled: false
     start: "22:00"             # in general.timezone; may be later than end, which crosses midnight
@@ -113,7 +113,7 @@ meaning (`version` rises if that ever has to happen).
   "ended_at": null,
   "duration_seconds": null,
   "load_pct": 72.0,
-  "link": "http://pengu.lan:8000"
+  "link": "http://pengumon.example:8000"
 }
 ```
 

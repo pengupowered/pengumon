@@ -54,7 +54,7 @@ def lines(f):
 
 def test_an_empty_dossier_says_so_everywhere():
     text = render_dossier_markdown(facts())
-    assert text.startswith("# Broadband Packet Loss Evidence Report\n**Generated:** 2025-10-09 08:53:20 | "
+    assert text.startswith("# Broadband Packet Loss Evidence Report\n**Generated:** 2025-10-09 08:53:20 UTC | "
                            "**Observation window:** past 24 hours\n**Local hardware:** no local or gateway probes")
     assert "- **Recorded incidents:** 0" in text and "- No single failing hop was isolated" in text
     assert "- No modem data: modem credentials are not configured in Pengumon." in text
@@ -68,11 +68,11 @@ def test_summary_lines_follow_the_counts():
     f = facts(total_incidents=3, total_dur_sec=185.0, total_dur_min=3.1, excluded=2, under_load=1, busy_pct=70.0,
               by_cause=[("isp_loss", 2, 1.5), ("dns_resolver_failure", 1, 1.6)])
     text = render_dossier_markdown(f)
-    assert "- **Cumulative duration:** 3.1 minutes (185 seconds)" in text
-    assert "- **By cause:** isp_loss: 2 (1.5 min), dns_resolver_failure: 1 (1.6 min)" in text
+    assert "- **Cumulative duration:** 3 minutes 5 seconds" in text
+    assert "- **By cause:** isp_loss: 2 (1 minute 30 seconds), dns_resolver_failure: 1 (1 minute 36 seconds)" in text
     assert "- 1 of these occurred while the line was at 70% load or more." in text
     assert "- 2 events during heavy line load were excluded (expected)." in text
-    assert "totalling 3.1 minutes (2 further events during heavy line load were excluded as expected)." in text
+    assert "totalling 3 minutes 5 seconds (2 further events during heavy line load were excluded as expected)." in text
 
 
 def test_the_primary_hop_is_named_with_its_label_and_later_loss_is_listed():
@@ -83,9 +83,9 @@ def test_the_primary_hop_is_named_with_its_label_and_later_loss_is_listed():
               max_lan_loss=0.0)
     text = render_dossier_markdown(f)
     assert "- **First hop with elevated loss:** ISP Hub (198.51.100.4) (3.0% loss)." in text
-    assert "| `router` | Router | 1000 | 0 | 0.0% | 11.0 ms | 40.0 ms | No material loss |" in text
-    assert "| `isp` | ISP Hub | 1000 | 30 | 3.0% | 11.0 ms | 40.0 ms | First hop with elevated loss |" in text
-    assert "| `cloud` | cloud | 1000 | 6 | 0.6% | 11.0 ms | 40.0 ms | Elevated loss |" in text
+    assert "| Hop 1 | Router | 1000 | 0 | 0.0% | 11.0 ms | 40.0 ms | No material loss |" in text
+    assert "| Hop 2 | ISP Hub | 1000 | 30 | 3.0% | 11.0 ms | 40.0 ms | First hop with elevated loss |" in text
+    assert "| Hop 3 | cloud | 1000 | 6 | 0.6% | 11.0 ms | 40.0 ms | Elevated loss |" in text
     assert "also present at later hops (cloud), so it continues past that point." in text
     assert "- Loss first appears at ISP Hub (198.51.100.4)." in text
     assert "Loss is first elevated at ISP Hub (198.51.100.4): 3.0%." in text
@@ -171,10 +171,23 @@ def test_the_dossier_says_which_side_stopped_answering_and_never_calls_gateway_l
     gw = hop("gateway", lost=50)
     at_gateway = render_dossier_markdown(facts(hop_stats=[gw], primary=gw, primary_place="gateway",
                                                labels={"gateway": "Modem"}, by_cause=[("gateway", 2, 3.0)]))
-    assert "the gateway itself stopped answering" in at_gateway and "not answering on its home side: 2 (3.0 min)" in at_gateway
+    assert "the gateway itself stopped answering" in at_gateway and "not answering on its home side: 2 (3 minutes)" in at_gateway
     assert "the gateway answered" not in at_gateway and "check the line" not in at_gateway
     first = hop("isp", lost=50)
     at_isp = render_dossier_markdown(facts(hop_stats=[first], primary=first, primary_place="first_isp",
                                            labels={"isp": "Hub"}, rf_evidence=True, unc_increase=40))
     assert "the provider's first router, while the gateway answers: the line or that router" in at_isp
     assert "point to the line itself" in at_isp and "Request: please check the line" in at_isp
+
+
+def test_the_dossier_reads_as_words_in_the_viewers_zone():
+    from zoneinfo import ZoneInfo
+    gone = hop("a")
+    f = facts(zone=ZoneInfo("America/New_York"), hours=1, total_incidents=1, total_dur_sec=0, excluded=1,
+              hop_stats=[gone], names={"a": "Hop 3: Example ISP"})
+    text = render_dossier_markdown(f)
+    assert "**Generated:** 2025-10-09 04:53:20 EDT | **Observation window:** past 1 hour" in text
+    assert "- **Cumulative duration:** none" in text
+    assert "- 1 event during heavy line load was excluded (expected)." in text
+    assert "| Hop 1 | Example ISP |" in text and "Hop 3" not in text
+    assert "recorded 1 incident totalling none" in text

@@ -173,9 +173,9 @@ async def test_without_fresh_router_data_classification_is_unchanged(rates):
 @pytest.mark.asyncio
 async def test_a_missed_router_poll_keeps_the_last_sample_up_to_60_s():
     load = LineLoad(LINE, rates_source=Rates((45, 954.0, 3.0), (300, 10.0, 1.0)))
-    assert load.load_at() == 95.4  # nothing in the 20 s window: the newest sample still counts
+    assert load.current().pct == 95.4  # nothing in the 20 s window: the newest sample still counts
     load = LineLoad(LINE, rates_source=Rates((15, 100.0, 1.0), (25, 954.0, 3.0)))
-    assert load.load_at() == 10.0  # samples in the window win over older ones
+    assert load.current().pct == 10.0  # samples in the window win over older ones
 
 
 @pytest.mark.asyncio
@@ -250,7 +250,7 @@ async def test_capacity_is_not_learned_from_too_little_history(tmp_path):
     load = LineLoad(LineConfig(), rates_source=Rates((2, 900.0, 1.0)), repository=repo, device_id="router")
     await load.refresh_capacity()
     assert load.down_mbps is None
-    assert load.load_at() is None  # unknown capacity: classify as before
+    assert load.current() is None  # unknown capacity: classify as before
 
 
 # --- backfill --------------------------------------------------------------------------------------
@@ -458,7 +458,7 @@ def test_an_impossible_rate_is_not_load():
 
 async def test_the_live_load_and_the_classifier_ignore_a_counter_glitch():
     classifier = make_classifier(Rates((1, 5.0, 535.0)), line=LineConfig(down_mbps=1100, up_mbps=40))
-    assert classifier.load.current() is None and classifier.load.load_at() is None
+    assert classifier.load.current() is None
 
 
 async def test_an_old_incident_with_an_impossible_load_is_flagged_not_shown_as_a_figure(tmp_path):

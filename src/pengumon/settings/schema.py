@@ -40,6 +40,7 @@ def setting_spec(setting: registry.Setting) -> Dict[str, Any]:
             "effect": setting.effect, "unit": setting.unit, "scale": setting.scale, "rounds": setting.rounds,
             "live": setting.live, "env": setting.env, "advanced": setting.advanced, "export": setting.export,
             "order": setting.order, "related": setting.related, "also_in": list(setting.also_in),
+            "choice_labels": dict(setting.choice_labels) if setting.choice_labels else None, "empty": setting.empty,
             **setting.constraints(), "default": _json(setting.default())}
 
 

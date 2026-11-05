@@ -30,7 +30,7 @@ from pengumon.api.settings_models import (
     SettingsError, SettingsPut, SettingsSchema, SettingsState, SettingsValues, ValidateResponse, ValueState,
     VersionDraft, VersionInfo,
 )
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.db.settings import SettingsConflict
 from pengumon.observability import grafana
 from pengumon.security import can_edit, rate_limit
@@ -153,8 +153,8 @@ async def put_settings(body: SettingsPut, state: StateDep,
         return JSONResponse(status_code=409, content=ConflictError(
             detail="Changed elsewhere since you loaded the settings", revision=e.current,
             conflicts=e.conflicts).model_dump())
-    except SecretsWriteFailed:
-        return _error(500, "The secrets file could not be written; nothing was saved")
+    except SecretsWriteFailed as e:
+        return _error(500, e.detail)
     return PutResponse(revision=applied.revision, summary=applied.summary, applied=applied.applied,
                        restart_needed=applied.restart_needed, live_failed=applied.live_failed)
 

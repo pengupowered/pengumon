@@ -68,7 +68,7 @@ def _config_file(tmp_path, devices: str) -> str:
 
 async def test_the_lifespan_installs_the_app_state_and_removes_it_at_shutdown(tmp_path, monkeypatch):
     from httpx import ASGITransport, AsyncClient
-    from pengumon.api.state import STATE_ATTR
+    from pengumon.state import STATE_ATTR
 
     monkeypatch.setenv("PENGUMON_CONFIG", _config_file(
         tmp_path, 'devices:\n  - {id: wifi, driver: asuswrt, url: "http://192.0.2.1", enabled: false}\n'))
@@ -95,7 +95,7 @@ async def test_a_device_that_cannot_run_is_reported_and_the_start_goes_on(tmp_pa
     """The devices are built from the settings store after the database opened: one that cannot run (its CA file is
     missing) is logged and left out, and the app starts without it."""
     import logging
-    from pengumon.api.state import STATE_ATTR
+    from pengumon.state import STATE_ATTR
 
     monkeypatch.setenv("PENGUMON_CONFIG", _config_file(
         tmp_path, 'devices:\n  - {id: wifi, driver: asuswrt, url: "https://192.0.2.1", tls: {ca_file: /nope.pem}}\n'
@@ -106,8 +106,8 @@ async def test_a_device_that_cannot_run_is_reported_and_the_start_goes_on(tmp_pa
             state = getattr(main.app.state, STATE_ATTR)
             assert [d.id for d in state.devices] == ["modem"]
             assert [d.id for d in state.config.devices] == ["wifi", "modem"]  # still the stored list
-            assert "tls.ca_file '/nope.pem' cannot be used" in state.devices.errors["wifi"]
-    assert any("device wifi: tls.ca_file '/nope.pem' cannot be used" in r.getMessage() for r in caplog.records)
+            assert "CA file '/nope.pem' cannot be used" in state.devices.errors["wifi"]
+    assert any("device wifi: CA file '/nope.pem' cannot be used" in r.getMessage() for r in caplog.records)
     assert (tmp_path / "pengumon.db").exists()
 
 
@@ -159,7 +159,7 @@ async def test_a_disabled_routers_stored_rates_still_serve_the_load_backfill(tmp
                   'devices:\n  - {id: router, driver: asuswrt, url: "http://192.0.2.1", enabled: false}\n'))
     _workers_idle(monkeypatch)
     async with main.lifespan(main.app):
-        from pengumon.api.state import STATE_ATTR
+        from pengumon.state import STATE_ATTR
         state = getattr(main.app.state, STATE_ATTR)
         assert state.classifier.load.device_id == "router"
         incident = await state.repository.get_incident_by_id(ids["busy"])
@@ -181,7 +181,7 @@ async def test_a_disabled_routers_stored_rates_still_teach_the_line_capacity(tmp
         tmp_path, 'devices:\n  - {id: router, driver: asuswrt, url: "http://192.0.2.1", enabled: false}\n'))
     _workers_idle(monkeypatch)
     async with main.lifespan(main.app):
-        from pengumon.api.state import STATE_ATTR
+        from pengumon.state import STATE_ATTR
         load = getattr(main.app.state, STATE_ATTR).classifier.load
         assert (load.down_mbps, load.up_mbps) == (500.0, 30.0)
         assert load.current() is None  # no live rates: the router is not polled
@@ -287,7 +287,7 @@ def test_sigterm_shuts_the_server_down_cleanly_within_podman_stops_grace_period(
 
 async def test_the_manager_refuses_a_device_that_cannot_be_built_and_applies_a_good_list(tmp_path, monkeypatch):
     from pengumon import main
-    from pengumon.api.state import STATE_ATTR
+    from pengumon.state import STATE_ATTR
 
     monkeypatch.setenv("PENGUMON_CONFIG", _config_file(tmp_path, ""))
     _workers_idle(monkeypatch)
@@ -297,7 +297,7 @@ async def test_the_manager_refuses_a_device_that_cannot_be_built_and_applies_a_g
         bad = {"id": "wifi", "driver": "asuswrt", "url": "https://192.0.2.1", "tls": {"verify": True, "ca_file": "/nope.pem"}}
         checked = await manager.validate({}, {"devices": [bad]})
         assert [(e["where"]) for e in checked.errors] == ["lists.devices[0]"]
-        assert "tls.ca_file '/nope.pem' cannot be used" in checked.errors[0]["message"]
+        assert "CA file '/nope.pem' cannot be used" in checked.errors[0]["message"]
         good = {"id": "wifi", "driver": "asuswrt", "url": "http://192.0.2.1", "enabled": False}
         await manager.apply(manager.revision, {}, {"devices": [good]})
         assert [d.id for d in state.devices] == ["wifi"]

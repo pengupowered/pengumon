@@ -4,7 +4,6 @@ body { min-height: 100vh; }
 .skip { position: absolute; left: -999px; top: 8px; z-index: 100; background: var(--surface-1); padding: 8px 12px; border-radius: var(--r-sm); }
 .skip:focus { left: 8px; }
 .grow { flex: 1; }
-.st-good-ink { color: var(--good); } .st-warn-ink { color: var(--warn); } .st-crit-ink { color: var(--crit); } .st-busy-ink { color: var(--busy); }
 
 /* Status glow behind the header: the page's one ambient flourish */
 .glow { position: fixed; inset: 0 0 auto; height: 420px; pointer-events: none; z-index: 0;
@@ -47,14 +46,12 @@ body[data-status="unknown"] { --gst: var(--unknown); }
   overflow: hidden; /* a long verdict title is cut with an ellipsis (its full text is the pill's title=), never pushed past the header */
 }
 .status-pill .dot { position: relative; width: 9px; height: 9px; border-radius: 50%; background: var(--st); flex: none; --ps: 2.33; }
-.status-pill .sp-ic { display: none; color: var(--st); }
 .status-pill b { font-weight: var(--fw-semi); }
 .status-pill .sp-word { display: none; }
 .status-pill #statusPillText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .status-pill .sp-metrics { flex: none; }
 .status-pill .sep { color: var(--ink-4); }
 .status-pill .sp-metrics { display: inline-flex; gap: 7px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
-.status-pill .sp-note { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding-left: 9px; border-left: 1px solid var(--line-strong); color: var(--warn); }
 .topbar.st-good .status-pill .dot::after, .topbar.st-warn .status-pill .dot::after, .topbar.st-busy .status-pill .dot::after, .topbar.st-crit .status-pill .dot::after { animation: breathe 2.4s var(--ease) infinite; }
 .live { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
 .live i { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--good); --ps: 3; }
@@ -63,7 +60,6 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .status-pill .dot::after, .live i::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--st, var(--good)); opacity: 0; will-change: transform, opacity; }
 .live-connecting i { background: var(--unknown); --st: var(--unknown); }
 .live-connecting i::after { animation: breathe 1.2s infinite; }
-.live-stale { color: var(--warn); }
 .tb-actions { display: flex; align-items: center; gap: 2px; }
 .tb-sep { width: 1px; height: 20px; background: var(--line-strong); margin: 0 6px; }
 .tb-grafana { margin-left: 6px; }
@@ -104,7 +100,6 @@ body[data-status="unknown"] { --gst: var(--unknown); }
   .status-pill { flex: 1; height: 36px; overflow: hidden; }
   .status-pill .sp-metrics > :nth-child(n+3) { display: none; }
   .status-pill .sp-metrics { flex-shrink: 3; min-width: 0; }
-  .status-pill .sp-note { display: none; }
   .status-pill b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* the verdict's title is a sentence; the phone's pill says its one word (the hero card has the title) */
   .status-pill #statusPillText { display: none; }
@@ -127,6 +122,16 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .conn-banner[hidden] { display: none; }
 .conn-banner svg.i { color: var(--unknown); flex: none; }
 @media (max-width: 720px) { .conn-banner { margin-inline: 12px; width: auto; } }
+/* First run: no device yet (index.html #setupHint, shown by main.js) */
+.setup-hint {
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: min(calc(100% - 48px), calc(var(--page-max) - 48px)); margin: 8px auto 0;
+  padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-1); color: var(--ink-1); font-size: var(--fs-sm);
+  border: 1px solid var(--line-strong);
+}
+.setup-hint[hidden] { display: none; }
+.setup-hint svg.i { color: var(--ink-3); flex: none; }
+.setup-hint > span { flex: 1 1 240px; }
+@media (max-width: 720px) { .setup-hint { margin-inline: 12px; width: auto; } }
 /* the verdict is not known while the data is not arriving: the pill turns grey and the cards dim */
 .topbar[data-conn="lost"] .status-pill.status-pill { --st: var(--unknown); --st-bg: var(--unknown-bg); }
 .topbar[data-conn="lost"] .status-pill .dot::after { animation: none; }

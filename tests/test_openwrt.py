@@ -18,6 +18,8 @@ from pengumon.drivers.openwrt import (
 )
 from pengumon.secrets import CredentialSources, password_env_var
 
+from device_helpers import Clock
+
 MAC_A, MAC_B, MAC_C = "02:00:00:00:00:0a", "02:00:00:00:00:0b", "02:00:00:00:00:0c"
 
 DUMP = {"interface": [
@@ -112,14 +114,6 @@ class FakeUbus:
         if body["params"][1:3] != ["session", "login"]:
             self.posts.append([tuple(body["params"][1:3])])
         return httpx.Response(200, json=self.answer(body))
-
-
-class Clock:
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self):
-        return self.now
 
 
 def build(ubus, clock=None, password="pw", **options):

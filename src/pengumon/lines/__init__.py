@@ -37,11 +37,3 @@ def wording(technology: Optional[str]) -> LineWording:
     """The wording for a line technology; the generic one when it is unknown (no access-line device)."""
     return WORDING.get(technology or "", GENERIC)
 
-
-def __getattr__(name: str):
-    """`CONTRIBUTIONS`, technology -> its AI-pack contribution class, loaded on first use: the contribution module needs
-    pengumon.capabilities, which itself imports this package, so a plain import here would be circular."""
-    if name == "CONTRIBUTIONS":
-        from pengumon.lines.docsis_contrib import DocsisContribution
-        return {"docsis": DocsisContribution}
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

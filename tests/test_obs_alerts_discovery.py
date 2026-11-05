@@ -11,7 +11,7 @@ import obs_helpers
 from icmp_fakes import FakeBackend, FakePath
 from obs_helpers import FakeTracer
 from discovery_fakes import discover, three_paths
-from pengumon import notify as notify_module
+from pengumon.notify import notifier as notify_module
 from pengumon.engine.discovery import engine as engine_module, traces as traces_module
 from pengumon.engine.mtr import MtrEngine
 from pengumon.observability import export
@@ -193,9 +193,9 @@ async def test_each_channel_counts_sent_and_failed_with_a_span_and_nothing_of_th
     def handler(request):
         return httpx.Response(500 if request.url.host == "bad.example.org" else 200)
 
-    from pengumon.notify import Notifier
-    from pengumon.notify_settings import WebhookConfig
-    from pengumon.webhook import WebhookSender
+    from pengumon.notify.notifier import Notifier
+    from pengumon.notify.settings import WebhookConfig
+    from pengumon.notify.webhook import WebhookSender
     good = WebhookSender(WebhookConfig(url="https://hooks.example.com/api/SEKRET-PATH?token=SEKRET-QUERY", id="homechat",
                                        name="Home chat"), {})
     bad = WebhookSender(WebhookConfig(url="https://bad.example.org/hook/SEKRET2", id="pager", name="Pager"), {},
@@ -220,7 +220,7 @@ async def test_each_channel_counts_sent_and_failed_with_a_span_and_nothing_of_th
 
 
 async def test_the_test_alert_is_counted_as_a_test_per_channel():
-    from pengumon.notify import Notifier
+    from pengumon.notify.notifier import Notifier
     sent = _alerts("test", "sent", "ntfy")
     notifier = Notifier("https://ntfy.example.net/t", client=_client(lambda request: httpx.Response(200)))
     results = await notifier.send_test()
@@ -230,7 +230,7 @@ async def test_the_test_alert_is_counted_as_a_test_per_channel():
 
 
 async def test_a_failed_ntfy_post_logs_the_error_type_and_status_but_not_the_topic(caplog):
-    from pengumon.notify import Notifier
+    from pengumon.notify.notifier import Notifier
     notifier = Notifier("https://ntfy.example.net/SEKRET-TOPIC", client=_client(lambda request: httpx.Response(403)))
     with caplog.at_level(logging.WARNING, logger="pengumon.notify"):
         assert await notifier._send_ntfy(_alert()) == "the server answered 403"

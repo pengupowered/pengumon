@@ -9,7 +9,17 @@
 - `GET /api/path/export`: The applied path as YAML (`pengumon-path.yaml`, a `targets:` list in config.yaml syntax)
 - `POST /api/path/import`: That YAML (or a config.yaml) in the body: `{"hops": [...], "device_matches"}`, a draft for the editor; nothing is applied. 422 with the reason for a bad file
 - `POST /api/targets`, `DELETE /api/targets/{id}`: One hop added at the end of the path, or removed (the add-target dialog, the trace dialog's Monitor); 400 for a taken id or past 64 hops
-- `GET /api/report?days=30`: Reliability report: per-day availability per hop, incident count and minutes by cause category (`by_cause`: `cause` is router, gateway, line, isp, ...: docs/diagnosis.md; expected incidents excluded), worst hours of the day. `tz_offset_minutes` buckets days and hours in the viewer's timezone
+- `GET /api/report?days=30`: Reliability report: per-day availability per hop, incident count and minutes by cause category (`by_cause`: `cause` is router, gateway, line, isp, ...: docs/diagnosis.md; expected incidents excluded), worst hours of the day (the hops that ignore ping and those removed from the path left out, as in the loss grid). `days` is 1 to 400. Days and hours are bucketed in the viewer's time zone, see [Time zone of the report routes](#time-zone-of-the-report-routes)
+- `GET /api/report/loss-grid?days=7`: Probe loss per calendar day and hour for the "when it breaks" heatmap: `days` 1 to 31, one row per day (oldest first) of 24 cells, each with `sent`, `lost` and `loss_pct` (`null` where nothing was sent). When each cell is (epoch seconds): `day_starts`, the start of every day plus the end of the last (`days` + 1 of them); `hour_starts`, per day `null` (hour h begins `h` × 3600 after the day's start) or, on a day the clocks change, the 25 instants its hours begin and the last one ends (the hour the clocks go back lasts two hours, the one they skip none). `zone` names the zone used (an IANA name, `UTC` or a fixed offset such as `+05:30`, as a browser's `Intl.DateTimeFormat` takes it) and `tz_offset_minutes` its offset now. Same time zone rule
+- `GET /api/uptime?window=24h`: Availability strips for every target in one answer: `window` is `24h` (96 blocks of 15 minutes), `7d` or `30d` (calendar days); each block is `ok`, `degraded`, `outage`, `busy` (explained by line load) or `no_data`, with the availability over the window, from the per-minute rollups. Block i runs from `bounds[i]` to `bounds[i + 1]` (epoch seconds, `blocks` + 1 of them; a day can last 23 or 25 hours); `zone` and `tz_offset_minutes` as in the loss grid: the clock its times are meant to be read on. Same time zone rule
+- `GET /api/history?start_time=&end_time=&target_ids=&bucket_seconds=&compact=`: The probe samples behind the latency chart (epoch seconds; default the last hour; `target_ids` repeated to narrow it). A range over an hour with no `bucket_seconds` is bucketed anyway (10 s up to a day, 60 s beyond), so one request cannot ask for every raw sample; `compact=true` answers `{"fields", "rows"}` instead of a list of objects. Rate limited (60 a minute)
+- `GET /api/targets`: Live statistics (WinMTR style) for every monitored target; 503 while the prober starts. Each target's `short_label` is its role words (Router, Gateway, ISP hop 2, Internet, DNS lookup, Other hop 1; never a name or an address; `null` while it is switched off), the rule the AI pack uses too (`engine/path_rules.py` `hop_roles`); the live stream's targets carry it as well. `POST /api/targets` and `DELETE /api/targets/{id}` are the add and remove above
+- `GET /api/incidents/count?scope=network`: `{"total", "expected"}`, how many incidents are recorded (`expected`: those explained by heavy line load); `scope` as for `/api/incidents`. The list loads a page at a time, so the dashboard asks here for the real figure
+- `GET /api/incidents/{id}/inspect`: The post-mortem data of one incident (the incident inspector); 404 for an unknown id
+- `GET /api/info`: The listen port, this host's LAN addresses and URLs, the ISP name, the sign-in state (`session`), `can_edit` and how probes are sent (`probe`: backend, resolution, and the fix when probing does not work)
+- `GET /api/services`: The state of your own apps (status, timings, last five incidents): [services.md](services.md)
+- `POST /api/mtr/trace`: `{"target_host", "family"}`: an on-demand traceroute, hop by hop (the Trace dialog). Rate limited (6 a minute)
+- `WS /ws`: The live stream the dashboard listens to (one message per probe round); the message is described in [architecture.md](architecture.md)
 - `GET /api/incidents?limit=100&offset=0`: Network incidents, newest first (`scope`, `include_expected`); `offset` skips the newest, so a client loads a first page and older ones on demand
 - `GET /api/incidents/dossier`: Evidence dossier for the ISP (window up to 30 days); conclusions are derived from the data, expected incidents are excluded and counted
 - `GET /api/ai-pack?scope=window&hours=24&level=full&detail=short`: The AI troubleshooting pack, one Markdown document for a chat model (`markdown`, the exact text), with `modules` (`id`, `title`, `chars`, `budget_chars`, `trimmed` per module section included) and `roles`, the "who is who" key that is never part of the text. `scope=window` takes `hours` (1 to 168; the dashboard offers 1, 24 and 168), `scope=incident` takes `incident_id` (an hour on each side; 404 for an unknown id, 422 when `incident_id` and `scope` disagree). `level`: `full` (the default), `vague` or `anonymized`; `detail`: `short` (the default) or `detailed`; times in the zone set in Settings (`general.timezone`), else in `tz` (the viewer's IANA zone, `America/New_York`; the dialog sends the browser's), else at `tz_offset_minutes` (as in `/api/report`), else UTC, which the header then says; a named zone's daylight-saving changes are followed and named. Anyone who can view the dashboard may ask for any level; with viewing without the token on, that includes Full. Rate limited (6 a minute) and one build at a time (429 while another runs). Counted in `pengumon_ai_pack_exports_total`.
@@ -30,7 +40,7 @@
 
 ## Where the routes live
 
-One router module per feature in `src/pengumon/api/`: `targets.py`, `path.py` (the path editor's routes), `incidents.py` (list, inspect, dossier), `history.py`, `reports.py` (report, loss grid, uptime, AI pack), `ops.py` (info, status, health, traceroute, `/metrics`), `settings.py` (the Settings page; its bodies are in `settings_models.py`), plus `devices.py`, `clients.py`, `services.py` and `engine/discovery/api.py`. `common.py` has what they share (`StateDep`, `json_response`, `device_or_404`). `api/__init__.py` lists the feature routers in `ROUTERS`; `api/router.py` only mounts them and holds no handlers (`tests/test_api_routers.py`). A new endpoint goes in its feature's module.
+One router module per feature in `src/pengumon/api/`: `targets.py`, `path.py` (the path editor's routes), `incidents.py` (list, inspect, dossier), `history.py`, `reports.py` (report, loss grid, uptime, AI pack), `ops.py` (info, status, health, traceroute, `/metrics`), `notifications.py` (the alert channels and the test message), `settings.py` (the Settings page; its bodies are in `settings_models.py`), `settings_preview.py` (the outage-rules preview), `devices.py`, `services.py`, `clients.py`, `discovery.py` and `live.py` (the `/ws` websocket). `common.py` has what they share (`StateDep`, `json_response`, `device_or_404`). `api/router.py` lists every router in `ROUTERS` and mounts them; it holds no handlers (`tests/test_api_routers.py`). A new endpoint goes in its feature's module in `api/`, also for a feature that is a component (docs/architecture.md, "Where things live").
 
 ## The probe path's history, preview and route check
 
@@ -63,6 +73,14 @@ token when one is set, and changes nothing that is live unless it says so.
 `GET /api/path` and `POST /api/path/import` also answer `device_matches`, and `GET /api/devices` gives each device a
 `label` (see the list above).
 
+## Time zone of the report routes
+
+`/api/report`, `/api/report/loss-grid` and `/api/uptime` put each sample in a day and an hour of the viewer's local
+time. They take `tz`, an IANA zone name such as `America/New_York` (the dashboard sends the browser's), and still
+accept `tz_offset_minutes` (-840 to 840) for older pages. The zone used is, in this order: the `general.timezone`
+setting (unless it is UTC, the default in a container), else `tz`, else `tz_offset_minutes`, else UTC; `/api/ai-pack` follows the same order. A named zone follows
+daylight-saving changes, so a day can have 23 or 25 hours; a fixed offset does not.
+
 ## Settings
 
 The Settings page reads these. The bodies are pydantic models in `src/pengumon/api/settings_models.py`; the list of
@@ -74,7 +92,8 @@ where from, and for a URL its host.
 
 - **`GET /api/settings/schema`**: `{"round_seconds", "sections": [{id, title, order}], "settings": [...], "lists",
   "secrets"}`. Each setting has its registry entry (`key`, `section`, `group`, `label`, `effect`, `unit`, `scale`,
-  `rounds`, `live`, `env`, `advanced`, `export`, `order`, `related`, `also_in`) and, read from its field, `type`
+  `rounds`, `live`, `env`, `advanced`, `export`, `order`, `related`, `also_in`, `choice_labels`: the words shown for
+  each stored choice, `empty`: what an empty value means) and, read from its field, `type`
   (number, integer, boolean, text, choice, time, timezone, layout), `nullable`, `min`, `max`, `exclusive_min`,
   `exclusive_max`, `max_length`, `step`, `choices` and `default`. `lists` has `devices`, `services`, `webhooks` and
   `dns_probes`, each with its `item_fields` and `default_items`; devices also have `drivers` (label, poll defaults,
@@ -88,6 +107,7 @@ where from, and for a URL its host.
   `{down_mbps, up_mbps}`. `about` (listen address, data folder, config and database paths, whether a token is set,
   viewing without it, the OTLP host, the version) is sent only to someone who may edit.
 - **`GET /api/settings/values`**: `{"revision", "values": {key: effective value}}`.
+- **`GET /api/settings/grafana-links`**: The header's Grafana links as they are now (the page refills its menu after a Save of `display.grafana_url`).
 
 - **`POST /api/settings/validate`** (60 a minute): a change `{values: {key: value | null}, lists: {name: [...] |
   null}}` against the current state -> `{ok, errors, warnings, summary}`. Nothing is applied. `warnings` are not
@@ -101,6 +121,13 @@ where from, and for a URL its host.
   changed between `base_revision` and now answers 409 `{detail, revision, conflicts}`; untouched parts may have
   changed. Answer: `{revision, summary, applied, restart_needed, live_failed}`; `live_failed` parts are saved and
   apply at the next start.
+- **`POST /api/settings/preview`** (6 a minute): `{values, days}` (`classifier.*`, `line.down_mbps` / `up_mbps` and
+  `alerts.*` keys only; `days` defaults to the smaller of 7 and the retention) -> `{"id"}`. The stored samples are
+  replayed with those draft rules in a separate process; nothing is changed. 422 for a key it cannot replay or a value
+  out of range, 429 with `Retry-After: 30` while another replay runs. **`GET /api/settings/preview/{id}`** answers
+  `{state: running | done | failed | cancelled, progress, window, current, draft, recorded, changes, notes}` (the
+  incident counts as recorded, as the current rules give them, and under the draft; polling keeps the job alive), and
+  **`DELETE /api/settings/preview/{id}`** stops it. This is the Outage rules preview on the Settings page.
 - **`GET /api/settings/versions`**: the kept versions (the last 50), newest first: `[{revision, applied_at, source:
   import | save | restore | yaml_import, summary}]`. **`GET /api/settings/versions/{n}`**: `{revision, values,
   lists}`, that version as a draft against the current state (null for a value stored now and not then); 404 when it

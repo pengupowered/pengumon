@@ -425,13 +425,13 @@ async def test_the_token_still_reads_the_export(viewers, app_state):
 
 def test_a_viewer_gets_the_live_stream_but_cannot_send(viewers, monkeypatch):
     """The live socket accepts a viewer; what a viewer sends never reaches the app (homeguard drops it). The app's
-    socket reads and ignores client text in any case (live/component.py): no client message changes anything."""
-    from pengumon.api.ws import ws_manager
+    socket reads and ignores client text in any case (api/live.py): no client message changes anything."""
+    from pengumon.live.ws import ws_manager
 
     client = TestClient(app)
     origin = {"Origin": "http://testserver"}
     received = []
-    from pengumon.live import component as live
+    from pengumon.api import live
 
     original = live.WebSocket.receive_text
 

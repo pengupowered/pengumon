@@ -56,7 +56,7 @@ def test_hop_status_thresholds_are_validated():
 def test_dashboard_layout_defaults_and_validation():
     import pytest
     from pydantic import ValidationError
-    from pengumon.ui import panel_ids
+    from pengumon.web.ui import panel_ids
     from pengumon.web.settings import DashboardConfig
 
     assert AppConfig().dashboard == DashboardConfig(order=[], hidden=[])

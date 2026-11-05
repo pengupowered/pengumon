@@ -15,6 +15,8 @@ from pengumon.observability.logs import (
 )
 from pengumon.observability.telemetry import exclude_from_telemetry, fastapi_telemetry
 
+from device_helpers import Clock
+
 
 class Capture(logging.Handler):
     """Keeps the records and formats them with the formatter under test."""
@@ -216,14 +218,6 @@ def test_invalid_settings_are_refused(clean_root, monkeypatch, kwargs):
 
 
 # --- StateLog ---------------------------------------------------------------------------------------------
-
-class Clock:
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self):
-        return self.now
-
 
 def _state_log(capture):
     logger, handler = capture

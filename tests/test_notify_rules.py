@@ -1,4 +1,4 @@
-"""The alert rules (notify_policy.py, notify.py): the severity filter, the delay, quiet hours across midnight and
+"""The alert rules (notify/policy.py, notify/notifier.py): the severity filter, the delay, quiet hours across midnight and
 daylight-saving changes, critical-still, the repeat window, and a reconfigure that keeps what was announced. Time is a
 fake wall clock and a fake scheduler: nothing here sleeps."""
 
@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from pengumon.incidents.model import Incident
-from pengumon.notify import Notifier
-from pengumon.notify_policy import AlertPolicy
-from pengumon.notify_settings import AlertsConfig
+from pengumon.notify.notifier import Notifier
+from pengumon.notify.policy import AlertPolicy
+from pengumon.notify.settings import AlertsConfig
 from pengumon.timeofday import next_wall_time, window_end, zone
 
 

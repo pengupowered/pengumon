@@ -18,7 +18,7 @@ import { state } from '../../js/state.js';
 import { bus as pageBus } from '../../js/bus.js';
 import './help.js';
 
-const { escapeHtml, icon, latestMs, setBadge, setText, STATUS } = util;
+const { escapeHtml, formatMs: fmtMs, icon, latestMs, setBadge, setText, STATUS } = util;
 
 // The classifier's status -> the design's status level and its word.
 const LEVEL = { healthy: 'good', degraded: 'warn', down: 'crit', busy: 'busy', unknown: 'unknown' };
@@ -60,7 +60,6 @@ export function updateDiagnosisBanner(diagnosis) {
 const STATE = { up: 'good', degraded: 'warn', down: 'crit' };
 const has = (v) => v !== null && v !== undefined;
 
-const fmtMs = (v) => (!has(v) ? '–' : v >= 100 ? String(Math.round(v)) : v.toFixed(1));
 const fmtPct = (v) => (v >= 100 ? '100%' : `${(+v).toFixed(1)}%`);
 
 // The origin of the chain: a small marker, not a hop (no status, no value). Hop statuses are on the nodes and links.
@@ -94,6 +93,8 @@ export function deltaText(d) {
   return { text: d > -NEGATIVE_NOISE_MS ? '≈0 ms' : `−${Math.abs(d).toFixed(1)} ms`, title: why };
 }
 
+const painted = new WeakMap(); // node element -> the HTML last written to its value, meta and sparkline boxes
+
 function paintNode(el, link, n, prev) {
   const word = n.quiet ? n.quietWords.word : STATUS[n.level].word; // ignores ping, or IPv6 unavailable on this host
   const unprobed = n.quiet && n.quietWords.kind !== 'ping'; // its last figures are from before IPv6 went away, or pings stopped
@@ -117,11 +118,18 @@ function paintNode(el, link, n, prev) {
     st.title = word;
     st.innerHTML = icon(STATUS[n.level].icon);
   }
-  el.querySelector('.node-val').innerHTML = unprobed ? '<b class="node-word">Not probed</b>'
+  // the figures change rarely, and the message comes every second: a node's three boxes are rewritten only when their
+  // HTML differs (rewriting identical HTML still rebuilds the nodes and, for the sparkline, its SVG)
+  const val = unprobed ? '<b class="node-word">Not probed</b>'
     : has(n.ms) ? `<b class="num">${fmtMs(n.ms)}</b><span>ms</span>` : '<b class="node-word">No reply</b>';
-  el.querySelector('.node-meta').innerHTML = n.quiet ? `<span title="${escapeHtml(n.quietWords.why)}">${escapeHtml(n.quietWords.meta)}</span>`
+  const meta = n.quiet ? `<span title="${escapeHtml(n.quietWords.why)}">${escapeHtml(n.quietWords.meta)}</span>`
     : `<span class="${n.loss > 0 ? 'bad' : ''}">loss <b class="num">${fmtPct(n.loss)}</b></span>${has(n.jitter) && has(n.ms) ? `<span>jitter <b class="num">${(+n.jitter).toFixed(1)}</b></span>` : ''}`;
-  el.querySelector('.node-spark').innerHTML = sparkSvg(unprobed ? [] : n.spark, n.level);
+  const spark = sparkSvg(unprobed ? [] : n.spark, n.level, { id: n.key }); // the same samples give the same markup (its gradient id is the node's)
+  const last = painted.get(el) || {};
+  if (last.val !== val) el.querySelector('.node-val').innerHTML = val;
+  if (last.meta !== meta) el.querySelector('.node-meta').innerHTML = meta;
+  if (last.spark !== spark) el.querySelector('.node-spark').innerHTML = spark;
+  painted.set(el, { val, meta, spark });
   // the link before the node: what this segment adds (from the last hop before it that answers)
   const broken = !has(n.ms) && !n.quiet;
   const linkLevel = n.level;
@@ -142,9 +150,14 @@ function paintNode(el, link, n, prev) {
 // How many nodes fit side by side before a label like "ISP hop 3" or a value like "23.2 ms" no longer does (the
 // chain's dense styles: links of 34 px, 24 px in a medium hero); a vertical chain (narrow hero) takes any number.
 const MIN_NODE = 112;
-function fits(chain) {
-  if (getComputedStyle(chain).flexDirection === 'column') return Infinity;
-  const width = chain.clientWidth;
+// Measuring forces a layout, so it is done when the chain's size changes (the ResizeObserver below), not on every message.
+let box = null; // { column, width } of #pathChain, null until measured
+function measure(chain) {
+  box = { column: getComputedStyle(chain).flexDirection === 'column', width: chain.clientWidth };
+}
+function fits() {
+  if (box.column) return Infinity;
+  const width = box.width;
   return Math.floor((width - 74) / (MIN_NODE + (width < 1060 ? 24 : 34)));
 }
 
@@ -168,8 +181,9 @@ let lastTargets = null;
 function updateChain(targets) {
   lastTargets = targets;
   const chain = document.getElementById('pathChain');
+  if (!box) measure(chain);
   let nodes = pathNodes(targets);
-  if (nodes.length > fits(chain)) nodes = pathNodes(targets, { collapseIsp: true });
+  if (nodes.length > fits()) nodes = pathNodes(targets, { collapseIsp: true });
   const key = nodes.map((n) => n.key).join('|');
   if (key !== chainKey) {
     chainKey = key;
@@ -177,7 +191,7 @@ function updateChain(targets) {
       : '<li class="chain-none">No router, modem, provider hop or public server is a target, so there is no path to draw. Add one as a target to see it here.</li>');
   }
   // more than five nodes, or four in a medium hero: narrower links and padding, no node icons in a medium hero
-  chain.dataset.dense = nodes.length + 1 > 5 || (nodes.length >= 4 && chain.clientWidth < 1060) ? '1' : '0';
+  chain.dataset.dense = nodes.length + 1 > 5 || (nodes.length >= 4 && box.width < 1060) ? '1' : '0';
   chain.classList.add('is-live');
   setText(chain.querySelector('[data-f=hostCount]'), String(targets.length));
   let heard = null; // the last node before this one that answers
@@ -333,7 +347,10 @@ export function mountDiagnosis(bus, ctx) {
     setInterval(driftNotice, DRIFT_EVERY_MS);
   });
   // a wider or narrower hero may fit a node per ISP hop, or no longer
-  new ResizeObserver(() => { if (lastTargets) updateChain(lastTargets); }).observe(document.getElementById('pathChain'));
+  new ResizeObserver(() => {
+    measure(document.getElementById('pathChain'));
+    if (lastTargets) updateChain(lastTargets);
+  }).observe(document.getElementById('pathChain'));
   return bus.subscribe('diagnosis', (d) => { updateDiagnosisBanner(d); inspectButton(d); });
 }
 

@@ -4,7 +4,8 @@
 // group, as its own line like Path health's own node. ISP hops and DNS stay out of the path series (at most three lines cross, as the
 // design asks); the chart's "Each target" view, hop details and target history show every target.
 
-import { latestMs } from './util.js';
+import { latestMs, median } from './util.js';
+import { ROLE_SHORT } from './path-api.js';
 
 export const V6_GROUP = 'internet_v6';
 
@@ -17,13 +18,6 @@ export const SERIES = [
 ];
 
 const has = (v) => v !== null && v !== undefined;
-
-export function median(values) {
-  const v = values.filter(has).sort((a, b) => a - b);
-  if (!v.length) return null;
-  const m = Math.floor(v.length / 2);
-  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
-}
 
 // Which target ids feed which series: { seriesId: [targetId...] }, from [{id, category}] (the configured targets;
 // disabled ones are left out).
@@ -55,8 +49,6 @@ export function combine(series, values) {
 // on its home-side address), ISP hop N, Internet (with the address when there are several public servers, the Internet figure being their median), DNS lookup N; a custom target keeps its
 // configured name. A number is added only when a category has several targets. The configured name stays the
 // secondary text. From [{id, category, name, address, enabled}] in path order: { targetId: label }.
-const SHORT = { local: 'Router', gateway: 'Gateway', isp: 'ISP hop', dns: 'DNS lookup' };
-
 export function shortLabels(targets) {
   const live = targets.filter((t) => t.enabled !== false);
   const out = {};
@@ -66,10 +58,13 @@ export function shortLabels(targets) {
     const group = byCat[t.category];
     const n = group.indexOf(t) + 1;
     const sameAddress = group.filter((o) => o.address === t.address).length > 1;
-    if (t.category === 'public' && group.length === 1) out[t.id] = 'Internet';
-    else if (t.category === 'public') out[t.id] = t.address && !sameAddress ? `Internet ${t.address}` : `Internet ${n}`;
-    else if (t.category === 'isp') out[t.id] = `ISP hop ${n}`;
-    else if (SHORT[t.category]) out[t.id] = group.length > 1 ? `${SHORT[t.category]} ${n}` : SHORT[t.category];
+    // The server's role rule (/api/targets short_label) where it is also the page's; a public server keeps its address
+    // and a custom hop its own name here (the server's rule leaves both out: it is the AI pack's anonymous role).
+    if (t.shortLabel && t.category !== 'public' && t.category !== 'custom') out[t.id] = t.shortLabel;
+    else if (t.category === 'public' && group.length === 1) out[t.id] = ROLE_SHORT.public;
+    else if (t.category === 'public') out[t.id] = `${ROLE_SHORT.public} ${t.address && !sameAddress ? t.address : n}`;
+    else if (t.category === 'isp') out[t.id] = `${ROLE_SHORT.isp} ${n}`;
+    else if (t.category !== 'custom' && ROLE_SHORT[t.category]) out[t.id] = group.length > 1 ? `${ROLE_SHORT[t.category]} ${n}` : ROLE_SHORT[t.category];
     else out[t.id] = t.name || t.id;
   });
   return out;
@@ -148,10 +143,10 @@ export const quietKey = (quiet) => (quiet instanceof Map ? [...quiet].map(([id, 
 
 // ---------- the path's nodes (Path health's chain, and the figure a target history opened from a node shows) ----------
 const STAGES = [
-  { cats: ['local'], kind: 'Router', icon: 'router' },
-  { cats: ['gateway'], kind: 'Gateway', icon: 'modem' },
+  { cats: ['local'], kind: ROLE_SHORT.local, icon: 'router' },
+  { cats: ['gateway'], kind: ROLE_SHORT.gateway, icon: 'modem' },
   { cats: ['isp'], kind: 'ISP', icon: 'isp', each: true },
-  { cats: ['public'], kind: 'Internet', icon: 'globe', fallback: ['dns'], redundant: true }
+  { cats: ['public'], kind: ROLE_SHORT.public, icon: 'globe', fallback: ['dns'], redundant: true }
 ];
 const RANK = { up: 0, degraded: 1, down: 2 };
 const STATE = { up: 'good', degraded: 'warn', down: 'crit' };

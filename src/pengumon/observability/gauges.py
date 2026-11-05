@@ -2,7 +2,7 @@
 (Prometheus text at /metrics, names in `prom`) and the OTel observable gauges `observability.export` registers (names in
 `otel`). A new metric is one `Gauge` here (or, from a feature's own module, one more entry appended to GAUGES).
 
-`collect(state)` takes the app's api.state.AppState and returns `[(labels, value)]`; a value of None leaves that
+`collect(state)` takes the app's pengumon.state.AppState and returns `[(labels, value)]`; a value of None leaves that
 sample out, and a gauge without samples is not declared at all. OTel callbacks run on the SDK's export thread, so a
 gauge that has an `otel` name must collect synchronously; one that is Prometheus-only (`otel` None) may be async.
 """
@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from pengumon import __version__
+from pengumon.live.ws import ws_manager
 from pengumon.observability.runtime import loop_monitor, process_stats
 
 Sample = Tuple[Dict[str, str], Optional[float]]
@@ -137,7 +138,6 @@ def _db_size(state) -> List[Sample]:
 
 
 def _ws_clients(state) -> List[Sample]:
-    from pengumon.api.ws import ws_manager  # (not at import: the api package imports this one)
     return [({}, len(ws_manager.active_connections))]
 
 

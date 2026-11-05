@@ -1,8 +1,13 @@
-# App health checks (`service_checks`)
+# App health checks
+
+Add your own apps on the **Settings** page (Devices and services, Host app checks): name, health address, and the
+options below. A save applies at once ([below](#changing-the-checks-without-a-restart)). The YAML here is the syntax
+that **Settings > Export** writes and **Import** reads; a `config.yaml` with a `service_checks` section is read only once,
+on the first start (see [configuration.md](configuration.md)).
 
 Pengumon also watches the other apps on this host over plain HTTP(S): every `interval_seconds` (30) it fetches
 each service's health URL. The dashboard shows them in a **Host services** card (after the hop matrix), and only when
-`service_checks.services` lists one: with none, nothing about services appears (`/api/features` reports
+the `service_checks.services` setting lists one: with none, nothing about services appears (`/api/features` reports
 `host_services` as unavailable). Each row has the status (`up`, `degraded` after 1 or 2 failed checks, `down` once
 `failures_for_incident` (3) failed in a row, `checking` before the first answer), the latency, when it was last
 checked and since when it has been up or failing, the reason when it is not up, the check address with a copy button,
@@ -15,7 +20,7 @@ service_checks:
     - id: my_app
       name: "My app"
       url: "http://127.0.0.1:9000/health"       # checked from the container; never shown as a link
-      open_url: "http://myhost.lan:9000/"    # optional link for browsers on the LAN: http(s), no credentials, no ?query
+      open_url: "http://myhost.lan:9000/"     # optional link for browsers on the LAN: http(s), no credentials, no ?query
       description: "What it does"               # optional
       notify: true                              # false: shown, but never sent to ntfy
       ca_file: "/app/certs/home-ca.pem"         # optional: verify an HTTPS endpoint against this CA

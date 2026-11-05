@@ -13,10 +13,11 @@ from pengumon.reports.ai_findings import (
     RULES, Baseline, Shape, collect_pack_facts, confidence, hop_window_vs_normal, latency_start, match_events,
     path_shape,
 )
-from pengumon.reports.queries import MinuteRow
+from pengumon.reports.queries import MinuteRow, minute_row_chunks
 from pengumon.reports import ai_pack
 from pengumon.reports.ai_pack import ModuleInput, render_pack, view_of
-from pengumon.capabilities.contrib import ModuleSection, activate, driver_note
+from pengumon.capabilities.contrib import ModuleSection
+from pengumon.reports.contributions import activate, driver_note
 from pengumon.config import AppConfig
 from datetime import timezone
 
@@ -180,3 +181,16 @@ def worst_modules():
         out.append(ModuleInput(c.id, c.title, c.layer, c.budget_chars, c.prompt_context(config), section,
                                note_of.get(c.id)))
     return tuple(out)
+
+
+async def test_the_minute_rows_come_in_chunks_without_a_gap_or_a_repeat(tmp_path):
+    repo, config, end = await open_repo(tmp_path), make_config(), week_end()
+    await seed(repo, config, end)
+    whole = [r for ch in await _chunks(repo, end, 10**6) for r in ch]
+    pieces = await _chunks(repo, end, 1000)
+    assert len(pieces) == 11 and len(whole) > 10_000   # 10,081 minutes in 1000-minute chunks
+    assert [r for ch in pieces for r in ch] == whole   # same rows, same (minute, target) order
+
+
+async def _chunks(repo, end, chunk_minutes):
+    return [ch async for ch in minute_row_chunks(repo, end - 7 * DAY, end, chunk_minutes)]

@@ -26,6 +26,14 @@ export function applyChartTheme() {
   clearTokenCache();
   if (typeof Chart === 'undefined') return;
   const d = Chart.defaults;
+  // Chart.js copies the scale defaults into each chart's own options when the chart is made, so a chart made in the other
+  // theme keeps the old text, grid and axis colours however the defaults change; remember what they were to swap them below.
+  const swap = new Map();
+  const remember = (was, now) => { if (typeof was === 'string' && was && was !== now && !swap.has(was)) swap.set(was, now); };
+  remember(d.color, token('--ink-3'));
+  remember(d.borderColor, token('--line'));
+  remember(d.scale?.grid?.color, token('--line'));
+  remember(d.scale?.border?.color, token('--line-strong'));
   d.color = token('--ink-3');
   d.borderColor = token('--line');
   d.font.family = token('--font');
@@ -39,5 +47,15 @@ export function applyChartTheme() {
     backgroundColor: token('--surface-1'), titleColor: token('--ink-1'), bodyColor: token('--ink-2'),
     borderColor: token('--line-strong'), borderWidth: 1, padding: 10, cornerRadius: 10, boxPadding: 4
   });
-  Object.values(Chart.instances).forEach((c) => c.update('none'));
+  Object.values(Chart.instances).forEach((c) => {
+    if (swap.size) {
+      Object.values(c.config.options.scales || {}).forEach((scale) => {
+        ['grid', 'border', 'ticks', 'title'].forEach((part) => {
+          const o = scale[part];
+          if (o && swap.has(o.color)) o.color = swap.get(o.color);
+        });
+      });
+    }
+    c.update('none');
+  });
 }

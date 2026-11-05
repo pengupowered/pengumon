@@ -1,6 +1,6 @@
 """Webhook delivery of alerts: the same events ntfy gets, as JSON (Pengumon's own payload), Slack or Discord.
 
-The Notifier (notify.py) decides what is announced (quiet rules, rate limits, dedup) and hands each alert to every
+The Notifier (notify/notifier.py) decides what is announced (quiet rules, rate limits, dedup) and hands each alert to every
 channel; this module builds the request body for a webhook and sends it. The URL comes from the owner's config, so it
 is trusted, but only http(s) is spoken and a redirect is followed only within the same host. Header values and URLs
 (a webhook id in the path or a token in the query is a secret) are never logged: a failure is logged as the webhook's
@@ -16,7 +16,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from pengumon.notify_settings import WebhookConfig
+from pengumon.notify.settings import WebhookConfig
 
 logger = logging.getLogger("pengumon.notify")
 

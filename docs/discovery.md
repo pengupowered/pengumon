@@ -235,7 +235,7 @@ nothing and says so.
 The result is stored (it survives a restart) and shown on Path health as "Your path changed · Review", which opens
 the path editor with the draft of that run. It is compared with the path as it is applied now, so once you Apply
 the changes it settled are gone. A provider that renumbered a router shows as one hop gone and one new: use
-**Replace address** in the editor to keep the old hop's history.
+**Change address** in the editor to keep the old hop's history.
 
 A set of changes raises one notification through ntfy and the webhooks (event `path_changed`, with a link to Path
 health when `notifications.public_url` is set). The same set is not announced twice. **Dismiss** marks the changes

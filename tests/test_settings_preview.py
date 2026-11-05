@@ -14,10 +14,9 @@ from types import SimpleNamespace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from pengumon.api.settings_models import PreviewJob
 from pengumon.config import AppConfig
 from pengumon.main import app, security_config
-from pengumon.settings.preview import PreviewBusy, PreviewInvalid, PreviewJobs, build_spec, draft_rules
+from pengumon.settings.preview import PreviewBusy, PreviewInvalid, PreviewJob, PreviewJobs, build_spec, draft_rules
 
 COUNTS = {"incidents": 2, "critical": 1, "warning": 1, "busy_hidden": 0, "total_seconds": 30.0, "alerts": None}
 RESULT = {"window": {"start": 1.0, "end": 2.0, "rounds": 3, "gaps": []}, "current": COUNTS,

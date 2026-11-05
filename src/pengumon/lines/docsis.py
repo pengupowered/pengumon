@@ -1,6 +1,6 @@
 """DOCSIS access lines (cable): how a set of channels is summarised and judged, for every DOCSIS modem driver.
 
-Thresholds (LEVELS, configurable on the Settings page) default to the commonly quoted cable-industry limits: upstream
+Thresholds (a LineSignalConfig, configurable on the Settings page; DEFAULT_LEVELS when none is passed) default to the commonly quoted cable-industry limits: upstream
 power above 49 dBmV (51 critical) or below 38 dBmV (35 critical), downstream SNR below 33 dB (30 critical),
 downstream power beyond ±8 dBmV. They are one set, used for the snapshot status, the grades the dashboard colours by, the channel table and the dossier's list of
 degraded channels (an older dashboard and the dossier used 48 and ±7 dBmV for some of these; the status and the
@@ -27,9 +27,9 @@ logger = logging.getLogger("pengumon.lines")
 TECHNOLOGY = "docsis"
 
 # The levels a DOCSIS line is judged by: the Settings page's "Your line" section (pengumon.lines.levels, the
-# defaults and their reasoning are there). One object for the whole process, read at call time by everything below;
-# `use_levels` copies the configured ones into it in place (at the start and after each save), so a holder of
-# LEVELS sees a change at once.
+# defaults and their reasoning are there). Every function below takes them as `levels`; the live app passes the live
+# config's section (the line monitor reads it at each poll: devices/monitors.py watch_levels), a report its config's.
+# DEFAULT_LEVELS, used when none are passed, is never changed.
 #
 # How new uncorrectable codewords are judged. An uncorrectable codeword is a frame lost after error correction; a few
 # are normal on a cable plant, and what matters is how many there are against the traffic and whether they persist:
@@ -40,19 +40,13 @@ TECHNOLOGY = "docsis"
 #    uncorrectable_warning_per_minute (60) or when the previous read had new errors too, critical above
 #    uncorrectable_critical_per_minute (500);
 # anything below is a short burst: graded good, with a note, and shown to the person as information.
-LEVELS = LineSignalConfig()
+DEFAULT_LEVELS = LineSignalConfig()
 
 
-def use_levels(levels: LineSignalConfig) -> None:
-    """Makes `levels` the ones in force: copied into LEVELS field by field, in one synchronous step."""
-    for name in type(LEVELS).model_fields:
-        setattr(LEVELS, name, getattr(levels, name))
-
-
-def ranges() -> Dict[str, Range]:
+def ranges(levels: Optional[LineSignalConfig] = None) -> Dict[str, Range]:
     """The good zone of each metric on the scale a gauge draws, and where it turns critical (see pengumon.grades),
-    at the levels in force."""
-    lv = LEVELS
+    at `levels` (DEFAULT_LEVELS when None)."""
+    lv = levels or DEFAULT_LEVELS
     return {
         "ds_power": Range("dBmV", -15.0, 15.0, good_low=-lv.ds_power_warning_abs_dbmv,
                           good_high=lv.ds_power_warning_abs_dbmv),
@@ -66,9 +60,9 @@ def ranges() -> Dict[str, Range]:
 
 
 def judge_errors(recent: int, interval_seconds: Optional[float], ratio: Optional[float],
-                 recurring: bool) -> Tuple[str, Optional[str]]:
+                 recurring: bool, levels: Optional[LineSignalConfig] = None) -> Tuple[str, Optional[str]]:
     """(grade, note) for `recent` new uncorrectable codewords in `interval_seconds`. See the thresholds above."""
-    lv = LEVELS
+    lv = levels or DEFAULT_LEVELS
     if recent <= 0:
         return GOOD, None
     minutes = max(interval_seconds or 60.0, 1.0) / 60.0
@@ -90,19 +84,19 @@ def judge_errors(recent: int, interval_seconds: Optional[float], ratio: Optional
     return GOOD, f"{detail}: a short burst, not repeated"
 
 
-def grade_snapshot(snapshot: DocsisSignalSnapshot) -> DocsisSignalSnapshot:
-    """Fills in the grades of a reading (in place): the snapshot's four metrics and, per channel, power, SNR and new
-    errors. A snapshot without a reading (error, unconfigured) has none."""
+def grade_snapshot(snapshot: DocsisSignalSnapshot, levels: Optional[LineSignalConfig] = None) -> DocsisSignalSnapshot:
+    """Fills in the grades of a reading (in place) at `levels`: the snapshot's four metrics and, per channel, power,
+    SNR and new errors. A snapshot without a reading (error, unconfigured) has none."""
     if snapshot.status in NO_READING_STATUSES:
         snapshot.grades = {}
         return snapshot
-    graded = ranges()
+    graded = ranges(levels)
     snapshot.grades = known_grades(
         ds_power=graded["ds_power"].grade(snapshot.downstream_power_avg),
         ds_snr=graded["ds_snr"].grade(snapshot.downstream_snr_avg),
         us_power=graded["us_power"].grade(snapshot.upstream_power_avg),
         uncorrectables=judge_errors(snapshot.uncorrectables_recent, snapshot.uncorrectables_interval_seconds,
-                                    snapshot.uncorrectables_ratio, snapshot.errors_recurring)[0],
+                                    snapshot.uncorrectables_ratio, snapshot.errors_recurring, levels)[0],
     )
     for channel in snapshot.channels:
         power = graded["ds_power" if channel.direction == "downstream" else "us_power"]
@@ -114,8 +108,9 @@ def grade_snapshot(snapshot: DocsisSignalSnapshot) -> DocsisSignalSnapshot:
     return snapshot
 
 
-def summarize(channels: Sequence[DocsisChannel], ts: float) -> DocsisSignalSnapshot:
-    """Averages and RF status of one reading. The error deltas are added by DocsisErrorTracker."""
+def summarize(channels: Sequence[DocsisChannel], ts: float,
+              levels: Optional[LineSignalConfig] = None) -> DocsisSignalSnapshot:
+    """Averages and RF status of one reading, at `levels`. The error deltas are added by DocsisErrorTracker."""
     ds_channels = [c for c in channels if c.direction == "downstream"]
     us_channels = [c for c in channels if c.direction == "upstream"]
 
@@ -126,7 +121,7 @@ def summarize(channels: Sequence[DocsisChannel], ts: float) -> DocsisSignalSnaps
     us_power_avg = round(sum(c.power_dbmv for c in us_channels) / len(us_channels), 2) if us_channels else None
     uncorrectables = sum(c.uncorrectables or 0 for c in ds_channels)
 
-    lv = LEVELS
+    lv = levels or DEFAULT_LEVELS
     status = "healthy"
     if (us_power_avg and us_power_avg > lv.us_power_critical_dbmv) or (ds_snr_avg and ds_snr_avg < lv.ds_snr_critical_db):
         status = "critical"
@@ -142,7 +137,7 @@ def summarize(channels: Sequence[DocsisChannel], ts: float) -> DocsisSignalSnaps
         uncorrectables_total=uncorrectables,
         channels=[c.model_copy() for c in channels],  # the error tracker fills in fields; readings stay as read
         status=status,
-    ))
+    ), levels)
 
 
 class DocsisErrorTracker:
@@ -186,8 +181,8 @@ class DocsisErrorTracker:
             bad += deltas[2]
         return bad / total if total else None
 
-    def apply(self, snapshot: DocsisSignalSnapshot) -> DocsisSignalSnapshot:
-        """Fills in the recent-error fields of a good snapshot (in place) and returns it."""
+    def apply(self, snapshot: DocsisSignalSnapshot, levels: Optional[LineSignalConfig] = None) -> DocsisSignalSnapshot:
+        """Fills in the recent-error fields of a good snapshot (in place), graded at `levels`, and returns it."""
         if self._prev_total is not None and self._prev_ts is not None:
             dt = max(1.0, snapshot.timestamp - self._prev_ts)
             delta_total = max(0, snapshot.uncorrectables_total - self._prev_total)
@@ -205,7 +200,7 @@ class DocsisErrorTracker:
                 snapshot.errors_span_mhz = [min(freqs), max(freqs)] if freqs else None
                 snapshot.errors_recurring = self._prev_had_errors
                 grade, snapshot.errors_note = judge_errors(
-                    delta_total, dt, snapshot.uncorrectables_ratio, snapshot.errors_recurring)
+                    delta_total, dt, snapshot.uncorrectables_ratio, snapshot.errors_recurring, levels)
                 # Live health rests on how serious the errors since the last poll are, not on the totals since the
                 # modem booted and not on a single small burst.
                 if grade == CRITICAL:
@@ -223,13 +218,13 @@ class DocsisErrorTracker:
         self._prev_channels = {ch.channel_id: (ch.uncorrectables or 0) for ch in snapshot.channels}
         self._prev_counts = {c.channel_id: (c.unerrored, c.correcteds or 0, c.uncorrectables or 0)
                              for c in snapshot.channels if c.direction == "downstream" and c.unerrored is not None}
-        return grade_snapshot(snapshot)  # the recent-error figures are known only now
+        return grade_snapshot(snapshot, levels)  # the recent-error figures are known only now
 
 # --- dossier: which channels are outside typical levels, and why ------------------------------------------
 
-def is_degraded(c) -> bool:
-    """A channel outside the warning levels in force (listed in the dossier)."""
-    lv = LEVELS
+def is_degraded(c, levels: Optional[LineSignalConfig] = None) -> bool:
+    """A channel outside the warning levels of `levels` (listed in the dossier)."""
+    lv = levels or DEFAULT_LEVELS
     return bool(
         (c.uncorrectables and c.uncorrectables > 100)
         or (c.snr_db is not None and c.snr_db < lv.ds_snr_warning_db)
@@ -249,9 +244,9 @@ def uncorrectable_increase(snapshots) -> int:
     return total
 
 
-def channel_finding(c) -> str:
-    """Why a degraded channel is listed (the first matching reason wins)."""
-    lv = LEVELS
+def channel_finding(c, levels: Optional[LineSignalConfig] = None) -> str:
+    """Why a degraded channel is listed at `levels` (the first matching reason wins)."""
+    lv = levels or DEFAULT_LEVELS
     if c.uncorrectables and c.uncorrectables > 500:
         return "High uncorrectable count"
     if c.snr_db is not None and c.snr_db < lv.ds_snr_warning_db:

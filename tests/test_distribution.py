@@ -288,7 +288,7 @@ def test_ci_builds_the_package_once_and_tests_that_wheel_in_the_image_and_native
     assert "if" not in test  # every architecture builds and tests the image; only the browser check is amd64-only
     assert "--no-e2e" in test["run"]
     # Linux x64 is the unit job and the image job; the native legs are the other systems
-    assert jobs["native"]["strategy"]["matrix"]["os"] == ["ubuntu-24.04-arm", "macos-14", "windows-latest"]
+    assert jobs["native"]["strategy"]["matrix"]["os"] == ["ubuntu-24.04-arm", "macos-latest", "windows-latest"]
     setup = next(s for s in jobs["native"]["steps"] if str(s.get("uses", "")).startswith("actions/setup-python@"))
     assert setup["with"]["cache"] == "pip" and "requirements-dev.txt" in setup["with"]["cache-dependency-path"]
     assert jobs["native"]["env"]["PENGUMON_REQUIRE_ICMP"] == "1"
@@ -389,7 +389,7 @@ def test_the_install_job_runs_the_install_scripts_from_the_release_files_on_thre
     jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
     install = jobs["install"]
     assert install["needs"] == "release-assets"
-    assert install["strategy"]["matrix"]["os"] == ["ubuntu-24.04", "macos-14", "windows-latest"]
+    assert install["strategy"]["matrix"]["os"] == ["ubuntu-24.04", "macos-latest", "windows-latest"]
     assert install["strategy"]["fail-fast"] is False
     download = next(s for s in install["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact@"))
     assert download["with"]["name"] == "release-assets"

@@ -70,7 +70,7 @@ PUBLIC_PATHS = ("/api/health", "/login", "/favicon.ico")
 # dashboard (the page, every GET of the API, /metrics and the live socket, which is receive-only for them) but change
 # nothing: every POST/PUT/DELETE/PATCH needs the token, and so do the reads below, which give away more than the
 # dashboard shows (the path and the settings as files to import elsewhere; anything under a device's credentials). Client names, IP and
-# MAC addresses are masked for viewers in the clients API itself (clients/api.py privacy_mode).
+# MAC addresses are masked for viewers in the clients API itself (api/clients.py privacy_mode).
 VIEWER_POLICY = ViewerPolicy(
     allow=("/", "/api/**", "/metrics"),
     deny=("/api/path/export", "/api/settings/export", "/api/devices/*/credentials", "/api/devices/*/credentials/**"),

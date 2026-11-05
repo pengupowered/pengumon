@@ -2,8 +2,9 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';
-import { escapeHtml, percentText, targetList } from '../../js/util.js';
-import { median, quietKey, quietTargets, shortLabels } from '../../js/path.js';
+import { escapeHtml, median, percentText, targetList, zoneParams } from '../../js/util.js';
+import { quietKey, quietTargets, shortLabels } from '../../js/path.js';
+import { CAUSE_LONG } from '../../js/path-api.js';
 
 let shown = null; // the last report and where it went, drawn again when the hops that ignore ping change
 let quiet = new Map(); // target id -> its neutral words (path.js quietTargets)
@@ -30,9 +31,8 @@ export async function loadReport(days) {
   });
   out.innerHTML = '<div class="skel" style="height:44px;width:60%;margin-bottom:14px"></div><div class="skel-stack"><div class="skel line" style="width:92%"></div><div class="skel line" style="width:76%"></div><div class="skel line" style="width:84%"></div></div>';
   try {
-    // Day and hour buckets are cut server-side; tell it where this browser's midnight is (minutes east of UTC).
-    const tz = -new Date().getTimezoneOffset();
-    const res = await fetch(`/api/report?days=${days}&tz_offset_minutes=${tz}`);
+    // Day and hour buckets are cut server-side, in the Settings zone, else this browser's.
+    const res = await fetch(`/api/report?days=${days}&${zoneParams()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     renderReport(out, await res.json());
   } catch (err) {
@@ -40,15 +40,8 @@ export async function loadReport(days) {
   }
 }
 
-// The cause categories (the server's `cause`, the incident lanes' words: Router, Gateway, Line, ISP, ...) with what
-// each means. Gateway: the gateway (modem) on its home-side address, which does not use the line; Line: loss from the
-// provider's first router on while the gateway answers. Display text only; an unknown category is shown as it is.
-const CAUSE_TEXT = {
-  router: 'Router: home network', gateway: 'Gateway (modem)', line: 'Line or first ISP router',
-  isp: 'ISP: beyond its first router', internet: 'Internet servers', dns: 'DNS', load: 'Busy line', service: 'Host service',
-  unknown: 'Unknown'
-};
-const causeText = (cause) => CAUSE_TEXT[cause] || String(cause || 'unknown').replace(/_/g, ' ');
+// The cause categories (the server's `cause`) with what each means: js/path-api.js CAUSES. An unknown one is shown as it is.
+const causeText = (cause) => CAUSE_LONG[cause] || String(cause || 'unknown').replace(/_/g, ' ');
 
 // The headline is the internet as seen through the public targets (the median of their availability; the last hop
 // when there is no public target); days are bars of what that figure lost (a clean day has no bar, so a bad day stands

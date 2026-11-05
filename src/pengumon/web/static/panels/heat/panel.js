@@ -1,13 +1,17 @@
 // When it breaks: packet loss by day and hour over the last 7 days (GET /api/report/loss-grid), all targets together,
 // on the sequential loss scale, with one sentence naming the hours where most loss falls. Every hour that has begun is a
 // button that lists the incidents of that hour in the Incidents panel (showIncidentWindow, panels/incidents), which says
-// so when there are none; an hour still to come is only a cell. Refreshed every 15 minutes.
+// so when there are none; an hour still to come is only a cell. The hours are the server's, on the clock of the zone it
+// used (Settings, else this browser's): when each one begins comes with the answer (day_starts, and hour_starts on a day
+// the clocks change), so a click lists the right stretch whatever this browser's zone. Refreshed every 15 minutes.
 
-import { escapeHtml } from '../../js/util.js';
+import { escapeHtml, zoneParams } from '../../js/util.js';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const tz = () => -new Date().getTimezoneOffset(); // minutes east of UTC, as the API takes it
 const hh = (h) => `${String(h % 24).padStart(2, '0')}:00`;
+// When hour h (0..24) of day d begins, from the answer: an hour of a day the clocks change is listed, any other is
+// that day's start plus h hours.
+const hourStart = (grid, d, h) => grid.hour_starts[d]?.[h] ?? grid.day_starts[d] + h * 3600;
 
 // loss % -> the sequential scale step (tokens --q0..--q4); null: no probes
 function step(pct) {
@@ -41,12 +45,14 @@ export function renderHeat(grid) {
       const fill = q === null ? 'var(--nodata)' : `var(--q${q})`;
       const what = q === null ? 'no probes' : pct > 0 ? `loss ${pct.toFixed(2)}% (${grid.lost[d][h]} of ${grid.sent[d][h]})` : 'no loss';
       const label = `${name} ${hh(h)}–${hh(h + 1)}`;
-      const [y, m, dd] = grid.days[d].split('-').map(Number);
-      const start = new Date(y, m - 1, dd, h).getTime() / 1000;
+      const start = hourStart(grid, d, h);
+      const end = hourStart(grid, d, h + 1);
       if (start > now) return `<i style="background:${fill}" data-tip="${escapeHtml(label)} · not yet"></i>`;
-      return `<button type="button" class="cell" tabindex="${d + h ? -1 : 0}" style="background:${fill}" data-action="showIncidentWindow" data-start="${start}" data-end="${start + 3600}"`
+      // the hour the clocks go back happens twice, the one they skip not at all
+      const clocks = end - start > 3600 ? ' (twice: the clocks went back)' : end <= start ? ' (none: the clocks went forward)' : '';
+      return `<button type="button" class="cell" tabindex="${d + h ? -1 : 0}" style="background:${fill}" data-action="showIncidentWindow" data-start="${start}" data-end="${end}"`
         + ` data-label="${escapeHtml(label)}" data-lost="${grid.lost[d][h] || 0}" data-sent="${grid.sent[d][h] || 0}"`
-        + ` data-tip="${escapeHtml(label)} · ${escapeHtml(what)} · click for its incidents" aria-label="${escapeHtml(`${label}, ${what}: show the incidents`)}"></button>`;
+        + ` data-tip="${escapeHtml(label + clocks)} · ${escapeHtml(what)} · click for its incidents" aria-label="${escapeHtml(`${label}${clocks}, ${what}: show the incidents`)}"></button>`;
     }).join('')}`;
   }).join('');
   const el = document.getElementById('heatGrid');
@@ -63,7 +69,7 @@ export function renderHeat(grid) {
 
 async function load() {
   try {
-    const res = await fetch(`/api/report/loss-grid?days=7&tz_offset_minutes=${tz()}`);
+    const res = await fetch(`/api/report/loss-grid?days=7&${zoneParams()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     renderHeat(await res.json());
   } catch (e) {

@@ -8,7 +8,7 @@ from pengumon.models.probes import TargetConfig
 from pengumon.devices.registry import DeviceRegistry
 from pengumon.engine.classifier import OutageClassifier
 from pengumon.engine.prober import NetworkProber
-from pengumon.metrics import render_metrics
+from pengumon.observability.prometheus import render_metrics
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.capabilities import BAND_5G, Client, ClientsReading, MeshNode, MeshReading
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot

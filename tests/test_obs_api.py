@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 import obs_helpers
 from pengumon.api import history as history_api
-from pengumon.api.ws import ConnectionManager
+from pengumon.live.ws import ConnectionManager
 from pengumon.db.samples import DeviceSample
 from pengumon.devices.registry import DeviceRegistry
 from pengumon.incidents.model import SystemDiagnosis
@@ -168,7 +168,7 @@ async def test_a_client_that_does_not_read_is_dropped_as_a_timeout_and_one_that_
 
 
 async def test_the_clients_gauge_counts_connected_dashboards():
-    from pengumon.api.ws import ws_manager
+    from pengumon.live.ws import ws_manager
     gauge = next(g for g in GAUGES if g.otel == "pengumon.ws.clients")
     before = gauge.collect(None)[0][1]
     socket = FakeSocket()

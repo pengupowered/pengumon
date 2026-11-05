@@ -19,7 +19,7 @@
 // only when the set of nodes changes; every message then just updates classes and texts in place.
 
 import { state } from '../../js/state.js';
-import { backhaulText, latestMs } from '../../js/util.js';
+import { backhaulText, formatMs, latestMs, setClass, setText } from '../../js/util.js';
 import { featureAvailable, primaryDevice } from '../../js/devices.js';
 
 // The devices the picture names: the primary line and router (the server's choice, devices.js primaryDevice) and the
@@ -50,17 +50,9 @@ function make(tag, className, text) {
   return el;
 }
 
-function setText(el, text) {
-  if (el && el.textContent !== text) el.textContent = text;
-}
-
-function setClass(el, cls) {
-  if (el && el.getAttribute('class') !== cls) el.setAttribute('class', cls); // SVG elements have no writable className
-}
-
 const pretty = (s) => String(s).replace(/_/g, ' ');
 const deviceLabel = (d) => (d.model ? pretty(d.model) : (d.host || d.id));
-const ms = (v) => (v === null || v === undefined ? null : `${v} ms`);
+const ms = (v) => (v === null || v === undefined ? null : formatMs(v, { unit: true, tenths: true }));
 
 // The enabled targets of a category, as the live message lists them.
 function inCategory(targets, ...categories) {

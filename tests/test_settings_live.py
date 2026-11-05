@@ -4,8 +4,9 @@ the running parts with no restart. A key or list without an entry fails, so a ne
 
 The observers read the part that uses the value. Where that part keeps the live config object (the classifier, the
 prober's hop colours, the reports) the in-place copy is the whole apply; the retention days, the log levels and the
-Grafana links have appliers (settings/component.py); the probe timeouts, the DNS lookups and the line and router
-levels have the probing component's (engine/probing.py), observed on the prober and on the LEVELS the gradings read.
+Grafana links have appliers (settings/component.py); the probe timeouts and the DNS lookups have the probing
+component's (engine/probing.py), observed on the prober; the line and router levels are read from the live config by
+the device monitors at each poll (devices/monitors.py watch_levels), observed on the levels a monitor would use.
 the alert rules, the notifier's channels, the host-app checks and the route checks are observed on the notifier, the
 service checker and the drift checker (their appliers: notify.reconfigure, services.checks, discovery.drift)."""
 
@@ -17,7 +18,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from pengumon import main, security
-from pengumon.api.state import STATE_ATTR
+from pengumon.state import STATE_ATTR
 from pengumon.db import retention
 from pengumon.devices import monitors
 from pengumon.engine import probing
@@ -47,14 +48,24 @@ def hop(name):
     return lambda st: getattr(st.prober.status_thresholds, name)
 
 
+def _monitor(kind, config):
+    """A monitor handed the running app's config, as the device supervisor hands it to every device it builds."""
+    monitor = kind(messages=monitors.UnconfiguredMessages(disabled="", missing_credentials=""))
+    monitor.watch_levels(config)
+    return monitor
+
+
 def line_level(name):
-    """The level the DOCSIS grading reads (lines/docsis.py LEVELS, set by the probing component's applier)."""
-    return lambda st: getattr(docsis.LEVELS, name)
+    """The level a line monitor of this app grades by (its config's line_signal, read at each poll)."""
+    return lambda st: getattr(_monitor(monitors.LineMonitor, st.config).levels, name)
 
 
 def router_level(name):
-    """The level the router monitors grade by (devices/monitors.py LEVELS, set by the probing applier)."""
-    return lambda st: getattr(monitors.LEVELS, name)
+    """The level a router monitor of this app grades by (its config's router_levels, read at each poll)."""
+    ranges = {"cpu_warning_pct": ("cpu", "good_high"), "mem_warning_pct": ("mem", "good_high"),
+              "mem_critical_pct": ("mem", "critical_high"), "wan_critical_pct": ("wan_rx", "critical_high")}
+    metric, edge = ranges[name]
+    return lambda st: _monitor(monitors.RouterMonitor, st.config).ranges[metric].as_dict()[edge]
 
 
 def uptime(name):
@@ -214,10 +225,7 @@ def test_every_registry_key_and_list_has_an_observer():
 def _restored():
     level, devices = logging.getLogger().level, logging.getLogger("pengumon.devices").level
     httpx = logging.getLogger("httpx").level
-    line_levels, router_levels = docsis.LEVELS.model_copy(), monitors.LEVELS.model_copy()
     yield
-    docsis.use_levels(line_levels)
-    monitors.use_levels(router_levels)
     logging.getLogger().setLevel(level)
     logging.getLogger("pengumon.devices").setLevel(devices)
     logging.getLogger("httpx").setLevel(httpx)

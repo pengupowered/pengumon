@@ -11,7 +11,7 @@
         <div class="field"><label for="setupUsername">Username</label><input class="input" type="text" id="setupUsername" value="admin" autocomplete="username"></div>
         <div class="field"><label for="setupPassword">Password</label><div class="input-wrap"><input class="input" type="password" id="setupPassword" placeholder="Admin password" required autocomplete="current-password" spellcheck="false">
           <button type="button" class="btn icon sm" id="btnShowPassword" data-action="toggleSetupPassword" aria-label="Show password"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></button></div></div>
-        <p class="fine setup-src" id="setupSource"></p>
+        <details class="setup-src"><summary class="fine">For containers and scripts</summary><p class="fine" id="setupSource"></p></details>
         <div id="setupResult" role="status" aria-live="polite"></div>
       </div></div>
       <footer class="modal-f"><button type="button" class="btn" data-action="closeModal" data-arg="deviceSetupModal">Cancel</button>

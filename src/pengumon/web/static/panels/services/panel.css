@@ -1,4 +1,4 @@
-/* Panel services: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel services: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* ---------- Services ---------- */
 .svc { list-style: none; display: flex; flex-direction: column; }
 .svc li { display: grid; grid-template-columns: 62px minmax(0, 1fr) 46px 64px 28px; gap: var(--sp-2); align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }

@@ -1,18 +1,18 @@
 {
  "calls": [
   [
-   "get_daily_availability",
+   "daily_availability",
    1759740800.0,
-   -300
+   "UTC-05:00"
   ],
   [
    "get_incidents_since",
    1759740800.0
   ],
   [
-   "get_hourly_loss",
+   "hourly_loss",
    1759740800.0,
-   -300
+   "UTC-05:00"
   ]
  ],
  "key_order": [

@@ -1,22 +1,19 @@
-"""The AI troubleshooting pack as Markdown: `build_ai_pack` collects the facts (reports.ai_findings) and the
-modules' sections (capabilities.contrib), `render_pack` renders them at one of three detail levels, through one Redactor (reports.redact).
+"""The AI troubleshooting pack as Markdown: `render_pack` renders the facts at one of three detail levels, through one
+Redactor (reports.redact). reports.contributions.build_ai_pack collects them (the core's facts from reports.ai_findings,
+the modules' sections from the contributions) and calls it.
 
 Pure: no database, no clock, no network. The facts are the dataclasses below. Anything in them that is a sentence of
 Pengumon's own refers to hops as `{hop:<target id>}` and to module devices as `{role:<key>}`; the renderer turns those
 into role strings, so a name never enters a sentence. Descriptions, probe errors, URLs and raw node ids are fields of
 the facts for completeness and are never rendered."""
 
-import dataclasses
 import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone, tzinfo
-from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from pengumon.reports.redact import (
-    ANONYMIZED, FULL, LEVELS, NEVER, VAGUE, WHAT_IT_IS, Redactor, is_home_hop, module_role_word,
-)
+from pengumon.reports.redact import ANONYMIZED, FULL, LEVELS, VAGUE, WHAT_IT_IS, Redactor
+from pengumon.timeofday import clock_changes
 
 HARD_CAP_CHARS = 32_000
 HEADLINE_CHARS = 200
@@ -302,31 +299,6 @@ def gap_words(gap: float) -> str:
     if abs(gap) < 60:
         return ""
     return f" ({_ago(gap)} {'before' if gap > 0 else 'after'})"
-
-
-def clock_changes(tz: tzinfo, start: float, end: float) -> List[Tuple[float, float, float]]:
-    """The daylight-saving changes of `tz` in [start, end]: (the first second of the new offset, the offset before,
-    the offset after), offsets in seconds. A fixed offset has none."""
-    if isinstance(tz, timezone):
-        return []
-
-    def offset(t: float) -> float:
-        return (datetime.fromtimestamp(t, tz).utcoffset() or timedelta(0)).total_seconds()
-
-    out = []
-    t, before = int(start), offset(int(start))
-    while t < end:
-        nxt = int(min(end, t + 3600))
-        after = offset(nxt)
-        if after != before:
-            lo, hi = t, nxt           # the offset at lo is the old one, at hi the new one
-            while hi - lo > 1:
-                mid = (lo + hi) // 2
-                lo, hi = (mid, hi) if offset(mid) == before else (lo, mid)
-            out.append((float(hi), before, after))
-            before = after
-        t = nxt if nxt > t else t + 1
-    return out
 
 
 class _Render:
@@ -1023,216 +995,3 @@ def _dns_name(rdns: str) -> bool:
 def _dns_label(name: str) -> bool:
     """A hop's own name that says it is a name server ("Provider DNS", "Public resolver 1")."""
     return bool(re.search(r"\b(?:dns|resolver)s?\b", name, re.I))
-
-
-def _label(scope: str, hours: int, incident_id: Optional[int]) -> str:
-    if scope == "incident":
-        return f"Incident {incident_id}, with an hour either side"
-    if hours == 1:
-        return "Past hour"
-    return f"Past {hours // 24} days" if hours % 24 == 0 and hours > 24 else f"Past {hours} hours"
-
-
-def _mesh_labels(identifiers: Mapping[str, str]) -> Dict[str, str]:
-    """Full label of each mesh node key (node ids are NEVER identifiers, so a mesh key's value is its label)."""
-    out: Dict[str, str] = {}
-    for value, key in identifiers.items():
-        if key.startswith("mesh_node:") and key not in out:
-            out[key] = value
-    return out
-
-
-def _live_device(live, capabilities) -> Optional[Any]:
-    """The monitor of the first live device offering one of the capabilities; None without a registry or a monitor."""
-    if live is None:
-        return None
-    for cap in capabilities:
-        found = live.providing(cap) if hasattr(live, "providing") else ()
-        if found:
-            return getattr(found[0], "monitor", None)
-    return None
-
-
-# The names a UTC clock goes by: a Settings zone that is one of them is the container's default, not the household's.
-UTC_NAMES = frozenset({"UTC", "UCT", "GMT", "GMT0", "GMT+0", "GMT-0", "Greenwich", "Universal", "Zulu", "+00:00",
-                       "-00:00", "Etc/UTC", "Etc/UCT", "Etc/GMT", "Etc/GMT0", "Etc/GMT+0", "Etc/GMT-0", "Etc/Greenwich",
-                       "Etc/Universal", "Etc/Zulu"})
-
-
-def pack_zone(config, tz_name: Optional[str] = None, tz_offset_minutes: int = 0) -> Tuple[tzinfo, str, str]:
-    """(tzinfo, kind, name) the pack's times are in. In this order: the zone set in Settings (general.timezone), when
-    it is not UTC (the default in a container that runs in UTC); the IANA zone the caller names (the viewer's
-    browser); a fixed offset the caller gives; else UTC. kind: named (follows daylight saving) | offset | utc."""
-    from pengumon.settings.general import known_zone
-    from pengumon.timeofday import zone
-    setting = (getattr(getattr(config, "general", None), "timezone", None) or "").strip()
-    if setting and setting not in UTC_NAMES:
-        if setting[:1] in "+-":
-            return zone(setting), "offset", f"UTC{setting}"
-        if known_zone(setting):
-            return zone(setting), "named", setting
-    name = (tz_name or "").strip()
-    if name and name not in UTC_NAMES and known_zone(name):
-        return zone(name), "named", name
-    if tz_offset_minutes:
-        return timezone(timedelta(minutes=tz_offset_minutes)), "offset", ""
-    return timezone.utc, "utc", "UTC"
-
-
-async def build_ai_pack(repository, config, *, scope: str, hours: int, incident_id: Optional[int], level: str,
-                        detail: str, devices, live, ignoring=frozenset(), tz_offset_minutes: int = 0,
-                        prober=None, tz_name: Optional[str] = None) -> Dict[str, Any]:
-    """The pack for the API: collects the modules' sections and the core's facts, renders at `level`. `detail`:
-    "short" or "detailed". `live`: the app's device registry, or None (no monitors: the live-only parts say so).
-    `prober`: the app's prober, for how pings are sent now (None: the environment says only what is stored).
-    `tz_name` (the viewer's IANA zone) and `tz_offset_minutes`: the fallbacks of pack_zone."""
-    from pengumon.capabilities import Capability
-    from pengumon.capabilities.contrib import ContribContext, activate, capability_contributions, driver_note, technology_contributions
-    from pengumon.drivers import DRIVERS
-    from pengumon.reports.ai_findings import collect_pack_facts
-    from pengumon import __version__
-
-    if level not in LEVELS:
-        raise ValueError(f"unknown detail level {level!r}")
-    render_detail = "detailed" if detail == "detailed" else "compact"
-    now = time.time()
-    if scope == "incident":
-        inc = await repository.get_incident_by_id(incident_id)
-        if inc is None:
-            raise ValueError(f"no incident {incident_id}")
-        start, end = inc.start_time - 3600, min(now, (inc.end_time or inc.start_time) + 3600)
-    else:
-        start, end = now - hours * 3600, now
-    tz, zone_kind, zone_name = pack_zone(config, tz_name, tz_offset_minutes)
-
-    act = activate(config)
-    caps_of = {cls: caps for caps, cls in capability_contributions()}
-    tech_of = {cls: tech for tech, cls in technology_contributions().items()}
-    cache: Dict[Any, Any] = {}
-    events, kinds, loaded = [], [], []
-    for c in act.contributions:
-        caps = caps_of.get(type(c), (Capability.ACCESS_LINE,))
-        ctx = ContribContext(repository, config, start, end, tuple(devices), live=_live_device(live, caps),
-                             tz_offset_minutes=tz_offset_minutes, cache=cache, tz=tz)
-        data = await c.collect(ctx)
-        events += c.emit(data)
-        kinds += list(c.events)
-        loaded.append((c, data))
-    for _, notes in act.notes:
-        kinds += list(notes.extra_events)
-    facts = await collect_pack_facts(repository, config, start=start, end=end, events=events, event_kinds=kinds,
-                                     ignoring=ignoring, detail=render_detail, scope=scope, incident_id=incident_id,
-                                     tz_offset_minutes=tz_offset_minutes, now=now, tz=tz)
-
-    # A driver's notes close one section only: its line technology's, else the router's, else the first it feeds.
-    def feeds(driver, c) -> bool:
-        return (getattr(driver, "line_technology", None) == tech_of.get(type(c)) if c.layer == "technology"
-                else any(cap in driver.offers for cap in caps_of.get(type(c), ())))
-
-    note_home: Dict[int, Tuple[Any, Any]] = {}
-    for cfg, notes in act.notes:
-        fed = [k for k, (c, _) in enumerate(loaded) if feeds(DRIVERS[cfg.driver], c)]
-        if fed:
-            home = next((k for k in fed if loaded[k][0].layer == "technology"), None)
-            if home is None:
-                home = next((k for k in fed if Capability.ROUTER_SYSTEM in caps_of.get(type(loaded[k][0]), ())), fed[0])
-            note_home.setdefault(home, (cfg, notes))
-    mesh = any(key.startswith("mesh_node:") for c, data in loaded for key in c.redaction.identifiers(data).values())
-    modules = []
-    for k, (c, data) in enumerate(loaded):
-        identifiers = c.redaction.identifiers(data)
-        note = None
-        if k in note_home:
-            cfg, notes = note_home[k]
-            note = (driver_note(cfg, notes, "full", mesh=mesh), driver_note(cfg, notes, "anonymized", mesh=mesh))
-            note = note if note[0] else None
-        modules.append(ModuleInput(c.id, c.title, c.layer, c.budget_chars, c.prompt_context(config),
-                                   c.section(data, level), note, _mesh_labels(identifiers), identifiers,
-                                   c.redaction.field_values(data),
-                                   core_findings=tuple(module_findings(facts, [e.code for e in c.events]))))
-
-    from pengumon.reports.queries import path_trace_names
-    names = await path_trace_names(repository)
-    identity = {t.id: SimpleNamespace(name=t.name, address=_address(t), rdns=names.get(_address(t), ""))
-                for t in list(config.targets) + list(config.dns_probes)}
-    provider, source = _provider(config, identity)
-    view = view_of(facts, identity, modules, provider, tz, _label(scope, hours, incident_id), __version__,
-                   apps=_apps(config, facts), environment=_environment(config, facts, prober, tz),
-                   provider_source=source, zone=zone_name, zone_kind=zone_kind)
-    view = dataclasses.replace(view, known_hops=await _known_hops(repository, config))
-    pack = render_pack(view, level, render_detail)
-    return {"markdown": pack.markdown, "modules": pack.modules, "roles": pack.roles, "level": level, "scope": scope,
-            "detail": detail, "chars": pack.chars, "tokens_estimate": pack.tokens, "trimmed": pack.trimmed,
-            "redactions": {**pack.swept, **{f"scan:{k}": v for k, v in pack.hits.items()}}}
-
-
-def _provider(config, identity: Mapping[str, Any]) -> Tuple[str, str]:
-    """(the provider's name, where it comes from): the ISP name set in Settings (line.isp_name, which also names the
-    dossier), else the domain most of the provider's hops' reverse names share (as discovery groups them), else none."""
-    from pengumon.engine.discovery.addresses import registrable_domain
-    named = getattr(getattr(config, "line", None), "isp_name", None)
-    if named:
-        return named, "named in Settings"
-    domains: Dict[str, int] = {}
-    for t in config.targets:
-        if getattr(t, "category", None) == "isp":
-            d = registrable_domain(getattr(identity.get(t.id), "rdns", "") or "")
-            if d:
-                domains[d] = domains.get(d, 0) + 1
-    if domains:
-        return max(sorted(domains), key=lambda d: domains[d]), "from its routers' names"
-    return "", ""
-
-
-def _apps(config, facts) -> Tuple[AppFact, ...]:
-    """The host apps Pengumon checks, with their outages in the window (the stored incidents)."""
-    services = getattr(getattr(config, "service_checks", None), "services", None) or ()
-    outages = getattr(facts, "service_outages", None) or {}
-    return tuple(AppFact(s.name, True, outages=outages.get(s.id, (0, 0.0))[0], down_s=outages.get(s.id, (0, 0.0))[1])
-                 for s in services if getattr(s, "enabled", True))
-
-
-def _environment(config, facts, prober, tz: tzinfo) -> List[str]:
-    """How pings are sent and whether IPv6 is probed (from the prober, when the app runs), and the stretches with no
-    probe at all."""
-    out = []
-    if prober is not None:
-        method = prober.probe_method()
-        if method.get("backend"):
-            out.append(f"Pings are sent with {method['backend']}, timed to {method['resolution_ms']:g} ms.")
-        if prober.probing_problem() is not None:
-            out.append("Pengumon cannot send pings from this computer now: it is measuring nothing until that is "
-                       "fixed.")
-        v6 = [t for t in config.targets if getattr(t, "family", 4) == 6 and getattr(t, "enabled", True)]
-        if v6:
-            reason = getattr(getattr(prober, "ipv6", None), "reason", None)
-            out.append("IPv6: this computer has no IPv6 route now, so the IPv6 hops are not probed." if reason
-                       else "IPv6: probed.")
-        else:
-            out.append("IPv6: no IPv6 hop is set up; only IPv4 is measured.")
-    gaps = list(getattr(facts, "no_data", None) or ())
-    if gaps:
-        shown = ", ".join(f"{{when:{a:.0f}}} to {{when:{b:.0f}}}" for a, b in gaps[:5])
-        more = f" and {len(gaps) - 5} more" if len(gaps) > 5 else ""
-        out.append("Not measured (no probe at all: Pengumon was stopped or could not send pings, or the computer was "
-                   f"off or asleep): {shown}{more}.")
-    return out
-
-
-def _address(target) -> str:
-    """A target's address; a DNS probe's is its name server (or, with the system resolver, the name it looks up)."""
-    return getattr(target, "address", None) or getattr(target, "nameserver", None) or getattr(target, "domain", "") or ""
-
-
-async def _known_hops(repository, config) -> Tuple[HopFact, ...]:
-    """Every hop the pack may meet in an old title without showing it: the configured targets (switched off ones
-    too), the removed ones and those of the kept path versions (a hop's earlier name)."""
-    found = [(t.id, getattr(t, "category", "dns"), t.name, _address(t)) for t in list(config.targets) + list(config.dns_probes)]
-    try:
-        found += [(t.id, t.category, t.name, t.address) for t in await repository.removed_path_hops()]
-        for v in await repository.path_versions():
-            found += [(h.get("id", ""), h.get("category", "custom"), h.get("name", ""), h.get("address", ""))
-                      for h in (await repository.path_version(v["revision"])) or ()]
-    except AttributeError:       # a repository without the stored path
-        pass
-    return tuple(HopFact(i or "", c or "custom", n or "", a or "") for i, c, n, a in dict.fromkeys(found))

@@ -1,4 +1,4 @@
-/* Panel latency: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel latency: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 .lat-head { display: flex; align-items: flex-start; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; }
 .lat-legend { flex: 1 1 300px; min-width: 0; row-gap: 4px; }
 .lat-legend .lg { min-width: 0; max-width: 100%; }

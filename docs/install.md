@@ -32,9 +32,12 @@ The install scripts are small and readable: [`install.sh`](../scripts/install.sh
 The lock is the same file the container image is built from (`requirements.txt`, one lock for every operating
 system, with markers for the packages only some systems need).
 
-Options (the same names in both scripts, `-Version` style on Windows): `--version X.Y.Z` (default: the latest
-release), `--port N`, `--no-service` (install only, start it yourself with `pengumon run`), `--no-browser`,
-`--from DIR` (install from a folder with the release files, for a computer without internet access), `--uninstall`.
+Options (`install.sh`; `install.ps1` has the same ones in `-Version` style, except `--user`, `--system` and `--yes`,
+which Windows does not need): `--version X.Y.Z` (default: the latest release; the environment variable
+`PENGUMON_VERSION` sets the same), `--port N`, `--no-service` (install only, start it yourself with `pengumon run`),
+`--no-browser`, `--from DIR` (install from a folder with the release files, for a computer without internet access),
+`--uninstall`, and on Linux and macOS `--user` (no sudo: the program and data under your home folder, a user
+service), `--system` (the default as root), `--yes` / `-y` (answer the prompts with yes) and `-h` / `--help`.
 
 ## Windows
 
@@ -75,7 +78,9 @@ Pengumon as that account from boot, before anyone signs in. A service run by the
 
 Without sudo: add `--user`. That installs a LaunchAgent under your own account (program in
 `~/Library/Application Support/Pengumon/app`, data in `~/Library/Application Support/Pengumon`) that starts when you sign
-in. macOS may ask once whether Pengumon may find devices on your local network; allow it.
+in. macOS may ask once whether Pengumon may find devices on your local network; allow it. The script also links
+`pengumon` into `~/.local/bin` (as `uv` does) so the short command works; if that folder is not on your PATH it says
+so and shows the line to add to your shell profile.
 
 The pings and trace probes use an unprivileged ICMP socket, so no root is needed to probe.
 
@@ -96,7 +101,9 @@ read-only or hidden (`ProtectSystem=strict`, `ProtectHome`, `NoNewPrivileges`, a
 `/var/lib/pengumon`.
 
 Without sudo: add `--user`. That installs a systemd *user* unit that runs as you (program in `~/.local/share/pengumon`,
-data in `~/.local/state/pengumon`). Two things differ:
+data in `~/.local/state/pengumon`). The script also links `pengumon` into `~/.local/bin` (as `uv` does), so
+`pengumon doctor` and `pengumon run` work in a new terminal; if that folder is not on your PATH it says so and shows
+the line to add to your shell profile. Two things differ:
 
 - Many distributions (Debian, Ubuntu, Raspberry Pi OS) do not let ordinary users send ICMP. The script runs
   `pengumon doctor` and, if probing does not work, shows the one fix and offers to run it with sudo:
@@ -133,10 +140,16 @@ the file are ignored and the log says so (`config.yaml is ignored for settings`)
 anyway. The example has no active `targets:` (the path is discovered); a `targets:` list there is an optional fixed list,
 used on the first start only.
 
-Optional settings (access token, device passwords, ntfy, OpenTelemetry) go in a `.env` file next to `compose.yaml`;
-[`.env.example`](../.env.example) lists them. The container listens on all interfaces, so **set
+Optional environment variables (access token, device passwords, ntfy, OpenTelemetry) go in a `.env` file next to
+`compose.yaml`; [`.env.example`](../.env.example) lists them. Only the container reads a `.env`; a native install sets
+them on the service ([below](#environment-variables-for-a-native-install)). ntfy, device passwords and alerts can also be
+entered on the Settings page. The container listens on all interfaces, so **set
 `PENGUMON_ACCESS_TOKEN`** unless the host is only reachable by people you trust ([Security](security.md)).
 
+- **Time zone**: the image runs in UTC. Set `TZ` in `.env` to your zone (for example `TZ=America/New_York`; the
+  host's is in `timedatectl` or the `/etc/localtime` link), so that quiet hours, the daily route check and the
+  reports' days follow your clock; the Settings page (Display, Time zone) starts with it and can change it.
+  `scripts/deploy.sh` sets it from the host by itself.
 - **Rootless Podman** needs unprivileged ping allowed for your user, once:
   `echo 'net.ipv4.ping_group_range = 0 2147483647' | sudo tee /etc/sysctl.d/60-unprivileged-ping.conf && sudo sysctl --system`.
   `docker exec pengumon pengumon doctor` (or `podman exec`) says whether probing works.
@@ -198,6 +211,14 @@ Environment=PENGUMON_ACCESS_TOKEN=put-your-token-here
 and `sudo systemctl restart pengumon` (`systemctl --user restart pengumon`). On macOS the token goes in the
 `EnvironmentVariables` of the LaunchDaemon or LaunchAgent plist, and on Windows in a per-user environment variable
 (`setx PENGUMON_ACCESS_TOKEN ...`) followed by a sign-out and sign-in; these two have not been tried on a real computer.
+
+### Environment variables for a native install
+
+A native install has no `.env`. Any other `PENGUMON_*` variable (for example `PENGUMON_NOTIFY_URL`, or
+`PENGUMON_ALLOWED_HOSTS`) is set the same way as the token above: another `Environment=` line in the systemd override,
+another entry in the plist's `EnvironmentVariables`, another `setx`. A variable that is set wins over the same setting
+on the Settings page, which shows it as set by the environment. Most of them are optional, because the Settings page
+covers ntfy, webhooks and device passwords.
 
 ## Upgrade
 

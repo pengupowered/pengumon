@@ -12,10 +12,11 @@ import { registerActions } from '../../js/dispatch.js';
 import { browserLayout } from '../../js/layout.js';
 import { closeMenus, toast } from '../../js/chrome.js';
 import { refreshSettingsValues } from '../../js/settings-values.js';
-import { canEdit, closeModal, copyExport, escapeHtml, exportViewHtml, openModal } from '../../js/util.js';
+import { canEdit, closeModal, confirmReplaceDraft, copyExport, escapeHtml, exportToggle, icon, keepKeyboard, openModal, showExport } from '../../js/util.js';
 import { LIST_EDITORS } from './lists/index.js';
-import { edit, choose, refreshRows, rowHtml } from './fields.js';
+import { edit, choose, isLayoutKey, layoutRowHtml, refreshRows, resetLayout, rowHtml, useZone } from './fields.js';
 import { cancelPreview, defaultDays, hasRules, afterPreviewChange, previewHtml, runPreview, shown as previewShown, stopPreview } from './preview.js';
+import { applySearch, clearSearch, initSearch } from './search.js';
 import { rememberSlot, refreshSlots, resetEditing, slotHtml } from './secrets.js';
 import {
   S, applyDocument, changeCount, changed, clearDraft, dropConflicts, hasProblems, listItems, listState, load, watchDraft, setList, setValue
@@ -30,7 +31,6 @@ let saving = false;
 let draftSource = ''; // '' | 'restore' (a loaded version) | 'yaml_import' (an imported file): sent as ?source= on Save
 let versions = null; // GET /api/settings/versions, once read
 let versionsShown = false;
-let exportShown = false;
 let confirmed = null; // what "Discard" / "Replace" does
 let validateTimer = 0;
 let validateSeq = 0;
@@ -94,23 +94,23 @@ function groupsOf(section) {
 function listHtml(name) {
   const box = `<div class="set-list-box" data-box="${name}"></div>`;
   // the devices editor (lists/devices.js) draws only its cards; the other editors draw their own heading (lists/kit.js)
-  return name === 'devices' ? `<div class="set-list"><div class="set-list-h"><h4>Devices</h4></div>${box}</div>` : box;
+  return name === 'devices' ? `<div class="set-list"><div class="set-list-h"><h4 class="set-group-t">Devices</h4></div>${box}</div>` : box;
 }
+
+// The heading a list editor draws, by where it sits: a group of its own (level of a group heading), inside a group
+// (one level below), or none where the group it sits in already has its name.
+const LIST_HEADING = { dns_probes: 'group', webhooks: 'sub', services: 'none' };
 
 function secretsHtml(section) {
   return S.schema.secrets.filter((s) => s.section === section && !s.pattern).map((s) => { rememberSlot(s.slot, s); return slotHtml(s.slot, s); }).join('');
 }
 
 function groupHtml(section, group) {
-  const rows = group.specs.map((s) => rowHtml(s, section.id)).join('');
+  // dashboard.order and dashboard.hidden are one row, "Layout for new browsers", where the first of them stands
+  const rows = group.specs.map((s) => (!isLayoutKey(s.key) ? rowHtml(s, section.id) : s.key === 'dashboard.order' ? layoutRowHtml() : '')).join('');
   let extra = '';
   if (section.id === 'alerts' && group.name === 'Channels') extra = secretsHtml('alerts') + listHtml('webhooks');
   if (section.id === 'devices' && group.name === 'Host app checks') extra = listHtml('services');
-  if (section.id === 'display' && !group.name) {
-    extra = `<div class="set-row" data-extra="layout"><div class="set-main"><span class="set-label">Panel layout</span>
-      <div class="set-input"><button type="button" class="btn sm outline" data-action="settingsUseLayout" data-needs-edit>Use this browser's layout for everyone</button></div></div>
-      <div class="set-meta">Writes this browser's panel order and hidden panels into the two settings above; Save applies them as the default for every browser that has not arranged its own.</div></div>`;
-  }
   return `<div class="set-group">${group.name ? `<h4 class="set-group-t">${escapeHtml(group.name)}</h4>` : ''}${rows}${extra}</div>`;
 }
 
@@ -124,7 +124,7 @@ function sectionHtml(section) {
   if (section.id === 'devices' && !groups.some((g) => g.name === 'Host app checks')) groups.push({ name: 'Host app checks', specs: [] });
   const body = `${head}${groups.map((g) => groupHtml(section, g)).join('')}${tail}`;
   if (section.id === 'advanced') {
-    return `<details class="set-adv" id="set-sec-advanced" data-section="advanced"><summary><h3 class="section-t">${escapeHtml(section.title)}</h3><span class="muted">Change these only if you know why.</span></summary>${body}</details>`;
+    return `<details class="set-adv" id="set-sec-advanced" data-section="advanced"><summary>${icon('chevron', 'set-chev')}<h3 class="section-t">${escapeHtml(section.title)}</h3><span class="muted">Change these only if you know why.</span></summary>${body}</details>`;
   }
   return `<section class="set-sec" id="set-sec-${section.id}" data-section="${section.id}" aria-labelledby="set-sec-${section.id}-t"><h3 class="section-t" id="set-sec-${section.id}-t">${escapeHtml(section.title)}</h3>${body}</section>`;
 }
@@ -138,7 +138,7 @@ function aboutHtml() {
     ['Version', a.version], ['Listens on', a.listen], ['Data folder', a.data_dir], ['Config file', a.config_path], ['Database', a.db_path || '—'],
     ['Access token', a.token_set ? 'set' : 'not set'], ['Viewing without the token', a.view_without_token ? 'allowed' : 'not allowed'], ['Metrics export', a.otlp_host || 'off']
   ];
-  const cfg = a.config_yaml && a.config_yaml.differing_keys ? `<p class="fine">config.yaml is ignored after the first import; ${a.config_yaml.differing_keys} value${a.config_yaml.differing_keys === 1 ? '' : 's'} in it differ from this page.</p>` : '';
+  const cfg = a.config_yaml && a.config_yaml.differing_keys ? `<p class="fine">The config file only set the first values: ${a.config_yaml.differing_keys} of its value${a.config_yaml.differing_keys === 1 ? '' : 's'} now differ${a.config_yaml.differing_keys === 1 ? 's' : ''} from this page, and this page wins. Edit settings here, not in the file.</p>` : '';
   const report = (a.import_report || []).length ? `<details><summary class="fine">The first import left ${a.import_report.length} thing${a.import_report.length === 1 ? '' : 's'} out</summary><ul class="fine">${a.import_report.map((r) => `<li>${escapeHtml(r.key)}: ${escapeHtml(r.reason)}</li>`).join('')}</ul></details>` : '';
   return `<section class="set-sec" id="set-sec-about" data-section="about"><h3 class="section-t">About this install</h3>
     <dl class="set-about">${rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>${cfg}${report}</section>`;
@@ -157,12 +157,13 @@ function renderAll() {
   syncAccess();
   refreshRows();
   updateChrome();
+  applySearch();
   body.scrollTop = top;
 }
 
 function listContext(name) {
   return {
-    schema: S.schema, listName: name,
+    schema: S.schema, listName: name, heading: LIST_HEADING[name] || 'group',
     savedIds: () => listState(name).items.map((i) => i.id),
     listIsSet: () => name in S.draft.lists ? S.draft.lists[name] !== null : listState(name).set,
     resetList: () => { setList(name, null); mountLists(); },
@@ -277,8 +278,9 @@ async function openSettings(sectionId) {
   versions = null;
   versionsShown = false;
   $('settingsVersions').hidden = true;
-  showExport(false);
+  showExport('settings', false);
   setNotes([]);
+  clearSearch();
   $('settingsSections').innerHTML = '<p class="fine">Loading…</p>';
   try {
     await fetchState();
@@ -294,6 +296,7 @@ async function openSettings(sectionId) {
 }
 
 function goto(id) {
+  clearSearch();
   const target = $(`set-sec-${id}`);
   if (!target) return;
   if (target.tagName === 'DETAILS') target.open = true;
@@ -351,8 +354,7 @@ function requestClose() {
 
 // Replacing the draft (a version, an imported file) asks when there is one.
 function replaceDraft(text, fn) {
-  if (changeCount() === 0) { fn(); return; }
-  askConfirm(text, 'Replace the draft', fn);
+  confirmReplaceDraft(changeCount() > 0, text, fn, askConfirm);
 }
 
 // ---------- Save ----------
@@ -449,34 +451,8 @@ async function toggleVersions() {
   if (versionsShown) reveal($('settingsVersions'));
 }
 
-// Export shows the YAML here, with Copy and a download link. Chrome blocks or warns about a file downloaded over plain
-// HTTP from another machine ("insecure download"), whatever the page does; Copy works on every connection.
-function showExport(on) {
-  exportShown = on;
-  $('settingsExport').setAttribute('aria-expanded', String(on));
-  $('settingsExportView').hidden = !on;
-  if (!on) $('settingsExportView').innerHTML = '';
-}
-
-async function toggleExport() {
-  showExport(!exportShown);
-  if (!exportShown) return;
-  const box = $('settingsExportView');
-  box.innerHTML = '<p class="fine">Loading…</p>';
-  reveal(box);
-  let text;
-  try {
-    const res = await fetch('/api/settings/export', { cache: 'no-store' });
-    if (!res.ok) throw new Error(`The settings could not be exported (${res.status}).`);
-    text = await res.text();
-  } catch (e) {
-    box.innerHTML = `<p class="fine">${escapeHtml(e.message)}</p>`;
-    return;
-  }
-  box.innerHTML = exportViewHtml({ prefix: 'settings', intro: 'Every setting and list as YAML, without secrets. Import reads it in another install.',
-    text, href: '/api/settings/export', file: 'pengumon-settings.yaml' });
-  reveal(box);
-}
+// Export shows the YAML here, with Copy and a download link (util.exportToggle).
+const toggleExport = () => exportToggle('settings', { url: '/api/settings/export', what: 'settings', intro: 'Every setting and list as YAML, without secrets. Import reads it in another install.', file: 'pengumon-settings.yaml' });
 
 async function loadVersion(n) {
   try {
@@ -520,10 +496,11 @@ function useBrowserLayout() {
   setValue('dashboard.order', mine.order);
   setValue('dashboard.hidden', mine.hidden);
   refreshRows();
-  toast('This browser\'s layout is in the draft. Save to make it the default.');
+  toast('This browser\'s layout is in the draft. Save to make new browsers start with it.');
 }
 
 function jumpToRow(key) {
+  clearSearch(); // the row may have been filtered out
   const row = document.querySelector(`.set-row[data-key="${CSS.escape(key)}"]`);
   if (!row) return;
   const adv = row.closest('details');
@@ -569,6 +546,8 @@ registerActions('click', {
   settingsLoadVersion: (el) => loadVersion(el.dataset.arg),
   settingsImport: () => $('settingsImportFile').click(),
   settingsUseLayout: () => useBrowserLayout(),
+  settingsResetLayout: (el) => resetLayout(el),
+  settingsUseZone: (el) => useZone(el.dataset.arg, el),
   settingsPreview: () => previewFromFooter(),
   settingsPreviewRun: () => runPreview($('settingsPreviewDays').value)
 });
@@ -586,28 +565,10 @@ document.addEventListener('editaccess', () => {
   getJson('/api/settings').then((server) => { S.server = server; renderAll(); }).catch(() => {});
 });
 
-// Keyboard: focus moves into the dialog when it opens, Tab stays inside it and Escape closes it (asking first when
-// there is a draft).
-function keepKeyboard(modal) {
-  // on the document: after a click on a button that went away (Keep editing, Discard) focus is on <body>, outside the modal
-  document.addEventListener('keydown', (ev) => {
-    if (!isOpen() || !(modal.contains(ev.target) || ev.target === document.body)) return;
-    if (ev.key === 'Escape' && !ev.defaultPrevented) {
-      ev.preventDefault();
-      if (!$('settingsConfirm').hidden) keepEditing(); else requestClose();
-      return;
-    }
-    if (ev.key !== 'Tab') return;
-    const items = [...modal.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')].filter((e) => !e.disabled && !e.hidden && e.tabIndex >= 0 && e.offsetParent !== null);
-    if (!items.length) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (!modal.contains(document.activeElement)) { ev.preventDefault(); (ev.shiftKey ? last : first).focus(); }
-    else if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
-    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
-  });
-}
-keepKeyboard($(MODAL));
+// Keyboard (util.keepKeyboard): focus moves into the dialog when it opens, Tab stays inside it and Escape closes it (asking
+// first when there is a draft; with the question showing, Escape answers "keep editing").
+keepKeyboard($(MODAL), '#settingsTitle', { onEscape: () => { if (!$('settingsConfirm').hidden) keepEditing(); else requestClose(); } });
+initSearch();
 
 function openFromHash() {
   if (location.hash === '#settings' && !isOpen()) openSettings();

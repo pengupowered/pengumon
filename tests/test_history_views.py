@@ -8,7 +8,6 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from pengumon.db.repository import DatabaseRepository
 from pengumon.devices.registry import DeviceRegistry
 from pengumon.devices.samples import bucket_width, device_sample
 from pengumon.lines.docsis import channel_history_rows, line_sample
@@ -30,14 +29,6 @@ def _open_guards(monkeypatch):
 
 def _client():
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
-
-@pytest.fixture
-async def repo(tmp_path):
-    r = DatabaseRepository(db_path=str(tmp_path / "h.db"))
-    await r.initialize()
-    yield r
-    await r.close()
 
 
 def _devices():

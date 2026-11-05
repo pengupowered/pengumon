@@ -24,6 +24,9 @@ function checkUrls(items) {
 }
 
 const urlSpec = { label: 'Address (URL)', kind: 'url', env: null };
+// The stored formats in words.
+const FORMATS = { json: 'JSON (any service)', slack: 'Slack', discord: 'Discord' };
+const formatText = (item) => FORMATS[item.format] || item.format;
 
 const editor = makeListEditor({
   id: 'webhooks',
@@ -35,7 +38,7 @@ const editor = makeListEditor({
   resetLabel: 'Remove all webhooks',
   fields: [
     { f: 'name', label: 'Name', kind: 'text', required: true },
-    { f: 'format', label: 'Format', kind: 'choice', choices: ['json', 'slack', 'discord'], required: true },
+    { f: 'format', label: 'Format', kind: 'choice', choices: ['json', 'slack', 'discord'], labels: FORMATS, required: true },
     { f: 'timeout_seconds', label: 'Timeout (seconds)', kind: 'number', required: false, hint: 'Above 0 and up to 60.' }
   ],
   blank: (items) => {
@@ -48,7 +51,7 @@ const editor = makeListEditor({
     delete S.invalid[`webhook-url:${item.id}`];
   },
   title: (item) => item.name,
-  summary: (item) => `${item.format}${hasUrl(item.id) ? '' : ' · URL needed'}`,
+  summary: (item) => `${formatText(item)}${hasUrl(item.id) ? '' : ' · URL needed'}`,
   chips: (item) => (hasUrl(item.id) ? '' : '<span class="chip st st-crit" data-chip="url">URL needed</span>'),
   extra: (item) => {
     rememberSlot(urlSlot(item.id), urlSpec);
@@ -56,12 +59,12 @@ const editor = makeListEditor({
       const slot = headerSlot(ref);
       rememberSlot(slot, { label: name, kind: 'token', env: null });
       return `<div class="set-hdr"><div class="set-hdr-row">${slotHtml(slot, { label: `Header ${name}`, kind: 'token', env: null })}
-        <button type="button" class="btn sm" data-la="header-remove" data-hdr="${escapeHtml(name)}" data-needs-edit>Remove header</button></div></div>`;
+        <button type="button" class="btn sm" data-action="settingsListAct" data-arg="webhooks" data-la="header-remove" data-hdr="${escapeHtml(name)}" data-needs-edit>Remove header</button></div></div>`;
     }).join('');
     return `<h5 class="set-sub">Address</h5>${slotHtml(urlSlot(item.id), urlSpec)}
       <h5 class="set-sub">Headers</h5>${headers || '<p class="fine top">No headers.</p>'}
       <div class="set-hdr-add"><input class="input" type="text" data-hdr-name placeholder="Header name, e.g. Authorization" maxlength="100" aria-label="New header name">
-        <button type="button" class="btn sm" data-la="header-add" data-needs-edit>Add header</button></div>`;
+        <button type="button" class="btn sm" data-action="settingsListAct" data-arg="webhooks" data-la="header-add" data-needs-edit>Add header</button></div>`;
   },
   action: (act, button, items, ctx, { draw }) => {
     const card = button.closest('.set-card');
@@ -113,7 +116,7 @@ editor.sync = () => {
     const has = hasUrl(item.id);
     if (!has && !chip) sum.insertAdjacentHTML('beforeend', '<span class="chip st st-crit" data-chip="url">URL needed</span>');
     if (has && chip) chip.remove();
-    card.querySelector('.set-card-s').textContent = `${item.format}${has ? '' : ' · URL needed'}`;
+    card.querySelector('.set-card-s').textContent = `${formatText(item)}${has ? '' : ' · URL needed'}`;
   });
 };
 export default editor;

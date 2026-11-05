@@ -15,9 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
 
 from pengumon.api.common import StateDep
-from pengumon.api.settings_models import PreviewJob, PreviewRequest
+from pengumon.api.settings_models import PreviewRequest
 from pengumon.security import rate_limit
-from pengumon.settings.preview import PreviewBusy, PreviewInvalid, build_spec
+from pengumon.settings.preview import PreviewBusy, PreviewInvalid, PreviewJob, build_spec
 
 router = APIRouter(prefix="/api")
 

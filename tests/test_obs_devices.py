@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 import obs_helpers
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.capabilities import DriverError
 from pengumon.components import Context, task_kind
 from pengumon.devices.component import DeviceSupervisor

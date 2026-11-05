@@ -55,7 +55,7 @@ export const steps = [
     await settingsOpen(ctx);
     eq("sections", await page.$$eval("#settingsSections [data-section]", (els) => els.map((e) => e.dataset.section).join()), SECTIONS.join());
     eq("the hash", await page.evaluate(() => location.hash), "#settings");
-    ctx.ok("quiet hours show the time in their zone", /It is \d\d:\d\d there now/.test(await page.$eval(`${settingsRow("alerts.quiet_hours.start")} [data-meta]`, (e) => e.textContent)));
+    ctx.ok("quiet hours show the time in their zone", /It is \d{1,2}:\d\d(\s?[AP]M)? there now/.test(await page.$eval(`${settingsRow("alerts.quiet_hours.start")} [data-meta]`, (e) => e.textContent)));
     ctx.ok("a title", /Outage rules/.test(await text("#set-sec-outage-t")));
     await ctx.click("#btnSettingsCancel");
     await until(() => !document.getElementById("settingsModal").classList.contains("active"));
@@ -71,6 +71,46 @@ export const steps = [
       await until(() => !document.getElementById("headerMenu").hidden);
       ctx.ok("the header menu lists Settings", await page.$eval("#headerMenu [data-action=openSettings]", (e) => /Settings/.test(e.textContent)));
       await ctx.click(".tb-more");
+    });
+  }],
+
+  ["search: rows are filtered by label, help text or key across sections; Escape clears it first and then closes; a phone and the keyboard can use it", async (ctx) => {
+    const { eq, ok, page, phone, until } = ctx;
+    await settingsOpen(ctx);
+    const visible = () => page.$$eval("#settingsSections .set-row[data-key]:not([hidden])", (rows) => rows.filter((r) => r.offsetParent !== null).map((r) => r.dataset.key));
+    const total = (await visible()).length;
+    await page.focus("#settingsSearch");
+    await page.keyboard.type("time zone");
+    await until(() => document.querySelectorAll("#settingsSections .set-row[data-key]:not([hidden])").length < 10);
+    const zone = await visible();
+    ok(`the time zone row is found by its label (${zone.join()})`, zone.includes("general.timezone"));
+    ok("rows of other sections are gone", !(await visible()).includes(LOSS));
+    ok("a section with no match is hidden", await page.$eval("#set-sec-retention", (e) => e.hidden || e.offsetParent === null));
+    await page.$eval("#settingsSearch", (e) => { e.value = ""; });
+    await page.keyboard.type(LOSS.split(".")[0]);
+    ok("the key matches too", (await visible()).includes(LOSS));
+    await page.$eval("#settingsSearch", (e) => { e.select(); });
+    await page.keyboard.type("quiet hours");
+    ok("help text and label match (quiet hours sit under Alerts)", (await visible()).some((k) => k.startsWith("alerts.quiet_hours")));
+    await page.$eval("#settingsSearch", (e) => { e.select(); });
+    await page.keyboard.type("zzzz-no-such-setting");
+    await until(() => /No setting matches/.test(document.getElementById("settingsSearchStatus").textContent));
+    eq("nothing shown", (await visible()).length, 0);
+    await page.keyboard.press("Escape");
+    eq("Escape clears the box", await page.$eval("#settingsSearch", (e) => e.value), "");
+    eq("all rows are back", (await visible()).length, total);
+    ok("and the dialog is still open", await page.$eval("#settingsModal", (m) => m.classList.contains("active")));
+    await page.keyboard.press("Escape");
+    await until(() => !document.getElementById("settingsModal").classList.contains("active"));
+    await phone(async () => {
+      await settingsOpen(ctx);
+      await page.focus("#settingsSearch");
+      await page.keyboard.type("timezone");
+      await until(() => document.querySelectorAll("#settingsSections .set-row[data-key]:not([hidden])").length < 10);
+      ok("the phone filters too and does not scroll sideways", (await visible()).length >= 1 && await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await ctx.dialogShot("settings-search-phone");
+      await ctx.click("#btnSettingsCancel");
+      await until(() => !document.getElementById("settingsModal").classList.contains("active"));
     });
   }],
 
@@ -94,7 +134,7 @@ export const steps = [
     await page.evaluate(() => { history.replaceState({ e0: 1 }, ""); history.pushState({ e1: 1 }, ""); }); // the page the user came from, and this one
     await settingsOpen(ctx);
     ok("Save is off with no change", await page.$eval("#btnSettingsSave", (b) => b.disabled));
-    eq("the default is shown", await page.$eval(`${settingsRow(LOSS)} .set-def`, (e) => e.textContent.trim()), "Default 3 s");
+    eq("the standard value is shown", await page.$eval(`${settingsRow(LOSS)} .set-def`, (e) => e.textContent.trim()), "Standard: 3 s");
     await settingsType(page, LOSS, "5");
     eq("one change", await settingsSaveLabel(page), "Save 1 change");
     eq("badge Unsaved", await page.$eval(`${settingsRow(LOSS)} [data-badge=unsaved]`, (e) => e.textContent), "Unsaved");
@@ -496,18 +536,43 @@ export const steps = [
     });
   }],
 
-  ["the browser's layout can become everyone's default; the Layout dialog links to it", async (ctx) => {
+  ["the time zone reads \"UTC\", lists zones by place, and offers this browser's zone in one click", async (ctx) => {
+    const { eq, ok, page } = ctx;
+    const row = settingsRow("general.timezone");
+    await page.emulateTimezone("America/New_York"); // the test image runs in UTC: this browser is elsewhere
+    await settingsOpen(ctx);
+    const shown = () => page.$eval(`${row} select`, (s) => s.selectedOptions[0].textContent);
+    ok(`the server's UTC is "UTC" (${await shown()})`, /^UTC\b/.test(await shown()) && !/Etc\//.test(await shown()));
+    ok("zones are named by place", await page.$eval(`${row} select`, (s) => [...s.options].some((o) => o.textContent === "Chicago (America/Chicago)")));
+    ok("the browser's zone is suggested by city, whole in the box", await page.$eval(`${row} select optgroup[label=Suggested]`, (g) => [...g.children].some((o) => o.textContent === "New York · your browser")));
+    eq("the browser's zone is offered", await page.$eval(`${row} [data-action=settingsUseZone]`, (b) => b.textContent), "Use this browser's zone (America/New_York)");
+    await ctx.click(`${row} [data-action=settingsUseZone]`);
+    eq("it is in the draft", await settingsSaveLabel(page), "Save 1 change");
+    eq("the box shows it", await page.$eval(`${row} select`, (s) => s.value), "America/New_York");
+    eq("the offer is gone", await ctx.count(`${row} [data-action=settingsUseZone]`), 0);
+    eq("focus is on the zone's box", await page.evaluate((r) => document.activeElement === document.querySelector(`${r} select`), row), true);
+    ok("quiet hours' clock names the zone", /there now \(New York\)/.test(await ctx.text(`${settingsRow("alerts.quiet_hours.start")} [data-meta]`)));
+    await settingsDiscard(ctx);
+    await page.emulateTimezone();
+  }, { chromiumOnly: "page.emulateTimezone is CDP only" }],
+
+  ["the browser's layout can become the one new browsers start with, in one row with its Reset; the Layout dialog links to it", async (ctx) => {
     const { eq, ok, page, until } = ctx;
+    const row = "#settingsSections .set-row[data-extra=layout]";
     await ctx.openLayout();
     await ctx.click("#layoutList [data-action=movePanel][data-arg=report][data-arg2=up]");
     await ctx.click("#layoutModal [data-action=openSettingsAt]");
     await until(() => document.getElementById("settingsModal").classList.contains("active") && document.querySelectorAll("#settingsSections .set-row").length > 10);
     ok("the layout dialog closed", !(await ctx.modalOpen("layoutModal")));
-    await ctx.click('[data-action=settingsUseLayout]');
+    eq("one row for the two settings", await ctx.count(`${settingsRow("dashboard.order")}, ${settingsRow("dashboard.hidden")}`), 0);
+    eq("the standard layout in words", await ctx.text(`${row} [data-layout]`), "All panels, standard order");
+    eq("nothing to reset yet", await ctx.count(`${row} [data-action=settingsResetLayout]`), 0);
+    await ctx.click(`${row} [data-action=settingsUseLayout]`);
     eq("two settings in the draft", await settingsSaveLabel(page), "Save 1 change"); // hidden is [] = the default: only the order differs
-    ok("the order shown", /report/.test(await ctx.text(`${settingsRow("dashboard.order")} .set-layout`)));
-    await ctx.click(`${settingsRow("dashboard.order")} [data-action=settingsReset]`);
-    eq("reset", await settingsSaveLabel(page), "Save");
+    ok(`the order shown by the panels' titles (${await ctx.text(`${row} [data-layout]`)})`, /^Order: .*Reliability/.test(await ctx.text(`${row} [data-layout]`)));
+    await ctx.click(`${row} [data-action=settingsResetLayout]`);
+    eq("Reset to standard empties the draft", await settingsSaveLabel(page), "Save");
+    eq("and the row says so", await ctx.text(`${row} [data-layout]`), "All panels, standard order");
     await ctx.click("#btnSettingsCancel");
     await page.evaluate(() => localStorage.clear());
   }],
@@ -532,7 +597,11 @@ export const steps = [
       await page.evaluate(() => { const card = document.querySelector("[data-list=services] .set-card:last-of-type"); card.open = true; card.scrollIntoView(); });
       await page.type("[data-list=services] .set-card:last-of-type [data-f=url]", "http://192.0.2.44:8080/a/very/long/path/that/must/wrap/instead/of/scrolling/sideways/ok");
       eq("fits with a card expanded", JSON.stringify(await fits()), JSON.stringify({ page: true, body: true, modal: true }));
-      ok("the buttons are reachable: Save is the last, full width", await page.$eval("#btnSettingsSave", (b) => { const r = b.getBoundingClientRect(); return r.right <= innerWidth && r.width > innerWidth * 0.8; }));
+      ok("the footer is one row: every button on the same line, inside the screen", await page.$$eval("#settingsModal .modal-f .btn:not([hidden])", (bs) => {
+        const tops = bs.map((b) => Math.round(b.getBoundingClientRect().top));
+        return bs.length >= 4 && Math.max(...tops) - Math.min(...tops) <= 2 && bs.every((b) => b.getBoundingClientRect().right <= innerWidth);
+      }));
+      ok("the icon-only buttons keep their names", await page.$$eval("#settingsModal .modal-f .left .btn", (bs) => bs.every((b) => b.getAttribute("aria-label"))));
       await ctx.dialogShot("settings-phone-dark");
       await setTheme("light");
       await ctx.dialogShot("settings-phone-light");
@@ -592,7 +661,7 @@ export const steps = [
     eq("the driver select lists the drivers", await page.$eval("#dvScratch [data-f=driver]", (s) => s.value), "asuswrt");
     ok("the driver's options are generated", (await page.$$("#dvScratch [data-opt]")).length >= 4);
     eq("the map option shows its entry", await page.$eval("#dvScratch [data-map-k]", (i) => i.value), "02:00:00:00:00:01");
-    ok("the default poll interval is the placeholder", /Default 10/.test(await page.$eval("#dvScratch [data-f=poll_interval_seconds]", (i) => i.placeholder)));
+    ok("the standard poll interval is the placeholder", /Standard: 10/.test(await page.$eval("#dvScratch [data-f=poll_interval_seconds]", (i) => i.placeholder)));
     await shots("settings-devices");
   }],
 

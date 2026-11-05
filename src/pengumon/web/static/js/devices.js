@@ -16,6 +16,7 @@ async function fetchJson(url) {
 
 export async function loadDevices() {
   const [devices, features] = await Promise.all([fetchJson('/api/devices'), fetchJson('/api/features')]);
+  state.devicesKnown = Array.isArray(devices); // false: the list could not be read, so nobody says there are none
   state.devices = Array.isArray(devices) ? devices : [];
   state.features = Array.isArray(features) ? features : [];
 }
@@ -36,14 +37,15 @@ function feature(name) {
   return state.features.find(f => f.feature === name) || null;
 }
 
-// The reason a panel is missing, from the first of its features that says why (the text is for people; the logic
-// uses reason_kind only).
-export function missingNote(featureNames, what) {
+// The reason a panel is missing, in plain words for the Layout dialog and the panels' own notes (the logic uses
+// reason_kind only; the technical reason the server sends stays out of the page). `fix` is the panel's own sentence
+// on where and what to add, appended as it is.
+export function missingNote(featureNames, what, fix = '') {
+  const WHY = { none: 'no device added yet.', disabled: 'its device is switched off.', not_configured: 'its device needs its password.' };
   for (const name of featureNames) {
     const f = feature(name);
-    if (f && !f.available) {
-      return f.reason_kind === 'none' ? `${what}: no device configured (${f.reason})` : `${what}: ${f.reason}`;
-    }
+    if (!f || f.available) continue;
+    return `${what}: ${WHY[f.reason_kind] || 'not available.'}${fix ? ` ${fix}` : ''}`;
   }
   return `${what}: not available`;
 }

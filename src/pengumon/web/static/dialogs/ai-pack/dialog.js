@@ -9,7 +9,7 @@
 //   a change waits for DEBOUNCE_MS of quiet before it asks.
 
 import { registerActions } from '../../js/dispatch.js';
-import { copyText, keepKeyboard, openModal } from '../../js/util.js';
+import { copyText, keepKeyboard, openModal, zoneParams } from '../../js/util.js';
 
 const AI_PACK_URL = '/api/ai-pack';
 const DEBOUNCE_MS = 600;
@@ -44,6 +44,8 @@ const idleNote = () => (window.isSecureContext ? '' : HTTP_NOTE);
 
 function setBusy(busy) {
   $('aiPackText').setAttribute('aria-busy', String(busy));
+  // an empty box while the first answer is on its way says so (placeholder text is not part of what Copy gives)
+  $('aiPackText').placeholder = busy && !$('aiPackText').value ? 'Building the pack...' : '';
   const ready = !busy && same(shown, wanted) && !!$('aiPackText').value;
   $('aiPackCopy').disabled = !ready;
   $('aiPackDownload').disabled = !ready;
@@ -87,21 +89,11 @@ function renderAnswer(data, made) {
 
 // The viewer's IANA zone (America/New_York): the pack's times follow its daylight-saving changes when Settings names no
 // zone. Empty where the browser does not say.
-function browserZone() {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-  } catch {
-    return '';
-  }
-}
-
 function query(c) {
   const p = new URLSearchParams(c.scope === 'incident' ? { scope: 'incident', incident_id: String(incidentId) } : { scope: 'window', hours: String(HOURS[c.scope]) });
   p.set('level', c.level);
   p.set('detail', c.form);
-  p.set('tz_offset_minutes', String(-new Date().getTimezoneOffset()));
-  const zone = browserZone();
-  if (zone) p.set('tz', zone);
+  zoneParams().forEach((value, key) => p.set(key, value));
   return p;
 }
 

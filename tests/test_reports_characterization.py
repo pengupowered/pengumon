@@ -11,12 +11,14 @@ Regenerate only on purpose: PENGUMON_REGEN_GOLDEN=1 python -m pytest tests/test_
 
 import json
 import time
+from datetime import timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pytest
 
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
+from pengumon.reports import reliability
 from pengumon.reports.dossier import build_dossier
 from pengumon.reports.reliability import build_report
 
@@ -105,12 +107,13 @@ class FakeRepository:
         self.calls.append(["get_docsis_snapshots_in_range", start_time, end_time, padding_seconds])
         return list(self.window_snaps)
 
-    async def get_daily_availability(self, start_time, tz_offset_minutes=0):
-        self.calls.append(["get_daily_availability", start_time, tz_offset_minutes])
+    # build_report's two rollup queries (pengumon.reports.queries), patched in by run_report
+    async def daily_availability(self, start_time, tz, now=None):
+        self.calls.append(["daily_availability", start_time, str(tz)])
         return [dict(r) for r in self.daily]
 
-    async def get_hourly_loss(self, start_time, tz_offset_minutes=0):
-        self.calls.append(["get_hourly_loss", start_time, tz_offset_minutes])
+    async def hourly_loss(self, start_time, tz, exclude=(), now=None):
+        self.calls.append(["hourly_loss", start_time, str(tz)])
         return [dict(r) for r in self.hourly]
 
 
@@ -336,12 +339,14 @@ def report_scenario():
 
 async def run_report() -> dict:
     config, repo = report_scenario()
-    payload = await build_report(repo, config, 3, now=NOW, tz_offset_minutes=-300)
+    payload = await build_report(repo, config, 3, now=NOW, tz=timezone(timedelta(minutes=-300)))
     return {"key_order": list(payload), "calls": jsonable(repo.calls), "payload": jsonable(payload)}
 
 
-async def build_golden() -> dict:
+async def build_golden(monkeypatch) -> dict:
     golden = {name: await run_dossier(name) for name in SCENARIOS}
+    monkeypatch.setattr(reliability, "daily_availability", lambda repo, *a, **k: repo.daily_availability(*a, **k))
+    monkeypatch.setattr(reliability, "hourly_loss", lambda repo, *a, **k: repo.hourly_loss(*a, **k))
     golden["build_report"] = await run_report()
     return golden
 
@@ -356,5 +361,5 @@ def utc_clock(monkeypatch):
     time.tzset()
 
 
-async def test_dossier_and_report_match_the_recorded_golden(utc_clock):
-    check_golden("dossier_characterization", await build_golden())
+async def test_dossier_and_report_match_the_recorded_golden(utc_clock, monkeypatch):
+    check_golden("dossier_characterization", await build_golden(monkeypatch))

@@ -1,5 +1,6 @@
 """Two typical devices as tests build them: `modem` (xfinity_xb) and `router` (asuswrt), with the values of
-config.example.yaml, and a password from the environment source when one is given."""
+config.example.yaml, and a password from the environment source when one is given; and `Clock`, the clock tests
+inject and move by hand."""
 
 from typing import Optional
 
@@ -12,6 +13,7 @@ from pengumon.devices.wan import WanRates
 from pengumon.secrets import CredentialSources, password_env_var
 
 MODEM = {"id": "modem", "driver": "xfinity_xb", "url": "http://192.168.100.1", "poll_interval_seconds": 900.0}
+
 ROUTER = {"id": "router", "driver": "asuswrt", "url": "http://192.168.1.1", "poll_interval_seconds": 10.0}
 
 
@@ -41,3 +43,13 @@ def build_router(repository=None, *, password: Optional[str] = None, client: Opt
     """`clock` (monotonic) paces the driver; `wall_clock` timestamps readings and snapshots."""
     return build_device(router_config(**fields), repository, password_sources("router", password), client=client,
                         clock=clock, wall_clock=wall_clock, wan=wan)
+
+
+class Clock:
+    """A clock a test moves by setting `now` (seconds)."""
+
+    def __init__(self, now: float = 1000.0):
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now

@@ -11,7 +11,8 @@ from pathlib import Path
 
 from pengumon import secrets as secrets_module
 from pengumon.devices.settings import DeviceConfig
-from pengumon.secrets import CredentialSources, Credentials, SecretStore, credential_updates, update_secrets
+from pengumon.secrets import (CredentialSources, Credentials, SecretsFileUnusable, SecretStore, credential_updates,
+                              update_secrets)
 from platform_helpers import assert_mode, posix_files
 
 SECRET = "hunter2-very-secret"
@@ -110,6 +111,23 @@ def test_an_unparsable_secrets_file_is_reported_without_its_content(tmp_path, ca
         creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device("router"))
     assert creds.password is None
     assert "not valid JSON" in caplog.text and SECRET not in caplog.text
+
+
+@pytest.mark.parametrize("save", [
+    lambda store: store.write(credential_updates("router", "root", "new-pw")),  # the device dialog
+    lambda store: store.change({"ntfy": {"token": "new-token"}}),  # a Settings save
+], ids=["write", "change"])
+def test_a_save_never_overwrites_an_unparsable_secrets_file(tmp_path, caplog, save):
+    """A typo in a hand-edited secrets.json plus one save used to replace every credential in it with the new one."""
+    path = tmp_path / "secrets.json"
+    damaged = ('{"devices": {"modem": {"password": "' + SECRET + '"},, '
+               '"wan": {"password": "' + SECRET + '"}}}')  # a stray comma
+    path.write_text(damaged)
+    store = SecretStore(path)
+    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"), pytest.raises(SecretsFileUnusable):
+        save(store)
+    assert path.read_text() == damaged
+    assert "nothing was saved" in caplog.text and SECRET not in caplog.text
 
 
 @posix_files

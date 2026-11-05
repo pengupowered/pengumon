@@ -27,6 +27,22 @@ Pengumon concurrently probes multiple network stages every second and classifies
   - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🔴 **Packet loss / Timeout**
   - DNS Query (`google.com`): 🔴 Fails
   - Diagnosed Root Cause: **the line or the provider's first router** (for a cable modem: the coax line or the CMTS)
+- **DNS Resolver Outage**
+  - Local Mesh (`192.168.1.1`): 🟢 < 2ms
+  - Gateway (`192.168.100.1`): 🟢 < 2ms
+  - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🟢 < 20ms
+  - DNS Query (`google.com`): 🔴 **Timeout (above the Slow DNS level, 300 ms by default)**
+  - Diagnosed Root Cause: **DNS Resolver Outage**
+
+## How to read an incident
+
+The status pill says what the classifier decided, in a word: **Healthy**, **Degraded**, **Down** or **Busy** (a line
+load explains the delay, so it is expected and no incident opens; see Load-aware classification below). Loss from the
+degraded level (15 % by default) or the down level (40 %) is what moves a stage there (The levels, below). An incident
+has a **cause**, worded as a hypothesis, and a stable machine-readable **kind**; both place it in one category (router,
+gateway, line, ISP, internet, DNS, load, service), the groups the incident timeline, the reliability report and the
+dossier use. Open an incident in the list to get its inspector: the probes around it, stage by stage. The scenarios
+and the placement rules follow; the panels are described in [dashboard.md](dashboard.md).
 
 ## Where a fault is placed
 
@@ -57,13 +73,6 @@ from the incident's `kind` where it says enough, else from its cause code, so st
 placed again when read: an older gateway incident (`double_nat_congestion`) is in the `gateway` lane, and an older
 `isp_outage` recorded as `access_line_drop` whose description says the public internet timed out while the ISP hop
 answered is read as `isp`.
-- **DNS Resolver Outage**
-  - Local Mesh (`192.168.1.1`): 🟢 < 2ms
-  - Gateway (`192.168.100.1`): 🟢 < 2ms
-  - Public Anycast (`1.1.1.1` / `8.8.8.8`): 🟢 < 20ms
-  - DNS Query (`google.com`): 🔴 **Timeout (>400ms)**
-  - Diagnosed Root Cause: **DNS Resolver Outage**
-
 ## The levels (Settings, Outage rules)
 
 Each level below is a setting (`classifier.*`); the defaults are what the classifier always used. A change applies
@@ -108,11 +117,11 @@ looks at the WAN load (from the Asus router's 10 s byte counters) when it judges
 ## Intermediate-hop ping loss (the classic MTR rule)
 
 Routers answer ping from a slow path and drop those replies first, whether or not the line is busy. Loss at
-the `isp`-category hops (intermediate routers such as Hop 3 and Hop 4, and the ISP's DNS address)
+the `isp`-category hops (intermediate routers such as the second and third provider hops, and the ISP's DNS address)
 that does not carry through to the end targets is therefore not packet loss. When the ISP hops lose the degraded
 level (15% by default) or more, but the public targets lose under it **and** under half of what the ISP hops lose,
 and the local
-router, gateway and DNS probes are healthy, the status is `healthy` ("Hop 3 drops some ping replies, but later
+router, gateway and DNS probes are healthy, the status is `healthy` ("<hop name> drops some ping replies, but later
 hops and public targets are fine: routers often deprioritise ping replies, so this is not packet loss"), no
 incident is opened and no failure counter builds up. The busy rule above runs first and keeps its behaviour for
 the loaded case.
@@ -139,9 +148,7 @@ targets fail while no local router or gateway target is configured, so the fault
 incidents recorded before it existed get
 `legacy_latency` or `legacy_other` where their title matches no current template). It is part of the incident
 JSON in `/api/incidents` and the websocket. The intermediate-hop rule and the two backfills decide by `kind`, not
-by the display title, so titles can be reworded without changing behaviour. Schema version 6 adds the column and
-labels the existing incidents from their titles once; back up the database before the first start of a build
-with v6, and do not run an older build against a v6 database (its new incidents would have no `kind`).
+by the display title, so titles can be reworded without changing behaviour.
 
 **Loss span.** An incident's `start_time` and `end_time` are detection times: it opens a few probe rounds after the first
 lost probe and closes once enough rounds are clean again, so it runs a few seconds late on both ends (7 s of lost probes
@@ -150,18 +157,15 @@ its start to 2 s after its end give `loss_start` (the first lost probe) and `los
 one probe interval; a target that answered nothing in that window, such as a hop that ignores ping, is left out;
 intermittent loss counts from its first lost probe to its last). `loss_seconds` is 0 when nothing was lost (an incident
 raised on latency) and null when no such probe is stored. Both are in `/api/incidents`; the incident list shows the loss
-duration with the recorded one on hover, the inspector shows both ("Loss 7s · incident 12s"). Schema v12 adds the two
-columns; every start fills them for resolved incidents whose raw samples are still kept (`incidents/loss.py`,
-`db/incidents.py`).
+duration with the recorded one on hover, the inspector shows both ("Loss 7s · incident 12s"). Every start fills the two
+columns for resolved incidents whose raw samples are still kept (`incidents/loss.py`, `db/incidents.py`).
 
 Faults on the line to the ISP have the cause code `access_line_drop` (any line technology; the description names
 technology-specific causes, e.g. coax and CMTS for a DOCSIS modem). Loss at the gateway has `gateway_unreachable`
-(older builds raised `double_nat_congestion` for it, which now stands for delay at the gateway only); an older build
-cannot read `gateway_unreachable`, so going back to one after it was recorded needs the pre-deploy database backup.
-Schema v8 renames the stored
-`xfinity_last_mile_coax_drop` incidents to it, and the old name is still read as the new one. An older build cannot
-read the new code, so going back to one after v8 needs the pre-deploy database backup that `scripts/deploy.sh`
-makes. Schema v7 adds a nullable `error_kind` to the modem and router snapshots (older builds work against it).
+(older builds raised `double_nat_congestion` for it, which now stands for delay at the gateway only); the stored
+`xfinity_last_mile_coax_drop` incidents were renamed to `access_line_drop`, and the old name is still read as the new
+one. Which schema versions an older build cannot read, and why a backup matters before an upgrade, is in
+[storage.md](storage.md#schema-versions).
 
 The per-target status colours on the dashboard (up / degraded / down) come from `prober.hop_status`; the defaults
 are the values the dashboard has always used.

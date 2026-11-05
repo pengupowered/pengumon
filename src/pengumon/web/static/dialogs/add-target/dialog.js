@@ -3,7 +3,7 @@
 // (a taken id, the limit of custom targets, a host it refuses) is shown the same way.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, hostProblem, icon, initTargets, keepKeyboard } from '../../js/util.js';
+import { closeModal, escapeHtml, hostProblem, icon, initTargets, keepKeyboard, slug } from '../../js/util.js';
 
 const ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const FIELDS = ['name', 'address', 'id'];
@@ -45,10 +45,6 @@ function check(field) {
   return message;
 }
 
-function slug(name) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
-}
-
 function banner(html) {
   const box = $('addTargetError');
   box.hidden = !html;
@@ -71,7 +67,7 @@ export function cancelAddTarget() {
 function onInput(el) {
   if (el.id === INPUT.name) {
     const id = $(INPUT.id);
-    if (!id.value || id.value === autoId) { autoId = slug(el.value); id.value = autoId; if (touched.has('id')) check('id'); }
+    if (!id.value || id.value === autoId) { autoId = slug(el.value).slice(0, 64); id.value = autoId; if (touched.has('id')) check('id'); }
   } else if (el.id === INPUT.id) {
     touched.add('id');
   }

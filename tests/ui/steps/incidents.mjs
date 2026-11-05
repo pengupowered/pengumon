@@ -50,7 +50,8 @@ export const steps = [
     const r = await page.evaluate(async () => {
       const main = [...document.scripts].find((s) => s.type === "module").src;
       const m = await import(main.replace(/js\/main\.js$/, "panels/incidents/incidents.js"));
-      return { lanes: m.CAUSES.map(([k, w]) => `${k}=${w}`).join(","), words: ["router", "gateway", "line", "isp"].map((c) => m.causeOf({ cause: c })).join(">") };
+      const api = await import(main.replace(/js\/main\.js$/, "js/path-api.js"));
+      return { lanes: api.CAUSES.map(([k, w]) => `${k}=${w}`).join(","), words: ["router", "gateway", "line", "isp"].map((c) => m.causeOf({ cause: c })).join(">") };
     });
     eq("lane keys and words", r.lanes, "router=Router,gateway=Gateway,line=Line,isp=ISP,internet=Internet,dns=DNS,load=Load,service=Service,unknown=Other");
     eq("the server's router, gateway, line and isp categories", r.words, "Router>Gateway>Line>ISP");

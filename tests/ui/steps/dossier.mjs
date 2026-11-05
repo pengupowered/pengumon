@@ -27,6 +27,7 @@ export const steps = [
     await until(() => document.querySelectorAll("#dossierDoc h4").length >= 4);
     eq("four summary figures", await count("#dossierDoc .doc-stats .stat"), 4);
     ok("loss per hop as a table", (await count("#dossierDoc table tbody tr")) >= 3);
+    ok("the hop column counts the hops, it does not print target ids", await page.$$eval("#dossierDoc table tbody tr td:first-child", (cells) => cells.slice(0, 3).every((c) => /^Hop \d+$/.test(c.textContent.trim()))));
     ok("a path of hops", (await count("#dossierDoc .doc-path .dp")) >= 3);
     ok("no raw Markdown marks in the document", !/\*\*|^#{1,3} |\| :---/m.test(await page.$eval("#dossierDoc", (e) => e.innerText)));
     eq("the raw text is not shown", await shown("#dossierOutput"), false);

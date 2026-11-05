@@ -1,4 +1,4 @@
-/* Dialog sign-out: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Dialog sign-out: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 .so-row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-3); padding: var(--sp-3) 0; border-top: 1px solid var(--line); }
 .so-row:first-child { border-top: 0; padding-top: 0; }
 .so-row > div { display: flex; flex-direction: column; min-width: 0; }

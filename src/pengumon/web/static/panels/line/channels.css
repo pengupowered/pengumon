@@ -1,13 +1,8 @@
-/* Panel line: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel line: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* Channels */
 .ch-sum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-5); }
 .ch-sum .gauge { border-bottom: 0; }
 @container (max-width: 640px) { .ch-sum { grid-template-columns: 1fr; gap: 0; } .ch-sum .gauge { border-bottom: 1px solid var(--line); } }
-.chheat { display: grid; grid-template-columns: 44px minmax(0, 1fr); row-gap: 1px; column-gap: 8px; align-items: center; }
-.chh-l { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1; }
-.chh-row { display: grid; grid-template-columns: repeat(96, minmax(0, 1fr)); gap: 1px; height: 9px; }
-.chh-row i { background: var(--q0); min-width: 0; }
-.chheat .s-axis { margin-top: 6px; }
 .ch-hist-canvas { display: block; width: 100%; }
 .dlist tr.has-errors td { background: color-mix(in srgb, var(--warn) 6%, transparent); }
 .heat-foot { display: flex; justify-content: flex-end; margin-top: var(--sp-3); }

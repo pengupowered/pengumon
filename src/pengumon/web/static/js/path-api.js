@@ -3,16 +3,38 @@
 
 import { statusOf } from './device-panel.js';
 
-// The roles a hop can have (TargetConfig.category), in the editor's plain words, nearest first.
-export const ROLES = [
-  ['local', 'Your network'],
-  ['gateway', 'Gateway (modem)'],
-  ['isp', 'Provider'],
-  ['public', 'Internet'],
-  ['dns', 'DNS server'],
-  ['custom', 'Other']
-];
+// The roles a hop can have (TargetConfig.category), nearest first: the one table of their words. `short` is the name a
+// panel gives a hop of that role (Router, ISP hop 2); `long` is the role in the editor's plain words (Your network).
+// Every place that says a role, a stage or a category reads it from here.
+export const ROLE_TABLE = {
+  local: { short: 'Router', long: 'Your network' },
+  gateway: { short: 'Gateway', long: 'Gateway (modem)' },
+  isp: { short: 'ISP hop', long: 'Provider' },
+  public: { short: 'Internet', long: 'Internet' },
+  dns: { short: 'DNS lookup', long: 'DNS server' },
+  custom: { short: 'Other', long: 'Other' }
+};
+export const ROLES = Object.entries(ROLE_TABLE).map(([id, w]) => [id, w.long]); // [id, long word] for a select
 export const ROLE_WORD = Object.fromEntries(ROLES);
+export const ROLE_SHORT = Object.fromEntries(Object.entries(ROLE_TABLE).map(([id, w]) => [id, w.short]));
+
+// Where an incident's fault sat (the server's `cause` category), in the timeline's lane order: `short` is the lane and
+// the chip, `long` says what it means in the report. Router (local probes), Gateway (the gateway / modem on its home-side
+// address, which does not use the line), Line (loss from the provider's first router on while the gateway answers: the
+// line or that router), ISP (the provider's network beyond it).
+export const CAUSES = [
+  ['router', 'Router', 'Router: home network'],
+  ['gateway', 'Gateway', 'Gateway (modem)'],
+  ['line', 'Line', 'Line or first ISP router'],
+  ['isp', 'ISP', 'ISP: beyond its first router'],
+  ['internet', 'Internet', 'Internet servers'],
+  ['dns', 'DNS', 'DNS'],
+  ['load', 'Load', 'Busy line'],
+  ['service', 'Service', 'Host service'],
+  ['unknown', 'Other', 'Unknown']
+];
+export const CAUSE_SHORT = Object.fromEntries(CAUSES.map(([id, short]) => [id, short]));
+export const CAUSE_LONG = Object.fromEntries(CAUSES.map(([id, , long]) => [id, long]));
 export const ROLE_HINT = {
   local: 'router or LAN device', gateway: 'modem or the provider\'s gateway in your home', isp: 'a router of your provider',
   public: 'a server on the internet', dns: 'a DNS server', custom: 'not a stage of the path (a NAS, a VPN, a server)'

@@ -24,7 +24,6 @@ export const watchDraft = (fn) => { listeners.add(fn); };
 export const changed = () => listeners.forEach((fn) => fn());
 
 export const roundSeconds = () => (S.schema ? S.schema.round_seconds : 1);
-export const canEditServer = () => !!(S.server && S.server.can_edit);
 
 export function load(schema, server) {
   S.schema = schema;

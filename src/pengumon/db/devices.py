@@ -67,14 +67,6 @@ class DeviceQueries:
             ) as cursor:
                 return PackSamples(await cursor.fetchall())
 
-    async def get_latest_device_sample(self, device_id: str) -> Optional[DeviceSample]:
-        async with self._db.read() as db:
-            async with db.execute(
-                f"{self._DEVICE_SELECT} WHERE device_id = ? ORDER BY ts DESC LIMIT 1", (device_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-        return DeviceSample(*row) if row else None
-
     async def get_device_samples_bucketed(self, device_id: str, start_time: float, end_time: float,
                                         bucket_seconds: int) -> List[tuple]:
         """The device's polls with start_time <= ts <= end_time, grouped into buckets of bucket_seconds: per bucket

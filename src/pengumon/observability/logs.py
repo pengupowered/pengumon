@@ -10,8 +10,8 @@ Context goes in as keyword arguments of a ContextLogger, per call or bound once:
 
 Context values are identifiers, outcomes and measurements: never credentials, and never URLs with a query string.
 
-Configuration (environment wins over the config file):
-  PENGUMON_LOG_LEVEL   root level (server.log_level in config.yaml; default info)
+Configuration (environment wins over the setting):
+  PENGUMON_LOG_LEVEL   root level (the server.log_level setting; default info)
   PENGUMON_LOG_LEVELS  per-logger levels, "pengumon.devices=debug,uvicorn.access=warning"
   PENGUMON_LOG_FORMAT  "text" (default) or "json"
 """
@@ -200,7 +200,7 @@ def apply_levels(level: Optional[str], levels: Optional[str]) -> None:
 
 
 def apply_config_level(level: Optional[str]) -> None:
-    """Applies server.log_level from config.yaml once it is loaded; PENGUMON_LOG_LEVEL, if set, still wins."""
+    """Applies the server.log_level setting once it is loaded; PENGUMON_LOG_LEVEL, if set, still wins."""
     if not env_value("PENGUMON_LOG_LEVEL") and level:
         logging.getLogger().setLevel(_level(level))
 

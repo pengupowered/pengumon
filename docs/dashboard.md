@@ -49,7 +49,7 @@ One card group per panel, each in its own folder. What a panel needs, and what i
   - Without it: no card; a missing client list shows one muted line saying why
 - Host services (`services`)
   - Tab: Network
-  - Needs: the `host_services` feature (config `service_checks`)
+  - Needs: the `host_services` feature (the Host app checks setting)
   - Without it: no card, with the reason in the Layout dialog
 - Incidents (`incidents`)
   - Tab: Incidents
@@ -125,6 +125,11 @@ history. Sparklines are drawn by `static/js/sparkline.js` (SVG, not Chart.js); a
 or block that has begun opens the Incidents panel filtered to that time (on a phone, the Incidents tab), where each
 incident opens its inspector as usual. A time with nothing to list says why: nothing probed, every probe answered,
 busy-line incidents hidden, or loss too small or brief to open an incident.
+Their days and hours, and the Reliability report's, are in the zone set in Settings, else in the browser's own zone
+(the page sends it), and follow daylight saving: the day the clocks go back has 25 hours (the repeated hour counts twice
+in its cell, and opens both) and the day they go forward 23. The server says when each cell begins and ends, so a click
+opens the right stretch even when the browser runs in another zone than the one set in Settings; Uptime's times and
+dates read on that zone's clock.
 
 The **router** card's client and mesh counts come from the device's live summary (`clients`: counts only, never a
 client row); only the Local network dialog fetches the client list.
@@ -141,8 +146,8 @@ adding a device needs no layout change.
 Two layers:
 
 1. The **default**, from the server: `dashboard:` in the settings (Settings > Export shows it as YAML), `order:` (these panels first, the rest follow in
-   their usual order) and `hidden:` (not shown). Unknown or repeated ids are a config error; the valid ids are the
-   panel folder names. It reaches the page on `<body data-layout>`.
+   their usual order) and `hidden:` (not shown). Unknown or repeated ids are refused when you save (the message lists the valid ids, which are the
+   panel folder names); in a `config.yaml` read on the first start they are logged and the default kept. It reaches the page on `<body data-layout>`.
 2. The **browser's own choice**, in `localStorage` (`pengumon.layout.v1`) after the first change. It wins over the
    default, so the phone and the PC can differ. A stored layout never hides a panel added later.
 
@@ -155,10 +160,13 @@ with the sections in this order: Outage rules, Alerts, Your line, Devices and se
 Discovery, Display, a collapsed Advanced area ("Change these only if you know why") and "About this install". A rail
 on the left jumps between them; at 720 px and below it is a "Jump to section" list and the dialog is full screen.
 
-- **A row** is the label and input (numbers in their own unit: seconds, milliseconds, minutes, percent), then the effect
-  in one line, "Default 15 %", the badges and **Reset to default**. Badges: *Changed* (stored, not the default),
-  *Unsaved* (in the draft), *From environment · NAME* (the input is read-only and there is no Reset),
-  *Applies after a restart*. A hop-colour row shows the incident rule it relates to, with a link to it.
+- **A row** is the label and input (numbers in their own unit: seconds, milliseconds, minutes, percent, "per
+  million"; choices in words, such as "Every incident" / "Outages only"), then the effect in one line and, under the
+  input, the standard value in one form ("Standard: 15 %", "Standard: none", or what an empty box means), the badges
+  and **Reset to standard**. Badges: *Changed* (stored, not the standard value), *Unsaved* (in the draft), *From
+  environment · NAME* (the input is read-only and there is no Reset), *Applies after a restart*. Every control sits in
+  one column of the same width. A hop-colour row names the incident level it relates to and its value, with "Go to that
+  setting".
 - **Nothing applies until Save.** The Save button counts the changes ("Save 3 changes"); Cancel, the close button and
   Escape ask before throwing a draft away. Every number is checked against its range in the browser (the message
   appears under the field and Save stays off) and again by the server 0.4 s after the last edit (messages and amber
@@ -172,12 +180,18 @@ on the left jumps between them; at 720 px and below it is a "Jump to section" li
   host" or "Not set" and offers Replace and Remove. The text you type goes to the server in the Save and is never shown
   again, kept in a version or exported.
 - **Lists:** webhooks (Alerts), host app checks (Devices and services) and DNS lookups (Probing) are cards with Add,
-  Remove and, where order matters, Move up/down. A saved item's id is fixed. They apply without a restart.
+  Remove and, where order matters, Move up/down. A saved item's id is fixed. They apply without a restart. A device
+  card is named by its display name, else by what it is and its address ("Xfinity gateway · 192.0.2.1").
 - **Versions** lists the last 50 Saves; **Load** puts one in the page as a draft and Save restores it. **Export** downloads
   the settings as YAML (without secrets; viewers do not get it) and **Import** reads such a file, or a config.yaml, into
   a draft with notes on what it left out.
-- **Display** has "Use this browser's layout for everyone", which writes this browser's panel order and hidden panels
-  into the draft (the Layout dialog links to it).
+- **Display** has the **time zone** (quiet hours and the daily route check follow it, and the reports' days and hours
+  unless it is UTC; it starts as the server's zone, which a container takes from `TZ`, see
+  [Install](install.md#container)). Zones are listed by place ("New York (America/New_York)"), this browser's and the
+  server's first; UTC is "UTC"; when the setting is not this browser's zone, "Use this browser's zone" puts it in the
+  draft. **Layout for new browsers** is one row for `dashboard.order` and `dashboard.hidden`: the layout in words (the
+  panels' titles), "Use this browser's layout", which writes this browser's panel order and hidden panels into the
+  draft, and Reset to standard. A browser's own Layout choice wins over it (the Layout dialog links to the row).
 - **View only.** Without the access token (when `PENGUMON_VIEW_WITHOUT_TOKEN` allows viewing) the page shows a "View
   only" bar, every input is disabled and every changing control carries `data-needs-edit`; signing in turns them on.
 
@@ -199,7 +213,7 @@ Wider than 720 px there is no bar and every shown panel appears.
   **Router history** (router), **Channels** with a per-channel history (line, DOCSIS only), **Inspector** (incidents).
 - Standalone (`static/dialogs/<id>/`): **add-target**, **ai-pack**, **alerts**, **device-setup** (credentials and a test poll for a
   device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **settings**, **path-editor** (the probe path:
-  Path health's Edit, first-run review, Rediscover, Export / Import), **target-history**, **trace**.
+  Path health's Edit, first-run review, Rediscover, Export / Import), **sign-out**, **target-history**, **trace**.
 
 Dialogs are `div.modal` toggled by `.active` (`openModal` in `util.js`); on a phone they open as a bottom sheet. Their
 help texts and labels live in their own folder.
@@ -253,7 +267,8 @@ All under `src/pengumon/web/static/`:
   message), `bus.js`, `layout.js`, `tabs.js`, `chrome.js` (theme and menus), `dispatch.js` (delegated actions),
   `devices.js` and `device-feed.js` (devices and features), `device-panel.js`, `help.js`, `settings-values.js` (the live
   settings values for help texts), `util.js`, `state.js`,
-  `grades.js`, `path.js`, `sparkline.js`, `chart-theme.js`.
+  `grades.js`, `path.js`, `path-api.js` (the path and discovery API calls), `session.js` (sends a page whose sign-in ended to the
+  sign-in page), `sparkline.js`, `chart-theme.js`.
 - `panels/<id>/`, `dialogs/<id>/`: the features.
 - `vendor/`: Chart.js. The page is served from `/static/v/<hash>/` where the hash covers the whole tree, so all modules
   are cache-busted together and cached for a year.
@@ -268,7 +283,7 @@ quotes a threshold is a function of the settings values (`(values) => string`), 
 ## Adding a panel
 
 A panel is one folder, `static/panels/<id>/`; no shared file names it (the page, the config, the loader and the core
-modules find it by discovery in `pengumon/ui.py`). Files:
+modules find it by discovery in `pengumon/web/ui.py`). Files:
 
 - `panel.json`: `{"order": <number>}`, its default place.
 - `panel.html`: exactly one `<section data-panel="<id>">` holding one or more `.panel` cards (`data-size` 4, 8 or 12).

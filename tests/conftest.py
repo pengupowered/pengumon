@@ -21,6 +21,21 @@ async def _close_repositories(monkeypatch):
         await repo.close()
 
 
+@pytest.fixture
+def repo_options():
+    """Extra DatabaseRepository arguments for `repo`; a module overrides this fixture (test_storage.py does)."""
+    return {}
+
+
+@pytest.fixture
+async def repo(tmp_path, repo_options):
+    """An initialised DatabaseRepository on tmp_path/repo.db. A module with its own `repo` fixture uses that one."""
+    repository = DatabaseRepository(db_path=str(tmp_path / "repo.db"), **repo_options)
+    await repository.initialize()
+    yield repository
+    await repository.close()
+
+
 @pytest.fixture(autouse=True)
 def _no_real_config_home(monkeypatch):
     """The service code puts a user's unit under $XDG_CONFIG_HOME when it is set (GitHub's runners and many desktops set
@@ -41,8 +56,8 @@ def _fresh_rate_limits():
 @pytest.fixture
 def app_state(monkeypatch):
     """A fresh, empty AppState on the app for one test; set the parts a test needs on it (handlers read it through
-    the api.state.get_state dependency). Removed again afterwards."""
-    from pengumon.api.state import STATE_ATTR, AppState
+    the state.get_state dependency). Removed again afterwards."""
+    from pengumon.state import STATE_ATTR, AppState
     from pengumon.main import app
     state = AppState()
     monkeypatch.setattr(app.state, STATE_ATTR, state, raising=False)

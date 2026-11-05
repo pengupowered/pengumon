@@ -88,7 +88,9 @@ When an access token is set and viewing without it is allowed, a visitor who has
 
 Every Apply is kept as a version. **Earlier paths**, at the bottom of the editor, lists them (newest first: when, how
 many hops, what changed). **Restore the previous path**, or **Load** on any of them, puts that path in the editor as a
-draft; Apply restores it, and a hop that comes back keeps its history.
+draft; Apply restores it, and a hop that comes back keeps its history. If you have edited the draft and not applied
+the edits, the editor asks "Replace the draft with revision N?" first (**Replace the draft** or **Keep editing**); Import asks
+the same way.
 
 ## Rediscover, and "Your path changed"
 

@@ -3,9 +3,9 @@
 A component is a module with `async def register(ctx) -> Component | None`, listed once in pengumon.main.COMPONENTS.
 `register` builds the feature's parts from `ctx` (the config, the AppState being built, what earlier components left
 on the context) and returns what the app runs for it, or None when the config gives the feature nothing to do. A
-module may also have a module-level `router`, which the app factory mounts whether or not the feature is configured
-(the routes and the OpenAPI schema never depend on config.yaml), and `OPTIONAL = True`, which contains a failure of
-its register or start: the error is logged and the app runs without that feature.
+module may also set `OPTIONAL = True`, which contains a failure of its register or start: the error is logged and the
+app runs without that feature. A component has no routes: every route is in api/<feature>.py, listed in
+api/router.py, and mounted whether or not the feature is configured.
 
 `run_components` is the lifespan's middle: register every component in list order, install the AppState, start them
 in list order; at shutdown cancel every task they spawned, then stop them in reverse order.
@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Coroutine, List, Optional, Sequence, Tuple
 
-from pengumon.api.state import STATE_ATTR, AppState
+from pengumon.state import STATE_ATTR, AppState
 from pengumon.observability import get_logger
 from pengumon.observability.export import observe_state
 from pengumon.observability.telemetry import task_exits
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from pengumon.config import AppConfig
     from pengumon.engine.load import LineLoad
     from pengumon.incidents.model import SystemDiagnosis
-    from pengumon.notify import Notifier
+    from pengumon.notify.notifier import Notifier
     from pengumon.settings.hub import SettingsHub
 
 _log = get_logger("pengumon.components")
@@ -140,7 +140,7 @@ async def run_components(app: "FastAPI", config: "AppConfig", modules: Sequence,
             ctx.components.append(component)
             registered.append((module, component))
 
-    # The composition root: request handlers get it through api.state.get_state, the gauges through observe_state.
+    # The composition root: request handlers get it through pengumon.state.get_state, the gauges through observe_state.
     setattr(app.state, STATE_ATTR, state)
     observe_state(state)
 

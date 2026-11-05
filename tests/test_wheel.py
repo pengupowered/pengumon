@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from pengumon import __version__, ui
-from pengumon.web import assets
+from pengumon import __version__
+from pengumon.web import assets, ui
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "src" / "pengumon"

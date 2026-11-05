@@ -1,1 +1,1 @@
-"""Health checks of the other apps on this host (`service_checks:` in config.yaml; docs/services.md)."""
+"""Health checks of the other apps on this host (the `service_checks` settings; docs/services.md)."""

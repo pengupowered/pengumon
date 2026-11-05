@@ -1,5 +1,8 @@
 """GET /api/uptime: availability strips per target from the rollups."""
 
+from datetime import timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from httpx import ASGITransport, AsyncClient
 
 from pengumon.db.repository import DatabaseRepository
@@ -87,9 +90,25 @@ async def test_daily_windows_follow_the_time_zone(tmp_path):
     utc = await build_uptime(repo, None, "7d", now=NOW)
     assert utc["blocks"] == 7 and len(utc["targets"][0]["cells"]) == 7
     assert utc["targets"][0]["cells"][3] == "outage" and utc["targets"][0]["cells"][6] == "no_data"
-    month = await build_uptime(repo, None, "30d", now=NOW, tz_offset_minutes=-480)
+    month = await build_uptime(repo, None, "30d", now=NOW, tz=timezone(timedelta(minutes=-480)))
     assert len(month["targets"][0]["cells"]) == 30 and month["targets"][0]["cells"].count("outage") == 1
     assert month["tz_offset_minutes"] == -480 and month["end"] - month["start"] == 30 * 86400
+    await repo.close()
+
+
+async def test_daily_blocks_say_when_they_begin_and_a_day_can_have_25_hours(tmp_path):
+    """New York, 1 November 2026: the clocks go back, so that day's block is 25 hours long and the blocks after it
+    begin at 05:00 UTC, not 04:00. Three dead minutes at 23:30 EST that day are in its block, which the bounds say."""
+    repo = await make_repo(tmp_path)
+    nov1 = 1_793_491_200  # 2026-11-01 00:00 UTC
+    dead = nov1 + 28 * 3600 + 30 * 60
+    await repo.insert_samples(minute_samples("a", dead, 60, 3))
+    out = await build_uptime(repo, None, "7d", now=nov1 + 2 * 86400 + 17 * 3600, tz=ZoneInfo("America/New_York"))
+    bounds = out["bounds"]
+    assert out["zone"] == "America/New_York" and len(bounds) == 8
+    assert bounds[0] == out["start"] == nov1 - 4 * 86400 + 4 * 3600 and bounds[-1] == out["end"]
+    assert [b - a for a, b in zip(bounds, bounds[1:])] == [86400] * 4 + [90000] + [86400] * 2
+    assert out["targets"][0]["cells"][4] == "outage" and bounds[4] <= dead < bounds[5]
     await repo.close()
 
 

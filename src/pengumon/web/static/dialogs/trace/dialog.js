@@ -4,6 +4,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { escapeHtml, icon, initTargets, keepKeyboard } from '../../js/util.js';
+import { ROLE_SHORT } from '../../js/path-api.js';
 
 const PRIVATE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|127\.|f[cd]|fe80)/i;
 let hops = [];
@@ -15,7 +16,7 @@ const $ = (id) => document.getElementById(id);
 // The path stages a hop can be added as (Path health's words), and the one suggested: the first hop is the router; a
 // private address after it is most often the modem or the provider's box (a cable provider's first router can be one
 // too, hence the choice); a public one is an ISP hop, and the traced host itself the internet.
-const STAGES = [['local', 'Router'], ['gateway', 'Gateway'], ['isp', 'ISP hop'], ['public', 'Internet'], ['custom', 'Other']];
+const STAGES = ['local', 'gateway', 'isp', 'public', 'custom'].map((id) => [id, ROLE_SHORT[id]]);
 
 function suggestedStage(h) {
   if (h.hop_number === 1) return 'local';

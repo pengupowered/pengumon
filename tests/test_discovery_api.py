@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from discovery_fakes import discover, three_paths
-from pengumon.api.state import STATE_ATTR, AppState
+from pengumon.state import STATE_ATTR, AppState
 from pengumon.components import Context
 from pengumon.engine.discovery import component, jobs as jobs_module
 from pengumon.engine.discovery.draft import MAX_HOPS, diff_against, hop_id, trim

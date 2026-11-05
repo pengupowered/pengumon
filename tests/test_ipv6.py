@@ -424,3 +424,51 @@ def test_ipv6_default_router_without_the_file(tmp_path):
 def test_the_real_route_table_parses():
     router = netinfo.get_ipv6_default_router()
     assert router is None or ip_literal(router)[1] == 6
+
+
+def test_a_host_name_lookup_that_never_answers_is_given_up_on(monkeypatch):
+    # macOS looks up a host name with no DNS entry over mDNS, which can block for a minute (it hung CI's macOS runner)
+    import threading
+    import time
+    release = threading.Event()
+    monkeypatch.setattr(netinfo.socket, "getaddrinfo", lambda *a, **k: release.wait(30) or [])
+    started = time.monotonic()
+    try:
+        assert netinfo._hostname_ips(timeout=0.2) == []
+        assert time.monotonic() - started < 2
+    finally:
+        release.set()
+
+
+class _UdpSocket:
+    def __init__(self, source):
+        self.source = source
+
+    def settimeout(self, _):
+        pass
+
+    def connect(self, _):
+        if self.source is None:
+            raise OSError(errno.ENETUNREACH, "Network is unreachable")
+
+    def getsockname(self):
+        return (self.source, 40000)
+
+    def close(self):
+        pass
+
+
+@pytest.mark.parametrize("source, from_name, expected", [
+    ("192.0.2.7", None, ["192.0.2.7"]),                      # the route's source: the host name is not looked up
+    (None, ["127.0.1.1", "192.168.88.4"], ["192.168.88.4"]),  # no route: the host name's addresses, loopback left out
+    (None, [], ["127.0.0.1"]),
+])
+def test_the_lan_address_is_the_routes_source_and_the_host_name_only_without_a_route(monkeypatch, source, from_name,
+                                                                                        expected):
+    monkeypatch.setattr(netinfo.socket, "socket", lambda *a, **k: _UdpSocket(source))
+
+    def hostname_ips():
+        assert from_name is not None, "looked up the host name although the route gave the address"
+        return from_name
+
+    assert netinfo.get_lan_ips(hostname_ips=hostname_ips) == expected

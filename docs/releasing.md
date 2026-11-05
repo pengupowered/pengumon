@@ -25,7 +25,7 @@ artifacts are kept for 30 days, so a tag must follow the green `ci/` run within 
 
 ## One-time setup (before the first tag)
 
-PyPI uses trusted publishing: no token or password exists anywhere. The steps are in the maintainer's `pypi-setup.txt`:
+PyPI uses trusted publishing: no token or password exists anywhere. The steps, as the maintainer follows them:
 
 1. On PyPI, add a *pending publisher* for the project `pengumon`: owner `pengupowered`, repository `pengumon`, workflow
    `release.yml`, environment `pypi`.

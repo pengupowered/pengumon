@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from pengumon.api.state import AppState
 from pengumon.capabilities import Capability, DriverError, LineReading, PollResult, SystemReading, WanCounters
 from pengumon.devices.settings import DeviceConfig
 from pengumon.db import migrations
@@ -21,7 +20,7 @@ from pengumon.db.migrations import v009_device_tables
 from pengumon.db.repository import DatabaseRepository
 from pengumon.db.samples import DeviceSample, LineSample
 from pengumon.devices.registry import build_devices
-from pengumon.devices.samples import RouterHistory, device_sample, router_snapshot
+from pengumon.devices.samples import RouterHistory, device_sample, line_history, router_history, router_snapshot
 from pengumon.lines import docsis
 from pengumon.lines.docsis import DocsisHistory, decode_channels, encode_channels, line_sample, snapshot_from_sample
 from pengumon.main import app
@@ -330,14 +329,6 @@ def test_a_router_snapshot_round_trips_through_its_device_sample():
 
 # --- per device -------------------------------------------------------------------------------------------------------
 
-@pytest.fixture
-async def repo(tmp_path):
-    r = DatabaseRepository(db_path=str(tmp_path / "devices.db"))
-    await r.initialize()
-    yield r
-    await r.close()
-
-
 async def test_two_routers_store_and_read_independently(repo):
     registry = build_devices([DeviceConfig(id="upstairs", driver="asuswrt", url="http://192.168.1.1"),
                               DeviceConfig(id="downstairs", driver="asuswrt", url="http://192.168.2.1")], repo)
@@ -357,9 +348,6 @@ async def test_two_routers_store_and_read_independently(repo):
     downs = await RouterHistory(repo, "downstairs").get_router_snapshots_in_range(0, 2000)
     assert [s.client_count for s in ups] == [20, 20, 20]
     assert [(s.client_count, s.status) for s in downs] == [(3, "healthy")] * 3 + [(None, "error")]
-    assert (await repo.get_latest_device_sample("upstairs")).ts == 1020.0
-    assert (await repo.get_latest_device_sample("downstairs")).error_kind == "timeout"
-    assert await repo.get_latest_device_sample("elsewhere") is None
 
 
 def _ungraded(snapshot):
@@ -502,7 +490,7 @@ async def test_the_views_read_the_primary_devices_history(repo, app_state):
                               DeviceConfig(id="wifi", driver="asuswrt", url="http://192.168.1.1")], repo)
     app_state.repository, app_state.devices = repo, registry
     app_state.config = SimpleNamespace(targets=[], dns_probes=[])
-    assert (app_state.line_history().device_id, app_state.router_history().device_id) == ("cable", "wifi")
+    assert (line_history(registry, repo).device_id, router_history(registry, repo).device_id) == ("cable", "wifi")
     now = time.time()
     await repo.insert_line_sample(line_sample("old", DocsisSignalSnapshot(timestamp=now - 60, downstream_snr_avg=20.0,
                                                                           status="critical")))
@@ -515,8 +503,8 @@ async def test_the_views_read_the_primary_devices_history(repo, app_state):
     assert dossier["docsis"]["downstream_snr_avg"] == 38.5  # the enabled modem's, not the disabled one's
     assert [h["wan_rx_rate_mbps"] for h in history] == [5.0]
 
-    assert AppState(repository=repo).line_history() is None and AppState(repository=repo).router_history() is None
-    assert AppState(repository=repo, devices=build_devices([], repo)).router_history() is None
+    assert line_history(None, repo) is None and router_history(None, repo) is None
+    assert router_history(build_devices([], repo), repo) is None
 
 
 async def test_the_converted_config_yaml_shows_the_history_stored_under_modem_and_router(repo, app_state):

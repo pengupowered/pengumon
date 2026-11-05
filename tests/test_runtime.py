@@ -8,7 +8,7 @@ import httpx
 from httpx import AsyncClient, ASGITransport
 
 from pengumon import security
-from pengumon.api.ws import ConnectionManager
+from pengumon.live.ws import ConnectionManager
 from pengumon.capabilities import WanCounters
 from pengumon.config import AppConfig
 from pengumon.engine.prober_settings import DnsProbeConfig

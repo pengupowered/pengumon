@@ -148,8 +148,8 @@ def test_tls_verify_values():
 def test_an_unusable_ca_file_stops_the_build_naming_the_device(tmp_path):
     bad = tmp_path / "not-a-cert.pem"
     bad.write_text("hello")
-    for path in (tmp_path / "missing.pem", bad):
-        with pytest.raises(DeviceConfigError, match=re.escape(f"device wifi: tls.ca_file '{path}' cannot be used")):
+    for path, why in ((tmp_path / "missing.pem", "there is no such file"), (bad, "it holds no certificate in PEM form")):
+        with pytest.raises(DeviceConfigError, match=re.escape(f"device wifi: CA file '{path}' cannot be used: {why}")):
             build_device(_cfg("wifi", "asuswrt", url="https://router.lan", tls={"ca_file": str(path)}))
 
 
@@ -284,7 +284,7 @@ def test_an_unusable_ca_file_only_warns_where_it_cannot_matter(tmp_path, caplog,
     assert device.driver._verify is True  # falls back to verifying, never to no check
     (record,) = caplog.records
     assert record.levelname == "WARNING"
-    assert f"tls.ca_file '{missing}' cannot be used" in record.getMessage() and why in record.getMessage()
+    assert f"CA file '{missing}' cannot be used" in record.getMessage() and why in record.getMessage()
 
 
 def test_monitors_know_their_device():

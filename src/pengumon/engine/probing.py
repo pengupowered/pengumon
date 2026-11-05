@@ -4,25 +4,16 @@ component has registered. It owns the app's ICMP backend (engine/icmp_select.sha
 the incident path trace use too.
 
 Saved settings it applies without a restart (`subscribe`): the probe timeouts and the DNS lookups list (the prober
-keeps copies), and the line and router levels the device monitors grade by (module-level objects in lines/docsis.py
-and devices/monitors.py, bound to the live config here at the start). Everything else the probe round reads (the
-hop colours, the outage rules, the busy level) is the live config object itself, which the settings manager updates
-in place before the appliers run."""
+keeps copies). Everything else the probe round reads (the hop colours, the outage rules, the busy level) is the live
+config object itself, which the settings manager updates in place before the appliers run; so are the line and router
+levels the device monitors grade by (devices/monitors.py watch_levels, wired by the devices component)."""
 
 from pengumon.components import Component, Context
-from pengumon.devices import monitors
 from pengumon.engine.icmp_base import IcmpUnavailable
 from pengumon.engine.icmp_select import close_shared_backend
 from pengumon.engine.loop import check_live_parts, probe_background_worker
 from pengumon.engine.path import PathManager
 from pengumon.engine.prober import NetworkProber
-from pengumon.lines import docsis
-
-
-def use_levels(config) -> None:
-    """Puts the configured line and router levels in force (lines/docsis.py and devices/monitors.py read them)."""
-    docsis.use_levels(config.line_signal)
-    monitors.use_levels(config.router_levels)
 
 
 def subscribe(hub, config, prober: NetworkProber) -> None:
@@ -37,10 +28,6 @@ def subscribe(hub, config, prober: NetworkProber) -> None:
     @hub.on(lists=["dns_probes"], name="probing.dns_probes")
     def _dns_probes(change) -> None:
         prober.set_dns_targets(list(config.dns_probes))
-
-    @hub.on(prefixes=["line_signal.", "router_levels."], name="probing.levels")
-    def _levels(change) -> None:
-        use_levels(config)
 
 
 async def register(ctx: Context) -> Component:
@@ -62,7 +49,6 @@ async def register(ctx: Context) -> Component:
     path.prober = prober
     ctx.state.prober = prober
     ctx.state.path = path
-    use_levels(config)
     hub = getattr(ctx, "settings", None)  # the settings hub (Context.settings); absent before the settings component
     if hub is not None:
         subscribe(hub, config, prober)

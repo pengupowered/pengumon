@@ -1,6 +1,6 @@
 """The services component: the health checks of the apps on this host, and the pattern for an optional feature.
 
-`router` (GET /api/services) is always mounted; without an enabled service it answers []. `register` always builds
+Its route (GET /api/services, api/services.py) is always mounted; without an enabled service it answers []. `register` always builds
 the ServiceChecker, wired to the notifier, and polls it in its own task: with no enabled service a poll does nothing,
 and a service added on the Settings page is checked at the next poll. The interval is read every loop, and the
 settings hub tells the checker when the list changed (`set_services`). A failure here is contained
@@ -15,10 +15,9 @@ from typing import Callable, Optional, Union
 
 from pengumon.components import Component, Context
 from pengumon.observability import get_logger
-from pengumon.services.api import router
 from pengumon.services.checker import ServiceChecker
 
-__all__ = ["OPTIONAL", "collector_background_worker", "register", "router"]
+__all__ = ["OPTIONAL", "collector_background_worker", "register"]
 
 OPTIONAL = True
 MAX_SLEEP_SECONDS = 2.0  # longest single sleep between polls, so a changed interval is noticed within it

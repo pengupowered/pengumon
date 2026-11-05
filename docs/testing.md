@@ -7,7 +7,7 @@ pytest tests/ -v
 Or in a container with nothing installed locally (Podman, `Dockerfile.test`): `scripts/test.sh` (extra arguments go to
 pytest). It runs the suite in parallel with pytest-xdist (a dev-only dependency, hash-locked in `requirements-dev.txt`):
 `PENGUMON_TEST_WORKERS` sets the processes (default 4, which suits a 4-vCPU CI runner; `0` or `1` runs in one process),
-and so does `-n <N>` on the command line. The whole suite takes about 33 s that way, against about 96 s in one process.
+and so does `-n <N>` on the command line. The whole suite takes a few minutes; one process takes several times longer.
 Tests must be safe to run side by side: no fixed ports (bind port 0), no shared files outside `tmp_path`.
 `scripts/test.sh` tags its test image per work tree and removes that work tree's previous image after each build, so
 runs leave no dangling images (`scripts/lib-test-image.sh`).
@@ -94,7 +94,7 @@ Pushing a branch named `ci/<topic>` runs the whole workflow before a merge.
 
 ## Dashboard browser tests
 
-Three opt-in tests drive the dashboard. Run both with `scripts/test-ui.sh` (extra arguments go to pytest). It builds
+Three opt-in test files cover the dashboard (`test_ui_smoke.py`, `test_ui_steps.py`, `test_ui_lint.py`). Run them with `scripts/test-ui.sh` (extra arguments go to pytest). It builds
 `Dockerfile.ui`, which adds pengumon's Python test setup to the shared UI test runner image
 `localhost/ui-test-runner:1` (Debian's Chromium, Firefox ESR, Node, and `puppeteer-core`, `eslint` and `globals` from a pinned
 lockfile). Build that once with `tests/ui/runner/build.sh`, or point `UI_RUNNER_BASE` at an equivalent image; the
@@ -139,7 +139,7 @@ final 2.5 s wait for late errors, and the waits before screenshots.
 - `tests/test_ui_lint.py` runs ESLint (`tests/ui/eslint.config.mjs`: `no-undef`, module source type, `Chart` global)
   over the modules and over the browser test itself (`tests/ui/*.mjs`). Module scripts are strict, so an undeclared variable is a runtime error.
 
-Both are skipped unless `PENGUMON_UI_SMOKE=1` is set and the packages exist. Alternative without the container: run `npm ci --ignore-scripts` in a copy of `tests/ui/runner` (its `package.json` and
+`test_ui_smoke.py` and `test_ui_lint.py` are skipped unless `PENGUMON_UI_SMOKE=1` is set and node and the packages exist (`test_ui_steps.py` needs node only). Alternative without the container: run `npm ci --ignore-scripts` in a copy of `tests/ui/runner` (its `package.json` and
 `package-lock.json`), then set `PENGUMON_UI_SMOKE=1`, `PGBROWSER` (that directory), `PUPPETEER_EXECUTABLE_PATH` (an
 installed Chrome) and optionally `PENGUMON_BROWSER_ARGS`, and run `pytest tests/test_ui_smoke.py tests/test_ui_lint.py`.
 

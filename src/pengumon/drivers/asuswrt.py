@@ -20,8 +20,7 @@ from pengumon.capabilities import (
     PollResult, SystemReading, WanCounters,
 )
 from pengumon.capabilities.contrib import DriverNotes
-from pengumon.drivers.common import CPU_MIN_INTERVAL_SECONDS, CpuCounters
-from pengumon.drivers.common import cpu_pct as _cpu_pct
+from pengumon.drivers.common import TEXT_MAX, CpuCounters, CpuMeter, clean_text, normal_mac
 from pengumon.drivers.http import DeviceHttp, Verify, device_verify
 from pengumon.observability import get_logger
 
@@ -85,7 +84,7 @@ def _json_object(text: str) -> Optional[dict]:
 
 def _parse_cpu(text: str) -> CpuCounters:
     """Per-core cumulative (total, busy) counters from an appGet body containing cpu_usage(); empty if absent.
-    They count from the router's boot, so a CPU percentage needs two readings (see _cpu_pct)."""
+    They count from the router's boot, so a CPU percentage needs two readings (drivers/common.py CpuMeter)."""
     return {core: (int(total), int(busy)) for core, total, busy in _RE_CPU.findall(text)}
 
 
@@ -130,14 +129,12 @@ def _parse_clients(text: str) -> Optional[int]:
     return online
 
 
-_RE_MAC = re.compile(r"^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$")
 _RE_HMS = re.compile(r"^(\d+):([0-5]?\d):([0-5]?\d)$")
 # A mesh node's own MAC, then its radios'. Not the pap*: those are its parent's. Not wired_mac either: it lists the
 # node's wired neighbours (on an AiMesh main router, the satellites' own MACs), not the node.
 _MAC_NODE_FIELDS = ("mac", "ap2g", "ap5g", "ap5g1", "ap6g", "ap6g1", "ap2g_fh", "ap5g_fh", "ap5g1_fh", "ap6g_fh",
                     "ap6g1_fh", "apdwb")
 _BANDS = {"1": BAND_2G, "2": BAND_5G}  # isWL: 0 wired; 3 and anything else is BAND_OTHER (a 2nd high band, not 6 GHz)
-_TEXT_MAX = 64
 # The firmware's numeric client `type` as plain words. Only the types seen on an AiMesh router with their vendors are
 # mapped (9 Android devices, 10 and 6 Apple, 34 Windows and Linux PCs, 22 dhcpcd/Linux hosts, 7 game consoles, 24 Asus
 # network gear); the rest, including type 0 (the default) and 18 (printers and cameras and radio modules share it),
@@ -157,9 +154,8 @@ def _client_kind(entry: dict) -> Optional[str]:
 
 def _mac_id(value: object) -> Optional[str]:
     """A mesh node's short id: the last six hex digits of a MAC, lower case; None if `value` is not a MAC."""
-    if isinstance(value, str) and _RE_MAC.match(value.strip()):
-        return re.sub(r"[^0-9a-f]", "", value.lower())[-6:]
-    return None
+    mac = normal_mac(value)
+    return re.sub(r"[^0-9a-f]", "", mac.lower())[-6:] if mac else None
 
 
 def node_id(value: str) -> Optional[str]:
@@ -168,14 +164,6 @@ def node_id(value: str) -> Optional[str]:
     if re.fullmatch(r"[0-9A-Fa-f]{6}", value):
         return value.lower()
     return _mac_id(value)
-
-
-def _text(value: object) -> Optional[str]:
-    """A name or a vendor from the router: printable, trimmed and short, None when empty."""
-    if not isinstance(value, str):
-        return None
-    cleaned = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", value).strip()[:_TEXT_MAX]
-    return cleaned or None
 
 
 def _num(value: object) -> Optional[float]:
@@ -209,16 +197,16 @@ def _parse_client_list(text: str) -> Optional[ClientsReading]:
     clients = []
     for (key, v), online in zip(entries, flags):
         raw = v.get("mac") if isinstance(v.get("mac"), str) and v["mac"].strip() else key
-        mac = raw.strip().upper().replace("-", ":") if _RE_MAC.match(raw.strip()) else None
+        mac = normal_mac(raw)
         wifi = str(v.get("isWL", "0")).strip() not in ("0", "")
         rssi = _num(str(v.get("rssi", "")).lstrip("-")) if online and wifi else None
         rssi = -int(rssi) if rssi else None  # 0 means "no signal value"; dBm is negative
         clients.append(Client(
             key=mac or str(key),
-            label_parts=tuple(n for n in (_text(v.get("nickName")), _text(v.get("name"))) if n),
-            vendor=_text(v.get("vendor")),
+            label_parts=tuple(n for n in (clean_text(v.get("nickName")), clean_text(v.get("name"))) if n),
+            vendor=clean_text(v.get("vendor")),
             kind=_client_kind(v),
-            ip=_text(v.get("ip")),
+            ip=clean_text(v.get("ip")),
             mac=mac,
             connection="wifi" if wifi else "wired",
             band=_BANDS.get(str(v.get("isWL")).strip(), BAND_OTHER) if wifi else None,
@@ -243,8 +231,8 @@ def _parse_mesh_names(text: str) -> Dict[str, str]:
     for node in nodes if isinstance(nodes, list) else []:
         if not isinstance(node, dict):
             continue
-        alias = _text(node.get("alias"))
-        label = alias if alias and not _RE_MAC.match(alias) else _text(node.get("model_name"))
+        alias = clean_text(node.get("alias"))
+        label = alias if alias and normal_mac(alias) is None else clean_text(node.get("model_name"))
         if label:
             labelled.append((node, label))
     names: Dict[str, str] = {}
@@ -281,8 +269,8 @@ def _node_info(node: dict, wired_neighbours: set) -> _NodeInfo:
     AiMesh network whose satellites are wired); that part follows the field names only."""
     online = {"1": True, "0": False}.get(str(node.get("online", "")).strip())
     nid = _mac_id(node.get("mac"))
-    alias = _text(node.get("alias"))
-    label = alias if alias and not _RE_MAC.match(alias) else _text(node.get("model_name"))
+    alias = clean_text(node.get("alias"))
+    label = alias if alias and normal_mac(alias) is None else clean_text(node.get("model_name"))
     for pap, rssi, band in _BACKHAUL_RADIOS:
         if _mac_id(node.get(pap)):
             raw = _num(str(node.get(rssi, "")).lstrip("-"))
@@ -366,7 +354,7 @@ class AsusWrtOptions(BaseModel):
             nid = node_id(str(mac))
             if nid is None:
                 raise ValueError(f"mesh_node_labels: {mac!r} is not a MAC address (or its last six hex digits)")
-            out[nid] = label.strip()[:_TEXT_MAX]
+            out[nid] = label.strip()[:TEXT_MAX]
         return out
 
 
@@ -380,13 +368,13 @@ class AsusWrtDriver:
     default_poll_seconds = 10.0
     # The AI pack's note on this driver (capabilities/contrib.py). Each statement is established by this file:
     #  - ASUS router with ASUS firmware (AsusWRT), mesh nodes only on an AiMesh network: the module docstring, :1-2,
-    #    and `label` :375; `{aimesh}` is filled in only when a mesh was seen;
-    #  - counters read every {poll}: the poll interval of the device entry (`default_poll_seconds` :380 when it sets
+    #    and `label` :363; `{aimesh}` is filled in only when a mesh was seen;
+    #  - counters read every {poll}: the poll interval of the device entry (`default_poll_seconds` :368 when it sets
     #    none; one request carries every hook, :4-6);
     #  - client list every {clientlist_interval}, counts in between repeat the last list: `clientlist_interval_seconds`
-    #    :353 and the reuse at :532-533;
-    #  - CPU is the average since the previous reading: `_cpu_percent` :687-688;
-    #  - node names are the alias, else the model: `_parse_mesh_names` :235-247;
+    #    :341 and the reuse at :518-519;
+    #  - CPU is the average since the previous reading: drivers/common.py `CpuMeter`;
+    #  - node names are the alias, else the model: `_parse_mesh_names` :223-235;
     #  - offline clients the router remembers are not counted: devices/samples.py `client_counts` :18 (online only).
     # The anonymized text leaves out the vendor, firmware and mesh-network words.
     pack_notes: ClassVar[DriverNotes] = DriverNotes(
@@ -430,9 +418,7 @@ class AsusWrtDriver:
         self._combined_retry_at = 0.0
         self._client_count: Optional[int] = None
         self._clients_read_at: Optional[float] = None
-        self._cpu_counters: CpuCounters = {}
-        self._cpu_counters_at: Optional[float] = None
-        self._cpu_pct: Optional[float] = None
+        self._cpu = CpuMeter(clock)
 
     @classmethod
     def from_config(cls, cfg: "DeviceConfig", credentials: "Credentials", *,
@@ -627,7 +613,7 @@ class AsusWrtDriver:
                 raise transport_error
             raise DriverError("protocol", "the router answered without WAN counters, CPU, memory or clients")
 
-        cpu_pct = self._cpu_percent(cpu)
+        cpu_pct = self._cpu.update(cpu)
 
         readings: dict = {}
         missing: dict = {}
@@ -684,14 +670,3 @@ class AsusWrtDriver:
         else:
             self._log.debug("The router gave no mesh node names; nodes are numbered")
 
-    def _cpu_percent(self, cpu: CpuCounters) -> Optional[float]:
-        """CPU % since the previous reading, which becomes the new baseline; readings less than
-        CPU_MIN_INTERVAL_SECONDS apart repeat the last percentage and leave the baseline alone."""
-        if not cpu:
-            return None
-        now = self._clock()
-        if self._cpu_counters_at is not None and now - self._cpu_counters_at < CPU_MIN_INTERVAL_SECONDS:
-            return self._cpu_pct
-        self._cpu_pct = _cpu_pct(self._cpu_counters, cpu)
-        self._cpu_counters, self._cpu_counters_at = cpu, now
-        return self._cpu_pct

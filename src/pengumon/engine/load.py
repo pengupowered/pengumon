@@ -176,10 +176,6 @@ class LineLoad:
         window = [r for r in rates if r[0] >= now - LIVE_WINDOW_SECONDS] or rates[-1:]
         return self.reading_from(window)
 
-    def load_at(self, ts: Optional[float] = None) -> Optional[float]:
-        reading = self.current(ts)
-        return reading.pct if reading else None
-
 
 def is_load_explainable(kind: Optional[str]) -> bool:
     """Whether a stored incident is of a kind heavy load explains: latency/jitter only, or loss seen only at

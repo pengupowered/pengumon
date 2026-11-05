@@ -123,10 +123,15 @@ function save() {
   renderList();
 }
 
-// The order and hidden panels this browser shows now (a copy), for Settings > Display's "Use this browser's layout for
-// everyone", which writes them into dashboard.order and dashboard.hidden.
+// The order and hidden panels this browser shows now (a copy), for Settings > Display's "Use this browser's layout",
+// which writes them into dashboard.order and dashboard.hidden (the layout new browsers start with).
 export function browserLayout() {
   return { order: [...layout.order], hidden: [...layout.hidden] };
+}
+
+// Panel id -> title, in the panels' standard order (Settings > Display's "Layout for new browsers" names them).
+export function panelTitles() {
+  return new Map(entries.map((e) => [e.panel.id, e.panel.title]));
 }
 
 // Re-packs after a panel added or removed cards (a device panel that changes its size, for example).

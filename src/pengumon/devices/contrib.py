@@ -10,11 +10,15 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from pengumon.capabilities import BAND_2G, BAND_5G, Capability
-from pengumon.db.devices import PackSamples
 from pengumon.capabilities.contrib import (
-    NEVER, ROLE_ROUTER, ContribContext, EventKind, ModuleEvent, ModuleSection, RedactionHints, day_key, devices_with,
+    NEVER, ROLE_ROUTER, ContribContext, EventKind, ModuleEvent, ModuleSection, RedactionHints, day_key,
     effective_poll_seconds, field_key, host_of, mesh_role, median, plural,
 )
+from pengumon.db.devices import PackSamples
+from pengumon.drivers import DRIVERS, devices_with
+from pengumon.engine.load import CAPACITY_FLOOR_MBPS, CAPACITY_HISTORY_SECONDS, CAPACITY_MIN_SAMPLES, CAPACITY_PERCENTILE
+from pengumon.grades import SIGNAL_LEVELS, SIGNAL_WEAK, signal_grade
+from pengumon.incidents.model import LOAD_IMPLAUSIBLE_PCT
 
 # Error kinds that mean the device could not be reached at all (analysis/incident.py UNREACHABLE_KINDS).
 _UNREACHABLE_KINDS = frozenset({"timeout", "unreachable"})
@@ -111,9 +115,6 @@ class LoadFacts:
 async def _capacity(ctx: ContribContext, cfg) -> Tuple[Optional[Tuple[float, float]], str]:
     """The line capacity as the pack's load is judged against: the configured speeds, else the ones learned from the
     stored rates the way engine/load.py learns them (99.9th percentile of 7 days; waits for enough samples)."""
-    from pengumon.engine.load import (
-        CAPACITY_FLOOR_MBPS, CAPACITY_HISTORY_SECONDS, CAPACITY_MIN_SAMPLES, CAPACITY_PERCENTILE,
-    )
     line = ctx.config.line
     down, up = line.down_mbps, line.up_mbps
     learned: Optional[Tuple[float, float]] = None
@@ -162,7 +163,6 @@ class LineLoadContribution:
     )
 
     def prompt_context(self, config) -> str:
-        from pengumon.drivers import DRIVERS
         cfgs = devices_with(config.devices, Capability.WAN_COUNTERS)
         poll = effective_poll_seconds(cfgs[0], DRIVERS[cfgs[0].driver]) if cfgs else 10.0
         line = config.line
@@ -186,7 +186,6 @@ class LineLoadContribution:
             return None
         busy_pct = ctx.config.classifier.busy_load_pct
         capacity, source = await _capacity(ctx, cfg)
-        from pengumon.incidents.model import LOAD_IMPLAUSIBLE_PCT
         data = await _samples(ctx, cfg)
         lo, hi = data.span(ctx.start, ctx.end)
         events: List[ModuleEvent] = []
@@ -432,7 +431,6 @@ def _backhaul_words(node) -> str:
         return "not known"
     if node.backhaul == "wired":
         return "wired"
-    from pengumon.clients.api import signal_grade
     words = f"Wi-Fi {node.backhaul_band}" if node.backhaul_band else "Wi-Fi"
     if node.backhaul_rssi_dbm is not None:
         grade = signal_grade(node.backhaul_rssi_dbm)
@@ -464,7 +462,6 @@ class WifiMeshContribution:
     )
 
     def prompt_context(self, config) -> str:
-        from pengumon.clients.api import SIGNAL_LEVELS, SIGNAL_WEAK
         edges = [lvl[0] for lvl in SIGNAL_LEVELS]
         words = [f"above {edges[0]} {SIGNAL_LEVELS[0][1].lower()}"]
         words += [f"{edges[i - 1]} to {edges[i]} {SIGNAL_LEVELS[i][1].lower()}" for i in range(1, len(SIGNAL_LEVELS))]
@@ -513,7 +510,6 @@ class WifiMeshContribution:
         rows = await ctx.repository.get_mesh_counts(cfg.id, ctx.start, ctx.end, MESH_BUCKET_SECONDS)
         ids = sorted({r[1] for r in rows} | set(live_nodes))
         roles = {nid: mesh_role(i) for i, nid in enumerate(ids, 1)}
-        from pengumon.drivers import DRIVERS
         labels = dict(getattr(DRIVERS[cfg.driver].options_model.model_validate(cfg.options), "mesh_node_labels", {}))
         for nid, node in live_nodes.items():
             labels[nid] = node.label or labels.get(nid, "")

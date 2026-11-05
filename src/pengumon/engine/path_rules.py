@@ -11,11 +11,37 @@ fresh verdict to give or to vouch with.
 
 The rule judges the targets as they are now (their last ten probes); views over a longer time apply the current
 verdict to all of it. It never decides whether an incident opens: the classifier's verdicts do not read it.
+
+The hops' role words (`hop_roles`): what the dashboard (`short_label` of /api/targets and the live stream) and the AI
+pack call each hop when they do not use its configured name.
 """
 
-from typing import Iterable, Set
+from typing import Dict, Iterable, List, Set, Tuple
 
 PATH_RANK = {"local": 0, "gateway": 1, "isp": 2, "public": 3}
+_ROLE_WORD = {"local": "Router", "gateway": "Gateway", "isp": "ISP hop", "dns": "DNS lookup"}
+
+
+def hop_roles(hops: Iterable[Tuple[str, str]]) -> Dict[str, str]:
+    """Target id -> its role words, from (id, category) pairs in path order (the switched-on hops only): Router,
+    Gateway, ISP hop n, Internet, DNS lookup, Other hop n. A number only where a category has several hops (an ISP hop
+    and a custom one always have one). Never a name or an address: a custom hop's configured name is free text."""
+    by_cat: Dict[str, List[str]] = {}
+    for hop_id, category in hops:
+        by_cat.setdefault(category, []).append(hop_id)
+    out: Dict[str, str] = {}
+    for cat, group in by_cat.items():
+        many = len(group) > 1
+        for n, hop_id in enumerate(group, 1):
+            if cat == "public":
+                out[hop_id] = f"Internet {n}" if many else "Internet"
+            elif cat == "isp":
+                out[hop_id] = f"ISP hop {n}"
+            elif cat == "custom":
+                out[hop_id] = f"Other hop {n}"
+            else:
+                out[hop_id] = f"{_ROLE_WORD[cat]} {n}" if many else _ROLE_WORD[cat]
+    return out
 
 
 def ignoring_ping(targets: Iterable) -> Set[str]:

@@ -69,6 +69,36 @@ export const steps = [
     await page.evaluate(() => document.querySelector("[data-action=clearIncidentWindow]").click());
     await until(() => document.getElementById("incidentWindow").hidden);
   }],
+  ["loss heatmap: an hour opens the server's hour, also on a 25-hour day in another zone than this browser's", async ({ eq, moduleUrl, ok, page, text, until }) => {
+    await until(() => document.querySelectorAll("#heatGrid .cell").length >= 1);
+    // Berlin, 25 October 2026: 03:00 CEST becomes 02:00 CET at 01:00 UTC, so 02:00-03:00 happens twice (00:00-02:00 UTC)
+    // and 03:00 is 02:00 UTC; this browser runs in another zone (UTC in the test image), where 03:00 is an hour later
+    const got = await page.evaluate(async ([heat, util]) => {
+      const { renderHeat } = await import(heat);
+      const { zoneParams } = await import(util);
+      const at = (d, h) => Date.UTC(2026, 9, d, h) / 1000;
+      const sunday = Array.from({ length: 25 }, (_, h) => (h < 3 ? at(24, 22) + h * 3600 : at(25, h - 1)));
+      const rows = (v) => Array.from({ length: 3 }, () => Array(24).fill(v));
+      renderHeat({ days: ["2026-10-24", "2026-10-25", "2026-10-26"], weekdays: [5, 6, 0], zone: "Europe/Berlin", tz_offset_minutes: 60,
+        day_starts: [at(23, 22), at(24, 22), at(25, 23), at(26, 23)], hour_starts: [null, sunday, null], sent: rows(0), lost: rows(0), loss_pct: rows(null) });
+      const cells = [...document.querySelectorAll("#heatGrid .cell")];
+      const span = (c) => `${Number(c.dataset.start) - at(25, 0)}-${Number(c.dataset.end) - at(25, 0)}`;
+      const out = { browser: Intl.DateTimeFormat().resolvedOptions().timeZone, twice: span(cells[24 + 2]), three: span(cells[24 + 3]),
+        monday: span(cells[48]), tip: cells[24 + 2].dataset.tip };
+      cells[24 + 3].click();
+      renderHeat(await (await fetch(`/api/report/loss-grid?days=7&${zoneParams()}`)).json()); // the real answer again
+      return out;
+    }, [await moduleUrl("../panels/heat/panel.js"), await moduleUrl("util.js")]);
+    ok(`the browser runs in another zone (${got.browser})`, got.browser !== "Europe/Berlin");
+    eq("Sunday 02:00-03:00 is two hours: 00:00-02:00 UTC", got.twice, "0-7200");
+    ok(`and says why (${got.tip})`, /twice: the clocks went back/.test(got.tip));
+    eq("Sunday 03:00-04:00 is 02:00-03:00 UTC", got.three, "7200-10800");
+    eq("Monday 00:00 is 23:00 UTC on Sunday", got.monday, "82800-86400");
+    await until(() => !document.getElementById("incidentWindow").hidden);
+    ok("the window names the hour as the grid does", /Sun 03:00–04:00/.test(await text("#incidentWindow")));
+    await page.evaluate(() => document.querySelector("[data-action=clearIncidentWindow]").click());
+    await until(() => document.getElementById("incidentWindow").hidden);
+  }],
   ["time cells: one Tab stop per grid, arrow keys move between hours, Enter opens the hour", async ({ eq, ok, page, until }) => {
     eq("one heat cell in the tab order", await page.$$eval("#heatGrid > button", (b) => b.filter((e) => e.tabIndex === 0).length), 1);
     ok("one block per uptime strip in the tab order", await page.$$eval("#stripsBody .strip", (rows) => rows.length > 0 && rows.every((r) => [...r.children].filter((e) => e.tabIndex === 0).length === 1)));

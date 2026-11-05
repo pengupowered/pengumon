@@ -1,5 +1,5 @@
 """The devices component: the credential sources, every configured device (devices/registry.py) and its polling
-task, the device API (api/devices.py) and the devices' summaries in the live message (devices/summary.py).
+task, and the devices' summaries in the live message (devices/summary.py). The device routes are api/devices.py.
 
 It runs after the settings component, which loaded the stored devices into the config and created the one
 SecretStore (data/secrets.json).
@@ -18,7 +18,6 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from pengumon.api.devices import router
 from pengumon.components import Component, Context, LivePart, log_unexpected_exit
 from pengumon.devices.device import Device
 from pengumon.devices.registry import DeviceRegistry, build_device
@@ -28,7 +27,7 @@ from pengumon.observability import get_logger
 from pengumon.observability.telemetry import device_rebuilds
 from pengumon.secrets import CredentialSources, SecretStore
 
-__all__ = ["DEVICES_REBUILT", "ApplyResult", "DeviceSupervisor", "live_part", "register", "router", "unlink_hops"]
+__all__ = ["DEVICES_REBUILT", "ApplyResult", "DeviceSupervisor", "live_part", "register", "unlink_hops"]
 
 _log = get_logger("pengumon.devices")
 
@@ -70,8 +69,11 @@ class DeviceSupervisor:
     """Builds the devices of a config list into `registry` and keeps one polling task per device id."""
 
     def __init__(self, registry: DeviceRegistry, repository=None, credentials: Optional[CredentialSources] = None, *,
-                 build=build_device, spawn=None):
+                 build=build_device, spawn=None, config=None):
+        """`config`: the live config, whose line and router levels every built device's monitor grades by (read at
+        each poll, so a saved level applies with no applier)."""
         self.registry = registry
+        self._config = config
         self._repository = repository
         self._credentials = credentials or CredentialSources.none()
         self._build = build
@@ -82,13 +84,16 @@ class DeviceSupervisor:
 
     def _make(self, cfg: DeviceConfig, errors: Dict[str, str]) -> Optional[Device]:
         try:
-            return self._build(cfg, self._repository, self._credentials)
+            device = self._build(cfg, self._repository, self._credentials)
         except Exception as e:  # a CA file gone since the list was validated, a driver that can't be built
             message = str(e) or type(e).__name__
             errors[cfg.id] = message.removeprefix(f"device {cfg.id}: ")
             device_rebuilds.add(1, {"device.id": cfg.id, "reason": "failed"})
             _log.error(f"Device {cfg.id} cannot run and is left out: {message}", device=cfg.id, driver=cfg.driver)
             return None
+        if self._config is not None and hasattr(device.monitor, "watch_levels"):
+            device.monitor.watch_levels(self._config)
+        return device
 
     def build_all(self, configs: Iterable[DeviceConfig]) -> None:
         """The first build (at start): every device that can be built goes into the registry, in config order, with
@@ -230,7 +235,7 @@ async def register(ctx: Context) -> Component:
     secret_store = ctx.state.secret_store or SecretStore()  # the settings component's; one instance per app
     credentials = CredentialSources(store=secret_store)
     registry = DeviceRegistry()
-    supervisor = DeviceSupervisor(registry, ctx.state.repository, credentials, spawn=ctx.spawn)
+    supervisor = DeviceSupervisor(registry, ctx.state.repository, credentials, spawn=ctx.spawn, config=ctx.config)
     supervisor.build_all(ctx.config.devices)
     ctx.state.secret_store, ctx.state.credentials, ctx.state.devices = secret_store, credentials, registry
     if ctx.state.repository is not None:

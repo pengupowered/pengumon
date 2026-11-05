@@ -1,4 +1,4 @@
-/* Panel diagnosis: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel diagnosis: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* ---------- Hero: path health ---------- */
 .hero .panel-b { padding: var(--sp-5) var(--sp-5) var(--sp-4); }
 .verdict { display: flex; align-items: flex-start; gap: var(--sp-3); margin-bottom: var(--sp-5); }

@@ -64,14 +64,6 @@ def ip_literal(address: str) -> Tuple[str, int]:
     return str(ip), ip.version
 
 
-def ipv4_literal(address: str) -> str:
-    """`address` if it is an IPv4 literal (ValueError otherwise: the backends never resolve names)."""
-    try:
-        return str(ipaddress.IPv4Address(address))
-    except (ipaddress.AddressValueError, ValueError):
-        raise ValueError(f"not an IPv4 address: {address!r}") from None
-
-
 def sockaddr(address: str, version: int) -> tuple:
     """The sendto() address of a canonical literal from ip_literal: (host, 0) for IPv4, (host, 0, 0, scope id) for
     IPv6, the zone's interface name turned into its index (OSError when there is no such interface)."""

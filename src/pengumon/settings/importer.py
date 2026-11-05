@@ -24,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from pydantic import ValidationError
 
 from pengumon.config import BOOTSTRAP_KEYS, AppConfig
-from pengumon.notify_settings import SECRET_PREFIX, WebhookConfig, WebhookItem, webhook_id
+from pengumon.notify.settings import SECRET_PREFIX, WebhookConfig, WebhookItem, webhook_id
 from pengumon.settings import lenient, registry
 from pengumon.settings.document import SettingsDocument
 
@@ -182,7 +182,7 @@ def _unknown_notes(data: dict) -> List[str]:
         if isinstance(node, dict) and node:
             for key, value in node.items():
                 walk(value, f"{path}.{key}" if path else str(key))
-        else:
+        elif path:  # (an empty file has no keys at all, so nothing is unknown; the root path "" is not a key)
             unknown.append(path)
 
     walk(data, "")

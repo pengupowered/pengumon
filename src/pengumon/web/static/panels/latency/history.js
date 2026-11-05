@@ -4,8 +4,8 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { maxLivePoints, state } from '../../js/state.js';
-import { targetList } from '../../js/util.js';
-import { SERIES, combine, median, seriesMembers } from '../../js/path.js';
+import { median, targetList } from '../../js/util.js';
+import { SERIES, combine, seriesMembers } from '../../js/path.js';
 import { pingTargets, renderCharts, resetView, setLineMode, view } from './charts.js';
 import { primaryDevice } from '../../js/devices.js';
 import { applyTabs, selectTab } from '../../js/tabs.js';

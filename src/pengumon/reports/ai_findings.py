@@ -10,14 +10,14 @@ docstring, in the order the pack uses them:
 
     hop_baseline  hop_window_vs_normal  silent_hops  path_shape  patterns  match_events  confidence  score
 
-The roles-only labels (Router, Gateway, ISP hop 1, Internet, DNS lookup, Custom target) are `role_labels`, a port of
-`shortLabels` in web/static/js/path.js without the names and addresses that function can put in a label.
+The facts name hops by target id only; the renderer turns each id into its role words (engine.path_rules.hop_roles).
 """
 
 import bisect
 import json
 import math
 import time
+from array import array
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone, tzinfo
@@ -31,7 +31,7 @@ from pengumon.reports.common import (
     _targets, find_primary_failing_hop, material_loss_points,
 )
 from pengumon.reports.dossier import collect_dossier_facts
-from pengumon.reports.queries import MinuteRow, episode_loss, incident_rows, minute_rows
+from pengumon.reports.queries import MinuteRow, episode_loss, incident_rows, minute_row_chunks
 
 DAY = 86400.0
 
@@ -94,7 +94,6 @@ NO_PLACE_CAUSES = ("dns", "load")        # verdicts about lookups or a busy line
 LATENCY_KINDS = frozenset({"local_latency", "gateway_latency", "upstream_latency", "busy_latency", "legacy_latency",
                            "dns_slow"})
 KEY_ROLES = ("local", "gateway", "isp", "public")             # the "normal week" profile's hops: the first of each
-SHORT_ROLE = {"local": "Router", "gateway": "Gateway", "isp": "ISP hop", "dns": "DNS lookup"}
 
 
 # --- the shapes of the facts ---------------------------------------------------------------------------------------
@@ -127,7 +126,6 @@ class Deviation:
 class HopFact:
     target_id: str
     category: str
-    label: str                        # role words only
     ignores_ping: bool
     baseline: Baseline
     window: Deviation
@@ -252,7 +250,6 @@ class PackFacts:
     detail: str
     tz_offset_minutes: int
     order: List[str]                                    # the considered targets, path order
-    labels: Dict[str, str]
     categories: Dict[str, str]
     hops: List[HopFact]
     incidents: List[IncidentFact]                       # every network incident in the window, time order
@@ -287,32 +284,6 @@ def category_of(target: Any) -> str:
     return getattr(target, "category", None) or "dns"
 
 
-# --- labels --------------------------------------------------------------------------------------------------------
-
-def role_labels(targets: Sequence[Any]) -> Dict[str, str]:
-    """Role words for the enabled targets in path order (path.js shortLabels): Router, Gateway, ISP hop N, Internet,
-    DNS lookup, "Custom target". A number only when the role has several targets. Never a name or an address."""
-    live = [t for t in targets if getattr(t, "enabled", True) is not False]
-    by_role: Dict[str, list] = defaultdict(list)
-    for t in live:
-        by_role[category_of(t)].append(t)
-    out = {}
-    for t in live:
-        category = category_of(t)
-        group = by_role[category]
-        n = group.index(t) + 1
-        many = len(group) > 1
-        if category == "public":
-            out[t.id] = f"Internet {n}" if many else "Internet"
-        elif category == "isp":
-            out[t.id] = f"ISP hop {n}"
-        elif category in SHORT_ROLE:
-            out[t.id] = f"{SHORT_ROLE[category]} {n}" if many else SHORT_ROLE[category]
-        else:
-            out[t.id] = f"Custom target {n}" if many else "Custom target"
-    return out
-
-
 # --- rule: a hop's normal, and the window against it ----------------------------------------------------------------
 
 def _percentile(sorted_values: List[float], q: float) -> Optional[float]:
@@ -326,18 +297,19 @@ def hop_baseline(rows: Sequence[MinuteRow], rules: Rules = RULES) -> Baseline:
     """The hop's normal from its minute rows over the baseline window: the median of the minute averages, their 95th
     percentile ("busy"), the median of the minute p90s, the median jitter and the loss over every probe. Without
     `baseline_min_minutes` minutes that have a latency, no latency normal is claimed (None)."""
-    sent, ok_total = 0, 0
-    avgs: List[float] = []
-    p90s: List[float] = []
-    jits: List[float] = []
-    if rows:   # a week is 70k+ rows per hop: the columns are read once each, not attribute by attribute
-        _, _, n_col, ok_col, avg_col, p90_col, jit_col = zip(*rows)   # MinuteRow's fields in order
-        sent, ok_total = sum(n_col), sum(ok_col)
-        avgs = [v for v in avg_col if v is not None]
-        p90s = [v for v in p90_col if v is not None]
-        jits = [v for v in jit_col if v is not None]
+    if not rows:
+        return _baseline_of(0, 0, (), (), (), 0, rules)
+    _, _, n_col, ok_col, avg_col, p90_col, jit_col = zip(*rows)   # MinuteRow's fields in order
+    return _baseline_of(sum(n_col), sum(ok_col), [v for v in avg_col if v is not None],
+                        [v for v in p90_col if v is not None], [v for v in jit_col if v is not None], len(rows), rules)
+
+
+def _baseline_of(sent: int, ok_total: int, avgs: Iterable[float], p90s: Iterable[float], jits: Iterable[float],
+                 minutes: int, rules: Rules) -> Baseline:
+    """hop_baseline from the sums and the values already gathered (the pack folds the week's rows as it reads them)."""
     lost = sent - ok_total
-    avgs.sort()
+    avgs = sorted(avgs)
+    p90s, jits = list(p90s), list(jits)
     enough = len(avgs) >= rules.baseline_min_minutes
     return Baseline(
         normal_ms=median(avgs) if enough else None,
@@ -345,9 +317,26 @@ def hop_baseline(rows: Sequence[MinuteRow], rules: Rules = RULES) -> Baseline:
         p90_ms=median(p90s) if enough and p90s else None,
         jitter_ms=median(jits) if enough and jits else None,
         loss_pct=(lost * 100.0 / sent) if sent else None,
-        minutes=len(rows),
-        thin=len(rows) < rules.thin_baseline_minutes,
+        minutes=minutes,
+        thin=minutes < rules.thin_baseline_minutes,
     )
+
+
+class _HopFold:
+    """One hop's rows folded as they stream in, so that no list of a week's rows exists: the baseline window's sums
+    and latency columns (float arrays: 8 bytes a minute, not a tuple), the same for the pack's window, the window's
+    minutes with a lost probe, and the rows the close-ups will look up."""
+    __slots__ = ("sent", "ok", "avgs", "p90s", "jits", "minutes", "w_minutes", "w_sent", "w_ok", "w_avgs", "w_lossy",
+                 "w_at", "kept", "profile")
+
+    def __init__(self, blocks: int = 0, keep_window_at: bool = False):
+        self.sent = self.ok = self.minutes = self.w_minutes = self.w_sent = self.w_ok = 0
+        self.avgs, self.p90s, self.jits = array("d"), array("d"), array("d")
+        self.w_avgs = array("d")
+        self.w_lossy: List[MinuteRow] = []
+        self.w_at = (array("q"), array("d")) if keep_window_at else None   # the window's (minute, average), if asked
+        self.kept: List[MinuteRow] = []
+        self.profile = [[array("d"), 0, 0] for _ in range(blocks)]   # per block: averages, probes sent, probes lost
 
 
 def hop_window_vs_normal(rows: Sequence[MinuteRow], base: Baseline, material: float,
@@ -362,16 +351,21 @@ def hop_window_vs_normal(rows: Sequence[MinuteRow], base: Baseline, material: fl
         _, _, n_col, ok_col, avg_col, _, _ = zip(*rows)
     else:
         n_col = ok_col = avg_col = ()
-    lat = [a for a in avg_col if a is not None]   # the average of each minute that has a latency
-    sent = sum(n_col)
-    lost = sent - sum(ok_col)
+    return _deviation(len(rows), sum(n_col), sum(ok_col), [a for a in avg_col if a is not None],
+                      [r for r in rows if r[2] > r[3]], base, material, rules)
+
+
+def _deviation(minutes: int, sent: int, answered: int, lat: Sequence[float], lossy: Sequence[MinuteRow],
+               base: Baseline, material: float, rules: Rules) -> Deviation:
+    """hop_window_vs_normal from what the window's rows add up to: their count, probes sent and answered, the average
+    of each minute that has a latency, and the rows that lost a probe (the pack folds the rows as it reads them)."""
+    lost = sent - answered
     loss = (lost * 100.0 / sent) if sent else None
     med = median(lat) if lat else None
     normal = base.normal_ms
     slow = 0
     if normal is not None:
         slow = sum(1 for a in lat if a > rules.slow_factor * normal and a - normal >= rules.slow_extra_ms)
-    lossy = [r for r in rows if r[2] > r[3]]
     worst = None
     if lossy:
         w = max(lossy, key=lambda r: ((r.n - r.ok) / r.n, r.avg or 0.0))
@@ -385,7 +379,7 @@ def hop_window_vs_normal(rows: Sequence[MinuteRow], base: Baseline, material: fl
     if (loss is not None and base.loss_pct is not None and loss >= rules.notable_loss_factor * base.loss_pct
             and loss - base.loss_pct >= material):
         notable.append("lossier")
-    return Deviation(minutes=len(rows), median_ms=med, loss_pct=None if loss is None else round(loss, 2),
+    return Deviation(minutes=minutes, median_ms=med, loss_pct=None if loss is None else round(loss, 2),
                      slow_minutes=slow, lossy_minutes=len(lossy), worst_minute=worst, notable=notable)
 
 
@@ -619,15 +613,15 @@ def event_summaries(events: Sequence[Any], kinds: Mapping[str, Any], sources: Ma
 
 
 def busy_latency(events: Sequence[Any], kinds: Mapping[str, Any], target_id: Optional[str],
-                 rows: Sequence[MinuteRow]) -> Optional["BusyLatency"]:
-    """The median of `rows`' minute averages (the first public hop, in the window) in the minutes an event whose kind
-    supports "load" ran, and in the others. None without such an event or such a hop."""
+                 minutes: Sequence[int], avgs: Sequence[float]) -> Optional["BusyLatency"]:
+    """The median of the minute averages `avgs` (the first public hop, in the window; `minutes` are theirs) in the
+    minutes an event whose kind supports "load" ran, and in the others. None without such an event or such a hop."""
     spans = [(e.start, e.end) for e in events if "load" in getattr(kinds.get(e.code), "supports", ())]
     if not spans or target_id is None:
         return None
     busy = {m for a, b in spans for m in range(int(a // 60), int(b // 60) + 1)}
-    inside = [r.avg for r in rows if r.avg is not None and r.minute in busy]
-    other = [r.avg for r in rows if r.avg is not None and r.minute not in busy]
+    inside = [a for m, a in zip(minutes, avgs) if m in busy]
+    other = [a for m, a in zip(minutes, avgs) if m not in busy]
     if not inside:
         return None
     return BusyLatency(target_id, median(inside), median(other) if other else None, len(inside))
@@ -861,31 +855,75 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
     busy_pct = getattr(classifier, "busy_load_pct", 60.0)
 
     cfg_targets = [t for t in _targets(config) if getattr(t, "enabled", True) is not False]
-    labels = role_labels(cfg_targets)
     order = [t.id for t in cfg_targets]
     categories = {t.id: category_of(t) for t in cfg_targets}
     path = [(t, categories[t]) for t in order]
 
     # 1. the hops: the baseline window's minute rows, once; the window's are a slice of them
     base_start = end - rules.baseline_days * DAY
-    rows = await minute_rows(repository, base_start, end)
-    per_target: Dict[str, List[MinuteRow]] = defaultdict(list)
-    for r in rows:
-        if r[1] in categories:
-            per_target[r[1]].append(r)
     w0, w1 = int(start // 60), int(end // 60)
+    # the incidents first: the close-ups read the minutes around them, the only rows kept besides the folded sums
+    raw = await incident_rows(repository, start, end)
+    pad = rules.closeup_minutes_around
+    wanted: set = set()
+    first_minute = int(base_start // 60)
+    for r in raw:   # only minutes the query returns can matter
+        wanted.update(range(max(int(r["start_time"] // 60) - pad, first_minute),
+                            min(int((r["end_time"] if r["end_time"] is not None else now) // 60) + pad, w1) + 1))
+    n_blocks = 24 // rules.block_hours
+    folds: Dict[str, _HopFold] = {}
+    minutes_seen: set = set()   # every minute that has a probe of any target, for the no-data gaps
+    async for chunk in minute_row_chunks(repository, base_start, end):
+        for r in chunk:
+            m = r[0]
+            minutes_seen.add(m)
+            t = r[1]
+            category = categories.get(t)
+            if category is None:
+                continue
+            f = folds.get(t)
+            if f is None:
+                f = folds[t] = _HopFold(n_blocks if category in KEY_ROLES else 0, category == "public")
+            f.minutes += 1
+            f.sent += r[2]
+            f.ok += r[3]
+            if r[4] is not None:
+                f.avgs.append(r[4])
+            if r[5] is not None:
+                f.p90s.append(r[5])
+            if r[6] is not None:
+                f.jits.append(r[6])
+            if w0 <= m <= w1:
+                f.w_minutes += 1
+                f.w_sent += r[2]
+                f.w_ok += r[3]
+                if r[4] is not None:
+                    f.w_avgs.append(r[4])
+                    if f.w_at:
+                        f.w_at[0].append(m)
+                        f.w_at[1].append(r[4])
+                if r[2] > r[3]:
+                    f.w_lossy.append(r)
+            if m in wanted:
+                f.kept.append(r)
+            if f.profile:
+                a = f.profile[clock.hour(m * 60.0) // rules.block_hours]
+                if r[4] is not None:
+                    a[0].append(r[4])
+                a[1] += r[2]
+                a[2] += r[2] - r[3]
+    per_target: Dict[str, List[MinuteRow]] = {t: f.kept for t, f in folds.items()}
     hops = []
     for t in order:
-        rs = per_target.get(t)
-        if not rs:
+        f = folds.get(t)
+        if f is None:
             continue
-        base = hop_baseline(rs, rules)
-        win = hop_window_vs_normal([r for r in rs if w0 <= r[0] <= w1], base, material, rules)
-        hops.append(HopFact(t, categories[t], labels[t], t in ignoring, base, win))
+        base = _baseline_of(f.sent, f.ok, f.avgs, f.p90s, f.jits, f.minutes, rules)
+        win = _deviation(f.w_minutes, f.w_sent, f.w_ok, f.w_avgs, f.w_lossy, base, material, rules)
+        hops.append(HopFact(t, categories[t], t in ignoring, base, win))
     by_minute = _LazyMinutes(per_target)   # only the incidents' close-ups look minutes up
 
     # 2. the incidents and their episodes (one batched query)
-    raw = await incident_rows(repository, start, end)
     # host-app outages are not the network's; by kind once the services feature registered it, by cause always
     network = [r for r in raw if not is_service_kind(r["kind"])
                and incident_cause(r["kind"], r["cause_code"], r.get("description")) != "service"]
@@ -901,7 +939,7 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
     for code in list(kinds):
         sources.setdefault(code, "module")
     changes = await _change_events(repository, start, end, rules)
-    gaps = [g for g in no_data_gaps((r.minute for r in rows), end, rules) if g[1] > start and g[0] < end]
+    gaps = [g for g in no_data_gaps(minutes_seen, end, rules) if g[1] > start and g[0] < end]
     all_events = list(events) + [SimpleNamespace(
         code=c["code"], start=c["at"], at=c["at"], subject="", value=None,
         end=c["at"] + (rules.change_reach_seconds if c["code"] != "route.changed" else 0.0)) for c in changes]
@@ -960,7 +998,7 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
     more = Counter(i.cause for i in by_rank[n_rows:])
     closeups = []
     for inc in by_rank[:n_close]:
-        inc.hops = [{"target_id": t, "label": labels[t], "category": categories[t], "sent": s,
+        inc.hops = [{"target_id": t, "category": categories[t], "sent": s,
                      "lost": s - ok, "loss_pct": round((s - ok) * 100.0 / s, 1) if s else 0.0}
                     for t in order for s, ok in [episodes[inc.id][1].get(t, (0, 0))] if s]
         cu = _closeup(inc, by_minute, order, categories, rules)
@@ -976,17 +1014,11 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         v[i.confidence] += 1
         v["total"] += 1
         coincided.update({m.code for m in i.events})
-    key_ids = [next((t for t in order if categories[t] == role and t in per_target), None) for role in KEY_ROLES]
+    key_ids = [next((t for t in order if categories[t] == role and t in folds), None) for role in KEY_ROLES]
     profile = []
     for t in filter(None, key_ids):
-        acc = [[[], 0, 0] for _ in range(24 // rules.block_hours)]   # per block: averages, probes sent, probes lost
-        for r in per_target[t]:
-            a = acc[clock.hour(r.minute * 60.0) // rules.block_hours]
-            if r.avg is not None:
-                a[0].append(r.avg)
-            a[1] += r.n
-            a[2] += r.n - r.ok
-        profile.append({"target_id": t, "label": labels[t], "blocks": [
+        acc = folds[t].profile
+        profile.append({"target_id": t, "blocks": [
             {"hours": (k * rules.block_hours, (k + 1) * rules.block_hours), "median_ms": median(a[0]) if a[0] else None,
              "loss_pct": round(a[2] * 100.0 / a[1], 2) if a[1] else None} for k, a in enumerate(acc)]})
     days = range(clock.day(start), clock.day(max(start, end - 1e-6)) + 1)
@@ -998,14 +1030,14 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
     # 7. the window's first elevated hop (the dossier's rule, device-free)
     dossier = await collect_dossier_facts(repository, config, max(1, math.ceil((end - start) / 3600.0)), end,
                                           None, ignoring, start=start)
-    first_public = next((t for t in order if categories[t] == "public" and t in per_target), None)
+    first_public = next((t for t in order if categories[t] == "public" and t in folds), None)
     incident_spans = sorted(((spans[i.id][0], spans[i.id][1], i.shape.first_hop) for i in facts), key=lambda t: t[0])
     summaries = event_summaries(all_events, kinds, sources, incident_spans, start, end)
-    loaded = busy_latency(all_events, kinds, first_public,
-                          [r for r in per_target.get(first_public, ()) if w0 <= r.minute <= w1])
+    at = folds[first_public].w_at if first_public else None
+    loaded = busy_latency(all_events, kinds, first_public, at[0] if at else (), at[1] if at else ())
     return PackFacts(
         start=start, end=end, now=now, scope=scope, focus_id=focus.id if focus else None, detail=detail,
-        tz_offset_minutes=tz_offset_minutes, order=[h.target_id for h in hops], labels=labels, categories=categories,
+        tz_offset_minutes=tz_offset_minutes, order=[h.target_id for h in hops], categories=categories,
         hops=hops, incidents=sorted(facts, key=lambda i: i.start), listed=listed, more=sorted(more.items()),
         closeups=closeups, patterns=patterns(real, end - start, clock, rules),
         expected_count=len(facts) - len(real), service_count=len(raw) - len(network),

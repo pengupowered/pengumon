@@ -67,7 +67,7 @@ export function connectWebSocket() {
       banner.hidden = !lost;
       banner.querySelector('span').innerHTML = received
         ? '<b>Connection lost.</b> Showing the last data; reconnecting every 2 s.'
-        : '<b>Cannot reach pengumon.</b> No data yet; trying again every 2 s.';
+        : '<b>Cannot reach Pengumon.</b> No data yet; trying again every 2 s.';
     }
   };
 

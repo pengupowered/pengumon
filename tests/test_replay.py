@@ -20,7 +20,7 @@ from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.load import LineLoad
 from pengumon.engine.load_settings import LineConfig
 from pengumon.engine.replay import StoredLoad, replay, run_replay
-from pengumon.notify_settings import AlertsConfig
+from pengumon.notify.settings import AlertsConfig
 from pengumon.settings.preview import PreviewJobs
 
 from test_classifier_characterization import CONFIGS, T0, Texts, run_scenario

@@ -1,7 +1,11 @@
-"""The reliability report, the loss-by-hour grid and the uptime strips (built in pengumon.reports)."""
+"""The reliability report, the loss-by-hour grid and the uptime strips (built in pengumon.reports).
+
+Every route that puts times in days or hours takes `tz` (the viewer's IANA zone) and `tz_offset_minutes` (minutes east
+of UTC, the fallback of older pages); the zone used is the one set in Settings, else `tz`, else the offset, else UTC
+(timeofday.viewer_zone), and days and hours follow its daylight saving."""
 
 import asyncio
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -12,33 +16,45 @@ from pengumon.reports.loss_grid import build_loss_grid
 from pengumon.reports.reliability import build_report
 from pengumon.reports.uptime import build_uptime
 from pengumon.security import rate_limit
+from pengumon.timeofday import viewer_zone
 
 router = APIRouter(prefix="/api")
+
+TzOffset = Annotated[int, Query(ge=-840, le=840,
+                                description="minutes east of UTC: the fallback when Settings and `tz` name no zone")]
+TzName = Annotated[Optional[str], Query(max_length=64, pattern=r"^[A-Za-z0-9_+\-/]+$",
+                                        description="the viewer's IANA zone (America/New_York), when Settings has "
+                                                    "none; one the server does not know is ignored")]
 
 
 @router.get("/report")
 async def get_reliability_report(
     state: StateDep,
     days: int = Query(30, ge=1, le=400),
-    tz_offset_minutes: int = Query(0, ge=-840, le=840),
+    tz_offset_minutes: TzOffset = 0,
+    tz: TzName = None,
 ):
-    """Per-day availability per hop, incidents by cause (expected ones excluded) and the worst hours of the day."""
+    """Per-day availability per hop, incidents by cause (expected ones excluded) and the worst hours of the day (the
+    hops that ignore ping and the hops removed from the path left out, as in the loss grid)."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
-    return await build_report(state.repository, state.config, days, tz_offset_minutes=tz_offset_minutes)
+    return await build_report(state.repository, state.config, days, tz=viewer_zone(state.config, tz, tz_offset_minutes)[0],
+                              ignoring=ignoring_ping_ids(state.prober))
 
 
 @router.get("/report/loss-grid")
 async def get_loss_grid(
     state: StateDep,
     days: int = Query(7, ge=1, le=31),
-    tz_offset_minutes: int = Query(0, ge=-840, le=840),
+    tz_offset_minutes: TzOffset = 0,
+    tz: TzName = None,
 ):
     """Probe loss per calendar day and hour of the last `days` days, for the "when it breaks" heatmap: rows are days
-    (oldest first), columns the 24 hours; sent, lost and loss_pct per cell (loss_pct null where nothing was sent)."""
+    (oldest first), columns the 24 hours; sent, lost and loss_pct per cell (loss_pct null where nothing was sent);
+    when each cell begins (day_starts, hour_starts) and the zone used."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
-    return await build_loss_grid(state.repository, days, tz_offset_minutes=tz_offset_minutes,
+    return await build_loss_grid(state.repository, days, tz=viewer_zone(state.config, tz, tz_offset_minutes)[0],
                                  ignoring=ignoring_ping_ids(state.prober))
 
 
@@ -46,14 +62,16 @@ async def get_loss_grid(
 async def get_uptime(
     state: StateDep,
     window: Literal["24h", "7d", "30d"] = Query("24h"),
-    tz_offset_minutes: int = Query(0, ge=-840, le=840),
+    tz_offset_minutes: TzOffset = 0,
+    tz: TzName = None,
 ):
     """Availability strips for every target in one answer: one status per block (24h: 96 blocks of 15 min; 7d, 30d:
     calendar days) of ok, degraded, outage, busy (explained by line load) or no_data, plus the availability over the
-    window. From the per-minute rollups."""
+    window. From the per-minute rollups; each block's start and end (bounds) and the zone used."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
-    return await build_uptime(state.repository, state.config, window, tz_offset_minutes=tz_offset_minutes)
+    return await build_uptime(state.repository, state.config, window,
+                              tz=viewer_zone(state.config, tz, tz_offset_minutes)[0])
 
 
 _pack_building = asyncio.Lock()  # one pack at a time: a build reads the whole window and every module's history
@@ -67,9 +85,8 @@ async def get_ai_pack(
     incident_id: Optional[int] = Query(None, ge=1, description="required for scope=incident, refused otherwise"),
     level: Literal["full", "vague", "anonymized"] = Query("full"),
     detail: Literal["short", "detailed"] = Query("short"),
-    tz_offset_minutes: int = Query(0, ge=-840, le=840),
-    tz: Optional[str] = Query(None, max_length=64, pattern=r"^[A-Za-z0-9_+\-/]+$",
-                              description="the viewer's IANA zone (America/New_York), when Settings has none"),
+    tz_offset_minutes: TzOffset = 0,
+    tz: TzName = None,
 ):
     """The AI troubleshooting pack: one Markdown document to paste into a chat model, built from the stored history.
     `markdown` is the exact text; `modules` says which module sections it includes (id, title, chars, budget_chars,
@@ -86,7 +103,7 @@ async def get_ai_pack(
     if _pack_building.locked():
         api_rate_limited.add(1, {"bucket": "ai_pack_busy"})
         raise HTTPException(status_code=429, detail="Another pack is being built; try again in a few seconds")
-    from pengumon.reports.ai_pack import build_ai_pack  # A2's module, imported when asked: nothing loads without it
+    from pengumon.reports.contributions import build_ai_pack  # imported when asked: nothing loads without it
 
     async with _pack_building:
         pack = await build_ai_pack(

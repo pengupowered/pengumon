@@ -12,14 +12,13 @@ from httpx import ASGITransport, AsyncClient
 
 from pengumon import secrets as secrets_module
 from pengumon import security
-from pengumon.clients import api as clients_api
+from pengumon.api import clients as clients_api
 from pengumon.capabilities import BAND_2G, BAND_5G, BAND_OTHER, Capability, Client, ClientsReading, MeshReading
 from pengumon.capabilities.features import feature_status
 from pengumon.clients.settings import PrivacyConfig
 from pengumon.config import AppConfig
 from pengumon.devices.settings import DeviceConfig
 from pengumon.db import migrations
-from pengumon.db.repository import DatabaseRepository
 from pengumon.devices.registry import DeviceRegistry, build_device
 from pengumon.devices.summary import mesh_nodes
 from pengumon.drivers.asuswrt import (
@@ -27,7 +26,7 @@ from pengumon.drivers.asuswrt import (
 )
 from pengumon.main import app, security_config
 
-from device_helpers import build_modem, build_router
+from device_helpers import Clock, build_modem, build_router
 
 TOKEN = "tok-clients"
 
@@ -211,13 +210,6 @@ class Router:
         return httpx.Response(200, text=self.body)
 
 
-class Clock:
-    now = 1000.0
-
-    def __call__(self):
-        return self.now
-
-
 def make_router(router, clock, repository=None, **config):
     client = httpx.AsyncClient(transport=httpx.MockTransport(router))
     device = build_router(repository, username="u", password="p", client=client, clock=clock, wall_clock=clock, **config)
@@ -271,14 +263,6 @@ async def test_a_single_router_has_no_mesh_reading_and_no_complaint(caplog):
 
 # --- storage: counts only -------------------------------------------------------------------------------------------
 
-@pytest.fixture
-async def repo(tmp_path):
-    repository = DatabaseRepository(db_path=str(tmp_path / "c.db"))
-    await repository.initialize()
-    yield repository
-    await repository.close()
-
-
 async def test_a_client_list_poll_stores_counts_and_per_node_counts_never_a_client(repo, tmp_path):
     clock = Clock()
     device = make_router(Router(), clock, repository=repo)
@@ -292,8 +276,8 @@ async def test_a_client_list_poll_stores_counts_and_per_node_counts_never_a_clie
     assert await repo.get_mesh_counts("router", 0, 1e12, 1) == [(1000, "000001", 2.0), (1000, "000002", 2.0), (1000, "000003", 1.0)]
     # the whole database file holds no client: no name, address or MAC
     await repo.close()
-    raw = open(tmp_path / "c.db", "rb").read() + open(tmp_path / "c.db-wal", "rb").read() if (tmp_path / "c.db-wal").exists() \
-        else open(tmp_path / "c.db", "rb").read()
+    raw = open(tmp_path / "repo.db", "rb").read() + open(tmp_path / "c.db-wal", "rb").read() if (tmp_path / "c.db-wal").exists() \
+        else open(tmp_path / "repo.db", "rb").read()
     for needle in (b"desk-pc", b"192.0.2.1", b"AA:AA:AA:AA", b"Ann"):
         assert needle not in raw
 
@@ -572,7 +556,7 @@ async def test_the_client_routes_only_read(app_state):
 
 
 def test_a_signal_is_graded_by_the_server():
-    from pengumon.clients.api import signal_grade
+    from pengumon.grades import signal_grade
     assert signal_grade(None) is None
     assert signal_grade(-58) == {"word": "Excellent", "bars": 4, "grade": "good"}
     assert signal_grade(-60)["word"] == "Good" and signal_grade(-66)["word"] == "Good"

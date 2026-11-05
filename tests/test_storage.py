@@ -18,7 +18,7 @@ from pengumon.db.schema import (
     CREATE_INCIDENTS_TABLE,
     CREATE_DOCSIS_SIGNALS_TABLE,
 )
-from pengumon.devices.samples import RouterHistory, device_sample, router_snapshot
+from pengumon.devices.samples import RouterHistory, device_sample
 from pengumon.lines.docsis import DocsisHistory, line_sample
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.incidents.model import Incident
@@ -226,11 +226,9 @@ def _samples(start, seconds, targets=("a", "b"), fail_every=0):
 
 
 @pytest.fixture
-async def repo(tmp_path):
-    r = DatabaseRepository(db_path=str(tmp_path / "storage.db"), sample_flush_seconds=3600)
-    await r.initialize()
-    yield r
-    await r.close()
+def repo_options():
+    """`repo` flushes its sample buffer only when a test asks it to."""
+    return {"sample_flush_seconds": 3600}
 
 
 @pytest.mark.asyncio
@@ -558,12 +556,10 @@ async def _store_router(repo, snapshot, device_id="router"):
 @pytest.mark.asyncio
 async def test_router_snapshot_without_rates_or_model_reads_back_as_none(repo):
     await _store_router(repo, _router(1000.0, status="error", error_message="x", error_kind="timeout"))
-    latest = router_snapshot(await repo.get_latest_device_sample("router"))
-    (ranged,) = await RouterHistory(repo, "router").get_router_snapshots_in_range(900.0, 1100.0, padding_seconds=0)
-    for snap in (latest, ranged):
-        assert snap.wan_rx_rate_mbps is None and snap.wan_tx_rate_mbps is None  # not 0.0
-        assert snap.model_name is None  # not a default model name
-        assert snap.error_kind == "timeout" and snap.status == "error"
+    (snap,) = await RouterHistory(repo, "router").get_router_snapshots_in_range(900.0, 1100.0, padding_seconds=0)
+    assert snap.wan_rx_rate_mbps is None and snap.wan_tx_rate_mbps is None  # not 0.0
+    assert snap.model_name is None  # not a default model name
+    assert snap.error_kind == "timeout" and snap.status == "error"
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 
 from pengumon import main
 from pengumon.api.path import export_yaml, read_import
-from pengumon.api.state import STATE_ATTR
+from pengumon.state import STATE_ATTR
 from pengumon.config import AppConfig, load_config
 from pengumon.db.path import PathConflict
 from pengumon.db.repository import DatabaseRepository
@@ -23,6 +23,7 @@ from pengumon.engine.prober import NetworkProber
 from pengumon.engine.prober_settings import DnsProbeConfig
 from pengumon.main import app
 from pengumon.models.probes import ProbeSample, TargetConfig
+from pengumon.reports.queries import daily_availability
 
 from icmp_fakes import FakeBackend
 
@@ -133,7 +134,7 @@ async def test_a_removed_hop_keeps_its_history_hidden_until_it_comes_back(tmp_pa
     assert ids(await repo.get_history(now - 600, now)) == {"gw", "pub"}
     assert ids(await repo.get_history(now - 600, now, target_ids=["isp_1"])) == set()
     assert ids(await repo.get_hop_stats(now - 600)) == {"gw", "pub"}
-    assert ids(await repo.get_daily_availability(now - 600)) == {"gw", "pub"}
+    assert ids(await daily_availability(repo, now - 600)) == {"gw", "pub"}
 
     again = DatabaseRepository(db_path=repo.db_path)  # hidden after a restart too
     await again.initialize()
@@ -194,6 +195,19 @@ async def path_app(tmp_path, app_state):
     app_state.config, app_state.repository, app_state.prober, app_state.path = config, repo, prober, manager
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac, app_state
+
+
+async def test_get_targets_names_each_hop_by_its_role_words_and_follows_a_path_edit(path_app):
+    ac, state = path_app
+
+    async def labels():
+        return {t["target_id"]: t["short_label"] for t in (await ac.get("/api/targets")).json()}
+
+    assert await labels() == {"gw": "Gateway", "pub": "Internet", "dns_a": "DNS lookup"}
+    second = ISP.model_copy(update={"id": "isp_2", "address": "198.51.100.20"})
+    state.prober.set_targets([GW, ISP, second, PUB.model_copy(update={"enabled": False})], dns_ids=["dns_a"])
+    assert await labels() == {"gw": "Gateway", "isp_1": "ISP hop 1", "isp_2": "ISP hop 2", "pub": None,
+                              "dns_a": "DNS lookup"}
 
 
 async def test_get_path_lists_the_hops_in_order_with_their_positions(path_app):

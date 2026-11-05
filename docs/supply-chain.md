@@ -134,17 +134,15 @@ lock or audit, nor by GitHub's dependency graph. Check its releases and advisori
 
 ## Accepted risks
 
-- The CSP keeps `'unsafe-inline'` in `script-src`: `index.html` has 48 inline event handlers (43
-  `onclick`, 2 `onchange`, 1 `oninput`, 2 `onsubmit`) and `static/app.js` builds one more
-  (`onclick="event.stopPropagation(); inspectIncident(...)"`). Removing it means replacing them with
-  `addEventListener` code; that is a separate refactor.
-- `connect-src 'self' ws: wss:` allows websockets to any host; tighten later.
+None is recorded at present. The content security policy is strict (`script-src 'self'`, `connect-src 'self'`, no
+inline scripts or handlers; `src/pengumon/security.py:53-62`, [Security](security.md)).
 
 ## Not covered
 
 - Trust on first lock: hashes prove the same files are installed later, not that the first upload was
   benign. The 7-day cooldown and `MAL-` advisories reduce, not remove, that risk.
-- No signature or attestation verification of wheels.
+- The install scripts check the wheel and the lock against `SHA256SUMS`, but they do not verify a signature or build
+  attestation. Attestations are built and can be checked by hand ([install.md](install.md#checking-a-download)).
 - Debian packages come from apt (signed repositories) and are not hash-pinned; the `apt-get upgrade`
   layer makes image builds not bit-reproducible.
 - The Trivy vulnerability database is downloaded unpinned (rebuilt daily); only the Trivy image is pinned.

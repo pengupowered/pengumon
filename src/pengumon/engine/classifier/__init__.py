@@ -7,7 +7,7 @@ callbacks) stay in OutageClassifier. The outage-rules preview (engine.replay) dr
 the timestamps of stored samples. The pieces:
 
 * verdict.py   Verdict, the frozen result of a round; its `kind` drives control flow, the texts are for people
-* metrics.py   CategoryMetrics / RoundMetrics, computed once per round (not pengumon.metrics, the Prometheus one)
+* metrics.py   CategoryMetrics / RoundMetrics, computed once per round
 * rules.py     the diagnosis as pure functions of the round metrics
 * tracker.py   the incident state machine: onset, escalation, recovery
 

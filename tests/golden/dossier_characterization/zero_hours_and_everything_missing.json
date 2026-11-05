@@ -31,12 +31,12 @@
  ],
  "markdown": [
   "# Broadband Packet Loss Evidence Report",
-  "**Generated:** 2025-10-09 08:53:20 | **Observation window:** past 0 hours",
+  "**Generated:** 2025-10-09 08:53:20 UTC | **Observation window:** past 0 hours",
   "**Local hardware:** no local or gateway probes in this window",
   "",
   "## 1. Summary",
   "- **Recorded incidents:** 0",
-  "- **Cumulative duration:** 0.0 minutes (0 seconds)",
+  "- **Cumulative duration:** none",
   "- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by 0.5 points or more.",
   "",
   "## 2. Loss per hop",
@@ -54,7 +54,7 @@
   "",
   "## 5. Summary for a support ticket",
   "```text",
-  "Over the past 0 hours Pengumon recorded 0 incidents totalling 0.0 minutes.",
+  "Over the past 0 hours Pengumon recorded 0 incidents totalling none.",
   "No single failing hop could be isolated from the probe data.",
   "```"
  ],

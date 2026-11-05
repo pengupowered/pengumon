@@ -10,7 +10,7 @@ import time
 from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, Optional
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from pengumon.capabilities import Capability, DriverError, LineReading, PollResult
 from pengumon.capabilities.contrib import DriverNotes
@@ -33,6 +33,11 @@ SESSION_LIFETIME_SECONDS = 300.0
 _LOGGED_OUT_MARKERS = ("Please Login First", "home_loggedout", "Gateway > Login", "check.jst")
 
 
+def _log_dropped(dropped: int) -> None:
+    if dropped:
+        _log.debug("rows of the gateway's channel table could not be read; they are left out", dropped=dropped)
+
+
 class XfinityXbOptions(BaseModel):
     """The driver takes no options (a devices: entry's `options:` must be empty)."""
     model_config = ConfigDict(extra="forbid")
@@ -49,10 +54,10 @@ class XfinityXbDriver:
     default_poll_seconds = 1800.0
     min_poll_seconds = 600.0
     # The AI pack's note on this driver (capabilities/contrib.py). Each statement is established by this file:
-    #  - "Xfinity gateway (XB6, XB7 or XB8)": the module docstring, :1 and `label` :43;
-    #  - read never more often than every {min_poll} (`min_poll_seconds` :50); how often it was read is the DOCSIS
+    #  - "Xfinity gateway (XB6, XB7 or XB8)": the module docstring, :1 and `label` :48;
+    #  - read never more often than every {min_poll} (`min_poll_seconds` :55); how often it was read is the DOCSIS
     #    section's, from the stored readings, so the pack states the interval once;
-    #  - slow web page, some units fail or reboot when read often: the comment at :47-48.
+    #  - slow web page, some units fail or reboot when read often: the comment at :52-53.
     # No claim about who supplies the gateway or whether it routes (nothing here says). The anonymized text leaves
     # out the vendor and model words, which would name the provider.
     pack_notes: ClassVar[DriverNotes] = DriverNotes(
@@ -147,8 +152,10 @@ class XfinityXbDriver:
 
     @classmethod
     def _parse_channels(cls, html: str) -> List[DocsisChannel]:
-        """Extracts Downstream and Upstream channels from gateway HTML."""
+        """Extracts Downstream and Upstream channels from gateway HTML. A row that does not make a valid channel (a
+        firmware that words a value differently) is left out, and one debug line says how many were."""
         channels: List[DocsisChannel] = []
+        dropped = 0
 
         # 1. Primary parser: Comcast XB6/XB7/XB8 horizontal row-label format
         try:
@@ -215,7 +222,8 @@ class XfinityXbDriver:
                         correcteds=0,
                         uncorrectables=0
                     ))
-                except Exception:
+                except (ValueError, ValidationError):
+                    dropped += 1
                     continue
 
             # Process Upstream
@@ -246,7 +254,8 @@ class XfinityXbDriver:
                         correcteds=0,
                         uncorrectables=0
                     ))
-                except Exception:
+                except (ValueError, ValidationError):
+                    dropped += 1
                     continue
 
             # Process Codewords
@@ -268,10 +277,12 @@ class XfinityXbDriver:
                             c_ch.uncorrectables = cls._clean_int(uncorr_vals[i]) or 0
                         if i < len(unerr_vals):
                             c_ch.unerrored = cls._clean_int(unerr_vals[i])
-                except Exception:
+                except (ValueError, ValidationError):
+                    dropped += 1
                     continue
 
             if channels:
+                _log_dropped(dropped)
                 return channels
         except Exception as ex:
             _log.debug("horizontal channel table could not be parsed; trying the vertical layout",
@@ -305,7 +316,8 @@ class XfinityXbDriver:
                     correcteds=corr,
                     uncorrectables=uncorr
                 ))
-            except Exception:
+            except (ValueError, ValidationError):
+                dropped += 1
                 continue
 
         us_matches = re.findall(
@@ -332,7 +344,9 @@ class XfinityXbDriver:
                     correcteds=0,
                     uncorrectables=0
                 ))
-            except Exception:
+            except (ValueError, ValidationError):
+                dropped += 1
                 continue
 
+        _log_dropped(dropped)
         return channels

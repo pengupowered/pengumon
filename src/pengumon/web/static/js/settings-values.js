@@ -7,7 +7,6 @@ import { bus } from './bus.js';
 
 let values = {};
 let revision = null;
-const listeners = new Set();
 
 // {key: effective value}; empty until the first read, so a text always has a fallback (`val` below).
 export const settingsValues = () => values;
@@ -28,16 +27,7 @@ export async function refreshSettingsValues() {
   } catch (e) {
     return false; // the texts keep their fallbacks
   }
-  [...listeners].forEach((fn) => {
-    try { fn(values); } catch (e) { console.error(`settings-values: a listener threw: ${e && e.message ? e.message : e}`); }
-  });
   return true;
-}
-
-// fn(values) runs after the values changed. Returns the function that stops it.
-export function onSettingsChanged(fn) {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
 }
 
 // The page carries the values it was rendered with (<body data-settings>, from web/pages.py), so help texts need no fetch;

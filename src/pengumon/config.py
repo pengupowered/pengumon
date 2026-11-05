@@ -25,7 +25,7 @@ from pengumon.engine.netinfo import default_dns_probes, default_targets, get_def
 from pengumon.engine.prober_settings import DnsProbeConfig, ProberConfig
 from pengumon.lines.levels import LineSignalConfig
 from pengumon.models.probes import TargetConfig
-from pengumon.notify_settings import AlertsConfig, NotificationsConfig
+from pengumon.notify.settings import AlertsConfig, NotificationsConfig
 from pengumon.observability import get_logger
 from pengumon.observability.logs import parse_levels
 from pengumon.reports.settings import ReportsConfig, UptimeConfig

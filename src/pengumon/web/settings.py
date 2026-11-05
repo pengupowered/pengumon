@@ -1,5 +1,5 @@
 """The dashboard's config sections: `dashboard:` (the default layout) and `display:` (the Grafana links and the
-latency chart's first range). The card ids are the panel folders that pengumon.ui discovers, so a new panel needs no
+latency chart's first range). The card ids are the panel folders that pengumon.web.ui discovers, so a new panel needs no
 change here."""
 
 from typing import List, Literal, Optional
@@ -7,7 +7,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pengumon.observability.grafana import check_url
-from pengumon.ui import panel_ids
+from pengumon.web.ui import panel_ids
 
 
 class DashboardConfig(BaseModel):

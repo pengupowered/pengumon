@@ -8,7 +8,7 @@ window. Host-app and route-change alerts: quiet hours only. The test alert: neve
 from dataclasses import dataclass
 from typing import Optional
 
-from pengumon.notify_settings import AlertsConfig
+from pengumon.notify.settings import AlertsConfig
 from pengumon.timeofday import clock_text, window_end, zone
 
 SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}

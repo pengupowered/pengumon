@@ -5,7 +5,7 @@ from typing import Annotated, Any, Optional
 
 from fastapi import Depends, HTTPException, Response
 
-from pengumon.api.state import AppState, get_state
+from pengumon.state import AppState, get_state
 from pengumon.devices.device import Device
 from pengumon.observability.telemetry import api_answer_capped, api_answer_rows, api_answer_size
 

@@ -19,7 +19,9 @@ from pengumon.lines import docsis
 from pengumon.lines.docsis_model import DocsisChannel
 from pengumon.reports import ai_pack
 from pengumon.reports.ai_findings import LocalClock
-from pengumon.reports.ai_pack import build_ai_pack, pack_zone, render_pack
+from pengumon.reports.ai_pack import render_pack
+from pengumon.reports.contributions import build_ai_pack
+from pengumon.timeofday import viewer_zone
 from pengumon.settings.document import SettingsDocument
 
 END = 1_793_000_040.0       # a fixed clock (a whole minute), so the golden does not move with the day
@@ -162,8 +164,8 @@ def test_times_are_in_the_households_zone_across_a_clock_change():
     happened twice says which pass it is in."""
     ny, change = ZoneInfo("America/New_York"), 1793512800.0      # 2026-11-01 06:00 UTC: 02:00 EDT -> 01:00 EST
     settings = lambda name: SimpleNamespace(general=SimpleNamespace(timezone=name))   # noqa: E731
-    assert [pack_zone(settings("Etc/UTC"), "America/New_York", -300)[1:], pack_zone(settings("Etc/UTC"), None, -300)[1:],
-            pack_zone(settings("UTC"), None, 0)[1:], pack_zone(settings("Europe/Berlin"), "America/New_York", 0)[1:]] == [
+    assert [viewer_zone(settings("Etc/UTC"), "America/New_York", -300)[1:], viewer_zone(settings("Etc/UTC"), None, -300)[1:],
+            viewer_zone(settings("UTC"), None, 0)[1:], viewer_zone(settings("Europe/Berlin"), "America/New_York", 0)[1:]] == [
         ("named", "America/New_York"), ("offset", ""), ("utc", "UTC"), ("named", "Europe/Berlin")]
     assert [LocalClock(ny).hour(change + h * 3600) for h in (-6, 6)] == [20, 7]          # EDT before, EST after
     facts = canary_facts()
@@ -187,7 +189,7 @@ async def test_build_ai_pack_end_to_end_with_no_device_at_vague_in_the_incident_
     pytest.importorskip("pengumon.reports.ai_findings", reason="needs workstream A1's facts")
     from ai_pack_seed import add_incident, make_config, seed, week_end
     from pengumon.db.repository import DatabaseRepository
-    from pengumon.reports.ai_pack import build_ai_pack as build
+    from pengumon.reports.contributions import build_ai_pack as build
 
     repo = DatabaseRepository(db_path=str(tmp_path / "pack.db"))
     await repo.initialize()

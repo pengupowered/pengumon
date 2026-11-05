@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import TypeAdapter
 
 from pengumon.api.common import StateDep, device_or_404, record_answer, record_capped
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.capabilities import Capability
 from pengumon.capabilities.features import feature_status, host_services_status
 from pengumon.lines import docsis
@@ -25,7 +25,7 @@ from pengumon.devices.samples import BUCKET_FIELDS, MAX_POINTS_LIMIT, RouterHist
 from pengumon.api.payloads import CredentialsRequest
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.observability import get_logger
-from pengumon.secrets import SecretStore, credential_updates
+from pengumon.secrets import SECRETS_FILE_DAMAGED, SecretsFileUnusable, SecretStore, credential_updates
 from pengumon.security import rate_limit
 
 router = APIRouter(prefix="/api")
@@ -50,7 +50,10 @@ async def _set_credentials(state: AppState, device: Device, payload: Credentials
     until the next start only: the answer says so in `overridden_by`."""
     device_id = device.id
     store = state.secret_store or SecretStore()
-    store.write(credential_updates(device_id, payload.username, payload.password))
+    try:
+        store.write(credential_updates(device_id, payload.username, payload.password))
+    except SecretsFileUnusable:  # logged by the store, with what to do
+        raise HTTPException(status_code=500, detail=SECRETS_FILE_DAMAGED) from None
     device.set_credentials(payload.username, payload.password, source=f"{store.path} (set in the dashboard)")
     snapshot = await device.poll(force=True, bypass_gate=True)
     success = snapshot.status not in ("error", "unconfigured")
@@ -73,7 +76,7 @@ def device_ranges(device: Device) -> Dict[str, Dict[str, Any]]:
     """The gauge scale and good zone of each metric the device's snapshot grades (pengumon.grades.Range.as_dict), keyed
     like the snapshot's `grades`. Empty for a device whose readings are not graded."""
     if Capability.ACCESS_LINE in device.driver.offers and getattr(device.driver, "line_technology", None) == docsis.TECHNOLOGY:
-        return {name: r.as_dict() for name, r in docsis.ranges().items()}
+        return {name: r.as_dict() for name, r in docsis.ranges(getattr(device.monitor, "levels", None)).items()}
     ranges = getattr(device.monitor, "ranges", None)
     return {name: r.as_dict() for name, r in ranges.items()} if ranges else {}
 

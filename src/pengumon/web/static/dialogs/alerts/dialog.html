@@ -10,10 +10,10 @@
       <div class="row-btns" id="notifButtons"><button type="button" class="btn outline sm" id="btnRequestNotif" data-action="requestDesktopPermission">Allow notifications</button><button type="button" class="btn sm" data-action="sendTestNotification">Test</button></div>
       <div class="opt-row al-sound"><div><b id="alSoundLabel">Sound</b><span>A short tone in this tab, no permission needed.</span></div>
         <label class="switch"><input type="checkbox" id="btnToggleSound" role="switch" data-action="toggleSoundAlerts" aria-labelledby="alSoundLabel"><span></span></label></div>
-      <div class="row-btns">
-        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="down" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-down"/></svg>Outage tone</button>
-        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="degraded" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg>Warning tone</button>
-        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="healthy" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg>Restored chime</button>
+      <div class="row-btns al-preview" role="group" aria-label="Play a preview of each sound"><span class="fine">Play a preview:</span>
+        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="down" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-down"/></svg>Outage</button>
+        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="degraded" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg>Warning</button>
+        <button type="button" class="btn sm" data-action="playAlertSound" data-arg="healthy" data-arg2="true"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg>Restored</button>
       </div>
       <fieldset class="opts"><legend>Alert me when</legend>
         <label class="check"><input type="checkbox" id="alertDown" data-change="setAlertOption" data-arg="down"> The internet goes down</label>

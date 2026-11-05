@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Tuple
 
-STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 NOT_SERVED = (".html", ".json")  # under panels/ and dialogs/: templates and manifests
 
 

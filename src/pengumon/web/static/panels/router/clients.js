@@ -184,7 +184,7 @@ function row(c, hasNodes) {
   const signal = tr.appendChild(make('td'));
   signal.dataset.l = '';
   if (c.signal) {
-    const s = c.signal; // word, bars and grade come from the server (api/clients.py signal_grade)
+    const s = c.signal; // word, bars and grade come from the server (grades.py signal_grade)
     const sig = signal.appendChild(make('span', null, `sig st-${levelOfGrade(s.grade)}`));
     const bars = sig.appendChild(make('span', null, 'bars'));
     for (let b = 1; b <= 4; b++) bars.appendChild(make('i', null, b <= s.bars ? 'on' : ''));

@@ -40,8 +40,8 @@ def credential_env_name(device_id: str) -> str:
 
 
 class DeviceConfig(BaseModel):
-    """One modem, gateway or router pengumon reads (`devices:` in config.yaml). The driver (pengumon.drivers) decides
-    what it can report; credentials never go here (pengumon.secrets)."""
+    """One modem, gateway or router pengumon reads (an item of the `devices` list on the Settings page). The driver
+    (pengumon.drivers) decides what it can report; credentials never go here (pengumon.secrets)."""
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     id: str = Field(..., max_length=64)

@@ -33,7 +33,7 @@ class _Writer:
 
 
 async def render_metrics(state) -> str:
-    """`state` is the app's api.state.AppState. One block per gauge of observability.gauges.GAUGES."""
+    """`state` is the app's pengumon.state.AppState. One block per gauge of observability.gauges.GAUGES."""
     w = _Writer()
     for gauge in GAUGES:
         samples = gauge.collect(state)

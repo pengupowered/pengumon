@@ -24,7 +24,7 @@ function mountLine(section, ctx, device) {
     const a = adapter.detailAction;
     refs.actions.innerHTML = `<button type="button" class="btn sm outline" data-action="${a.action}" data-arg="${escapeHtml(device.id)}"><svg class="i" aria-hidden="true"><use href="#i-${a.icon}"/></svg>${a.label}</button>`;
   } else {
-    refs.body.innerHTML = `<p class="cap-note">pengumon has no detail view for ${escapeHtml(tech)} lines yet: the card shows the device's status only.</p>`;
+    refs.body.innerHTML = `<p class="cap-note">Pengumon has no detail view for ${escapeHtml(tech)} lines yet: the card shows the device's status only.</p>`;
   }
   placeCard(section, root, refs, device);
 
@@ -53,6 +53,6 @@ export default {
   icon: 'modem',
   instances: (ctx) => ctx.devicesOffering('access_line').map((d) => ({ key: d.id, device: d })),
   available: (ctx) => ctx.devicesOffering('access_line').length > 0,
-  reason: (ctx) => ctx.reason(['line_health'], 'Line'),
+  reason: (ctx) => ctx.reason(['line_health'], 'Line', 'Add your modem in Settings > Devices and services.'),
   mount: (section, ctx, inst) => mountLine(section, ctx, inst.device)
 };

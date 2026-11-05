@@ -13,19 +13,14 @@ A component is a module with
 async def register(ctx: Context) -> Component | None
 ```
 
-and, optionally,
-
-- a module-level `router` (an `APIRouter`). `create_app` mounts it at import time, whether or not the feature is
-  configured, so the routes and the OpenAPI schema never depend on `config.yaml`. A route of an unconfigured feature
-  answers as it always has: `[]`, 400 or 503.
-- `OPTIONAL = True`, for a feature the app can run without (see below).
+and, optionally, `OPTIONAL = True`, for a feature the app can run without (see below).
 
 `register` builds the feature's parts from `ctx` and returns what the app runs for it, or `None` when the config
 gives the feature nothing to do (no enabled service check, no device with a client list, no ntfy URL). `ctx`
 (`components.Context`) carries:
 
 - `config`, the loaded `AppConfig`;
-- `state`, the `AppState` being built. Request handlers read it through `api.state.get_state`, the gauges through
+- `state`, the `AppState` being built. Request handlers read it through `pengumon.state.get_state`, the gauges through
   `observe_state`, once every component has registered.
 - what one component builds for later ones and no handler needs: `notifier`, `line_load`;
 - `spawn(coro)`, which starts a background task that runs until shutdown.
@@ -40,6 +35,20 @@ Gauges stay in the one table, `observability/gauges.py`. Each row reads the `App
 `state.service_checker`), so a feature that is not configured simply has no samples. A feature module may append
 its own rows. The services gauges stay in the table so that the order of `/metrics` does not change.
 
+## Where things live
+
+- **Routes.** Every HTTP and websocket route is in `api/<feature>.py`, and `api/router.py` lists every router in
+  `ROUTERS`. That holds for the features that are components too (`api/devices.py`, `api/services.py`,
+  `api/clients.py`, `api/discovery.py`, `api/live.py`): a component has no routes. `create_app` mounts them all at
+  import time, whether or not the feature is configured, so the routes and the OpenAPI schema never depend on the
+  settings; a route of an unconfigured feature answers as it always has (`[]`, 400 or 503). `/metrics` and the page
+  are mounted by `main.py` itself.
+- **The `api` package is the top layer.** Route modules import the feature packages; nothing outside `api/` but
+  `main.py` imports `api`. What the routes and the lower layers share lives below it: the app state in `state.py`
+  (`AppState`, `get_state`), the live stream's broadcaster in `live/ws.py`, the preview job's answer in
+  `settings/preview.py`. `api/__init__.py` holds only its docstring, so importing one route module loads only what that
+  module needs.
+
 ## The order, and why
 
 - **1. storage** (`db/storage.py`). Opens (migrates) the database. The settings live in it, every later component may use it, and their `stop` runs before its own, which closes it.
@@ -48,12 +57,14 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 - **4. probing** (`engine/probing.py`). Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one.
 - **5. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history.
 - **6. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
-- **7. notify** (`notify.py`). ntfy and webhooks (`webhook.py`), for the classifier and the service checks.
+- **7. notify** (`notify/component.py`). The notifier: ntfy and webhooks (`notify/notifier.py`, `notify/webhook.py`), for the classifier and the service checks.
 - **8. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
-- **9. services** (`services/component.py`). Optional: host service checks.
-- **10. clients** (`clients/component.py`). Optional: the client list.
-- **11. live** (`live/component.py`). The `/ws` route and the broadcaster task.
-- **12. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Last, so its `stop` (a run still going is cancelled) comes first.
+- **9. settings_preview** (`settings/preview_component.py`). The job store for the outage-rules preview; its `stop` kills a replay still running.
+- **10. services** (`services/component.py`). Optional: host service checks.
+- **11. clients** (`clients/component.py`). Optional: the client list.
+- **12. live** (`live/component.py`). The broadcaster task that feeds the `/ws` route (`api/live.py`).
+- **13. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Its `stop` (a run still going is cancelled) runs early, because it comes late in the list.
+- **14. runtime** (`observability/component.py`). The event-loop monitor (lag and task count for the telemetry). Last in the list; it has nothing to stop.
 
 The repository object exists before any component. The lifespan builds it from `config.database`
 (`storage.repository_for`, the bootstrap `db_path`); building it opens nothing.
@@ -79,7 +90,8 @@ everything that runs, in the order it runs.
    while a probe round, a device poll or a service check is still running.
 2. Each component's `stop` runs in reverse list order. A stop that fails is logged and the others still run.
    - discovery cancels a run still going (it writes nothing).
-   - The live, clients, line_load, retention and probing components have nothing to stop. Their tasks have ended.
+   - settings_preview kills a preview replay still running.
+   - The runtime, live, clients, line_load, retention and probing components have nothing to stop. Their tasks have ended.
    - services resolves its open incidents and closes its HTTP clients.
    - classifier ends its path traces (they write to the repository) and resolves the incident still open.
    - notify closes its HTTP client.

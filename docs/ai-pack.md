@@ -23,8 +23,8 @@ what is wrong; the dossier is the evidence for the provider.
 Tips:
 
 - **Larger models answer better.** The pack is written so small models follow it too, but in our tests the larger
-  ones weighed the evidence more carefully. A 7-day pack is about 5,000 to 6,000 tokens,
-  well within any current model.
+  ones weighed the evidence more carefully. A 7-day pack from a real home network is about 5,500 tokens, and no pack
+  exceeds 32,000 characters (about 8,000 tokens), well within any current model.
 - **Over plain HTTP**, Chrome may block **Download .md** as an insecure download. **Copy** works on every connection;
   the dialog says so in its footer.
 - **Times** are in the zone set in Settings, else in your browser's zone, else UTC; the pack's first lines name the
@@ -116,8 +116,11 @@ A new device of a kind Pengumon knows (another DOCSIS modem, another router) nee
 and Grafana row.
 
 A new kind of line (fiber, DSL) needs a technology contribution as well: a class meeting the `Contribution` protocol
-in `capabilities/contrib.py`, registered in `lines/__init__.py` under `CONTRIBUTIONS`, next to its `WORDING`. The
-capability modules are listed in `devices/contrib.py` (`CAPABILITY_CONTRIBUTIONS`). A contribution has:
+in `capabilities/contrib.py` (the contract, which imports nothing of Pengumon), registered in
+`reports/contributions.py` under `TECHNOLOGY_CONTRIBUTIONS`; its wording goes in `lines/__init__.py` (`WORDING`). The
+capability modules are listed in `devices/contrib.py` (`CAPABILITY_CONTRIBUTIONS`). `reports/contributions.py` also
+activates them from the configured devices and builds the pack (`build_ai_pack`); `reports/ai_pack.py` only renders it.
+A contribution has:
 
 - `id`, `title`, `layer` (`technology` or `capability`) and `budget_chars`, the most its prompt text, section and
   driver note may take together;

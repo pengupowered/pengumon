@@ -20,7 +20,7 @@ SETTINGS_MODULES = [
     "pengumon.config", "pengumon.engine.prober_settings", "pengumon.engine.classifier_settings",
     "pengumon.engine.load_settings", "pengumon.services.settings", "pengumon.clients.settings",
     "pengumon.web.settings", "pengumon.devices.settings", "pengumon.secrets", "pengumon.engine.netinfo",
-    "pengumon.notify_settings", "pengumon.engine.discovery.settings", "pengumon.lines.levels", "pengumon.devices.levels",
+    "pengumon.notify.settings", "pengumon.engine.discovery.settings", "pengumon.lines.levels", "pengumon.devices.levels",
     "pengumon.reports.settings", "pengumon.settings.general", "pengumon.settings.registry",
     "pengumon.settings.lenient", "pengumon.settings.importer", "pengumon.settings.manager",
 ]
@@ -36,14 +36,6 @@ def test_every_feature_section_is_defined_outside_config_py():
     in_config = [name for name, field in AppConfig.model_fields.items()
                  if _section_model(field.annotation).__module__ == config.__name__]
     assert sorted(in_config) == sorted(CORE_SECTIONS)
-
-
-def test_config_py_defines_only_appconfig_and_the_core_sections():
-    tree = ast.parse((SRC / "config.py").read_text(encoding="utf-8"))
-    classes = [n.name for n in tree.body if isinstance(n, ast.ClassDef)]
-    assert sorted(classes) == ["AppConfig", "DatabaseConfig", "ServerConfig"]
-    functions = [n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    assert sorted(functions) == ["_bootstrap", "_read_yaml", "load_config", "load_server_config", "read_config_file"]  # secrets writing and gateway discovery live elsewhere
 
 
 def _runtime_imports_of_config(tree: ast.AST):
@@ -70,7 +62,7 @@ def test_only_the_app_imports_pengumon_config():
                  # the app, its command, and the settings store (it describes, imports and builds AppConfig)
                  if path.relative_to(SRC).as_posix() not in ("main.py", "cli.py", "settings/registry.py",
                                                               "settings/importer.py", "settings/manager.py",
-                                                              "settings/check.py")]
+                                                              "settings/validate.py", "settings/check.py")]
     assert offenders == []
 
 

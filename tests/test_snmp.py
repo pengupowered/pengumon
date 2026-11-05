@@ -20,6 +20,8 @@ from pengumon.drivers.snmp import (
 )
 from pengumon.secrets import CredentialSources, password_env_var
 
+from device_helpers import Clock
+
 COMMUNITY = "s3cret-ro"
 HR_STORAGE_OTHER = (1, 3, 6, 1, 2, 1, 25, 2, 1, 1)
 
@@ -149,14 +151,6 @@ def router_mib(*, uptime=500_000, hc=True, rx=10_000_000_000, tx=2_000_000_000, 
     for i, load in enumerate(processors):
         mib[HR_PROCESSOR_LOAD + (196608 + i,)] = (ber.INTEGER, load)
     return mib
-
-
-class Clock:
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self):
-        return self.now
 
 
 def snmp_driver(port, community=COMMUNITY, clock=None, **options):

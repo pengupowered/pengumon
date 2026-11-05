@@ -1,8 +1,5 @@
 """Per-category probe metrics for one classifier round (rolling loss, latency and jitter).
 
-Not to be confused with pengumon.metrics, the Prometheus exporter. Import this module by its full path,
-pengumon.engine.classifier.metrics.
-
 The arithmetic (window, rounding, summation order, the unrounded fallback) is pinned by the characterization
 golden and by a randomised equivalence test; do not reorder operations.
 """

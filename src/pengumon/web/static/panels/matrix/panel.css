@@ -1,4 +1,4 @@
-/* Panel matrix: its own styles (linked because the folder exists, pengumon.ui). Tokens only. */
+/* Panel matrix: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
 /* ---------- Hop details ---------- */
 /* a name without a space (a 191-letter host name is valid) wraps in a narrow card instead of widening the page; the wide
    layout below cuts it with an ellipsis, and the whole name is the tooltip (sub's title) */

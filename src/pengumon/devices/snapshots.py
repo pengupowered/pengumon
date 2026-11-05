@@ -20,7 +20,7 @@ class RouterMetricsSnapshot(BaseModel):
     wan_tx_load_pct: Optional[float] = None
     # cpu, mem, wan_rx, wan_tx -> good/warn/critical, decided in pengumon.devices.monitors
     grades: Dict[str, str] = Field(default_factory=dict)
-    model_name: Optional[str] = None  # the device's `model` in config.yaml, else the model its driver reports (if any)
+    model_name: Optional[str] = None  # the device's `model` setting, else the model its driver reports (if any)
     status: Literal["healthy", "warning", "critical", "unconfigured", "error"] = "unconfigured"
     error_message: Optional[str] = None
     error_kind: Optional[str] = Field(default=None, exclude=True)  # as on DocsisSignalSnapshot

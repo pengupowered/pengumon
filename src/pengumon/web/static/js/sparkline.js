@@ -65,10 +65,11 @@ export function drawSparkline(canvas, values, color) {
 
 // The design's SVG sparkline (path health nodes, service rows): status-coloured line over a gradient wash, red ticks
 // for lost probes, a dot on the newest value; no data is a flat dashed line. Returns markup; colours are tokens.
-let sparkId = 0;
+// `id` names the series (a path node's key): its gradient id is `sg-<id>`, so the same samples give the same markup and a
+// caller can tell by comparing strings whether anything changed. Without one the id follows the level.
 const SPARK_COLOR = { good: 'var(--accent)', warn: 'var(--warn)', crit: 'var(--crit)', busy: 'var(--busy)', unknown: 'var(--unknown)' };
 
-export function sparkSvg(vals, level = 'good', { h = 30, w = 120 } = {}) {
+export function sparkSvg(vals, level = 'good', { h = 30, w = 120, id: series = level } = {}) {
   const c = SPARK_COLOR[level] || SPARK_COLOR.good;
   const has = (v) => v !== null && v !== undefined;
   if (!vals || !vals.some(has)) {
@@ -86,7 +87,7 @@ export function sparkSvg(vals, level = 'good', { h = 30, w = 120 } = {}) {
     d += `${pen ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`;
     pen = true;
   });
-  const id = `sg${++sparkId}`;
+  const id = `sg-${String(series).replace(/[^\w-]/g, '_')}`;
   const first = vals.findIndex(has);
   let last = vals.length - 1;
   while (!has(vals[last])) last--;

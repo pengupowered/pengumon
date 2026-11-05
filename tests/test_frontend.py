@@ -12,7 +12,7 @@ from pengumon.web.assets import ASSET_VERSION
 WEB = Path(__file__).resolve().parents[1] / "src" / "pengumon" / "web"
 STATIC = WEB / "static"
 JS = STATIC / "js"  # the core and the shared library
-# every module: the core and shared library, and each panel's and dialog's folder (pengumon.ui)
+# every module: the core and shared library, and each panel's and dialog's folder (pengumon.web.ui)
 JS_ROOTS = (JS, STATIC / "panels", STATIC / "dialogs")
 SHARED_CSS = ("tokens.css", "components.css", "page.css", "style.css")
 
@@ -218,11 +218,6 @@ def test_util_js_has_no_literal_target_ids():
     assert "canonicalTargetOrder = []" in text
 
 
-def test_the_dashboard_no_longer_calls_the_removed_endpoints():
-    for path in js_files():
-        assert not re.search(r"/api/(modem|router)/", (WEB / path).read_text(encoding="utf-8")), path
-
-
 # --- metric help popovers (help.js) and the mobile tab bar (tabs.js) -------------------------------------------------
 
 HELP_KEY = re.compile(r"""data-help=["']([A-Za-z0-9_.]+)["']|dataset\.help\s*=\s*["']([A-Za-z0-9_.]+)["']""")
@@ -290,8 +285,10 @@ def _docsis_thresholds():
 
 def _router_thresholds():
     from pengumon.devices.levels import RouterLevelsConfig
+    from pengumon.grades import SIGNAL_LEVELS
     lv = RouterLevelsConfig()  # the defaults (the levels are settings now)
-    return (lv.cpu_warning_pct, lv.mem_warning_pct, lv.mem_critical_pct, lv.wan_critical_pct)
+    return (lv.cpu_warning_pct, lv.mem_warning_pct, lv.mem_critical_pct, lv.wan_critical_pct,
+            *(edge for edge, *_ in SIGNAL_LEVELS))
 
 
 def _panel_help(panel: str) -> str:
@@ -325,7 +322,7 @@ def test_info_buttons_are_plain_buttons_and_metrics_keep_no_title_hint():
 
 def registry_entries() -> dict[str, str]:
     """Panel id -> its tab, from the default export of each discovered panel's panel.js, in the default order."""
-    from pengumon.ui import discover
+    from pengumon.web.ui import discover
     entries: dict[str, str] = {}
     for part in discover().panels:
         text = (STATIC / part.module).read_text(encoding="utf-8")
@@ -348,7 +345,7 @@ def test_tabs_are_named_consistently():
 
 def test_every_panel_folder_has_the_contract_and_is_a_config_id():
     """A panel is a folder: panel.json, panel.html (one section of that panel), panel.js (its registry entry)."""
-    from pengumon.ui import discover, panel_ids
+    from pengumon.web.ui import discover, panel_ids
     from pengumon.web.settings import DashboardConfig
     ui = discover()
     folders = sorted(p.name for p in (STATIC / "panels").iterdir() if p.is_dir())
@@ -366,7 +363,7 @@ def test_every_panel_folder_has_the_contract_and_is_a_config_id():
 def test_no_shared_file_names_a_panel():
     """Adding, removing or renaming a panel touches its own folder only: the page, the config, the module loader,
     the core modules and the shared styles never name one."""
-    from pengumon.ui import discover
+    from pengumon.web.ui import discover
     ids = [p.id for p in discover().panels]
     shared = {
         "templates/index.html": (WEB / "templates" / "index.html").read_text(encoding="utf-8"),
@@ -386,7 +383,7 @@ def test_no_shared_file_names_a_panel():
 async def test_the_page_includes_links_and_loads_every_discovered_folder():
     import json
     from html import unescape
-    from pengumon.ui import discover
+    from pengumon.web.ui import discover
     ui = discover()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         html = (await ac.get("/")).text
@@ -415,7 +412,7 @@ async def test_the_page_includes_links_and_loads_every_discovered_folder():
 async def test_the_page_carries_the_configured_default_layout_in_a_csp_safe_attribute():
     import json
     from html import unescape
-    from pengumon.api.state import STATE_ATTR, AppState
+    from pengumon.state import STATE_ATTR, AppState
     from pengumon.config import AppConfig
     config = AppConfig(dashboard={"order": ["matrix", "diagnosis"], "hidden": ["report"]})
     setattr(app.state, STATE_ATTR, AppState(config=config))
@@ -460,7 +457,7 @@ def test_the_page_skeleton_has_no_optional_feature_markup():
 
 
 def test_every_panel_module_has_the_contract():
-    from pengumon.ui import discover
+    from pengumon.web.ui import discover
     for part in discover().panels:
         text = (STATIC / part.module).read_text(encoding="utf-8")
         assert re.search(r"available\s*[:(]", text), f"{part.module} has no availability function"
@@ -495,7 +492,7 @@ def test_registering_an_action_twice_is_refused():
 def test_every_module_is_loaded():
     """A module nothing loads never runs, so the actions it registers would be missing from the page: every module is
     reached from main.js or from a discovered panel or dialog module (loaded by panels/index.js)."""
-    from pengumon.ui import discover
+    from pengumon.web.ui import discover
     ui = discover()
     seen: set[Path] = set()
     todo = [JS / "main.js", *(STATIC / m for m in ui.modules["panels"] + ui.modules["dialogs"])]
@@ -522,15 +519,6 @@ def test_device_templates_carry_no_ids_so_a_card_can_exist_once_per_device():
             assert "data-f=" in body
 
 
-def test_no_device_roles_are_left():
-    """No module keeps a "the line" / "the router" singleton; a single-device view asks for the primary device."""
-    assert not (JS / "roles.js").exists()
-    for path in js_files():
-        text = (WEB / path).read_text(encoding="utf-8")
-        assert not re.search(r"state\.(lineDevice|routerDevice|clientsDevice)", text), path
-    assert "export function primaryDevice" in (JS / "devices.js").read_text(encoding="utf-8")
-
-
 TECHNOLOGY_WORDS = re.compile(r"docsis|modem|cable|coax|fiber|dsl|snr|dbmv|channel|uncorrectable", re.IGNORECASE)
 
 
@@ -555,7 +543,6 @@ def test_no_coloured_metric_is_graded_against_a_number_in_the_browser():
     for path in js_files():
         text = (WEB / path).read_text(encoding="utf-8")
         assert not re.search(r"rx > 500|tx > 30|cpu_usage_pct > \d|mem_usage_pct > \d|absP [<>]=? \d|snr_db [<>] \d|dbm [<>]=? -\d", text), path
-
 
 
 def test_no_browser_test_file_is_shipped_in_the_static_tree():

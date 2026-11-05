@@ -18,7 +18,8 @@ export const steps = [
     eq("panels without a device are listed apart", await count("#layoutUnavailable .lay-row"), bare ? 2 : 0);
     if (bare) {
       for (const id of ["line", "router"]) eq(`${id} is not shown`, await panelShown(page, id), false);
-      ok("the reason is given", (await page.$$eval("#layoutList .layout-reason", (e) => e.map((x) => x.textContent))).every((t) => t.length > 10));
+      const reasons = await page.$$eval("#layoutUnavailable .layout-reason", (e) => e.map((x) => x.textContent));
+      ok(`the reason says where to fix it, in plain words (${reasons.join(" | ")})`, reasons.length === 2 && reasons.every((t) => /Settings > Devices and services/.test(t) && !/access_line|service_checks|[a-z]+_[a-z]+|no enabled device/.test(t)));
     }
     await click("#layoutList [data-action=movePanel][data-arg=report][data-arg2=up]");
     await click("#layoutList [data-change=togglePanel][data-arg=services]");
@@ -50,6 +51,18 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=layoutModal]");
     await waitCount("#hopMatrixBody tr", 5); // the reload built the rows again
   }, { variants: ALL_VARIANTS }],
+
+  ["a fresh install says how to add a router or modem, with a button to the right Settings section; one with a device does not", async ({ bare, click, eq, ok, page, shown, text, until }) => {
+    eq("the hint is shown only without a device", await shown("#setupHint"), bare);
+    if (!bare) return;
+    ok("it names Settings and the device", /No router or modem added yet/.test(await text("#setupHint")));
+    await page.focus("#setupHint button");
+    await page.keyboard.press("Enter"); // reachable and usable from the keyboard
+    await until(() => document.getElementById("settingsModal").classList.contains("active") && document.querySelector("#set-sec-devices"));
+    await until(() => document.querySelector("#set-sec-devices").getBoundingClientRect().top < innerHeight / 2);
+    await click("#btnSettingsCancel");
+    await until(() => !document.getElementById("settingsModal").classList.contains("active"));
+  }, { variants: ["full", "bare"] }],
 
   ["layout on a phone: hiding both cards of a tab removes the tab; Reset brings it back", async ({ bare, click, eq, layoutMounted, openLayout, page, until }) => {
     await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });

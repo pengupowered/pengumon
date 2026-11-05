@@ -11,7 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from discovery_fakes import FakeDns, FakeLan, three_paths
-from pengumon.api.state import AppState
+from pengumon.state import AppState
 from pengumon.components import Context
 from pengumon.config import AppConfig
 from pengumon.db.repository import DatabaseRepository
@@ -23,9 +23,9 @@ from pengumon.engine.discovery.jobs import KEEP_SECONDS, DiscoveryJobs
 from pengumon.engine.discovery.settings import DiscoverySettings
 from pengumon.main import app
 from pengumon.models.probes import TargetConfig
-from pengumon.notify import Notifier
-from pengumon.notify_settings import WebhookConfig
-from pengumon.webhook import WebhookSender
+from pengumon.notify.notifier import Notifier
+from pengumon.notify.settings import WebhookConfig
+from pengumon.notify.webhook import WebhookSender
 
 ROUTER = TargetConfig(id="router", name="Router", address="192.168.1.1", category="local")
 ISP_1 = TargetConfig(id="isp_1", name="Provider hop 1", address="203.0.113.1", category="isp")

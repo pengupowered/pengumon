@@ -102,6 +102,7 @@ class TargetStats(BaseModel):
     enabled: bool
     color: Optional[str] = None  # from the target's config; None = the category's colour
     group: Optional[str] = None  # from the target's config: hops of one role with the same group are one node
+    short_label: Optional[str] = None  # its role words (engine.path_rules.hop_roles); None while it is switched off
     sent: int = 0
     received: int = 0
     loss_pct: float = 0.0  # Cumulative lifetime loss %

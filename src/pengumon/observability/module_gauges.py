@@ -13,12 +13,12 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from pengumon.capabilities import BAND_2G, BAND_5G, BAND_6G, Capability, ClientsReading, MeshReading
 from pengumon.devices.snapshots import RouterMetricsSnapshot
-from pengumon.grades import CRITICAL, WARN
+from pengumon.grades import CRITICAL, SIGNAL_LEVELS, WARN
 from pengumon.lines.docsis import NO_READING_STATUSES
 from pengumon.lines.docsis_model import DocsisSignalSnapshot
 from pengumon.observability.gauges import Gauge, Sample
 
-WEAK_SIGNAL_DBM = -75  # at or below this a client's signal is "Weak" (clients/api.py SIGNAL_LEVELS)
+WEAK_SIGNAL_DBM = SIGNAL_LEVELS[-1][0]  # at or below this a client's signal is "Weak"
 _BANDS = {BAND_2G: "2g", BAND_5G: "5g", BAND_6G: "6g"}  # any other band: "other"
 _BAND_NAMES = ("2g", "5g", "6g", "other")
 _GRADES = ("good", "warn", "critical")

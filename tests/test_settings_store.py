@@ -296,10 +296,10 @@ async def test_validation_warnings_are_not_refusals(tmp_path):
     checked = await manager.validate({"database.retention_days": 3, "privacy.client_details": "full"}, {})
     assert checked.ok
     messages = [w["message"] for w in checked.warnings]
-    assert "retention under 7 days: line-capacity learning needs 7" in messages
-    assert ("lowering raw retention from 7 to 3 days deletes 4 days of samples at the next hourly cleanup"
+    assert "Under 7 days, Pengumon cannot learn your line's speed from its traffic: that needs 7 days of samples." in messages
+    assert ("Going from 7 to 3 days deletes the oldest 4 days of samples at the next hourly cleanup."
             in messages)
-    assert any("client details full" in m for m in messages)
+    assert any("anyone who can reach the page sees" in m for m in messages)
 
 
 async def test_list_rules_ids_renames_and_hop_ids(tmp_path):
@@ -364,6 +364,11 @@ async def test_a_secrets_write_failure_commits_nothing(tmp_path, monkeypatch):
     with pytest.raises(SecretsWriteFailed):
         await manager.apply(1, {"line.isp_name": "X"}, {}, {"ntfy.token": "tk"})
     assert manager.revision == 1 and await manager.repository.settings_revision() == 1
+
+
+def test_an_empty_config_has_no_unknown_keys():
+    """A fresh start has no config.yaml: the first import must not log "Settings import: : not a setting"."""
+    assert read_settings({}, move_secrets=True).notes == []
 
 
 async def test_export_round_trips_through_import(tmp_path):

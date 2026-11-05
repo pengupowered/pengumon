@@ -206,3 +206,29 @@ def test_release_assets_refuses_a_dist_folder_without_exactly_one_wheel(tmp_path
     done = subprocess.run(["bash", str(RELEASE_ASSETS), str(tmp_path / "dist"), str(tmp_path / "out")],
                           capture_output=True, text=True, check=False)
     assert done.returncode == 1 and "exactly one pengumon-*.whl" in done.stderr
+
+
+@posix_shell
+def test_a_user_install_puts_the_pengumon_command_on_the_path_through_a_link_in_local_bin(tmp_path):
+    """The block of install.sh that makes the link, run on its own with a made-up home and install."""
+    block = SH[SH.index("# ---- the command"):SH.index("# ---- service")]
+    home, app = tmp_path / "home", tmp_path / "app" / "venv" / "bin"
+    app.mkdir(parents=True)
+    (app / "pengumon").write_text("#!/bin/sh\n")
+
+    def run(path: str, scope: str = "user") -> subprocess.CompletedProcess:
+        script = f'say() {{ printf "%s\\n" "$*"; }}\nSCOPE={scope}\nPENGUMON="{app / "pengumon"}"\n{block}\necho "CMD=$CMD"\n'
+        return subprocess.run(["sh", "-c", script], env={"HOME": str(home), "PATH": path}, capture_output=True, text=True, check=True)
+
+    link = home / ".local" / "bin" / "pengumon"
+    off = run("/usr/bin:/bin")  # ~/.local/bin is not on the PATH: the link is made, the person is told, the full path is shown
+    assert link.is_symlink() and link.resolve() == (app / "pengumon").resolve()
+    assert "is not on your PATH yet" in off.stdout and f"CMD={app / 'pengumon'}" in off.stdout
+    on = run(f"{home / '.local' / 'bin'}:/usr/bin:/bin")  # again, now on the PATH: nothing to add, the short command is shown
+    assert "not on your PATH" not in on.stdout and "CMD=pengumon" in on.stdout
+    link.unlink()
+    link.write_text("something else")  # a file of the person's: left alone
+    kept = run("/usr/bin:/bin")
+    assert link.read_text() == "something else" and "left alone" in kept.stdout
+    system = run("/usr/bin:/bin", scope="system")
+    assert "CMD=" in system.stdout and "Linked" not in system.stdout

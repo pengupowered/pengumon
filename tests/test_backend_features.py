@@ -3,6 +3,7 @@
 import asyncio
 import re
 import time
+from datetime import timedelta, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -20,7 +21,7 @@ from pengumon.main import app
 from pengumon.incidents.model import Incident
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.models.probes import ProbeSample, TargetConfig, TargetStats
-from pengumon.notify import Notifier
+from pengumon.notify.notifier import Notifier
 from pengumon.reports.common import find_primary_failing_hop
 from pengumon.reports.dossier import build_dossier
 from pengumon.reports.reliability import build_report
@@ -39,12 +40,13 @@ def _cfg():
     )
 
 
-async def _repo(tmp_path, loss=None, minutes=30):
-    """Samples for the last `minutes` minutes, one per target every 2 s; loss maps target -> every Nth lost."""
+async def _repo(tmp_path, loss=None, minutes=30, now=None):
+    """Samples for the `minutes` minutes before `now` (default: the clock), one per target every 2 s; loss maps
+    target -> every Nth lost."""
     repo = DatabaseRepository(db_path=str(tmp_path / "t.db"))
     await repo.initialize()
     loss = loss or {}
-    now = time.time()
+    now = now or time.time()
     samples = []
     for i in range(minutes * 30):
         ts = now - minutes * 60 + i * 2
@@ -334,27 +336,28 @@ async def test_classifier_calls_incident_callbacks():
 
 @pytest.mark.asyncio
 async def test_report_day_and_hour_buckets_follow_tz_offset(tmp_path, app_state):
-    repo = await _repo(tmp_path, loss={"hub": 4}, minutes=2)
-    now = time.time()
+    now = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC: the 2-minute window is inside one hour, whatever the clock says
+    repo = await _repo(tmp_path, loss={"hub": 4}, minutes=2, now=now)
     utc = await build_report(repo, _cfg(), 2, now=now)
-    east = await build_report(repo, _cfg(), 2, now=now, tz_offset_minutes=840)
-    west = await build_report(repo, _cfg(), 2, now=now, tz_offset_minutes=-840)
-    hour = lambda r: r["loss_by_hour"][0]["hour"]
+    east = await build_report(repo, _cfg(), 2, now=now, tz=timezone(timedelta(minutes=840)))
+    west = await build_report(repo, _cfg(), 2, now=now, tz=timezone(timedelta(minutes=-840)))
+    hour = lambda r: [h["hour"] for h in r["loss_by_hour"]]  # noqa: E731
     assert east["tz_offset_minutes"] == 840
-    assert (hour(east) - hour(utc)) % 24 in (14, 15)  # the 2-minute window may straddle an hour boundary
-    assert (hour(utc) - hour(west)) % 24 in (14, 15)
-    # +14 h and -14 h are 28 h apart, so the sample day differs between them
-    assert east["availability"]["days"] != west["availability"]["days"]
+    assert (hour(utc), hour(east), hour(west)) == ([8], [22], [18])
+    assert (utc["availability"]["days"], east["availability"]["days"], west["availability"]["days"]) == (
+        ["2025-10-09"], ["2025-10-09"], ["2025-10-08"])
 
     app_state.repository = repo
     app_state.config = _cfg()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get("/api/report?days=1&tz_offset_minutes=-300")
         assert res.status_code == 200 and res.json()["tz_offset_minutes"] == -300
+        res = await ac.get("/api/report?days=1&tz_offset_minutes=-300&tz=Asia/Kolkata")  # the named zone wins
+        assert res.status_code == 200 and res.json()["tz_offset_minutes"] == 330
         assert (await ac.get("/api/report?days=1&tz_offset_minutes=841")).status_code == 422
 
 
 def test_prometheus_label_values_escape_newlines():
     """A newline in a label value (a target name, say) must not end the sample line."""
-    from pengumon.metrics import escape_label
+    from pengumon.observability.prometheus import escape_label
     assert escape_label('a "b"\nc\\d') == 'a \\"b\\"\\nc\\\\d'

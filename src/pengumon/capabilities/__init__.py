@@ -10,9 +10,10 @@ that produced nothing in a poll is listed in `PollResult.missing` with the reaso
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import ClassVar, FrozenSet, Literal, Mapping, Optional, Protocol, Tuple
+from typing import TYPE_CHECKING, ClassVar, FrozenSet, Literal, Mapping, Optional, Protocol, Tuple
 
-from pengumon.lines.docsis_model import DocsisChannel
+if TYPE_CHECKING:
+    from pengumon.lines.docsis_model import DocsisChannel
 
 
 class Capability(str, Enum):
@@ -65,7 +66,7 @@ class LineReading:
     for technology "docsis"."""
 
     technology: Literal["docsis"]
-    channels: Tuple[DocsisChannel, ...] = ()
+    channels: Tuple["DocsisChannel", ...] = ()
 
 
 # Wi-Fi bands a client can be on. A driver that cannot tell a band leaves `Client.band` None; a band that is none of

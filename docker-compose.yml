@@ -35,6 +35,9 @@ services:
     environment:
       - PENGUMON_HOST=0.0.0.0
       - PENGUMON_PORT=8000
+      # The host's time zone (e.g. America/New_York), the zone Settings starts with: quiet hours, the daily route check
+      # and the reports' days follow it. Empty keeps the image's UTC. scripts/deploy.sh sets it from the host.
+      - TZ=${TZ:-}
       - PENGUMON_ACCESS_TOKEN=${PENGUMON_ACCESS_TOKEN:-}
       - PENGUMON_ALLOWED_HOSTS=${PENGUMON_ALLOWED_HOSTS:-}
       - PENGUMON_SESSION_MAX_AGE_DAYS=${PENGUMON_SESSION_MAX_AGE_DAYS:-}

@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initChrome();
   await Promise.all([initTargets(), loadDevices(), initSettingsValues()]);
   initHelp();
+  document.getElementById('setupHint').hidden = !state.devicesKnown || state.devices.length > 0;
   mountLayout(await loadModules(), context());
   initTabs();
   connectWebSocket();

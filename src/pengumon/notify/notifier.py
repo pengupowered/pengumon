@@ -1,16 +1,14 @@
 """Push notifications for incidents: ntfy (https://ntfy.sh) and webhooks (JSON, Slack, Discord), either or both.
 
 PENGUMON_NOTIFY_URL is the ntfy topic URL (for example https://ntfy.sh/my-topic or a self-hosted server);
-PENGUMON_NOTIFY_TOKEN, when set, is sent as a Bearer token. Webhooks are listed under `notifications:` in config.yaml
-(webhook.py, docs/webhooks.md). Every channel hears the same alerts, after the same rules: expected conditions and
-app outages inside their grace period are quiet, and the `alerts:` settings (notify_policy.py) say when the rest goes
-out: a severity filter, a delay, quiet hours that hold an alert until they end, and how often one cause repeats.
+PENGUMON_NOTIFY_TOKEN, when set, is sent as a Bearer token. Webhooks are set on the Settings page (the
+`notifications.webhooks` list; notify/webhook.py, docs/webhooks.md). Every channel hears the same alerts, after the same
+rules: expected conditions and app outages inside their grace period are quiet, and the `alerts:` settings
+(notify/policy.py) say when the rest goes out: a severity filter, a delay, quiet hours that hold an alert until they end, and how often one cause repeats.
 Delivery runs in background tasks with a short timeout, so the classifier never waits for the network.
 
-As a component (register), the notifier is always built, from the environment, the Settings secrets and the config,
-and left on the context for the classifier and the service checks (with no channel it announces nothing). A saved
-change to the channels or the rules reaches it through `reconfigure`, with no restart; what it already announced, what
-it sent lately and what is waiting for its time all carry over.
+A saved change to the channels or the rules reaches the notifier through `reconfigure`, with no restart; what it
+already announced, what it sent lately and what is waiting for its time all carry over (notify/component.py).
 """
 
 import asyncio
@@ -23,16 +21,14 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 
 import httpx
 
-from pengumon.components import Component, Context
 from pengumon.incidents.taxonomy import is_service_kind
 from pengumon.incidents.model import Incident
-from pengumon.notify_policy import AlertPolicy, Timing
-from pengumon.notify_settings import SECRET_PREFIX, NotificationsConfig, WebhookConfig
-from pengumon.observability import get_logger
+from pengumon.notify.policy import AlertPolicy, Timing
+from pengumon.notify.settings import SECRET_PREFIX, NotificationsConfig, WebhookConfig
 from pengumon.observability.telemetry import alert_delivery_duration, alerts, tracer
 from pengumon.secrets import SECRETS_DIR, SecretStore, resolve_webhook_secret
 from pengumon.settings.env import secret_override
-from pengumon.webhook import Alert, WebhookSender, alert_link, failure_words
+from pengumon.notify.webhook import Alert, WebhookSender, alert_link, failure_words
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -476,37 +472,3 @@ def _resolve_headers(name: str, headers: Mapping[str, str], env: Mapping[str, st
             value = secret
         resolved[header] = value
     return resolved
-
-
-def _describe(notifier: Notifier) -> str:
-    return ", ".join(c["name"] if c["kind"] == "ntfy" else f"webhook {c['name']} ({c['format']})"
-                     for c in notifier.channels()) or "no channel"
-
-
-async def register(ctx: Context) -> Optional[Component]:
-    config, store = ctx.config, ctx.state.secret_store
-
-    def policy() -> AlertPolicy:
-        return AlertPolicy(config.alerts, config.general.timezone)
-
-    def secret_value():
-        manager = getattr(ctx.state, "settings", None)  # W1's SettingsManager; None where the store is not running (tests)
-        return manager.secret_value if manager is not None else None
-
-    notifier = Notifier.build(config.notifications, store, policy=policy(), secret_value=secret_value())
-    channels = notifier.channels()
-    log = get_logger("pengumon")  # the app's lifecycle logger name
-    log.info(f"Incident notifications enabled: {_describe(notifier)}." if channels
-             else "Incident notifications: no channel configured yet.")
-    ctx.notifier = ctx.state.notifier = notifier
-
-    hub = getattr(ctx, "settings", None)  # the settings hub (W1); without it the notifier is set at start only
-    if hub is not None:
-        @hub.on(keys=["notifications.public_url", "general.timezone"], prefixes=["alerts."], lists=["webhooks"],
-                slots=["ntfy.", "webhook.", "webhook_header."], name="notify.reconfigure")
-        def _reconfigure(change) -> None:
-            built = build_channels(config.notifications, store, secret_value=secret_value())
-            notifier.reconfigure(built.url, built.token, built.senders, config.notifications.public_url, policy())
-            log.info(f"Notifications reconfigured: {_describe(notifier)}.")
-
-    return Component("notify", stop=notifier.aclose)

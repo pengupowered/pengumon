@@ -5,7 +5,7 @@
 - Raw probe samples, device readings (`device_samples`, `line_samples`): Kept for `database.retention_days` (7). Pruned at startup and hourly; the log line says how many rows went, and an incremental vacuum then hands the space back to the OS Where: `cleanup_old_samples`
 - Per-minute rollups (`rollup_1m`): One row per target and minute (count, ok, latency sum/min/max, jitter), upserted on every flush. Kept for `database.rollup_retention_days` (400). They feed every history chart, the report, the dossier and the incident inspector (its hop table and charts, at minute resolution) beyond the raw window Where: `cleanup_old_samples`
 - Incidents: Kept (hundreds of rows, a few hundred KB). They are the outage record, including the ones classified as expected (busy line)
-- Dashboard live stream: The incident history (up to 500 entries, ~0.5 MB) is sent once per dashboard and again only when an incident changes; every other second's message is ~12 KB. With no dashboard open nothing is built or queried Where: `api/ws.py`
+- Dashboard live stream: The incident history (up to 500 entries, ~0.5 MB) is sent once per dashboard and again only when an incident changes; every other second's message is ~12 KB. With no dashboard open nothing is built or queried Where: `live/ws.py`
 - Disk writes: Probe samples (and their rollup upserts) are committed in one transaction every 10 s (`sample_flush_seconds`); reads and shutdown flush first. A crash can lose at most 10 s of samples. One idle connection stays open so SQLite does not checkpoint and delete the WAL after every write; every connection uses `synchronous=NORMAL` Where: `db/probes.py`
 
 Measured 2026-10-10 on the live container (before 0.2.0): disk writes 93 → 16 KB/s (~8 GB/day → ~1.4 GB/day), network out
@@ -231,8 +231,8 @@ are collected every 30 s.
 
 ## 🔔 Notifications
 
-Set `PENGUMON_NOTIFY_URL` to an [ntfy](https://ntfy.sh) topic URL (and `PENGUMON_NOTIFY_TOKEN` for a protected
-server) to be told when an incident starts and when it resolves. Expected and `busy` conditions never notify,
-there is at most one message per cause every 5 minutes, and delivery runs in a background task so a slow ntfy
+Enter an [ntfy](https://ntfy.sh) topic URL (and a token for a protected server) on the Settings page, Alerts (or set
+`PENGUMON_NOTIFY_URL` and `PENGUMON_NOTIFY_TOKEN`, which win), to be told when an incident starts and when it resolves. Expected and `busy` conditions never notify,
+one cause is not repeated within the repeat window ([webhooks.md](webhooks.md#when-alerts-go-out)), and delivery runs in a background task so a slow ntfy
 server cannot delay the probes. Webhooks (Discord, Slack, Home Assistant, any URL) get the same alerts after the same
 rules: [webhooks.md](webhooks.md).

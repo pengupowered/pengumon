@@ -1,7 +1,7 @@
-"""The discovery component: the job store behind POST /api/discovery (engine/discovery/api.py), and the background
+"""The discovery component: the job store behind POST /api/discovery (api/discovery.py), and the background
 route-change checks (drift.py).
 
-`router` is always mounted. `register` makes the job store, whose runs diff their draft against the applied probe
+The routes are always mounted. `register` makes the job store, whose runs diff their draft against the applied probe
 path (engine/path.py) and the hops removed from it; the configured devices' hosts get one front-page request each. A
 run the owner starts begins when the path editor asks for one. With `discovery.background` on (the default) it also
 makes the DriftChecker: started with the app, it checks the route once a day, and the classifier's "incident ended"
@@ -18,13 +18,12 @@ from urllib.parse import urlsplit
 
 from pengumon.components import Component, Context
 from pengumon.engine.discovery.addresses import parse
-from pengumon.engine.discovery.api import router
 from pengumon.engine.discovery.drift import DriftChecker
 from pengumon.engine.discovery.engine import Deps, live_path_from_targets, run_discovery
 from pengumon.engine.discovery.jobs import DiscoveryJobs
 from pengumon.engine.path import path_manager
 
-__all__ = ["OPTIONAL", "register", "router"]
+__all__ = ["OPTIONAL", "register"]
 
 OPTIONAL = True
 
