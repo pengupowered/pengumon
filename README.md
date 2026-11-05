@@ -222,6 +222,9 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
 
 ## Development
 
+Contributions are welcome: [CONTRIBUTING.md](https://github.com/pengupowered/pengumon/blob/main/CONTRIBUTING.md) explains how, and the [code of conduct](https://github.com/pengupowered/pengumon/blob/main/CODE_OF_CONDUCT.md)
+applies. Report a security problem privately, as [SECURITY.md](https://github.com/pengupowered/pengumon/blob/main/SECURITY.md) describes.
+
 ```bash
 pip install -e ".[dev]"
 PENGUMON_CONFIG=config.yaml PENGUMON_DATA=data python -m pengumon.main   # :8000 on 127.0.0.1, ./config.yaml

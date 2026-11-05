@@ -4,6 +4,9 @@ All notable changes to Pengumon are listed here. The format follows [Keep a Chan
 and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+### Added
+- A contributing guide, a code of conduct (Contributor Covenant 2.1), a security policy (private reports through
+  GitHub), and forms for bug reports, ideas and pull requests.
 
 ## [0.23.0] - 2026-11-05
 ### Fixed

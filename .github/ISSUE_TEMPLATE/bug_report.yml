@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in Pengumon does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Keep your network private:** replace addresses, device names and passwords with made-up
+        ones before pasting anything. A security problem goes to the private report in SECURITY.md instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Settings > About this install, or `pengumon version`.
+      placeholder: "0.23.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is Pengumon installed?
+      options:
+        - Container (compose.release.yaml or docker-compose.yml)
+        - install.sh (Linux or macOS)
+        - install.ps1 (Windows)
+        - uv or pip
+        - From source
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and browser
+      placeholder: "Ubuntu 24.04, Firefox 140"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: The steps to get there, if you know them.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: Pengumon's log around the time (`docker logs pengumon` for a container, or the terminal it runs in), with your own addresses and names replaced.
+      render: text
+  - type: textarea
+    id: devices
+    attributes:
+      label: Devices, if it involves one
+      description: The modem or router model and the driver (Settings > Devices and services), without its address or password.

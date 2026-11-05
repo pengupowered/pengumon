@@ -1,0 +1,26 @@
+name: Idea or feature request
+description: Something Pengumon could do, or do better.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would it help you with?
+      description: The situation or question you have about your network, rather than a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Pengumon to do?
+  - type: textarea
+    id: devices
+    attributes:
+      label: Your setup, if it matters
+      description: For a new device driver, the modem or router model and its firmware; no addresses or passwords.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I would like to work on this myself (see CONTRIBUTING.md).
