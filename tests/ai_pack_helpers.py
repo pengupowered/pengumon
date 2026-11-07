@@ -18,6 +18,7 @@ class Section:               # capabilities.contrib.ModuleSection
     findings: List[str] = field(default_factory=list)
     table: Optional[Tuple[List[str], List[List[str]]]] = None
     day_columns: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    shorter: Dict[int, Tuple[str, ...]] = field(default_factory=dict)
 
 
 def ts(month: int, day: int, hh: int, mm: int = 0, ss: int = 0) -> float:

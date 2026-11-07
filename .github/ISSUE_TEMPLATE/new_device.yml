@@ -1,0 +1,74 @@
+name: Support for a new device
+description: A modem, router or other device Pengumon cannot read yet.
+labels: ["device"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. Before you start, see the [supported devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md#supported-devices)
+        (a generic driver for SNMP, UPnP or OpenWrt may already cover yours) and
+        [how to add a device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md).
+
+        **Keep your network private.** Anything you paste here is public. Replace IP addresses, MAC addresses, serial
+        numbers, Wi-Fi names, host names and account details with made-up ones, and **delete** passwords, tokens, cookies
+        and community strings. The guide has a table of what to replace.
+  - type: input
+    id: model
+    attributes:
+      label: Make and model
+      placeholder: "Example Networks EX-1000"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Usually on the device's status or about page.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of device is it?
+      options:
+        - Cable modem or gateway
+        - Fiber or DSL modem
+        - Router
+        - Mesh Wi-Fi system
+        - Switch or access point
+        - Something else
+    validations:
+      required: true
+  - type: checkboxes
+    id: offers
+    attributes:
+      label: What does it offer? (tick everything that you know works)
+      options:
+        - label: A web page I sign in to (no API I know of)
+        - label: A documented or discoverable HTTP/JSON API
+        - label: SNMP
+        - label: UPnP (Internet Gateway Device)
+        - label: SSH or Telnet only
+        - label: I do not know
+  - type: textarea
+    id: wants
+    attributes:
+      label: What would you like Pengumon to show from it?
+      description: For example the cable line levels, WAN traffic, CPU and memory, connected devices, mesh nodes.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: What you know about how it answers
+      description: >-
+        The address of the status page or API (path only, no host), how it signs in, anything that upsets it (reads that
+        are too frequent, one session at a time). **Redacted** samples of its answers are welcome, but only after the
+        guide's redaction steps; a link to the vendor's API documentation is better still.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I will write the driver myself, following docs/adding-a-device.md.
+        - label: I can test a driver someone else writes, on this device.
+        - label: I have redacted everything I pasted above (addresses, MACs, serials, names), and removed any password, token or cookie.
+          required: true

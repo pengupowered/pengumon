@@ -50,6 +50,13 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .status-pill .sp-word { display: none; }
 .status-pill #statusPillText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .status-pill .sp-metrics { flex: none; }
+/* on a wide screen the pill never cuts its figures: the verdict title gives way first (a phone shows one word instead).
+   A grid, so the title's column may shrink to nothing and the pill's smallest width is the dot and the figures. */
+@media (min-width: 721px) {
+  .status-pill { display: inline-grid; grid-auto-flow: column; grid-template-columns: auto minmax(0, max-content) max-content; min-width: min-content; }
+}
+/* a narrow window: the name beside the logo and the live tick make room for the figures, as on a phone */
+@media (min-width: 721px) and (max-width: 900px) { .brand-name, .live { display: none; } }
 .status-pill .sep { color: var(--ink-4); }
 .status-pill .sp-metrics { display: inline-flex; gap: 7px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .topbar.st-good .status-pill .dot::after, .topbar.st-warn .status-pill .dot::after, .topbar.st-busy .status-pill .dot::after, .topbar.st-crit .status-pill .dot::after { animation: breathe 2.4s var(--ease) infinite; }

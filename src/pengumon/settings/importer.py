@@ -29,7 +29,8 @@ from pengumon.settings import lenient, registry
 from pengumon.settings.document import SettingsDocument
 
 DROPPED_KEYS = {"prober.ping_count_per_probe": "does nothing; dropped"}
-LIST_WORDS = {"devices": "devices", "services": "services", "webhooks": "webhooks", "dns_probes": "DNS lookups"}
+LIST_WORDS = {"devices": "devices", "services": "services", "webhooks": "webhooks", "dns_probes": "DNS lookups",
+              "themes": "custom themes"}
 _SECRET_NAME_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 
 

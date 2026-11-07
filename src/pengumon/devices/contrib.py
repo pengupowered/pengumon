@@ -31,6 +31,10 @@ CLIENT_DROP_RATIO = 0.7      # online clients below this share of the median of 
 COUNTER_WRAP_ZONE = 1 << 31  # a counter that went backwards from within 2 GiB of 2**32 wrapped (32-bit counters)
 NODE_ROWS = 8                # mesh nodes listed in the table
 MESH_BUCKET_SECONDS = 60
+EVENT_TIMES = 6              # a node's falls to 0 clients, and the sharp drops, listed with their time: the longest
+EVENT_TIMES_SHORTEST = 2     # over its budget, the section shortens such a list to this before it leaves anything out
+DROP_AT_FALL_SECONDS = 120.0  # a sharp drop this close to a node's fall to 0 clients is that fall (its events' reach)
+NEAR_WEAK_DB = 2             # a Wi-Fi backhaul this close above weak says so: a node on it often drops out
 
 
 def _first_device(ctx: ContribContext, capability) -> Optional[Any]:
@@ -413,6 +417,19 @@ class RouterContribution:
 # =============================================================================================================
 
 @dataclass(frozen=True)
+class NodeFacts:
+    role: str                          # the node's role key
+    backhaul: str                      # in words, for the table
+    median: float                      # clients per minute
+    lowest: float
+    falls: Tuple[Tuple[float, int], ...] = ()   # (minute it fell to 0 clients, minutes at 0 from then)
+    minutes_at_0: int = 0              # every minute at 0 clients, a stretch the window starts with too
+    weak: str = ""                     # "weak" or "near weak": its Wi-Fi backhaul's signal; "" otherwise
+    rssi: Optional[int] = None         # that backhaul's signal, dBm
+    descriptor: str = ""               # what tells it apart without a name ("the only node on Wi-Fi backhaul")
+
+
+@dataclass(frozen=True)
 class WifiFacts:
     identifiers: Dict[str, str]
     readings: int = 0                  # polls that carried a client list
@@ -422,8 +439,19 @@ class WifiFacts:
     wifi_5g: Optional[float] = None
     wifi_other: Optional[float] = None
     drops: int = 0
-    nodes: Tuple[Tuple[str, str, float, float, int], ...] = ()  # role key, backhaul, median, lowest, times at 0
+    drop_times: Tuple[Tuple[float, float, float], ...] = ()   # (start, seconds, lowest count) of each sharp drop
+    nodes: Tuple[NodeFacts, ...] = ()
     events: Tuple[ModuleEvent, ...] = ()
+
+
+def _weakness(node) -> str:
+    """"weak" or "near weak" (fair, at most NEAR_WEAK_DB above weak) for a node's Wi-Fi backhaul; "" otherwise."""
+    rssi = getattr(node, "backhaul_rssi_dbm", None) if node is not None and node.backhaul == "wifi" else None
+    if rssi is None:
+        return ""
+    if signal_grade(rssi)["word"] == SIGNAL_WEAK[0]:
+        return "weak"
+    return "near weak" if rssi - SIGNAL_LEVELS[-1][0] <= NEAR_WEAK_DB else ""
 
 
 def _backhaul_words(node) -> str:
@@ -433,9 +461,39 @@ def _backhaul_words(node) -> str:
         return "wired"
     words = f"Wi-Fi {node.backhaul_band}" if node.backhaul_band else "Wi-Fi"
     if node.backhaul_rssi_dbm is not None:
-        grade = signal_grade(node.backhaul_rssi_dbm)
-        words += f", {node.backhaul_rssi_dbm} dBm ({grade['word'].lower()})"
+        grade = signal_grade(node.backhaul_rssi_dbm)["word"].lower()
+        if _weakness(node) == "near weak":
+            grade += ", near weak: a backhaul this weak often drops the node"
+        words += f", {node.backhaul_rssi_dbm} dBm ({grade})"
     return words
+
+
+def _descriptors(ids: List[str], live_nodes: Dict[str, Any]) -> Dict[str, str]:
+    """What tells a node apart without its name: the only one on a Wi-Fi (or a wired) backhaul. Said only when at most
+    one node's backhaul is not known (the main router reports none), so the claim holds."""
+    kinds = {nid: getattr(live_nodes.get(nid), "backhaul", None) for nid in ids}
+    if len(ids) < 2 or sum(1 for k in kinds.values() if k is None) > 1:
+        return {}
+    out = {}
+    for kind, words in (("wifi", "the only node on Wi-Fi backhaul"), ("wired", "the only node on wired backhaul")):
+        alone = [nid for nid, k in kinds.items() if k == kind]
+        if len(alone) == 1:
+            out[alone[0]] = words
+    return out
+
+
+def _length(seconds: float) -> str:
+    """"40 s", "5 min"."""
+    return f"{round(seconds)} s" if seconds < 60 else f"{round(seconds / 60)} min"
+
+
+def _timed(items: List[Tuple[float, str]], weight: List[float], count: int) -> str:
+    """The `count` heaviest of `items` ((time, words)), in time order, then how many more: the pack's {minute:ts}
+    token stands for the time."""
+    order = sorted(range(len(items)), key=lambda k: (-weight[k], items[k][0]))[:count]
+    shown = ", ".join(f"{{minute:{items[k][0]:.0f}}} ({items[k][1]})" for k in sorted(order, key=lambda k: items[k][0]))
+    more = len(items) - len(order)
+    return shown + (f"; {more} more, shorter" if more else "")
 
 
 class WifiMeshContribution:
@@ -445,9 +503,9 @@ class WifiMeshContribution:
     budget_chars: ClassVar[int] = 1800
     events: ClassVar[Tuple[EventKind, ...]] = (
         EventKind("clients.drop", "online clients dropped to {value:.0f}", frozenset({"router"}), 120.0,
-                  "sharp drops in online clients"),
+                  "sharp drops in online clients", by_time_of_day=True),
         EventKind("mesh.node_empty", "{subject} at 0 clients", frozenset({"router"}), 120.0,
-                  "mesh nodes falling to 0 clients"),
+                  "mesh nodes falling to 0 clients", by_time_of_day=True),
     )
     redaction: ClassVar[RedactionHints] = RedactionHints(
         fields={"counts": ("keep", "keep", "keep"), "backhaul": ("keep", "keep", "keep"),
@@ -471,8 +529,9 @@ class WifiMeshContribution:
             f"names or addresses. Signal in dBm, closer to 0 is stronger: {', '.join(words)}. A mesh node joins the "
             "main router by cable (\"wired backhaul\") or by Wi-Fi; a weak Wi-Fi backhaul slows and drops everything "
             "behind that node. A sharp drop in clients, or a node falling to 0 clients, at the time of an incident "
-            "points to the Wi-Fi or that node rather than the line. The probes measure Pengumon's own computer's "
-            "path: other devices' Wi-Fi trouble shows in them only when that computer is on Wi-Fi too."
+            "points to the Wi-Fi or that node rather than the line. A node falling to 0 clients at the times of the "
+            "user's problem, with no incident on the path, points to that node's link. The probes measure Pengumon's "
+            "own computer's path: other devices' Wi-Fi trouble shows in them only when that computer is on Wi-Fi too."
         )
 
     async def collect(self, ctx: ContribContext) -> Optional[WifiFacts]:
@@ -501,10 +560,17 @@ class WifiMeshContribution:
             below.append(bool(m and online < CLIENT_DROP_RATIO * m))
         sample_ts, sample_online = pad_ts[lo:hi], pad_online[lo:hi]
         drops = 0
+        drop_times = []
+        step = median([b - a for a, b in zip(sample_ts, sample_ts[1:])]) or float(MESH_BUCKET_SECONDS)
         for first, last in _runs(sample_ts, below):
             drops += 1
-            events.append(ModuleEvent("clients.drop", sample_ts[first], sample_ts[last], value=float(min(
-                sample_online[first:last + 1]))))
+            lowest = float(min(sample_online[first:last + 1]))
+            events.append(ModuleEvent("clients.drop", sample_ts[first], sample_ts[last], value=lowest))
+            # until the first reading back up (or one reading's step, when the next one is missing or far)
+            after = sample_ts[last + 1] if last + 1 < len(sample_ts) else None
+            near = after is not None and after - sample_ts[last] <= MAX_GAP_SECONDS
+            until = after if near else sample_ts[last] + step
+            drop_times.append((sample_ts[first], until - sample_ts[first], lowest))
         # the mesh: stored per-node counts, and what the router's monitor knows now (labels, backhaul)
         live_nodes = {n.id: n for n in (getattr(getattr(ctx.live, "latest_mesh", None), "nodes", None) or ())}
         rows = await ctx.repository.get_mesh_counts(cfg.id, ctx.start, ctx.end, MESH_BUCKET_SECONDS)
@@ -527,15 +593,31 @@ class WifiMeshContribution:
         for bucket, nid, mean in rows:
             per_node.setdefault(nid, []).append((bucket, mean))
         table = []
+        described = _descriptors(ids, live_nodes)
+        per_minute = MESH_BUCKET_SECONDS / 60.0
         for nid in ids:
             series = per_node.get(nid, [])
             values = [v for _, v in series]
-            if values:
-                table.append((roles[nid], _backhaul_words(live_nodes.get(nid)), median(values), min(values),
-                              sum(v == 0 for v in values)))
-            for (_, before), (bucket, after) in zip(series, series[1:]):
-                if before > 0 and after == 0:
+            # each fall to 0 clients (from a count above 0) and how long it stayed at 0
+            falls: List[List[float]] = []
+            in_fall = False
+            for k, (bucket, v) in enumerate(series):
+                if v != 0:
+                    in_fall = False
+                    continue
+                if k > 0 and series[k - 1][1] > 0:
+                    falls.append([float(bucket), 0.0])
+                    in_fall = True
                     events.append(ModuleEvent("mesh.node_empty", float(bucket), float(bucket), roles[nid]))
+                if in_fall:
+                    falls[-1][1] += per_minute
+            if values:
+                node = live_nodes.get(nid)
+                table.append(NodeFacts(
+                    roles[nid], _backhaul_words(node), median(values), min(values),
+                    tuple((a, round(m)) for a, m in falls), round(sum(v == 0 for v in values) * per_minute),
+                    _weakness(node), getattr(node, "backhaul_rssi_dbm", None) if node is not None else None,
+                    described.get(nid, "")))
         events.sort(key=lambda e: e.start)
 
         window = have[lo:hi]
@@ -547,7 +629,7 @@ class WifiMeshContribution:
         return WifiFacts(
             identifiers=identifiers, readings=len(window), online=med(data.clients_online), wired=med(data.clients_wired),
             wifi_2g=med(data.clients_wifi_2g), wifi_5g=med(data.clients_wifi_5g), wifi_other=med(data.clients_wifi_other),
-            drops=drops, nodes=tuple(table), events=tuple(events))
+            drops=drops, drop_times=tuple(drop_times), nodes=tuple(table), events=tuple(events))
 
     def emit(self, facts: Optional[WifiFacts]) -> List[ModuleEvent]:
         return list(facts.events) if facts is not None else []
@@ -560,26 +642,75 @@ class WifiMeshContribution:
         if f.wifi_other:
             parts.append(f"other bands {f.wifi_other:g}")
         findings = [f"Online clients: median {f.online:g} ({', '.join(parts)}); sharp drops {f.drops}."]
+        shorter: Dict[int, Tuple[str, ...]] = {}
+
+        def name(n: NodeFacts) -> str:
+            # at Full the role becomes the node's own name; elsewhere a descriptor tells the user which node it is
+            return f"{n.role} ({n.descriptor})" if n.descriptor and detail != "full" else n.role
+
+        def listed(head: str, items: List[Tuple[float, str]], weight: List[float]) -> None:
+            """A bullet listing timed items, with shorter versions down to EVENT_TIMES_SHORTEST of them."""
+            findings.append(f"{head}{_timed(items, weight, EVENT_TIMES)}.")
+            fewer = range(min(EVENT_TIMES, len(items)) - 1, EVENT_TIMES_SHORTEST - 1, -1)
+            if fewer:
+                shorter[len(findings) - 1] = tuple(f"{head}{_timed(items, weight, n)}." for n in fewer)
+
+        nodes = list(f.nodes[:NODE_ROWS])
+        empty = sorted((n for n in f.nodes if n.minutes_at_0), key=lambda n: (-n.minutes_at_0, n.role))
+
+        def fell(n: NodeFacts, extra: str = "") -> str:
+            """"Mesh node 3 fell to 0 clients 6 times (37 min in all)"; `extra` goes inside the brackets."""
+            if not n.falls:          # at 0 from the window's start, no fall in it
+                return f"{name(n)} at 0 clients for {n.minutes_at_0} min" + (f" ({extra})" if extra else "")
+            times = "once" if len(n.falls) == 1 else f"{len(n.falls)} times"
+            more = f"; {extra}" if extra else ""
+            return f"{name(n)} fell to 0 clients {times} ({n.minutes_at_0} min in all{more})"
+
+        for n in empty:
+            if n.falls:
+                listed(fell(n) + ": ", [(a, f"{m} min") for a, m in n.falls], [float(m) for _, m in n.falls])
+        if f.drop_times:
+            # a drop when a node fell to 0 clients is that fall, listed above: only the others get their times
+            fall_times = [a for n in f.nodes for a, _ in n.falls]
+            others = [d for d in f.drop_times if not any(d[0] - DROP_AT_FALL_SECONDS <= a <= d[0] + d[1]
+                                                         + DROP_AT_FALL_SECONDS for a in fall_times)]
+            head = f"{plural(f.drops, 'sharp drop')} in online clients"
+            at_falls = len(f.drop_times) - len(others)
+            if not others:
+                findings.append(f"{head}, " + ("all at the times a node fell to 0 clients." if at_falls > 1
+                                               else "at the time a node fell to 0 clients."))
+            else:
+                if at_falls:
+                    head += f", {at_falls} at the times a node fell to 0 clients; the others"
+                listed(f"{head}: ", [(a, f"{_length(sec)}, to {low:g}") for a, sec, low in others],
+                       [sec for _, sec, _ in others])
         table = None
-        if f.nodes:
-            rows = [[role, backhaul, f"{med:g}", f"{low:g}", str(zeros)]
-                    for role, backhaul, med, low, zeros in f.nodes[:NODE_ROWS]]
-            table = (["Node", "Backhaul", "Median clients", "Lowest", "Times at 0"], rows)
-        unknown = [n[0] for n in f.nodes[:NODE_ROWS] if n[1] == "not known"]
+        if nodes:
+            rows = [[n.role, n.backhaul, f"{n.median:g}", f"{n.lowest:g}", str(len(n.falls)), str(n.minutes_at_0)]
+                    for n in nodes]
+            table = (["Node", "Backhaul", "Median clients", "Lowest", "Falls to 0", "Minutes at 0"], rows)
+        unknown = [n.role for n in nodes if n.backhaul == "not known"]
         if unknown:
             findings.append(f"Backhaul not known for {', '.join(unknown)} (Pengumon could not read it): it matters "
                             "only for devices on that node, not for these probes unless the monitoring computer is "
                             "on it.")
-        empty = [n for n in f.nodes if n[4] > 0]
         headline = None
         if f.drops or empty:
-            bits = []
-            if f.drops:
-                bits.append(f"{plural(f.drops, 'sharp drop')} in online clients")
-            if empty:
-                bits.append(f"{plural(len(empty), 'mesh node')} fell to 0 clients")
+            bits = [f"{plural(f.drops, 'sharp drop')} in online clients"] if f.drops else []
+            # each node at 0 clients by name, the most minutes first, with a weak Wi-Fi backhaul said, as many as fit
+            shown = 0
+            for n in empty:
+                bit = fell(n, f"Wi-Fi backhaul {n.weak}, {n.rssi} dBm" if n.weak else "")
+                rest = len(empty) - shown - 1
+                tail = [f"{plural(rest, 'more node')} at 0 clients"] if rest else []
+                if len("Wi-Fi and mesh: " + "; ".join(bits + [bit] + tail) + ".") > 200 and shown:
+                    break
+                bits.append(bit)
+                shown += 1
+            if shown < len(empty):
+                bits.append(f"{plural(len(empty) - shown, 'more node')} at 0 clients")
             headline = ("Wi-Fi and mesh: " + "; ".join(bits) + ".")[:200]
-        return ModuleSection(headline, findings, table, {})
+        return ModuleSection(headline, findings, table, {}, shorter)
 
 
 # (the capabilities that activate it (any of), the class), in the order the pack shows them

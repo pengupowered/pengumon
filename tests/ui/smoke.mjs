@@ -1,7 +1,7 @@
 // Browser smoke test of the dashboard: the runner. Usage: node smoke.mjs BASE_URL OUT_DIR VARIANT [SHARD]
 // SHARD "i/n" (1 based) runs only the i-th of n slices of the step files, so the long `full` variant can run as several
 // apps and browsers side by side (test_ui_smoke.py); the slices are balanced by the weights in SHARD_WEIGHT below.
-// (PGBROWSER = dir with node_modules/puppeteer-core; variants: full, bare, tworouters, unknownline, longpath, token, viewonly, see test_ui_smoke.py)
+// (PGBROWSER = dir with node_modules/puppeteer-core; variants: full, bare, tworouters, unknownline, longpath, token, viewonly, firstrun, see test_ui_smoke.py)
 // Supported way to run it: scripts/test-ui.sh (locked-down container, see Dockerfile.ui); the image sets PGBROWSER,
 // PUPPETEER_EXECUTABLE_PATH (Debian's chromium) and PENGUMON_BROWSER_ARGS. Alternative: an installed Chrome (e.g. on
 // Windows) named by PUPPETEER_EXECUTABLE_PATH, with puppeteer-core installed from tests/ui/runner/package-lock.json into $PGBROWSER.

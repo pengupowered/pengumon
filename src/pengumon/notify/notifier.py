@@ -462,11 +462,11 @@ def _resolve_headers(name: str, headers: Mapping[str, str], env: Mapping[str, st
     resolved = {}
     for header, value in headers.items():
         if value.startswith(SECRET_PREFIX):
-            secret_name = value[len(SECRET_PREFIX):]
-            secret = (secret_value(f"webhook_header.{secret_name}") if secret_value is not None else
-                      resolve_webhook_secret(secret_name, env=env, secrets_dir=secrets_dir, store=store))
+            header_secret_key = value[len(SECRET_PREFIX):]
+            secret = (secret_value(f"webhook_header.{header_secret_key}") if secret_value is not None else
+                      resolve_webhook_secret(header_secret_key, env=env, secrets_dir=secrets_dir, store=store))
             if secret is None:
-                logger.error(f"Webhook {name} is not used: header {header} names the secret {secret_name!r}, which "
+                logger.error(f"Webhook {name} is not used: header {header} names the secret {header_secret_key!r}, which "
                              "is not set (environment, secrets directory or data/secrets.json)")
                 return None
             value = secret

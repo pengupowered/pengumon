@@ -1,0 +1,31 @@
+{
+  "id": "digital-rain",
+  "name": "Digital rain",
+  "description": "Green phosphor on black, monospace type and a soft glow, with characters falling behind the header.",
+  "modes": ["dark"],
+  "tokens": {
+    "dark": {
+      "--bg": "#020604", "--surface-1": "#06100a", "--surface-2": "#0a1810", "--surface-3": "#0f2218",
+      "--line": "#11301e", "--line-strong": "#1c5233", "--scrim": "rgba(0, 4, 2, .72)",
+      "--ink-1": "#d2ffde", "--ink-2": "#98e8b0", "--ink-3": "#74c88f", "--ink-4": "#56a46e",
+      "--accent": "#4be3c3", "--accent-bg": "rgba(75, 227, 195, .13)", "--on-accent": "#01140e", "--focus": "#a6ffc9",
+      "--good": "#4ade6e", "--good-bg": "rgba(74, 222, 110, .12)",
+      "--warn": "#e8d44d", "--warn-bg": "rgba(232, 212, 77, .12)", "--warn-fill": "#e8d44d",
+      "--serious": "#f29b4b", "--serious-bg": "rgba(242, 155, 75, .13)",
+      "--crit": "#ff6b76", "--crit-bg": "rgba(255, 107, 118, .13)",
+      "--busy": "#b29bff", "--busy-bg": "rgba(178, 155, 255, .13)",
+      "--unknown": "#6ea283", "--unknown-bg": "rgba(110, 162, 131, .12)",
+      "--nodata": "#0d2016",
+      "--s1": "#2fd0ff", "--s2": "#ffb347", "--s3": "#5dff8f", "--s4": "#d77bff",
+      "--s5": "#f5f06a", "--s6": "#4f8dff", "--s7": "#ff7aa8", "--s8": "#a8ff3e",
+      "--q0": "#0b1a10", "--q1": "#1f3a14", "--q2": "#4c6a12", "--q3": "#b5a21a", "--q4": "#ff6b76",
+      "--font": "ui-monospace, \"SF Mono\", \"Cascadia Mono\", \"JetBrains Mono\", Menlo, Consolas, \"Liberation Mono\", monospace",
+      "--mono": "ui-monospace, \"SF Mono\", \"Cascadia Mono\", \"JetBrains Mono\", Menlo, Consolas, \"Liberation Mono\", monospace",
+      "--r-xs": "1px", "--r-sm": "2px", "--r-md": "4px", "--r-lg": "6px",
+      "--shadow-pop": "0 14px 36px rgba(0, 0, 0, .7), 0 0 0 1px #1c5233, 0 0 18px rgba(74, 222, 110, .12)"
+    }
+  },
+  "effect": {"id": "effect", "default_on": true},
+  "chart": {"line_width": 1.5, "curve": "straight", "grid": false, "points": 2, "fill": false},
+  "tags": ["skin", "effect", "retro"]
+}

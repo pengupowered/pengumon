@@ -1,7 +1,7 @@
-// Reliability report panel: availability per day and hop, causes and worst hours (the dossier button in the header
-// shares its module).
+// Reliability report panel: availability per day and hop, causes and worst hours (the dossier button in the footer shares
+// its module). model.js fetches and makes the view model, view.js is the standard view (docs/themes.md, "Drawing a card").
 
-import { followQuietHops, loadReport } from './report.js';
+import { initReport } from './model.js';
 
 export default {
   id: 'report',
@@ -10,5 +10,5 @@ export default {
   icon: 'report',
   core: true,
   available: () => true,
-  mount: () => { loadReport(7); followQuietHops(); }
+  mount: (section) => initReport(section)
 };

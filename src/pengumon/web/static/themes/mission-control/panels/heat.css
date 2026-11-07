@@ -1,0 +1,10 @@
+/* Mission control's When it breaks: the standard view (panels/heat/view.js) restyled: larger, taller hour blocks with
+   a black gap between them, the day names brighter, the sentence larger; the scale and the hint quiet. */
+:root[data-look="mission-control"] [data-panel="heat"] .heat { gap: 3px; grid-template-columns: 34px repeat(24, minmax(0, 1fr)); }
+:root[data-look="mission-control"] [data-panel="heat"] .heat > i,
+:root[data-look="mission-control"] [data-panel="heat"] .heat > .cell { aspect-ratio: .9; border-radius: 1px; }
+:root[data-look="mission-control"] [data-panel="heat"] .heat > [data-v="day"] { color: var(--ink-2); font-weight: var(--fw-semi); }
+:root[data-look="mission-control"] [data-panel="heat"] .heat .hd { color: var(--ink-3); }
+:root[data-look="mission-control"] [data-panel="heat"] .scale-legend i { width: 18px; height: 10px; }
+:root[data-look="mission-control"] [data-panel="heat"] .insight { font-size: var(--fs-md); color: var(--ink-2); background: var(--surface-2); border-left: 4px solid var(--warn); }
+:root[data-look="mission-control"] [data-panel="heat"] .insight b { color: var(--ink-1); }

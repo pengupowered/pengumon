@@ -67,7 +67,7 @@ class DeviceConfig(BaseModel):
     @classmethod
     def _valid_id(cls, v: str) -> str:
         v = v.strip()
-        if not ID_PATTERN.match(v):
+        if not ID_PATTERN.fullmatch(v):
             raise ValueError("Device ID must be 1-64 alphanumeric characters, hyphens, or underscores.")
         return v
 

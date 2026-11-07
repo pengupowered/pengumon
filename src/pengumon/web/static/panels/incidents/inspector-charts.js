@@ -2,7 +2,7 @@
 // axis (one label per second of the window), the same left and right gutters, the shaded band of the incident and a
 // crosshair that follows the pointer on every chart. Colours come from the design tokens (chart-theme.js).
 
-import { escapeHtml, getTargetInfo, sortTargetsByCanonical, targetList } from '../../js/util.js';
+import { escapeHtml, localFormat, getTargetInfo, sortTargetsByCanonical, targetList } from '../../js/util.js';
 import { shortLabels } from '../../js/path.js';
 import { series, token } from '../../js/chart-theme.js';
 
@@ -144,7 +144,7 @@ export function renderTracks(data) {
   const targetSet = new Set(data.samples.map((s) => s.target_id));
   const groups = probeRounds(data.samples);
   const times = groups.map((g) => g.t);
-  const labels = times.map((t) => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  const labels = times.map((t) => localFormat(t * 1000, { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   const inside = times.map((t, i) => [t, i]).filter(([t]) => t >= data.event_start && t <= data.event_end).map(([, i]) => i);
   const expected = data.incident && data.incident.expected;
   band = inside.length

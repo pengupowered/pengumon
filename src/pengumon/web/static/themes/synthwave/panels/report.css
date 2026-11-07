@@ -1,0 +1,56 @@
+/* Synthwave's view of the Reliability card (report.js): a neon dashboard. Scoped to this theme and to the card while this
+   view draws it ([data-view="synthwave"]). Colours are the theme's tokens. */
+
+:root[data-look="synthwave"] [data-panel="report"] .panel[data-view="synthwave"] > .panel-h { border-bottom-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+:root[data-look="synthwave"] [data-panel="report"] .sw-rep { display: flex; flex-direction: column; gap: var(--sp-4); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-wait { color: var(--ink-3); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-lbl { display: block; color: var(--ink-3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .12em; }
+
+/* the availability: a large lit number, its readouts outlined beside it */
+:root[data-look="synthwave"] [data-panel="report"] .sw-hero { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--sp-3); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-big {
+  flex: 1 1 180px; min-width: 0; padding: var(--sp-3) var(--sp-4); border: 2px solid var(--accent); border-radius: var(--r-md);
+  background: linear-gradient(160deg, var(--accent-bg), transparent 70%);
+  box-shadow: 0 0 22px -6px var(--accent), inset 0 0 20px -12px var(--accent);
+}
+:root[data-look="synthwave"] [data-panel="report"] .sw-bn { display: block; font-size: 44px; line-height: 1.05; font-weight: var(--fw-bold); color: var(--ink-1); text-shadow: 0 0 8px var(--accent), 0 0 24px color-mix(in srgb, var(--accent) 70%, transparent); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-bn small { font-size: var(--fs-lg); margin-left: 2px; color: var(--s1); text-shadow: 0 0 10px var(--s1); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-src { display: block; margin-top: 4px; color: var(--ink-2); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+:root[data-look="synthwave"] [data-panel="report"] .sw-reads { flex: 1 1 140px; display: flex; flex-direction: column; gap: var(--sp-3); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-read { flex: 1; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--s1); border-radius: var(--r-md); box-shadow: 0 0 12px -5px var(--s1), inset 0 0 12px -10px var(--s1); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-rv { display: block; font-size: var(--fs-xl); font-weight: var(--fw-bold); color: var(--ink-1); text-shadow: 0 0 10px color-mix(in srgb, var(--s1) 60%, transparent); }
+
+:root[data-look="synthwave"] [data-panel="report"] .sw-t { color: var(--ink-2); font-size: var(--fs-xs); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .12em; margin-bottom: var(--sp-2); }
+
+/* lost per day: neon columns standing on a grid */
+:root[data-look="synthwave"] [data-panel="report"] .sw-cols {
+  display: grid; gap: 6px; align-items: end; height: 96px; padding: 0 var(--sp-2); border-bottom: 2px solid var(--accent);
+  background: repeating-linear-gradient(to top, color-mix(in srgb, var(--accent) 22%, transparent) 0 1px, transparent 1px 24px);
+  box-shadow: 0 6px 14px -10px var(--accent); margin-bottom: 22px;
+}
+:root[data-look="synthwave"] [data-panel="report"] .sw-col { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; min-width: 0; }
+:root[data-look="synthwave"] [data-panel="report"] .sw-col i { display: block; min-height: 0; background: linear-gradient(to top, var(--accent), var(--s1)); border-radius: 2px 2px 0 0; box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-col.nodata i { background: var(--nodata); box-shadow: none; height: 4px !important; }
+:root[data-look="synthwave"] [data-panel="report"] .sw-col span { position: absolute; left: 0; right: 0; bottom: -20px; text-align: center; color: var(--ink-3); font-size: var(--fs-xs); }
+
+:root[data-look="synthwave"] [data-panel="report"] .sw-note { color: var(--ink-2); font-size: var(--fs-xs); margin-top: var(--sp-2); }
+
+/* by cause: glowing meters */
+:root[data-look="synthwave"] [data-panel="report"] .sw-meters { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-meters li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px var(--sp-3); align-items: baseline; }
+:root[data-look="synthwave"] [data-panel="report"] .sw-mn { color: var(--ink-1); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+:root[data-look="synthwave"] [data-panel="report"] .sw-mp { color: var(--ink-1); text-shadow: 0 0 8px var(--s1); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-bar { grid-column: 1 / -1; height: 8px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); overflow: hidden; background: var(--surface-1); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--s1), var(--accent)); box-shadow: 0 0 10px var(--accent); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-muted { color: var(--ink-3); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-excl { color: var(--ink-3); font-size: var(--fs-xs); }
+
+/* every hop, under a fold */
+:root[data-look="synthwave"] [data-panel="report"] .sw-hops-box { border-top: 1px solid var(--line-strong); padding-top: var(--sp-2); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-hops-box summary { cursor: pointer; color: var(--s1); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .12em; }
+:root[data-look="synthwave"] [data-panel="report"] .sw-hops { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); margin-top: var(--sp-2); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-hops th { text-align: left; color: var(--ink-3); font-size: var(--fs-xs); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .08em; padding: 0 8px 6px; }
+:root[data-look="synthwave"] [data-panel="report"] .sw-hops td { padding: 6px 8px; border-top: 1px solid var(--line); color: var(--ink-1); }
+:root[data-look="synthwave"] [data-panel="report"] .sw-hops .r { text-align: right; }
+@media (max-width: 520px) { :root[data-look="synthwave"] [data-panel="report"] .sw-bn { font-size: 36px; } :root[data-look="synthwave"] [data-panel="report"] .sw-hops td, :root[data-look="synthwave"] [data-panel="report"] .sw-hops th { padding-inline: 4px; } }

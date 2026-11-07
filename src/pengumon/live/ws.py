@@ -99,9 +99,18 @@ class ConnectionManager:
                 self._closers.add(closer)
                 closer.add_done_callback(self._closers.discard)
 
-    async def _close(self, connection: WebSocket) -> None:
+    async def close_all(self) -> None:
+        """Ends every live connection (code 1012, "restarting": each page reconnects in a moment, and the server checks
+        it again). For a change of who may connect (pengumon.access): those let in under the old rule are not checked
+        again otherwise. Not 1008, which sends a page to the sign-in page even when it holds the new sign-in."""
+        connections, self.active_connections = list(self.active_connections), []
+        if connections:
+            logger.info("Closing every live connection: the sign-in changed", clients=len(connections))
+            await asyncio.gather(*(self._close(c, 1012) for c in connections))
+
+    async def _close(self, connection: WebSocket, code: Optional[int] = None) -> None:
         try:
-            await asyncio.wait_for(connection.close(), self.send_timeout)
+            await asyncio.wait_for(connection.close() if code is None else connection.close(code), self.send_timeout)
         except Exception:
             pass
 

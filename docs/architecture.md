@@ -48,11 +48,19 @@ its own rows. The services gauges stay in the table so that the order of `/metri
   (`AppState`, `get_state`), the live stream's broadcaster in `live/ws.py`, the preview job's answer in
   `settings/preview.py`. `api/__init__.py` holds only its docstring, so importing one route module loads only what that
   module needs.
+- **Cards (the page).** A card is a folder, `web/static/panels/<id>/` (`web/ui.py` finds it). A card drawn by views
+  splits into its model (`model.js`, or `charts.js` for latency: fetching, state, actions, the view model with every
+  value formatted) and its standard view (`view.js`: the DOM of its body). A built-in theme may add its own view of a
+  card, `web/static/themes/<theme>/panels/<id>.js` (+ `.css`), found by `web/themes.py`, or restyle the standard view
+  with a stylesheet alone (`<id>.css`, through the hooks each standard part documents); `web/static/js/cards.js`
+  mounts the right view, swaps it on a theme change and falls back to the standard one. The contract and the
+  conversion guide are in [themes.md, "Drawing a card"](themes.md#drawing-a-card) and
+  ["Restyling a card"](themes.md#restyling-a-card).
 
 ## The order, and why
 
 - **1. storage** (`db/storage.py`). Opens (migrates) the database. The settings live in it, every later component may use it, and their `stop` runs before its own, which closes it.
-- **2. settings** (`settings/component.py`). The settings store: the one-time import of config.yaml on the first start, then the stored settings (the environment overrides on top) copied into the live config, so every later component is built from them. Creates the one `SecretStore`, puts the hub on `ctx.settings` (components subscribe their appliers for live changes there) and sets the repository's retention days before the start-up cleanup.
+- **2. settings** (`settings/component.py`). The settings store: the one-time import of config.yaml on the first start, then the stored settings (the environment overrides on top) copied into the live config, so every later component is built from them. Creates the one `SecretStore`, puts the hub on `ctx.settings` (components subscribe their appliers for live changes there) and sets the repository's retention days before the start-up cleanup. Puts the sign-in in force (`access/manager.py`: the password from secrets.json or `PENGUMON_ACCESS_TOKEN`, and the viewers setting, into the app's one `SecurityConfig`) before the app answers its first request.
 - **3. devices** (`devices/component.py`). Built from the stored devices. A device that cannot run (a missing CA file, say) is logged and left out; the start goes on. Warns about stored history of devices that are not in the settings.
 - **4. probing** (`engine/probing.py`). Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one.
 - **5. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history.

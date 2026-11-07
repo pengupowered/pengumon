@@ -7,7 +7,7 @@
 // value is shown through textContent. The Wi-Fi link rate is not traffic and is labelled so.
 
 import { registerActions } from '../../js/dispatch.js';
-import { CLIENT_KINDS, keepKeyboard, openModal, deviceName } from '../../js/util.js';
+import { CLIENT_KINDS, keepKeyboard, openModal, deviceName, localFormat } from '../../js/util.js';
 import { clientsDevice, setTopologyClients, setTopologyFilter } from './topology.js';
 import { series } from '../../js/chart-theme.js';
 import { levelOfGrade } from '../../js/grades.js';
@@ -208,7 +208,7 @@ function renderClients() {
   setTopologyFilter(view.filter && view.filter.kind === 'node' ? view.filter.value : null);
 
   const owner = clientsDevice();
-  const asOf = data.ts ? `as of ${new Date(data.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'waiting for the first client list';
+  const asOf = data.ts ? `as of ${localFormat(data.ts * 1000, { hour: '2-digit', minute: '2-digit' })}` : 'waiting for the first client list';
   document.getElementById('clientsUpdated').textContent = [owner ? deviceName(owner) : null, asOf].filter(Boolean).join(' · ');
   const note = document.getElementById('clientsPrivacyNote');
   note.hidden = !data.privacy.hint;
@@ -241,9 +241,8 @@ function renderClients() {
 }
 
 function timeLabel(ts) {
-  const d = new Date(ts * 1000);
-  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return view.rangeSeconds > 86400 ? `${d.toLocaleDateString([], { weekday: 'short' })} ${hm}` : hm;
+  const hm = localFormat(ts * 1000, { hour: '2-digit', minute: '2-digit' });
+  return view.rangeSeconds > 86400 ? `${localFormat(ts * 1000, { weekday: 'short' })} ${hm}` : hm;
 }
 
 function seriesFor(history) {

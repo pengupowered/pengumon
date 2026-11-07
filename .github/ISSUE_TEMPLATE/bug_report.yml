@@ -12,7 +12,7 @@ body:
     attributes:
       label: Version
       description: Settings > About this install, or `pengumon version`.
-      placeholder: "0.23.0"
+      placeholder: "0.24.0"
     validations:
       required: true
   - type: dropdown

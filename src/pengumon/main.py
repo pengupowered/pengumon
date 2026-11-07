@@ -29,7 +29,8 @@ from pengumon.observability import apply_config_level, get_logger, grafana, setu
 from pengumon.observability import component as runtime
 from pengumon.observability.export import setup_telemetry
 from pengumon.observability.telemetry import fastapi_telemetry
-from pengumon.security import SESSIONS_PATH, FileSessionStore, SecurityConfig, SecurityMiddleware
+from pengumon.security import (SESSIONS_PATH, FileSessionStore, SecurityConfig, SecurityMiddleware, tls_files,
+                               tls_requested)
 from pengumon.services import component as services
 from pengumon.settings import component as settings
 from pengumon.settings import preview_component as settings_preview
@@ -77,9 +78,11 @@ async def lifespan(app: FastAPI):
 
 
 async def _validation_error(request: Request, exc: RequestValidationError):
-    """FastAPI's 422 answer, except that on credential routes the errors leave out the submitted values: FastAPI
-    echoes each invalid `input`, which there is a password (pydantic's hide_input_in_errors does not reach it)."""
-    if request.url.path.rstrip("/").endswith("/credentials"):
+    """FastAPI's 422 answer, except that on credential routes (a device's, the sign-in's) the errors leave out the
+    submitted values: FastAPI echoes each invalid `input`, which there is a password (pydantic's hide_input_in_errors
+    does not reach it)."""
+    path = request.url.path.rstrip("/")
+    if path.endswith("/credentials") or path == "/api/access" or path.startswith("/api/access/"):
         errors = [{k: v for k, v in error.items() if k != "input"} for error in exc.errors()]
         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
     return await request_validation_exception_handler(request, exc)
@@ -100,8 +103,12 @@ def create_app() -> FastAPI:
     # Level 5, not the default 9: on the largest responses it is ~2.5x faster for a few percent more bytes.
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
-    # Outermost: Host/Origin/token guards, body limit and the security headers (HTTP and websocket).
+    # Outermost: Host/Origin/token guards, body limit and the security headers (HTTP and websocket). One instance, shared
+    # by the middleware and app.state: the sign-in (pengumon.access) puts the password set on the page into it at start
+    # and changes it in place, and the middleware reads it on every request.
     security_config = SecurityConfig.from_env(session_store=FileSessionStore(SESSIONS_PATH))
+    if tls_requested():  # HTTPS with your own certificate (main() checks the files): the session cookie is Secure
+        security_config.cookie_secure = True
     app.add_middleware(SecurityMiddleware, cfg=security_config)
     app.state.security_config = security_config  # the clients API reads whether a token is set (privacy.client_details)
 
@@ -116,13 +123,27 @@ app = create_app()
 security_config: SecurityConfig = app.state.security_config  # tests adjust the guards of the app through it
 
 
+def tls_options() -> dict:
+    """uvicorn's ssl options from PENGUMON_TLS_CERT / PENGUMON_TLS_KEY ({} for plain HTTP). SystemExit with the reason
+    when only one is set or the pair cannot be loaded: the start stops rather than serve plain HTTP by mistake."""
+    try:
+        files = tls_files()
+    except ValueError as e:
+        raise SystemExit(f"Pengumon cannot start with HTTPS: {e}") from None
+    return {"ssl_certfile": files[0], "ssl_keyfile": files[1]} if files else {}
+
+
 def main():
     """Starts the server on the configured address (pengumon.paths.listen_address: PENGUMON_HOST/PORT, then the
-    config's server section, then 127.0.0.1:8000). `pengumon run` and `python -m pengumon.main` both end here."""
+    config's server section, then 127.0.0.1:8000), over HTTPS when a certificate is given (tls_options).
+    `pengumon run` and `python -m pengumon.main` both end here."""
     host, port, _, _ = paths.listen_address(load_server_config())
+    ssl = tls_options()
     setup_logging()
+    if ssl:
+        logger.info(f"Serving HTTPS with the certificate {ssl['ssl_certfile']}")
     # log_config=None: uvicorn keeps its hands off logging; its loggers go through the pengumon handler.
-    uvicorn.run("pengumon.main:app", host=host, port=port, reload=False, log_config=None)
+    uvicorn.run("pengumon.main:app", host=host, port=port, reload=False, log_config=None, **ssl)
 
 
 if __name__ == "__main__":

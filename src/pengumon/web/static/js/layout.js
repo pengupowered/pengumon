@@ -1,7 +1,8 @@
 // Which panels the page shows, and in what order. The registry (panels/index.js) lists the panels in their usual order;
 // the server's default (`dashboard:` in config.yaml, on <body data-layout>) and this browser's own choice (localStorage,
 // edited in the Layout dialog or a panel's own menu) are applied over it:
-//   layout = { order: [panel id...], hidden: [panel id...] }
+//   layout = { order: [panel id...], hidden: [panel id...], colours: {panel id: {theme} | {custom: {token: '#rrggbb'}}} }
+// `colours` are a card's own colours (themes.js paints them): another theme's accent and series colours, or custom ones.
 // Unknown ids are ignored and a panel that a layout does not mention keeps its place and is shown, so a stored layout
 // never hides a panel added later. A panel that is not available on this installation (no such device, feature off)
 // is never mounted and cannot be shown; the dialog lists it apart, with the reason.
@@ -16,12 +17,14 @@ import { applyTabs } from './tabs.js';
 import { registerActions } from './dispatch.js';
 import { icon, keepKeyboard, openModal } from './util.js';
 import { showMenu, closeMenus, toast } from './chrome.js';
+import { CARD_TOKENS, setCardColours, themeList } from './themes.js';
+import { token } from './chart-theme.js';
 
 const STORAGE_KEY = 'pengumon.layout.v1';
 
 let entries = []; // { panel, section, available, reason, count } for every panel whose section is on the page
-let defaults = { order: [], hidden: [] }; // registry order with the server's default applied
-let layout = { order: [], hidden: [] }; // what is applied now
+let defaults = { order: [], hidden: [], colours: {} }; // registry order with the server's default applied
+let layout = { order: [], hidden: [], colours: {} }; // what is applied now
 
 // `pref` ids first (known ones, once), then the rest of `base` in its order.
 function mergeOrder(base, pref) {
@@ -67,11 +70,28 @@ function clearStored() {
   }
 }
 
+const HEX = /^#[0-9a-f]{6}$/i;
+// The colours of known cards, each {theme: id} or {custom: {token: '#rrggbb'}}; anything else is left out.
+function knownColours(ids, colours) {
+  const out = {};
+  if (!colours || typeof colours !== 'object') return out;
+  Object.entries(colours).forEach(([id, c]) => {
+    if (!ids.includes(id) || !c || typeof c !== 'object') return;
+    if (typeof c.theme === 'string' && c.theme) out[id] = { theme: c.theme };
+    else if (c.custom && typeof c.custom === 'object') {
+      const custom = Object.fromEntries(CARD_TOKENS.filter((n) => HEX.test(c.custom[n] || '')).map((n) => [n, c.custom[n]]));
+      if (Object.keys(custom).length) out[id] = { custom };
+    }
+  });
+  return out;
+}
+
 function combine(ids, server, stored) {
   const known = (list) => idList(list).filter((id) => ids.includes(id));
-  const base = { order: mergeOrder(ids, server && server.order), hidden: known(server && server.hidden) };
+  const base = { order: mergeOrder(ids, server && server.order), hidden: known(server && server.hidden), colours: knownColours(ids, server && server.colours) };
   if (!stored) return base;
-  return { order: mergeOrder(base.order, stored.order), hidden: known(stored.hidden) };
+  // a layout stored before cards had colours keeps the server's
+  return { order: mergeOrder(base.order, stored.order), hidden: known(stored.hidden), colours: 'colours' in stored ? knownColours(ids, stored.colours) : base.colours };
 }
 
 const byId = () => new Map(entries.map((e) => [e.panel.id, e]));
@@ -115,6 +135,7 @@ function apply() {
   entries.forEach((e) => { e.section.dataset.layoutHidden = layout.hidden.includes(e.panel.id) ? '1' : '0'; });
   applyTabs();
   pack();
+  setCardColours(layout.colours);
 }
 
 function save() {
@@ -123,10 +144,10 @@ function save() {
   renderList();
 }
 
-// The order and hidden panels this browser shows now (a copy), for Settings > Display's "Use this browser's layout",
-// which writes them into dashboard.order and dashboard.hidden (the layout new browsers start with).
+// The order, hidden panels and card colours this browser shows now (a copy), for Settings > Display's "Use this
+// browser's layout", which writes them into dashboard.order, .hidden and .colours (the layout new browsers start with).
 export function browserLayout() {
-  return { order: [...layout.order], hidden: [...layout.hidden] };
+  return { order: [...layout.order], hidden: [...layout.hidden], colours: JSON.parse(JSON.stringify(layout.colours)) };
 }
 
 // Panel id -> title, in the panels' standard order (Settings > Display's "Layout for new browsers" names them).
@@ -176,8 +197,71 @@ function rowFor(e, at, usable) {
     b.setAttribute('aria-label', `Move ${e.panel.title} ${dir}`);
     move.append(b);
   });
-  row.append(label, move);
+  row.append(label, move, coloursFor(e));
   return row;
+}
+
+const SWATCH_NAMES = { '--accent': 'Accent' };
+const CUSTOM = 'custom';
+
+// "Colours: Page theme / <a theme> / Custom": a card's own colours; Custom shows the accent and the eight series colours.
+function coloursFor(e) {
+  const id = e.panel.id;
+  const spec = layout.colours[id];
+  const now = spec ? (spec.theme || CUSTOM) : '';
+  const box = document.createElement('div');
+  box.className = 'lay-colours';
+  const select = document.createElement('select');
+  select.className = 'input';
+  select.id = `layColours-${id}`;
+  select.dataset.change = 'setCardTheme';
+  select.dataset.arg = id;
+  const opt = (value, text) => Object.assign(document.createElement('option'), { value, textContent: text, selected: value === now });
+  select.append(opt('', 'Page theme'), ...themeList().map((t) => opt(t.id, t.name)), opt(CUSTOM, 'Custom'));
+  if (now && now !== CUSTOM && !themeList().some((t) => t.id === now)) select.append(opt(now, 'A theme that is gone (page theme)'));
+  const label = document.createElement('label');
+  label.htmlFor = select.id;
+  label.textContent = 'Colours';
+  box.append(label, select);
+  if (now === CUSTOM) {
+    const swatches = document.createElement('span');
+    swatches.className = 'lay-swatches';
+    CARD_TOKENS.forEach((n, i) => {
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = spec.custom[n] || '#000000';
+      input.dataset.change = 'setCardColour';
+      input.dataset.arg = id;
+      input.dataset.arg2 = n;
+      const name = SWATCH_NAMES[n] || `Series colour ${i}`;
+      input.setAttribute('aria-label', `${e.panel.title}: ${name}`);
+      input.title = name;
+      swatches.append(input);
+    });
+    box.append(swatches);
+  }
+  return box;
+}
+
+// The page theme's colours now, as the start of a card's custom ones (a token that is not #rrggbb starts as grey).
+function pageColours() {
+  return Object.fromEntries(CARD_TOKENS.map((n) => [n, HEX.test(token(n)) ? token(n).toLowerCase() : '#7d8a9b']));
+}
+
+function setCardTheme(id, value) {
+  const colours = { ...layout.colours };
+  if (!value) delete colours[id];
+  else if (value === CUSTOM) colours[id] = { custom: colours[id] && colours[id].custom ? colours[id].custom : pageColours() };
+  else colours[id] = { theme: value };
+  layout = { ...layout, colours };
+  save();
+}
+
+function setCardColour(id, name, value) {
+  const now = layout.colours[id];
+  if (!now || !now.custom || !HEX.test(value)) return;
+  layout = { ...layout, colours: { ...layout.colours, [id]: { custom: { ...now.custom, [name]: value.toLowerCase() } } } };
+  save();
 }
 
 function renderList() {
@@ -234,7 +318,7 @@ function togglePanel(id, shown) {
 
 function resetLayout() {
   clearStored();
-  layout = { order: defaults.order.slice(), hidden: defaults.hidden.slice() };
+  layout = { order: defaults.order.slice(), hidden: defaults.hidden.slice(), colours: { ...defaults.colours } };
   apply();
   renderList();
 }
@@ -302,7 +386,11 @@ registerActions('click', {
     toast(`${e ? e.panel.title : 'Panel'} hidden. Bring it back from Layout.`);
   }
 });
-registerActions('change', { togglePanel: (el) => togglePanel(el.dataset.arg, el.checked) });
+registerActions('change', {
+  togglePanel: (el) => togglePanel(el.dataset.arg, el.checked),
+  setCardTheme: (el) => setCardTheme(el.dataset.arg, el.value),
+  setCardColour: (el) => setCardColour(el.dataset.arg, el.dataset.arg2, el.value)
+});
 
 // Decides which of `panels` this installation has, mounts those, and applies the layout. `ctx` is what a panel gets.
 // A panel with `instances(ctx)` gets one mount(section, ctx, instance) call per instance (an empty list: not

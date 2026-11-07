@@ -1,0 +1,29 @@
+{
+  "id": "starship",
+  "name": "Starship console",
+  "description": "A far-future ship's console: one flowing frame on a black ground, a coloured rail sweeping through rounded corners into each panel's header bar, flat orange, lilac and blue blocks, upper-case labels.",
+  "modes": ["dark"],
+  "tokens": {
+    "dark": {
+      "--bg": "#000000", "--surface-1": "#0a0910", "--surface-2": "#121019", "--surface-3": "#1c1926",
+      "--line": "#29253a", "--line-strong": "#4a4462", "--scrim": "rgba(0, 0, 0, .76)",
+      "--ink-1": "#f6eee4", "--ink-2": "#dcc6e8", "--ink-3": "#aab3ec", "--ink-4": "#8b90c6",
+      "--accent": "#ff9d3d", "--accent-bg": "rgba(255, 157, 61, .14)", "--on-accent": "#140900", "--focus": "#ffe2a8",
+      "--good": "#63d68b", "--good-bg": "rgba(99, 214, 139, .13)",
+      "--warn": "#ffd23f", "--warn-bg": "rgba(255, 210, 63, .13)", "--warn-fill": "#ffd23f",
+      "--serious": "#ff7b54", "--serious-bg": "rgba(255, 123, 84, .14)",
+      "--crit": "#ff5c6c", "--crit-bg": "rgba(255, 92, 108, .14)",
+      "--busy": "#b39dff", "--busy-bg": "rgba(179, 157, 255, .14)",
+      "--unknown": "#8f8ba8", "--unknown-bg": "rgba(143, 139, 168, .14)",
+      "--nodata": "#1f1c2b",
+      "--s1": "#9fb3ff", "--s2": "#ffa64d", "--s3": "#57d6c8", "--s4": "#ffe066",
+      "--s5": "#e5a3d9", "--s6": "#5f86ff", "--s7": "#c9a0ff", "--s8": "#ff7a7a",
+      "--q0": "#14121c", "--q1": "#3a2a1a", "--q2": "#7a4a16", "--q3": "#d0821c", "--q4": "#ff5c6c",
+      "--r-lg": "18px", "--r-md": "12px",
+      "--shadow-pop": "0 14px 36px rgba(0, 0, 0, .8), 0 0 0 2px #4a4462"
+    }
+  },
+  "effect": {"id": "effect", "default_on": true},
+  "chart": {"line_width": 3, "curve": "straight", "spark": "bars"},
+  "tags": ["skin", "effect", "console"]
+}

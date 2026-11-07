@@ -1,6 +1,8 @@
-// Latency and packet loss panel: the live charts and their 15 minute to 24 hour history views.
+// Latency and packet loss panel: the live charts and their 15 minute to 24 hour history views. charts.js keeps the data
+// and makes the view model, history.js loads the stored history, view.js is the standard view (docs/themes.md, "Drawing
+// a card").
 
-import { initCharts, mountCharts } from './charts.js';
+import { mountCharts } from './charts.js';
 import { loadHistoricalRange, preloadLiveHistory, setTimeRange } from './history.js';
 import { settingsValues, val } from '../../js/settings-values.js';
 import { state } from '../../js/state.js';
@@ -26,8 +28,7 @@ export default {
   core: true,
   available: () => true,
   mount(section, ctx) {
-    initCharts();
-    mountCharts(ctx.bus);
+    mountCharts(ctx.bus, section);
     const opening = RANGE_SECONDS[val(settingsValues(), 'display.default_latency_range', 'live')];
     if (opening) setTimeRange(opening);
     else preloadLiveHistory();

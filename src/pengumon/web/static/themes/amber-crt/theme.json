@@ -1,0 +1,31 @@
+{
+  "id": "amber-crt",
+  "name": "Amber CRT",
+  "description": "Amber phosphor on a near-black tube: monospace type, faint scanlines, a slight glow and a slow refresh band rolling down the screen.",
+  "modes": ["dark"],
+  "tokens": {
+    "dark": {
+      "--bg": "#0a0600", "--surface-1": "#120b02", "--surface-2": "#1a1004", "--surface-3": "#241706",
+      "--line": "#3a2608", "--line-strong": "#5c3d0c", "--scrim": "rgba(5, 3, 0, .76)",
+      "--ink-1": "#ffcf70", "--ink-2": "#f0b452", "--ink-3": "#d09640", "--ink-4": "#a87a34",
+      "--accent": "#ffeab0", "--accent-bg": "rgba(255, 234, 176, .13)", "--on-accent": "#1a0f00", "--focus": "#fff3d1",
+      "--good": "#86de6a", "--good-bg": "rgba(134, 222, 106, .12)",
+      "--warn": "#ffd23a", "--warn-bg": "rgba(255, 210, 58, .12)", "--warn-fill": "#ffd23a",
+      "--serious": "#ff9a3c", "--serious-bg": "rgba(255, 154, 60, .13)",
+      "--crit": "#ff5f45", "--crit-bg": "rgba(255, 95, 69, .14)",
+      "--busy": "#a6b8ff", "--busy-bg": "rgba(166, 184, 255, .13)",
+      "--unknown": "#a58a5e", "--unknown-bg": "rgba(165, 138, 94, .13)",
+      "--nodata": "#21150a",
+      "--s1": "#ffb000", "--s2": "#6fb8ff", "--s3": "#f07a5a", "--s4": "#b8e05a",
+      "--s5": "#d68cff", "--s6": "#4fd1b5", "--s7": "#ffe28a", "--s8": "#ff8fc0",
+      "--q0": "#1a1004", "--q1": "#3a2606", "--q2": "#6e4a08", "--q3": "#c08010", "--q4": "#ff5f45",
+      "--font": "ui-monospace, \"SF Mono\", \"Cascadia Mono\", \"JetBrains Mono\", Menlo, Consolas, \"Liberation Mono\", \"DejaVu Sans Mono\", monospace",
+      "--mono": "ui-monospace, \"SF Mono\", \"Cascadia Mono\", \"JetBrains Mono\", Menlo, Consolas, \"Liberation Mono\", \"DejaVu Sans Mono\", monospace",
+      "--r-xs": "1px", "--r-sm": "2px", "--r-md": "3px", "--r-lg": "4px",
+      "--shadow-pop": "0 14px 36px rgba(0, 0, 0, .75), 0 0 0 1px #5c3d0c, 0 0 20px rgba(255, 176, 0, .1)"
+    }
+  },
+  "effect": {"id": "effect", "default_on": true},
+  "chart": {"line_width": 2, "curve": "stepped", "grid": true, "points": 0, "fill": false},
+  "tags": ["skin", "effect", "retro"]
+}

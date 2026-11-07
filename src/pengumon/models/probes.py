@@ -41,7 +41,7 @@ class TargetConfig(BaseModel):
         if v is None or not v.strip():
             return None
         v = v.strip()
-        if not ID_PATTERN.match(v):
+        if not ID_PATTERN.fullmatch(v):
             raise ValueError("must be 1-64 letters, digits, hyphens or underscores")
         return v
 
@@ -54,7 +54,7 @@ class TargetConfig(BaseModel):
     @classmethod
     def validate_id(cls, v: str) -> str:
         v = v.strip()
-        if not ID_PATTERN.match(v):
+        if not ID_PATTERN.fullmatch(v):
             raise ValueError("Target ID must be 1-64 alphanumeric characters, hyphens, or underscores.")
         return v
 

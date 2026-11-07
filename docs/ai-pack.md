@@ -44,7 +44,7 @@ A summary, not raw data: Pengumon's findings with the numbers behind them, sized
 | Findings | the most important points first: how much went wrong overall, where loss starts, what coincided; one headline per device module |
 | Incidents | the significant incidents in time order (20, or 40 with more examples), each with where it starts, Pengumon's verdict (*gateway*, *line* or *isp*), a confidence and what happened at the same time |
 | Close-ups | the 3 (or 6) most significant incidents minute by minute, 10-second rows for an incident pack |
-| A normal week | latency by time of day and, per day, incidents and lost minutes, plus the line's own columns where a module adds them |
+| This week by time of day and by day | latency by time of day and, per day, incidents and lost minutes, plus the line's own columns where a module adds them |
 | Your devices | one subsection per device module (below), or a short "What Pengumon cannot see here" without any |
 | Host apps, changes, environment | host app checks, path and route changes, the ping backend, IPv6, gaps in the data |
 | What went wrong for you? | your one line |
@@ -96,14 +96,25 @@ off still contributes its stored history.
 
 | Module | Appears when a device offers | What it adds |
 |---|---|---|
-| Cable line (DOCSIS) | `access_line` with a DOCSIS line | channel power and SNR against the usual ranges, codeword error bursts, restarts; per-day lowest SNR and new uncorrectables |
+| Cable line (DOCSIS) | `access_line` with a DOCSIS line | channel power and SNR against the usual ranges (each channel outside them with every way it is), codeword error bursts with their times, restarts and readings the modem did not answer (always in its Findings line, zeros too); per-day new uncorrectables |
 | Line load | `wan_counters` | download and upload rates against the line's capacity, router restarts; per-day peak load, so a busy line is told apart from a fault |
 | Router | `router_system` | CPU and memory, readings above the warning levels, times the router stopped answering |
-| Wi-Fi and mesh | `client_inventory` (and `mesh`) | client counts per band and node, sudden drops in online clients, mesh nodes left with no clients, each node's backhaul (counts only, never a client) |
+| Wi-Fi and mesh | `client_inventory` (and `mesh`) | client counts per band and node, sudden drops in online clients, each mesh node's falls to 0 clients with their times and minutes, each node's backhaul (one just above weak says so) (counts only, never a client) |
 
 Each subsection starts with a short "How to read it" for the assistant (the ranges in force, filled in from your
 configuration), then the findings and at most one small table. A driver may close its section with notes about itself
 (how often it is read, what its status page lacks). A module with no readings in the window says so in one line.
+
+Events with a time are listed with it, the largest few first and then how many more: the cable line's readings with new
+uncorrectable codewords, each mesh node's falls to 0 clients (day, time, minutes at 0), and the sharp drops in online
+clients that were not such a fall. A Findings line names the node ("Mesh node 3 fell to 0 clients 6 times (37 min in
+all)") and says when its Wi-Fi backhaul is weak or near weak. At Vague and Anonymized a node whose backhaul is the only
+one of its kind is also described that way ("the only node on Wi-Fi backhaul"), never by name, so you can tell which of
+your nodes it is. In a window with no incident, the Wi-Fi events are related to the time of day ("6 of 6 between 18:00
+and 00:00") instead of to incidents.
+
+A section longer than its module's budget is cut in this order: a timed list shrinks to its largest two, then table
+rows past the third go, then bullets past the second, then the last rows. Nothing that the Findings line says is cut.
 
 The same modules feed OpenTelemetry and `/metrics` (line levels, codeword errors, WAN rates, router CPU and memory,
 client and mesh counts), and the Grafana dashboard shows a row per module that appears only where a device reports it:
@@ -130,9 +141,10 @@ A contribution has:
   the devices, and the router's latest state while the app runs), with no HTTP and no driver, so it works offline;
 - `events`: its `EventKind`s. Codes are technology-neutral where they can be (`line.error_burst`, `line.restart`,
   `line.signal_out_of_range`), so a new line technology corroborates the same verdicts; `supports` names the cause
-  categories an event backs up, and `reach_seconds` how far from an incident it still counts;
+  categories an event backs up, and `reach_seconds` how far from an incident it still counts; `by_time_of_day` relates
+  the events to the time of day when the window has no incident;
 - `emit(facts)` and `section(facts, detail)`: the events and the `ModuleSection` (headline, findings, at most one
-  table, per-day columns);
+  table, per-day columns, and `shorter`: shorter versions of a long bullet, used before anything is cut);
 - `redaction`: `RedactionHints`, what happens to each field at each level (keep, role, generic, drop or never), and
   `identify(facts)`, the strings that name its devices, so the redactor can replace them everywhere;
 - `instruments`: the OpenTelemetry names it owns, each documented in [telemetry.md](telemetry.md), with labels that are

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from pengumon.devices.settings import DeviceConfig
 from pengumon.capabilities import (
     BAND_2G, BAND_5G, Capability, Client, ClientsReading, LineReading, MeshNode, MeshReading, PollResult,
     SystemReading, WanCounters,
@@ -281,8 +282,11 @@ async def test_the_section_numbers_follow_the_stored_history(world):
     facts = dict((await collected(world)))
     docs = facts["docsis"][0].section(facts["docsis"][1], "full")
     assert "2,410 new uncorrectable codewords in 3 of 11 readings: +" in " ".join(docs.findings)
-    assert "Modem restarted 1 time; not answering in 1 reading." in " ".join(docs.findings)
+    # the restarts and the unanswered readings are in the headline, which no trim cuts
+    assert "; 1 modem restart; not answering in 1 reading; " in docs.headline
     assert docs.table and len(docs.table[1]) == 6 and docs.headline.startswith("Cable line:")
+    # a channel's Finding names every way it is outside the levels, worst first
+    assert docs.table[1][0][5] == "Low SNR; high power"
     load = facts["wan_load"][0].section(facts["wan_load"][1], "full")
     assert any("Counters stood still 1 time; router restarts 1." in f for f in load.findings)
     assert any("Peak load 93 %" in f for f in load.findings)
@@ -292,7 +296,11 @@ async def test_the_section_numbers_follow_the_stored_history(world):
     assert "sharp drops 1" in wifi.findings[0] and wifi.table
     rows = {r[0]: r for r in wifi.table[1]}
     assert rows["mesh_node:1"][1] == "wired" and rows["mesh_node:2"][1] == "Wi-Fi 5 GHz, -61 dBm (good)"
-    assert rows["mesh_node:2"][4] == "2"
+    # falls to 0 clients and the minutes at 0 are two columns; each fall is listed with its time and length
+    assert wifi.table[0][4:] == ["Falls to 0", "Minutes at 0"] and rows["mesh_node:2"][4:] == ["1", "2"]
+    fell_at = (T0 + 6600) // 60 * 60                   # the minute the node's count went to 0
+    assert f"mesh_node:2 fell to 0 clients once (2 min in all): {{minute:{fell_at:.0f}}} (2 min)." in wifi.findings
+    assert "1 sharp drop in online clients, at the time a node fell to 0 clients." in wifi.findings
 
 
 async def test_a_contribution_with_no_readings_says_so_in_one_line(world):
@@ -316,7 +324,8 @@ async def test_a_contribution_with_no_readings_says_so_in_one_line(world):
 def test_driver_notes_state_the_configured_intervals_and_hide_the_vendor_when_anonymized():
     notes, config = all_driver_notes(), make_config()
     configs = {c.driver: c for c in config.devices}
-    assert set(notes) == {"xfinity_xb", "asuswrt"}
+    configs["upnp_igd"] = DeviceConfig(id="gw", driver="upnp_igd", url="http://192.168.88.1")
+    assert set(notes) == {"xfinity_xb", "asuswrt", "upnp_igd"}
     for name, note in notes.items():
         full = driver_note(configs[name], note, "full", mesh=True)
         vague = driver_note(configs[name], note, "vague", mesh=True)
@@ -329,6 +338,8 @@ def test_driver_notes_state_the_configured_intervals_and_hide_the_vendor_when_an
     assert "(AsusWRT). Its counters are read every 10 s, its client list every 60 s" in router
     assert ", on an AiMesh network" in driver_note(configs["asuswrt"], notes["asuswrt"], "full", mesh=True)
     assert "AiMesh" not in router
+    upnp = driver_note(configs["upnp_igd"], notes["upnp_igd"], "full")
+    assert "read every 30 s" in upnp and "32-bit" in upnp and "UPnP" in upnp
 
 
 # --- telemetry ----------------------------------------------------------------------------------------------------

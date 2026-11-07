@@ -14,3 +14,11 @@
 @container (max-width: 480px) { .lay-row { grid-template-columns: 34px minmax(0, 1fr) auto; } .lay-show { grid-column: 2; } .lay-move { grid-column: 3; grid-row: 1 / span 2; flex-direction: column; } }
 
 .lay-list label.check { white-space: nowrap; }
+
+/* A card's own colours (themes.js): under the row, across it */
+.lay-colours { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--sp-2); padding-left: calc(34px + var(--sp-3)); font-size: var(--fs-sm); color: var(--ink-3); }
+.lay-colours select { max-width: 100%; width: auto; height: 30px; font-size: var(--fs-sm); }
+.lay-swatches { display: flex; flex-wrap: wrap; gap: 4px; }
+.lay-swatches input[type="color"] { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface-1); cursor: pointer; }
+.lay-swatches input[type="color"]:first-child { margin-right: 6px; } /* the accent, then the eight series colours */
+@container (max-width: 480px) { .lay-colours { padding-left: 0; } }

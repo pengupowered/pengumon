@@ -142,9 +142,11 @@ used on the first start only.
 
 Optional environment variables (access token, device passwords, ntfy, OpenTelemetry) go in a `.env` file next to
 `compose.yaml`; [`.env.example`](../.env.example) lists them. Only the container reads a `.env`; a native install sets
-them on the service ([below](#environment-variables-for-a-native-install)). ntfy, device passwords and alerts can also be
-entered on the Settings page. The container listens on all interfaces, so **set
-`PENGUMON_ACCESS_TOKEN`** unless the host is only reachable by people you trust ([Security](security.md)).
+them on the service ([below](#environment-variables-for-a-native-install)). The sign-in password, ntfy, device passwords
+and alerts can also be set on the Settings page. The container listens on all interfaces, so the first person to open
+the dashboard is asked who may open it: choose **Only people with a password** unless the host is only reachable by
+people you trust ([Security](security.md#who-can-open-the-dashboard)). `PENGUMON_ACCESS_TOKEN` in `.env` sets the
+password instead, and then the question is never asked.
 
 - **Time zone**: the image runs in UTC. Set `TZ` in `.env` to your zone (for example `TZ=America/New_York`; the
   host's is in `timedatectl` or the `/etc/localtime` link), so that quiet hours, the daily route check and the
@@ -175,7 +177,10 @@ before rebuilding.
 
 ## Your first minutes
 
-1. Open `http://127.0.0.1:8000` (on the same computer; the install script opens it for you).
+1. Open `http://127.0.0.1:8000` (on the same computer; the install script opens it for you). The first visit asks
+   **Who can open this dashboard?**: "Anyone on my home network" (no password, the usual choice while it listens on
+   this computer only) or "Only people with a password" (Pengumon proposes one and shows it once; this browser stays
+   signed in). Settings > Sign-in changes it later ([Security](security.md#who-can-open-the-dashboard)).
 2. **Path health** shows "Finding your network path" and then "Pengumon found your network path". Press **Review**,
    check the hops (each has a role, a badge of how sure it is, and the reasons), rename any you like, and press
    **Apply**. Until then the default targets are probed. What discovery sends where is in
@@ -191,16 +196,21 @@ before rebuilding.
 By default Pengumon listens on `127.0.0.1`, this computer only, which is also why no firewall prompt appears. To open it
 from a phone or another computer (the usual case on a Raspberry Pi or a server):
 
-1. Choose a long random access token and give it to the service as `PENGUMON_ACCESS_TOKEN`. Without a token, anyone who
-   can reach the port can read the data and change settings.
+1. Set a password: **Settings > Sign-in > Set a password** on this computer (Pengumon proposes one, shows it with Copy,
+   and keeps this browser signed in). Without one, anyone who can reach the port can read the data and change settings.
 2. Listen on the network: `pengumon service install --host 0.0.0.0` (add `--system` or `--user` as the same install
    used), or `server.host: "0.0.0.0"` in `config.yaml` and a restart (the listen address is one of the few things that file still
    holds). Containers already do.
-3. Open `http://<computer's address>:8000` and sign in with the token. If you use a name that is not an IP address, a
-   single word or `.lan`, `.local`, `.home.arpa` or `.internal`, add it to `PENGUMON_ALLOWED_HOSTS` ([Security](security.md)).
+3. Open `http://<computer's address>:8000` and sign in with the password (the sign-in page calls it the access token).
+   If you use a name that is not an IP address, a single word or `.lan`, `.local`, `.home.arpa` or `.internal`, add it
+   to `PENGUMON_ALLOWED_HOSTS` ([Security](security.md)).
 4. Your computer's firewall must allow the port; the install scripts do not open it.
 
-Setting the token for a native service: on Linux, `sudo systemctl edit pengumon` (system service) or
+HTTPS is optional: with your own certificate (`PENGUMON_TLS_CERT` and `PENGUMON_TLS_KEY`) or behind a reverse proxy
+([Security](security.md#https)).
+
+The password can also come from the service's environment, `PENGUMON_ACCESS_TOKEN` (it then wins over the Settings
+page, which says so). Setting it for a native service: on Linux, `sudo systemctl edit pengumon` (system service) or
 `systemctl --user edit pengumon`, add
 
 ```ini

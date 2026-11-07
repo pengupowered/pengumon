@@ -5,7 +5,10 @@ same facts. Example values only."""
 from pengumon.capabilities.contrib import ContribContext
 from pengumon.config import AppConfig
 from pengumon.db.samples import DeviceSample
-from pengumon.devices.contrib import LineLoadContribution, RouterContribution, WifiMeshContribution
+from pengumon.capabilities import BAND_5G, MeshNode
+from pengumon.devices.contrib import (
+    LineLoadContribution, NodeFacts, RouterContribution, WifiFacts, WifiMeshContribution, _backhaul_words, _descriptors,
+)
 from pengumon.devices.settings import DeviceConfig
 
 T0 = 100000.0
@@ -48,3 +51,31 @@ async def test_the_facts_of_a_run_of_polls(repo):
     assert (router.readings, router.unreachable, router.cpu_over, router.mem) == (186, 1, 4, (40.0, 40.0))
     assert [(e.code, e.start, e.end, e.value) for e in wifi.events] == [("clients.drop", T0 + 1500, T0 + 1520, 5.0)]
     assert (wifi.readings, wifi.drops, wifi.online, wifi.wifi_5g) == (186, 1, 20.0, 15.0)
+
+
+def wifi_facts(node: NodeFacts) -> WifiFacts:
+    return WifiFacts(identifiers={}, readings=10, online=9.0, wired=4.0, wifi_2g=1.0, wifi_5g=4.0, nodes=(node,))
+
+
+def test_a_node_that_falls_to_0_on_a_wifi_backhaul_near_weak_says_so_in_the_findings_line():
+    near = MeshNode(id="000003", label="x", backhaul="wifi", backhaul_band=BAND_5G, backhaul_rssi_dbm=-74)
+    fair = MeshNode(id="000003", label="x", backhaul="wifi", backhaul_band=BAND_5G, backhaul_rssi_dbm=-72)
+    assert _backhaul_words(near) == "Wi-Fi 5 GHz, -74 dBm (fair, near weak: a backhaul this weak often drops the node)"
+    assert _backhaul_words(fair) == "Wi-Fi 5 GHz, -72 dBm (fair)"
+    node = NodeFacts("mesh_node:3", _backhaul_words(near), 2.0, 0.0, ((T0, 5), (T0 + 7200, 8)), 13, "near weak", -74)
+    assert WifiMeshContribution().section(wifi_facts(node), "full").headline == (
+        "Wi-Fi and mesh: mesh_node:3 fell to 0 clients 2 times (13 min in all; Wi-Fi backhaul near weak, -74 dBm).")
+
+
+def test_a_node_is_told_apart_without_its_name_where_its_backhaul_is_the_only_one_of_its_kind():
+    nodes = {"000002": MeshNode(id="000002", label="x", backhaul="wired"),
+             "000003": MeshNode(id="000003", label="y", backhaul="wifi")}
+    assert _descriptors(["000001", "000002", "000003"], nodes) == {
+        "000002": "the only node on wired backhaul", "000003": "the only node on Wi-Fi backhaul"}
+    assert _descriptors(["000001", "000002", "000003", "000004"], nodes) == {}   # two not known: either may be wired
+    node = NodeFacts("mesh_node:3", "Wi-Fi", 2.0, 0.0, ((T0, 5),), 5, descriptor="the only node on Wi-Fi backhaul")
+    contribution = WifiMeshContribution()
+    assert contribution.section(wifi_facts(node), "vague").findings[1].startswith(
+        "mesh_node:3 (the only node on Wi-Fi backhaul) fell to 0 clients once (5 min in all): ")
+    assert "(the only node" not in contribution.section(wifi_facts(node), "full").headline   # Full names the node
+

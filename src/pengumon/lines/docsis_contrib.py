@@ -8,15 +8,15 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from pengumon.capabilities import Capability
 from pengumon.capabilities.contrib import (
-    ROLE_LINE, ContribContext, DriverNotes, EventKind, ModuleEvent, ModuleSection, RedactionHints, day_key,
+    ROLE_LINE, ContribContext, EventKind, ModuleEvent, ModuleSection, RedactionHints, day_key,
     effective_poll_seconds, field_key, host_of, median, plural,
 )
 from pengumon.drivers import DRIVERS, devices_with
 from pengumon.grades import GOOD
 from pengumon.lines import docsis
 from pengumon.lines.docsis import (
-    NO_READING_STATUSES, TECHNOLOGY, channel_finding, decode_channels, decode_summary, grade_snapshot, is_degraded,
-    judge_errors, snapshot_from_sample,
+    NO_READING_STATUSES, TECHNOLOGY, channel_finding, channel_findings, decode_channels, decode_summary, grade_snapshot,
+    is_degraded, judge_errors, snapshot_from_sample,
 )
 
 # Error kinds that mean the modem could not be reached at all (analysis/incident.py UNREACHABLE_KINDS); a refused
@@ -36,6 +36,7 @@ REACH_SECONDS = 60.0
 # their events span the whole interval and reach only a second further (the stamps are to the second).
 COUNTED_REACH_SECONDS = 1.0
 ERROR_TIMES = 4  # readings with new uncorrectables listed with their time, the largest counts
+ERROR_TIMES_SHORTEST = 2  # over its budget, the section shortens that list to this before it leaves anything out
 AT_LIMIT_SHOWN = 3  # channels at a healthy limit described one by one
 
 
@@ -66,11 +67,16 @@ class DocsisFacts:
     spacing: Optional[Tuple[float, float, float]] = None   # seconds between the window's readings: median, 10th, 90th %
 
 
-def _finding(channel, levels) -> str:
-    """channel_finding, saying which count it means: the channel's uncorrectables since the modem started, not the
-    new ones of the table's column."""
-    text = channel_finding(channel, levels)
-    return "High uncorrectable count since the modem started" if text == "High uncorrectable count" else text
+def _finding(c, lv) -> str:
+    """Every way the channel is outside the levels `lv`, worst first (docsis.channel_findings, by rank): "SNR below
+    30 dB (errors likely); high uncorrectable count since the modem started". A critical level says its limit (the
+    levels themselves are in the columns before); the uncorrectable count is the channel's own since the modem started,
+    not the new ones of the table's column."""
+    found = sorted(channel_findings(c, lv), key=lambda f: f.rank)
+    if not found:
+        return channel_finding(c, lv)
+    text = "; ".join(f.words for f in found)
+    return text[:1].upper() + text[1:]
 
 
 def _as_shown(channel):
@@ -185,10 +191,10 @@ class DocsisContribution:
             "- Codewords are the data blocks on downstream channels. Corrected ones were fixed (fine in moderation); "
             "uncorrectable ones are lost data. Each reading counts the new ones since the reading before: every burst "
             "is counted, only its time within that interval is unknown. Downstream only: these counters do not see the "
-            "upload direction. Loss starting at the Gateway is the modem itself or the cable from the router to it, "
-            "not the coaxial line (unless it restarted). A coaxial (RF) problem shows "
-            "as loss starting at ISP hop 1 while the Gateway answers, often with a burst of new "
-            "uncorrectables; a few without loss are common.\n"
+            "upload direction. Loss starting at the Gateway is the modem unit or the cable from the router to it, not "
+            "the coaxial line; a modem restart at that time means the unit. A coaxial (RF) problem shows as loss "
+            "starting at ISP hop 1 while the Gateway answers, often with a burst of new uncorrectables; a few without "
+            "loss are common.\n"
             "- \"Modem restarted\": its error counters went down, as after a restart (a change in its set of channels "
             "can look the same). \"Modem not answering\": Pengumon could not read its status page (down, restarting or "
             "busy); compare the Gateway hop's pings at that time.\n"
@@ -332,15 +338,21 @@ class DocsisContribution:
                                        else ""))
         errors = (f"{f.new_errors:,} new uncorrectable codewords in {f.error_readings} of {plural(f.good, 'reading')}"
                   if f.new_errors else f"No new uncorrectable codewords in {plural(f.good, 'reading')}")
-        if f.error_times:
+        shorter: Dict[int, Tuple[str, ...]] = {}
+
+        def timed(count: int) -> str:
             # the largest counts, in time order; {counted:a:b} is the pack's token for the interval between two
             # readings and the incidents in it
-            shown = sorted(sorted(f.error_times, key=lambda e: -e[2])[:ERROR_TIMES])
+            shown = sorted(sorted(f.error_times, key=lambda e: -e[2])[:count])
             more = len(f.error_times) - len(shown)
-            errors += (": " + "; ".join(f"+{n:,} {{counted:{a:.0f}:{b:.0f}}}" for a, b, n in shown)
-                       + (f"; {more} more readings with fewer" if more else ""))
-        findings.append(f"{errors}. Modem restarted {plural(f.restarts, 'time')}; not answering in "
-                        f"{plural(f.unreachable, 'reading')}.")
+            return (f"{errors}: " + "; ".join(f"+{n:,} {{counted:{a:.0f}:{b:.0f}}}" for a, b, n in shown)
+                    + (f"; {plural(more, 'more reading')} with fewer" if more else "") + ".")
+        if f.error_times:
+            findings.append(timed(ERROR_TIMES))
+            fewer = range(min(ERROR_TIMES, len(f.error_times)) - 1, ERROR_TIMES_SHORTEST - 1, -1)
+            shorter = {len(findings) - 1: tuple(timed(n) for n in fewer)}
+        else:
+            findings.append(f"{errors}.")
         if f.at_limit:
             findings.append(f"{plural(len(f.at_limit), 'channel')} at a healthy limit at the last reading, worth "
                             "watching, not a fault: " + "; ".join(f.at_limit[:AT_LIMIT_SHOWN])
@@ -350,20 +362,15 @@ class DocsisContribution:
         if f.degraded:
             findings.append(f"{plural(f.degraded_count, 'channel')} outside typical levels at the last reading:")
             table = (list(_CHANNEL_HEADER), [list(r) for r in f.degraded])
-        notable = f.new_errors or f.restarts or f.unreachable or f.degraded_count
-        headline = None
-        if notable:
-            bits = []
-            if f.new_errors:
-                bits.append(f"{f.new_errors:,} new uncorrectable codewords in {f.error_readings} of "
-                            f"{plural(f.good, 'reading')}")
-            if f.restarts:
-                bits.append(plural(f.restarts, "modem restart"))
-            if f.unreachable:
-                bits.append(f"not answering in {plural(f.unreachable, 'reading')}")
-            if f.degraded_count:
-                bits.append(f"{plural(f.degraded_count, 'channel')} outside typical levels at the last reading")
-            headline = ("Cable line: " + "; ".join(bits) + ".")[:200]
+        # the restarts and the readings it did not answer are always in the headline, zeros too: no trim can hide
+        # them, and a model that reads "0 modem restarts" does not send the user to look for one
+        bits = [f"{f.new_errors:,} new uncorrectable codewords in {f.error_readings} of {plural(f.good, 'reading')}"
+                if f.new_errors else f"no new uncorrectable codewords in {plural(f.good, 'reading')}",
+                plural(f.restarts, "modem restart"),
+                f"not answering in {plural(f.unreachable, 'reading')}" if f.unreachable else "answered every reading"]
+        if f.degraded_count:
+            bits.append(f"{plural(f.degraded_count, 'channel')} outside typical levels at the last reading")
+        headline = ("Cable line: " + "; ".join(bits) + ".")[:200]
         columns = {"Uncorr. codewords": {d: f"{n:,}" for d, n in sorted(f.errors_by_day.items())}} \
             if f.errors_by_day else {}
-        return ModuleSection(headline, findings, table, columns)
+        return ModuleSection(headline, findings, table, columns, shorter)

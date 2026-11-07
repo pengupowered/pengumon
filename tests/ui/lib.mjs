@@ -251,12 +251,28 @@ export async function createContext({ base, outDir, variant }) {
   };
   const noSideScroll = (modal) => page.evaluate((id) => { const b = document.querySelector(`#${id} .modal-b`); return b.scrollWidth <= b.clientWidth + 1; }, modal);
 
-  // ---- the theme, through the header's own button (so the charts re-theme as they do for a person); null: the system theme ----
+  // ---- light or dark, through the header's theme menu (so the charts re-theme as they do for a person) ----
+  // pickMode("light" | "dark" | ""): "" is "Like the system"; flipMode: the other one of what shows now.
+  const darkNow = () => page.evaluate(() => (document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches));
+  const pickInMenu = async (action, arg) => {
+    await click("#btnTheme");
+    await until(() => !document.getElementById("themeMenu").hidden);
+    await click(`#themeMenu [data-action=${action}][data-arg="${arg}"]`);
+    await until(() => document.getElementById("themeMenu").hidden);
+  };
+  const pickMode = (mode) => pickInMenu("pickMode", mode);
+  // pickLook(id), "" for the default: done once the theme is on the page (after its stylesheet has loaded)
+  const pickLook = async (id) => {
+    await pickInMenu("pickLook", id);
+    await until((want) => document.documentElement.dataset.look === (want || document.documentElement.dataset.lookDefault), id);
+  };
+  const flipMode = async () => pickMode((await darkNow()) ? "light" : "dark");
+  // null: the system theme
   const systemTheme = await page.evaluate(() => (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
   const setTheme = async (t) => {
     const want = t || systemTheme;
     const now = await page.evaluate(() => document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
-    if (now !== want) await click("#btnTheme");
+    if (now !== want) await pickMode(t || "");
     await until((w) => (document.documentElement.dataset.theme || w) === w, want);
   };
 
@@ -267,7 +283,7 @@ export async function createContext({ base, outDir, variant }) {
   // a dialog photographed in the current theme, the other one, and a phone width (<name>-dark.png, -light.png, -phone-*.png)
   async function shots(name) {
     const dark = await page.evaluate(() => document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches));
-    const flip = async () => { await click("#btnTheme"); await sleep(400); };
+    const flip = async () => { await flipMode(); await sleep(400); };
     await snap(`${name}-${dark ? "dark" : "light"}.png`);
     await flip();
     await snap(`${name}-${dark ? "light" : "dark"}.png`);
@@ -320,6 +336,13 @@ export async function createContext({ base, outDir, variant }) {
   });
   // the served URL of a dashboard module in js/ (a step imports it inside the page, to use the page's own copy and state)
   const moduleUrl = (name) => page.evaluate((n) => [...document.scripts].find((s) => s.src.endsWith("/js/main.js")).src.replace("main.js", n), name);
+
+  // Hop details is not drawn while it is off screen (js/cards.js, offscreen: 'defer'): a step that waits for what it
+  // shows brings it on screen first, as a person scrolls to it.
+  const showCard = async (panel) => {
+    await page.$eval(`[data-panel=${panel}] .panel-b`, (b) => b.scrollIntoView({ block: "center" }));
+    await frames(2);
+  };
 
   // ---- help popovers ----
   const popoverText = () => page.$eval("#helpPopover", (e) => (e.hidden ? null : e.textContent.trim()));
@@ -387,9 +410,9 @@ export async function createContext({ base, outDir, variant }) {
     browser, firefox, page, client, base, outDir, variant, bare, problems, dialogs, stats, report,
     LINE, ROUTER, USUAL_PANELS, PHONE, DESKTOP, SHOTS, systemTheme, fs, path,
     sleep, frames, layoutSettled, nextMessages, positionSettled, until, text, count, shown, visible, click, clickAt, waitText, waitCount, chartLabels, hasChart, modalOpen, eq, ok, dialogKeys, tabStaysIn,
-    panelOrder, layoutMounted, openLayout, pageReady, phone, noSideScroll, setTheme, stubFetch,
+    panelOrder, layoutMounted, openLayout, pageReady, phone, noSideScroll, setTheme, pickMode, pickLook, flipMode, darkNow, stubFetch,
     shot, dialogShot, snap, shots, inspect, inspectNamed, canvasSig, inkedPixels, moduleUrl,
-    popoverText, openHelp, signIn, signInWithToken, expectRefusals, expectStatus, resetPage, step,
+    popoverText, openHelp, showCard, signIn, signInWithToken, expectRefusals, expectStatus, resetPage, step,
   };
   return ctx;
 }

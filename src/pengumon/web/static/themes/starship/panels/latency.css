@@ -1,0 +1,30 @@
+/* Starship console's Latency: the standard view (panels/latency/view.js) restyled: the lines as readouts (a block in
+   the line's colour, its name, what it is made of), the Path / Each target switch as two console keys, both charts
+   straight on black. The lines' shape is theme.json "chart". */
+
+:root[data-look="starship"] [data-panel="latency"] .lat-legend { gap: 6px; align-items: stretch; }
+/* a line: a tile with a bar in its colour */
+:root[data-look="starship"] [data-panel="latency"] .lat-legend .lg:has(> .key.line) {
+  display: grid; grid-template-columns: 14px minmax(0, auto); grid-template-rows: auto auto; column-gap: 8px; align-items: center;
+  padding-right: 10px; background: none; border-radius: 0; overflow: hidden;
+}
+:root[data-look="starship"] [data-panel="latency"] .lat-legend .lg > .key.line { grid-row: 1 / 3; align-self: stretch; width: 14px; height: auto; border-radius: 0; }
+:root[data-look="starship"] [data-panel="latency"] .lat-legend .lg b {
+  padding-top: 3px; font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .07em; font-size: var(--fs-sm); line-height: 1.3;
+}
+:root[data-look="starship"] [data-panel="latency"] .lat-legend .lg .muted { grid-column: 2; padding-bottom: 4px; max-width: 36ch; }
+/* the band, the WAN download, the lost probes: small keys */
+:root[data-look="starship"] [data-panel="latency"] .lat-legend .lg > .key:not(.line) { width: 14px; height: 8px; border-radius: 2px; }
+/* the switch: two console keys one gap apart, the outer ends rounded */
+:root[data-look="starship"] [data-panel="latency"] .seg.lat-view { padding: 0; gap: 3px; border: 0; background: none; }
+:root[data-look="starship"] [data-panel="latency"] .lat-view button { min-height: 30px; padding: 2px 14px; border-radius: 0; background: var(--surface-3); color: var(--ink-2); font-weight: var(--fw-bold); letter-spacing: .08em; }
+:root[data-look="starship"] [data-panel="latency"] .lat-view button:first-child { border-radius: var(--r-pill) 0 0 var(--r-pill); padding-left: 16px; }
+:root[data-look="starship"] [data-panel="latency"] .lat-view button:last-child { border-radius: 0 var(--r-pill) var(--r-pill) 0; padding-right: 16px; }
+:root[data-look="starship"] [data-panel="latency"] .lat-view button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+/* the charts: straight on black */
+:root[data-look="starship"] [data-panel="latency"] .chart-box.lat-main,
+:root[data-look="starship"] [data-panel="latency"] .chart-box.lat-loss { border: 0; border-radius: 0; background: none; }
+:root[data-look="starship"] [data-panel="latency"] .chart-box.lat-main { min-height: 220px; }
+@container (max-width: 560px) {
+  :root[data-look="starship"] [data-panel="latency"] .lat-legend .lg:has(> .key.line) { flex: 1 1 100%; }
+}

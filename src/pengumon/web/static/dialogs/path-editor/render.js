@@ -144,8 +144,9 @@ function deviceBlock(h) {
   } else {
     line = `${icon('plug', 'sm')}<span class="muted">No device connected</span> · <span class="fine">add one in Settings, Devices, to read it</span>`;
   }
+  const kindKnown = state.devices.find((d) => d.driver === h.suggested_driver);
   const driver = !h.device_id && h.suggested_driver
-    ? `<p class="fine pe-suggest">Discovery thinks this is a device the <code>${escapeHtml(h.suggested_driver)}</code> driver can read${state.devices.some((d) => d.driver === h.suggested_driver) ? '' : `: add it in Settings, Devices (driver <code>${escapeHtml(h.suggested_driver)}</code>)`}.</p>` : '';
+    ? `<p class="fine pe-suggest">${kindKnown ? `Discovery thinks this is a device Pengumon can read: ${escapeHtml(kindKnown.kind || 'one you have set up')}.` : 'Discovery thinks this is a device Pengumon can read: add it in Settings, Devices.'}</p>` : '';
   return `<div class="pe-dev"><div class="pe-dev-l">${line}</div>${chooser}<p class="fine pe-dev-why">${why}</p>${driver}</div>`;
 }
 

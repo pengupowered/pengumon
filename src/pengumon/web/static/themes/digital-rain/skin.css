@@ -1,0 +1,44 @@
+/* Digital rain: shapes and texture (docs/themes.md, "Skins"). Every selector is under this theme's own data-look, so
+   nothing here touches another theme. Colours come from the tokens in theme.json; the falling characters are effect.js. */
+
+/* faint scanlines over the page background */
+:root[data-look="digital-rain"] body {
+  background-image: repeating-linear-gradient(to bottom, transparent 0 2px, color-mix(in srgb, var(--good) 3%, transparent) 2px 3px);
+}
+
+/* cards: a hairline in phosphor green and a soft glow */
+:root[data-look="digital-rain"] .panel {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent), 0 0 28px -14px color-mix(in srgb, var(--good) 45%, transparent);
+}
+
+/* titles: upper case, spaced, glowing */
+:root[data-look="digital-rain"] .panel-t,
+:root[data-look="digital-rain"] .brand-name,
+:root[data-look="digital-rain"] .modal-t {
+  text-transform: uppercase; letter-spacing: .08em;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--good) 55%, transparent);
+}
+:root[data-look="digital-rain"] .brand-name { letter-spacing: .12em; }
+
+/* the big numbers glow a little */
+:root[data-look="digital-rain"] .node-val b,
+:root[data-look="digital-rain"] .big-count b,
+:root[data-look="digital-rain"] .verdict h3 {
+  letter-spacing: 0; text-shadow: 0 0 10px color-mix(in srgb, currentColor 45%, transparent);
+}
+
+/* buttons: square, outlined */
+:root[data-look="digital-rain"] .btn.primary { box-shadow: 0 0 14px -4px color-mix(in srgb, var(--accent) 70%, transparent); }
+
+/* the rain: the whole viewport behind the page (effect.js). Dim, so text over it stays readable (AA arithmetic in
+   docs/themes.md, "Effects"); its own layer, so a frame repaints the canvas and not the cards over it */
+:root[data-look="digital-rain"] .fx-rain { position: absolute; left: 0; top: 0; opacity: .6; will-change: transform; }
+
+/* cards and the header let the rain show through (only while the effect runs: the layer then has data-fx). Half the
+   card's colour is as far as text allows: --ink-3 over the brightest glyph is 4.75:1 (AA), --ink-4 3.17:1 (its 3:1) */
+:root[data-look="digital-rain"]:has(#fxLayer[data-fx="digital-rain"]) .panel { background-color: color-mix(in srgb, var(--surface-1) 50%, transparent); }
+:root[data-look="digital-rain"] .topbar::before {
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}

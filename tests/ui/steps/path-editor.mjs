@@ -417,7 +417,7 @@ export const steps = [
     ok("the IPv6 servers are marked IPv6", /IPv6/.test(await text('#pathEditorHops [data-hop="cloudflare_dns_v6"] .pe-hop-sub')));
     ok("and one node in the chain", await page.$eval('#pathEditorChain [data-action=splitPathHops][data-arg="google_dns_v6"]', (b) => !!b.closest(".pe-node.merged")));
     ok("a live hop not found is marked", await page.$eval('#pathEditorHops [data-hop="isp_localhost"]', (e) => e.classList.contains("gone")));
-    ok("the suggested driver", /Discovery thinks this is a device the asuswrt driver can read/.test(await text(`${router} .pe-dev`)));
+    ok("the suggested driver", /Discovery thinks this is a device Pengumon can read: ASUS router\./.test(await text(`${router} .pe-dev`)));
     await shots("path-editor-discovery");
     await click(`${router} [data-action=connectPathDevice]`);
     await until(() => document.getElementById("deviceSetupModal").classList.contains("active"));

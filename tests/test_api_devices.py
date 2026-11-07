@@ -104,9 +104,9 @@ async def test_the_device_list_describes_each_device_and_its_last_poll(app_state
     assert set(listed[0]["ranges"]) == {"ds_power", "ds_snr", "us_power", "uncorrectables"}
     assert listed[1] == {
         "id": "wifi", "driver": "asuswrt", "host": "192.168.1.1", "url": "http://192.168.1.1", "model": "RT-AX88U",
-        "label": "ASUS router · RT-AX88U", "enabled": True,
+        "label": "ASUS router · RT-AX88U", "kind": "ASUS router", "enabled": True,
         "offers": ["client_inventory", "mesh", "router_system", "wan_counters"], "line_technology": None, "poll_interval_seconds": 10.0,
-        "has_credentials": True, "status": "healthy", "last_poll": 123.0,
+        "has_credentials": True, "needs_sign_in": True, "status": "healthy", "last_poll": 123.0,
     }
     assert listed[0]["id"] == "cable" and listed[0]["line_technology"] == "docsis"
     assert listed[0]["label"] == "Xfinity gateway · cable"  # no model: its id, never only an address
@@ -167,6 +167,17 @@ async def test_device_credentials_are_stored_under_the_device_and_tested(app_sta
     assert wifi.credentials_source == f"{path} (set in the dashboard)"
 
 
+async def test_a_device_with_no_password_takes_none(app_state):
+    written = []
+    app_state.secret_store = RecordingStore(written)
+    app_state.devices = DeviceRegistry([build_device(DeviceConfig(id="gw", driver="upnp_igd", url="http://192.168.88.1"))])
+    async with _client() as ac:
+        listed = (await ac.get("/api/devices")).json()[0]
+        res = await ac.post("/api/devices/gw/credentials", json={"password": "pw"})
+    assert (listed["needs_sign_in"], listed["has_credentials"]) == (False, True)
+    assert res.status_code == 400 and written == []
+
+
 async def test_a_failed_credential_test_says_so(app_state):
     app_state.devices = _generic_registry()
     async with _client() as ac:
@@ -219,6 +230,13 @@ async def test_info_has_no_isp_name_unless_configured(app_state):
     app_state.config = AppConfig()
     async with _client() as ac:
         assert (await ac.get("/api/info")).json()["isp_name"] is None
+
+
+async def test_info_names_the_zone_settings_sets_and_not_utc(app_state):
+    async with _client() as ac:
+        for setting, want in (("Asia/Tokyo", "Asia/Tokyo"), ("UTC", None), ("+01:00", None)):
+            app_state.config = AppConfig(general={"timezone": setting})
+            assert (await ac.get("/api/info")).json()["timezone"] == want
 
 
 # --- /api/features --------------------------------------------------------------------------------------------------

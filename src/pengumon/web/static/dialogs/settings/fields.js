@@ -6,11 +6,11 @@
 import { escapeHtml } from '../../js/util.js';
 import { panelTitles } from '../../js/layout.js';
 import { fmt, isNumeric, parse, problem, same, toShown } from './model.js';
-import { S, isEnv, inDraft, roundSeconds, setValue, valueOf, valueState } from './store.js';
+import { S, isEnv, inDraft, listItems, roundSeconds, setValue, valueOf, valueState } from './store.js';
 
 const ISP = 'classifier.isp_latency_spike_threshold_ms';
 const ZONE = 'general.timezone';
-const LAYOUT_KEYS = ['dashboard.order', 'dashboard.hidden'];
+const LAYOUT_KEYS = ['dashboard.order', 'dashboard.hidden', 'dashboard.colours'];
 
 const inputId = (section, key) => `set-in-${section}-${key.replace(/[^a-z0-9]+/gi, '-')}`;
 const num = (spec, stored) => (stored === null || stored === undefined ? '' : String(toShown(spec, stored, roundSeconds())));
@@ -57,7 +57,7 @@ function clockText(hhmm) {
 const choiceLabel = (spec, choice) => (spec.choice_labels && spec.choice_labels[choice]) || String(choice);
 
 // The panel layout a browser starts with, in words, by the panels' titles.
-function layoutSummary(order, hidden) {
+function layoutSummary(order, hidden, colours) {
   const titles = panelTitles();
   const ids = [...titles.keys()];
   const name = (id) => titles.get(id) || id;
@@ -65,9 +65,23 @@ function layoutSummary(order, hidden) {
   const merged = [...new Set([...known(order), ...ids])];
   const standardOrder = merged.every((id, i) => id === ids[i]);
   const off = known(hidden);
-  if (standardOrder && !off.length) return 'All panels, standard order';
+  const own = colours && typeof colours === 'object' ? Object.keys(colours).filter((id) => titles.has(id)) : [];
+  const tail = own.length ? ` · Own colours: ${own.map(name).join(', ')}` : '';
+  if (standardOrder && !off.length) return `All panels, standard order${tail}`;
   const shown = merged.filter((id) => !off.includes(id)).map(name);
-  return `${standardOrder ? 'Standard order' : `Order: ${shown.join(', ')}`} · ${off.length ? `Hidden: ${off.map(name).join(', ')}` : 'No panel hidden'}`;
+  return `${standardOrder ? 'Standard order' : `Order: ${shown.join(', ')}`} · ${off.length ? `Hidden: ${off.map(name).join(', ')}` : 'No panel hidden'}${tail}`;
+}
+
+// The themes Display > Theme offers: the built-in ones (the schema's choice labels), then the custom ones of the draft.
+function themeChoices(spec) {
+  const custom = listItems('themes').filter((t) => t && t.id).map((t) => [t.id, `${t.name || t.id} (custom)`]);
+  return [...Object.entries(spec.choice_labels || {}), ...custom];
+}
+const themeName = (spec, id) => (themeChoices(spec).find(([k]) => k === id) || [id, id])[1];
+function themeOptions(spec, value) {
+  const choices = themeChoices(spec);
+  if (!choices.some(([id]) => id === value)) choices.push([value, `${value} (not found: the standard theme shows)`]);
+  return choices.map(([id, name]) => `<option value="${escapeHtml(id)}"${id === value ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
 }
 
 // A stored value of `spec` as the page shows it: "15 %", "5 min", "1 per million", "Outages only", "on", "New York
@@ -75,6 +89,7 @@ function layoutSummary(order, hidden) {
 export function shownValue(spec, v) {
   if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return spec.empty || 'none';
   if (spec.type === 'choice') return choiceLabel(spec, v);
+  if (spec.type === 'theme') return themeName(spec, v);
   if (spec.type === 'timezone') return zoneLabel(v);
   if (spec.type === 'time') return clockText(v);
   return fmt(spec, v, roundSeconds());
@@ -142,6 +157,9 @@ function inputHtml(spec, section) {
   }
   if (spec.type === 'timezone') {
     return `<select class="input" ${common}${env ? ' disabled' : ''}>${zoneOptions(value)}</select>`;
+  }
+  if (spec.type === 'theme') {
+    return `<select class="input" ${common}${env ? ' disabled' : ''}>${themeOptions(spec, value)}</select>`;
   }
   if (spec.type === 'time') {
     return `<input class="input" type="time" ${common}${locked} value="${escapeHtml(value || '')}">`;
@@ -232,11 +250,11 @@ export function rowHtml(spec, section) {
 
 // ---------- the layout row: dashboard.order and dashboard.hidden as one ----------
 
-const layoutNow = () => layoutSummary(valueOf('dashboard.order'), valueOf('dashboard.hidden'));
+const layoutNow = () => layoutSummary(valueOf('dashboard.order'), valueOf('dashboard.hidden'), valueOf('dashboard.colours'));
 
 function layoutMetaHtml() {
   const reset = '<button type="button" class="set-lnk" data-action="settingsResetLayout" data-needs-edit>Reset to standard</button>';
-  return `<span class="set-effect">The panel order and hidden panels a browser starts with. Once someone arranges a browser with Layout, that browser keeps its own.</span><span class="set-side"><span class="set-def">Standard: all panels, standard order</span> ${stateHtml(LAYOUT_KEYS, reset)}</span>`;
+  return `<span class="set-effect">The panel order, hidden panels and card colours a browser starts with. Once someone arranges a browser with Layout, that browser keeps its own.</span><span class="set-side"><span class="set-def">Standard: all panels, standard order</span> ${stateHtml(LAYOUT_KEYS, reset)}</span>`;
 }
 
 export const isLayoutKey = (key) => LAYOUT_KEYS.includes(key);
@@ -261,7 +279,7 @@ export function readInput(el, spec) {
   const text = el.value;
   const why = problem(spec, text, roundSeconds());
   if (why) return { problem: why };
-  return { stored: spec.type === 'timezone' || spec.type === 'choice' ? text : parse(spec, text, roundSeconds()) };
+  return { stored: spec.type === 'timezone' || spec.type === 'choice' || spec.type === 'theme' ? text : parse(spec, text, roundSeconds()) };
 }
 
 // An edit of a row's input (typing, switching, picking).
@@ -323,6 +341,10 @@ export function refreshRows(root = document.getElementById('settingsModal')) {
     if (input) input.setAttribute('aria-invalid', String(bad || !!S.errors[`values.${spec.key}`]));
     const rel = row.querySelector('[data-rel]');
     if (rel) rel.textContent = shownValue(S.spec[rel.dataset.rel], valueOf(rel.dataset.rel));
+    if (spec.type === 'theme' && input && document.activeElement !== input) {
+      const html = themeOptions(spec, valueOf(spec.key)); // a custom theme added or renamed in the list below
+      if (input._options !== html) { input.innerHTML = html; input._options = html; }
+    }
     if (!input || document.activeElement === input || bad) return;
     const value = valueOf(spec.key);
     if (spec.type === 'boolean') input.checked = !!value;

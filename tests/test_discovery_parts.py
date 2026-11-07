@@ -10,6 +10,7 @@ import pytest
 
 from discovery_fakes import ASUS_FRONT, ASUS_LOGIN, LUCI_INDEX, XFINITY_LOGIN, FakeDns, three_paths, trace
 from icmp_fakes import FakeBackend, FakePath
+from pengumon.drivers import upnp_wire
 from pengumon.engine.discovery import devices, upnp
 from pengumon.engine.discovery.addresses import address_class, registrable_domain, same_subnet
 from pengumon.engine.discovery.lookups import (
@@ -46,7 +47,7 @@ def test_same_subnet():
     ("ae1.cr1.lon.example.co.uk", "example.co.uk"), ("host.example.com.au", "example.com.au"),
     ("r1.example.ne.jp", "example.ne.jp"), ("co.uk", "co.uk"), ("a.example.de", "example.de"),
     ("router", None), ("192.0.2.1", None), ("1.2.0.192.in-addr.arpa", None), ("bad_label.example.net", None),
-    ("", None), (None, None), ("-x.example.net", None),
+    ("", None), (None, None), ("-x.example.net", None), ("a\n.example.net", None),
 ])
 def test_registrable_domain(name, domain):
     assert registrable_domain(name) == domain
@@ -359,13 +360,13 @@ def test_ssdp_answers_count_only_with_a_description_on_the_answering_private_hos
 
 
 def test_an_igd_description_lists_its_wan_services_from_the_whole_device_tree():
-    d = upnp.parse_description(IGD_DESCRIPTION)
+    d = upnp_wire.parse_description(IGD_DESCRIPTION)
     assert (d.friendly_name, d.manufacturer, d.model) == ("Example Router", "Example Corp", "XR-1")
     assert d.services == [("urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1", "/ctl/CmnIfCfg"),
                           ("urn:schemas-upnp-org:service:WANIPConnection:1", "/ctl/IPConn")]
     other = IGD_DESCRIPTION.replace(b"InternetGatewayDevice:1</deviceType>\n    <friendlyName>",
                                     b"MediaServer:1</deviceType>\n    <friendlyName>")
-    assert upnp.parse_description(other) is None
+    assert upnp_wire.parse_description(other) is None
 
 
 BILLION_LAUGHS = b"""<?xml version="1.0"?>
@@ -380,11 +381,11 @@ EXTERNAL_ENTITY = b"""<?xml version="1.0"?>
 
 @pytest.mark.parametrize("body", [
     BILLION_LAUGHS, EXTERNAL_ENTITY, b"<!doctype root><root/>", b"<root><device>", b"not xml at all",
-    b"<root>" + b"<a>x</a>" * (upnp.XML_MAX // 8) + b"</root>", "<root/>",
+    b"<root>" + b"<a>x</a>" * (upnp_wire.XML_MAX // 8) + b"</root>", "<root/>",
 ], ids=["billion-laughs", "external-entity", "doctype", "unclosed", "not-xml", "oversized", "str-body"])
 def test_hostile_or_oversized_xml_is_refused(body):
-    assert upnp.safe_xml(body) is None
-    assert upnp.parse_description(body if isinstance(body, bytes) else b"") is None
+    assert upnp_wire.safe_xml(body) is None
+    assert upnp_wire.parse_description(body if isinstance(body, bytes) else b"") is None
 
 
 @pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be", "utf-8"])
@@ -394,19 +395,19 @@ def test_a_doctype_is_refused_in_any_encoding(encoding):
     if encoding != "utf-8":
         text = text.replace('<?xml version="1.0"?>', f'<?xml version="1.0" encoding="{encoding}"?>')
     body = text.encode(encoding)
-    assert upnp.safe_xml(body) is None
-    assert upnp.parse_soap_answer(body, "GetExternalIPAddress") == {}
-    assert upnp.parse_description(body) is None
-    assert upnp.safe_xml("<root/>".encode("utf-16")) is not None  # a UTF-16 document without a DTD is still fine
+    assert upnp_wire.safe_xml(body) is None
+    assert upnp_wire.parse_soap_answer(body, "GetExternalIPAddress") == {}
+    assert upnp_wire.parse_description(body) is None
+    assert upnp_wire.safe_xml("<root/>".encode("utf-16")) is not None  # a UTF-16 document without a DTD is still fine
 
 
 def test_soap_answers_keep_only_known_fields():
     body = soap_answer("GetExternalIPAddress", {"NewExternalIPAddress": "203.0.113.200", "Evil": "x"})
-    assert upnp.parse_soap_answer(body, "GetExternalIPAddress") == {"NewExternalIPAddress": "203.0.113.200"}
+    assert upnp_wire.parse_soap_answer(body, "GetExternalIPAddress") == {"NewExternalIPAddress": "203.0.113.200"}
     fault = (b'<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault>'
              b'<faultstring>UPnPError</faultstring></s:Fault></s:Body></s:Envelope>')
-    assert upnp.parse_soap_answer(fault, "GetExternalIPAddress") == {}
-    assert upnp.parse_soap_answer(BILLION_LAUGHS, "GetExternalIPAddress") == {}
+    assert upnp_wire.parse_soap_answer(fault, "GetExternalIPAddress") == {}
+    assert upnp_wire.parse_soap_answer(BILLION_LAUGHS, "GetExternalIPAddress") == {}
 
 
 def _igd_handler(seen, description=IGD_DESCRIPTION, external="203.0.113.200"):
@@ -450,7 +451,7 @@ async def test_a_control_url_on_another_host_is_never_called():
 
 async def test_an_oversized_description_is_not_parsed():
     seen = []
-    huge = IGD_DESCRIPTION.replace(b"<friendlyName>", b"<!--" + b"x" * upnp.XML_MAX + b"--><friendlyName>")
+    huge = IGD_DESCRIPTION.replace(b"<friendlyName>", b"<!--" + b"x" * upnp_wire.XML_MAX + b"--><friendlyName>")
     async with _client(_igd_handler(seen, huge)) as client:
         assert await upnp.read_igd("http://192.168.1.1:5000/rootDesc.xml", client, "192.168.1.1") is None
     assert len(seen) == 1  # no SOAP call either
@@ -469,6 +470,39 @@ async def test_discover_igds_skips_hosts_it_must_leave_alone_and_answers_from_el
     assert {httpx.URL(u).host for _m, u, _a in seen} == {"192.168.1.1"}
 
 
+async def test_a_gateway_whose_answers_break_the_reading_does_not_fail_the_others():
+    seen = []
+    good = _igd_handler(seen)
+
+    def handler(request):
+        if request.url.host == "192.168.1.66":
+            raise RuntimeError("an answer nothing expected")  # not an httpx error: read_igd does not catch it
+        return good(request)
+
+    async def search():
+        return [("192.168.1.66", ssdp("192.168.1.66")), ("192.168.1.1", ssdp("192.168.1.1"))]
+
+    async with _client(handler) as client:
+        found = await upnp.discover_igds(client, search)
+    assert [i.address for i in found] == ["192.168.1.1"]
+
+
+@pytest.mark.parametrize("figure", ["86400\u00b2", "\u0668\u0666\u0664\u0660\u0660"])  # "²", Arabic-Indic digits
+async def test_a_figure_that_is_not_plain_digits_is_left_out(figure):
+    seen = []
+    plain = _igd_handler(seen)
+
+    def handler(request):
+        response = plain(request)
+        if request.method == "POST":
+            return httpx.Response(200, content=response.content.replace(b">86400<", f">{figure}<".encode()))
+        return response
+
+    async with _client(handler) as client:
+        igd = await upnp.read_igd("http://192.168.1.1:5000/rootDesc.xml", client, "192.168.1.1")
+    assert igd.uptime_s is None and igd.down_bps == 100_000_000
+
+
 async def test_discover_igds_asks_only_gateways_on_the_traced_path():
     seen = []
 
@@ -485,7 +519,7 @@ async def test_discover_igds_asks_only_gateways_on_the_traced_path():
 
 
 def test_the_msearch_asks_for_an_internet_gateway():
-    text = upnp.msearch(upnp.IGD_TYPES[0]).decode()
+    text = upnp_wire.msearch(upnp_wire.IGD_TYPES[0]).decode()
     assert text.startswith("M-SEARCH * HTTP/1.1\r\n") and "ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1" in text
     assert 'MAN: "ssdp:discover"' in text and text.endswith("\r\n\r\n")
 

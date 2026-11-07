@@ -81,7 +81,7 @@ to delete it on Apply instead (that cannot be undone).
 draws the new path. If the path was changed elsewhere (another tab or device) after you opened the editor, Apply is
 refused and nothing changes; **Load the current path** starts over from the current one.
 
-When an access token is set and viewing without it is allowed, a visitor who has not signed in sees the editor as
+When a password is set and viewing without it is allowed, a visitor who has not signed in sees the editor as
 "View only": Apply, Preview, Rediscover and Restore stay off until they sign in ([security.md](security.md)).
 
 ## Earlier paths
@@ -105,8 +105,8 @@ Path health shows "Your path changed" with what changed; **Review** opens that d
 hides the notice until the route changes again.
 
 > [!WARNING]
-> Without an access token, any device that can reach the dashboard can edit the path and delete a removed hop's history,
-> including hops that came from `config.yaml`. Set `PENGUMON_ACCESS_TOKEN` if other people's devices share your network
+> Without a password, any device that can reach the dashboard can edit the path and delete a removed hop's history,
+> including hops that came from `config.yaml`. Set one in Settings > Sign-in if other people's devices share your network
 > ([security.md](security.md)).
 
 ## Export and import

@@ -15,7 +15,7 @@ inspector and the dossier use.
 
 import json
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
 from pengumon.db.samples import LineSample
 from pengumon.grades import CRITICAL, GOOD, WARN, Range, known_grades
@@ -220,18 +220,52 @@ class DocsisErrorTracker:
                              for c in snapshot.channels if c.direction == "downstream" and c.unerrored is not None}
         return grade_snapshot(snapshot, levels)  # the recent-error figures are known only now
 
-# --- dossier: which channels are outside typical levels, and why ------------------------------------------
+# --- the dossier and the AI pack: which channels are outside typical levels, and why ----------------------
+
+# A channel's uncorrectable codewords since the modem started (not the new ones between polls, which the grades judge):
+# above UNCORRECTABLES_LISTED the channel is listed as degraded, above UNCORRECTABLES_HIGH it is called a high count.
+UNCORRECTABLES_LISTED = 100
+UNCORRECTABLES_HIGH = 500
+
+
+class Finding(NamedTuple):
+    """One way a channel is outside the levels: `rank` (lower is worse: 0 past a critical level, 1 past a warning
+    level, 2 and 3 the counts since the modem started), `label` for the dossier, `words` for the AI pack."""
+    rank: int
+    label: str
+    words: str
+
+
+def channel_findings(c, levels: Optional[LineSignalConfig] = None) -> List[Finding]:
+    """Every way channel `c` is outside `levels`, in the dossier's order (its first is the reason the dossier gives;
+    the AI pack sorts them by rank). Empty for a channel within them."""
+    lv = levels or DEFAULT_LEVELS
+    unc = c.uncorrectables or 0
+    found: List[Finding] = []
+    if unc > UNCORRECTABLES_HIGH:
+        found.append(Finding(2, "High uncorrectable count", "high uncorrectable count since the modem started"))
+    if c.snr_db is not None and c.snr_db < lv.ds_snr_critical_db:
+        found.append(Finding(0, "Low SNR", f"SNR below {lv.ds_snr_critical_db:g} dB (errors likely)"))
+    elif c.snr_db is not None and c.snr_db < lv.ds_snr_warning_db:
+        found.append(Finding(1, "Low SNR", "low SNR"))
+    if c.direction == "upstream":
+        if c.power_dbmv > lv.us_power_critical_dbmv:
+            found.append(Finding(0, "High upstream power",
+                                 f"power above {lv.us_power_critical_dbmv:g} dBmV (may drop off)"))
+        elif c.power_dbmv > lv.us_power_warning_dbmv:
+            found.append(Finding(1, "High upstream power", "high power"))
+        elif c.power_dbmv < lv.us_power_low_warning_dbmv:
+            found.append(Finding(1, "Low upstream power", "low power"))
+    if UNCORRECTABLES_LISTED < unc <= UNCORRECTABLES_HIGH:
+        found.append(Finding(3, "Uncorrectables present", "uncorrectables since the modem started"))
+    if c.direction == "downstream" and abs(c.power_dbmv) > lv.ds_power_warning_abs_dbmv:
+        found.append(Finding(1, "Power level out of range", "high power" if c.power_dbmv > 0 else "low power"))
+    return found
+
 
 def is_degraded(c, levels: Optional[LineSignalConfig] = None) -> bool:
-    """A channel outside the warning levels of `levels` (listed in the dossier)."""
-    lv = levels or DEFAULT_LEVELS
-    return bool(
-        (c.uncorrectables and c.uncorrectables > 100)
-        or (c.snr_db is not None and c.snr_db < lv.ds_snr_warning_db)
-        or (c.direction == "downstream" and abs(c.power_dbmv) > lv.ds_power_warning_abs_dbmv)
-        or (c.direction == "upstream" and (c.power_dbmv > lv.us_power_warning_dbmv
-                                           or c.power_dbmv < lv.us_power_low_warning_dbmv))
-    )
+    """A channel outside the warning levels of `levels` (listed in the dossier and the AI pack)."""
+    return bool(channel_findings(c, levels))
 
 
 def uncorrectable_increase(snapshots) -> int:
@@ -245,19 +279,9 @@ def uncorrectable_increase(snapshots) -> int:
 
 
 def channel_finding(c, levels: Optional[LineSignalConfig] = None) -> str:
-    """Why a degraded channel is listed at `levels` (the first matching reason wins)."""
-    lv = levels or DEFAULT_LEVELS
-    if c.uncorrectables and c.uncorrectables > 500:
-        return "High uncorrectable count"
-    if c.snr_db is not None and c.snr_db < lv.ds_snr_warning_db:
-        return "Low SNR"
-    if c.direction == "upstream" and c.power_dbmv > lv.us_power_warning_dbmv:
-        return "High upstream power"
-    if c.direction == "upstream" and c.power_dbmv < lv.us_power_low_warning_dbmv:
-        return "Low upstream power"
-    if c.uncorrectables and c.uncorrectables > 100:
-        return "Uncorrectables present"
-    return "Power level out of range"
+    """Why a degraded channel is listed at `levels`, for the dossier: the first of channel_findings."""
+    found = channel_findings(c, levels)
+    return found[0].label if found else "Power level out of range"
 
 
 # --- storage ---------------------------------------------------------------------------------------------------------

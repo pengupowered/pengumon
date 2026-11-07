@@ -4,9 +4,15 @@ export const subject = "panel:services";
 export const variants = ["full"];
 
 export const steps = [
-  ["host services card: an up and a down service, the Open link, copy, history, and no service incidents in the network log", async ({ click, count, eq, ok, outDir, page, path, text, until, waitCount, waitText }) => {
+  ["host services card: an up and a down service, the Open link, copy, history, and no service incidents in the network log", async ({ click, count, eq, moduleUrl, ok, outDir, page, path, text, until, waitCount, waitText }) => {
     await until(() => !document.getElementById("servicesCard").hidden);
     await waitCount("#servicesList .svc-row", 2);
+    eq("with a service down the card is an outage", await page.$eval("#servicesCard", (c) => c.dataset.status), "crit");
+    const levels = await page.evaluate(async (u) => {
+      const { cardStatus } = await import(u);
+      return [[{ status: "degraded" }, { status: "up" }], [{ status: "up" }, { status: "unknown" }], [{ status: "degraded" }, { status: "down" }]].map(cardStatus).join();
+    }, await moduleUrl("../panels/services/model.js"));
+    eq("a degraded service is a warning, only a down one an outage", levels, "warn,good,crit");
     const row = (id) => `#servicesList .svc-row[data-service=${id}]`;
     await waitText(`${row("svc_up")} [data-role=status]`, /^Up$/);
     await waitText(`${row("svc_down")} [data-role=status]`, /^Down$/);

@@ -1,7 +1,8 @@
-// Host services panel: the apps on this host whose health is checked (config: service_checks).
+// Host services panel: the apps on this host whose health is checked (config: service_checks). model.js keeps the
+// services and makes the view model; view.js is the standard view (docs/themes.md, "Drawing a card").
 
 import { featureAvailable } from '../../js/devices.js';
-import { initServices } from './services.js';
+import { initServices } from './model.js';
 import './help.js';
 
 export default {

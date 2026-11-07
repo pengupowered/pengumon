@@ -82,3 +82,19 @@ def test_dns_probes_left_out_are_the_defaults_and_an_empty_list_is_none(tmp_path
     empty = tmp_path / "empty.yaml"
     empty.write_text(f"targets:\n{target}dns_probes: []\n", encoding="utf-8")
     assert load_config(str(empty)).dns_probes == []
+
+
+def test_a_line_break_never_rides_along_in_an_id_or_a_colour():
+    """A pattern ending in $ also matches before a final line break. Ids are trimmed before they are checked (a device id
+    becomes an environment variable's name and a secret's file name); a chart colour is checked as a whole string."""
+    import pytest
+    from pydantic import ValidationError
+    from pengumon.devices.settings import DeviceConfig
+    from pengumon.engine.prober_settings import DnsProbeConfig
+    from pengumon.models.probes import TargetConfig
+    assert TargetConfig(id="router\n", name="Router", address="192.0.2.1").id == "router"
+    assert DeviceConfig(id="modem\n", driver="snmp", url="snmp://192.0.2.1").id == "modem"
+    assert DnsProbeConfig(id="dns\n", name="DNS").id == "dns"
+    with pytest.raises(ValidationError):
+        TargetConfig(id="router", name="Router", address="192.0.2.1", color="#3987e5\n")
+    assert TargetConfig(id="router", name="Router", address="192.0.2.1", color="#3987E5").color == "#3987e5"

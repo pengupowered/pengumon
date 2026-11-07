@@ -80,7 +80,7 @@ devices:
 
 
 @pytest.mark.parametrize("entry, message", [
-    ({"id": "x", "driver": "netgear", "url": "http://203.0.113.4"}, "unknown driver 'netgear'; available drivers: asuswrt, openwrt, snmp, xfinity_xb"),
+    ({"id": "x", "driver": "netgear", "url": "http://203.0.113.4"}, "unknown driver 'netgear'; available drivers: asuswrt, openwrt, snmp, upnp_igd, xfinity_xb"),
     ({"id": "bad id", "driver": "asuswrt", "url": "http://203.0.113.4"}, "Device ID must be"),
     ({"id": "x", "driver": "asuswrt", "url": "192.168.1.1"}, "url must start with http:// or https:// and name a host"),
     ({"id": "x", "driver": "asuswrt", "url": "ftp://192.168.1.1"}, "url must start with http:// or https://"),

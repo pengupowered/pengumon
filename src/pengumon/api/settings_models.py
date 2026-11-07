@@ -3,7 +3,7 @@ their shapes are written down. docs/api.md describes them; the frontend and the 
 
 Conventions:
 - A key is a registry key ("classifier.down_loss_pct"); a list name is one of devices, services, webhooks,
-  dns_probes; a slot is a secret slot ("ntfy.url", "webhook.<id>.url", "webhook_header.<name>").
+  dns_probes, themes; a slot is a secret slot ("ntfy.url", "webhook.<id>.url", "webhook_header.<name>").
 - Values are stored units (rounds, fractions, seconds); the page converts with the schema's scale and rounds.
 - A secret's value is only ever sent *to* the server (PUT `secrets`), never back.
 """
@@ -50,7 +50,7 @@ class SectionSpec(_Model):
     order: int
 
 
-FieldType = Literal["number", "integer", "boolean", "text", "choice", "time", "timezone", "layout", "list",
+FieldType = Literal["number", "integer", "boolean", "text", "choice", "time", "timezone", "layout", "theme", "list",
                     "object", "map"]
 
 
@@ -99,6 +99,7 @@ class DriverSpec(_Model):
     default_poll_seconds: float
     min_poll_seconds: float
     default_username: str
+    needs_sign_in: bool = True
     url_schemes: List[str]
     options: List[ItemFieldSpec]  # mesh_node_labels is type "map" (MAC -> label)
 

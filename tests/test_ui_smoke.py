@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from pengumon.access.manager import SETUP_KEY
 from pengumon.capabilities import BAND_5G, Client, ClientsReading
 from pengumon.db.repository import DatabaseRepository
 from pengumon.db.samples import MeshCount
@@ -55,11 +56,14 @@ pytestmark = pytest.mark.skipif(
     reason="run scripts/test-ui.sh, or set PENGUMON_UI_SMOKE=1 with node, $PGBROWSER (puppeteer-core) and PUPPETEER_EXECUTABLE_PATH")
 
 
-async def seed(db_path: str, now: float) -> None:
+async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
     """Three hops of 1 s probes for 2 h 20 min, 15 network incidents plus a service one (a 2 h one, a short one with a path trace, one
-    explained by load), DOCSIS and router history around them."""
+    explained by load), DOCSIS and router history around them. `access_answered`: the first-run question (who can open the
+    dashboard, pengumon.access) was answered "anyone on my home network"; only the `firstrun` variant leaves it open."""
     repo = DatabaseRepository(db_path=db_path)
     await repo.initialize()
+    if access_answered:
+        await repo.set_meta(SETUP_KEY, "open")
     start = float(int(now)) - 8400.0
     samples = []
     # one probe round per second, the targets 25 ms apart as the prober sends them, straddling the half second: rounding
@@ -157,6 +161,9 @@ DEVICES = {
     # from the header (steps/sign-out.mjs)
     "viewonly": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
                 '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
+    # a fresh install: the first-run question is open (who can open the dashboard); steps/access-setup.mjs answers it
+    "firstrun": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
+                '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
     # a line device of a technology the page has no adapter for (serve.py relabels the modem driver)
     "unknownline": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
                    '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
@@ -176,7 +183,7 @@ RUNS = [pytest.param(*r, id="-".join([r[0]] + ([r[1].replace("/", "of")] if r[1]
     ("full", "3/3"), ("full", "2/2", "firefox"), ("longpath", "1/1"),
     ("full", "1/3"), ("token", "1/1"), ("tworouters", "1/1"),
     ("full", "2/3"), ("viewonly", "1/1"), ("bare", "1/1"),
-    ("full", "1/2", "firefox"), ("unknownline", "1/1"))]
+    ("full", "1/2", "firefox"), ("unknownline", "1/1"), ("firstrun", "1/1"))]
 assert {r.values[0] for r in RUNS} == set(DEVICES) and sum(r.values[0] == "full" and len(r.values) == 2 for r in RUNS) == FULL_SHARDS
 
 
@@ -185,9 +192,10 @@ def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
     """`full`: modem, router and a two-node mesh (every panel and the Local network modal). `bare`: no devices at all
     (no device cards, the rest of the live page works). `tworouters`: a card per router. `unknownline`: the line card's
     common part only. `token`: `full` behind an access token (sign in, sign out, sign out everywhere). `viewonly`: the
-    token with PENGUMON_VIEW_WITHOUT_TOKEN on (view only, then sign in to edit)."""
+    token with PENGUMON_VIEW_WITHOUT_TOKEN on (view only, then sign in to edit). `firstrun`: the first-run question is
+    still open (who can open the dashboard); every other variant has it answered."""
     db = tmp_path / "smoke.db"
-    asyncio.run(seed(str(db), time.time()))
+    asyncio.run(seed(str(db), time.time(), access_answered=variant != "firstrun"))
     config = tmp_path / "config.yaml"
     targets = "".join(
         f'  - {{id: "{t}", name: "{n}", category: {c}, address: "127.0.0.1", enabled: true}}\n'
@@ -204,7 +212,10 @@ def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
         '    - {id: svc_down, name: "Service Down", url: "http://127.0.0.1:1/health"}\n'
         + DEVICES[variant])
 
-    env = {**os.environ, "PENGUMON_BROWSER": browser, "PYTHONPATH": str(ROOT / "src"), "PENGUMON_CONFIG": str(config), "PGBROWSER": PGBROWSER}
+    # Its own data directory. Without PENGUMON_DATA the app uses ~/.local/state/pengumon, which every run in the container
+    # (pytest-xdist) shares, and with it sessions.json: the `token` variant's "Sign out everywhere" then refused the cookie
+    # that `viewonly` had just signed in with, closed its live socket (1008) and sent its page back to the sign-in page.
+    env = {**os.environ, "PENGUMON_BROWSER": browser, "PYTHONPATH": str(ROOT / "src"), "PENGUMON_CONFIG": str(config), "PENGUMON_DATA": str(tmp_path / "data"), "PGBROWSER": PGBROWSER}
     # configured devices (a password each), so the features the history views need are available
     env.update({"PENGUMON_DEVICE_MODEM_PASSWORD": "smoke-pw", "PENGUMON_DEVICE_ROUTER_PASSWORD": "smoke-pw",
                 "PENGUMON_DEVICE_ROUTER2_PASSWORD": "smoke-pw"})
@@ -222,7 +233,7 @@ def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
     if variant in ("token", "viewonly"):  # made up for the test; the page signs in with it, the checks below send it as Bearer
         env["PENGUMON_ACCESS_TOKEN"] = env["PENGUMON_SMOKE_TOKEN"] = "smoke-token-not-a-secret"
         headers = {"Authorization": "Bearer smoke-token-not-a-secret"}
-    # cwd: the credential forms write data/secrets.json relative to it, so they must not write into the repository
+    # cwd: keeps anything written relative to it out of the repository (the data directory is PENGUMON_DATA above)
     server = None
     try:
         # free_port() closes its socket before the app binds, and several runs start at once (pytest-xdist): another one

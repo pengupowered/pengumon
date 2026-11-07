@@ -12,8 +12,9 @@ from pengumon.web.assets import ASSET_VERSION
 WEB = Path(__file__).resolve().parents[1] / "src" / "pengumon" / "web"
 STATIC = WEB / "static"
 JS = STATIC / "js"  # the core and the shared library
-# every module: the core and shared library, and each panel's and dialog's folder (pengumon.web.ui)
-JS_ROOTS = (JS, STATIC / "panels", STATIC / "dialogs")
+# every module: the core and shared library, each panel's and dialog's folder (pengumon.web.ui) and each theme's effect
+# (pengumon.web.themes)
+JS_ROOTS = (JS, STATIC / "panels", STATIC / "dialogs", STATIC / "themes")
 SHARED_CSS = ("tokens.css", "components.css", "page.css", "style.css")
 
 
@@ -114,8 +115,10 @@ async def test_dashboard_script_is_an_es_module_under_the_tree_hash():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         html = (await ac.get("/")).text
         scripts = re.findall(r"<script\b[^>]*>", html)
-        # Chart.js stays a classic script (it defines the global `Chart`), then the one module entry point
-        assert scripts == [f'<script src="/static/v/{ASSET_VERSION}/vendor/chart.umd.min.js">',
+        # the theme first (a classic script in <head>, before the first paint: js/theme-boot.js), Chart.js stays a classic
+        # script (it defines the global `Chart`), then the one module entry point
+        assert scripts == [f'<script src="/static/v/{ASSET_VERSION}/js/theme-boot.js">',
+                           f'<script src="/static/v/{ASSET_VERSION}/vendor/chart.umd.min.js">',
                            f'<script type="module" src="/static/v/{ASSET_VERSION}/js/main.js">']
         assert "app.js" not in html
         # every module's imports resolve to a shipped file, served as JavaScript (a wrong MIME type blocks a module)
@@ -161,7 +164,7 @@ def test_every_delegated_action_in_the_markup_is_registered():
     assert all(registered.values()), registered  # the parser found a map for each event
     used = used_actions()
     # the template and the incident table rows really do use the attributes this test looks for
-    assert used["templates/index.html"]["click"] and used["static/panels/incidents/incidents.js"]["click"] == {"inspectIncident"}
+    assert used["templates/index.html"]["click"] and used["static/panels/incidents/view.js"]["click"] == {"inspectIncident"}
     for source, kinds in used.items():
         for kind, names in kinds.items():
             assert names <= registered[kind], f"{source}: no {kind} action registered for {sorted(names - registered[kind])}"
@@ -220,7 +223,9 @@ def test_util_js_has_no_literal_target_ids():
 
 # --- metric help popovers (help.js) and the mobile tab bar (tabs.js) -------------------------------------------------
 
-HELP_KEY = re.compile(r"""data-help=["']([A-Za-z0-9_.]+)["']|dataset\.help\s*=\s*["']([A-Za-z0-9_.]+)["']""")
+# a help button as markup, as `el.dataset.help = ...`, or as a view model's `help: {key: '...'}` / `help: '...'` (the router
+# and line cards name the help of a meter or gauge in their view model; their views draw the button)
+HELP_KEY = re.compile(r"""data-help=["']([A-Za-z0-9_.]+)["']|dataset\.help\s*=\s*["']([A-Za-z0-9_.]+)["']|\bhelp:\s*(?:\{\s*key:\s*)?["']([A-Za-z0-9_.]+)["']""")
 HELP_MAP_KEY = re.compile(r"^  '([A-Za-z0-9_.]+)':", re.MULTILINE)
 
 
@@ -238,7 +243,7 @@ def _used_help_keys() -> dict[str, set[str]]:
     for path in [*html_files(), *js_files()]:
         if path.endswith("/help.js"):
             continue
-        keys = {a or b for a, b in HELP_KEY.findall((WEB / path).read_text(encoding="utf-8"))}
+        keys = {a or b or c for a, b, c in HELP_KEY.findall((WEB / path).read_text(encoding="utf-8"))}
         if keys:
             used[path] = keys
     return used
@@ -422,7 +427,7 @@ async def test_the_page_carries_the_configured_default_layout_in_a_csp_safe_attr
     finally:
         delattr(app.state, STATE_ATTR)
     raw = re.search(r"<body\b[^>]*\bdata-layout='([^']*)'", html).group(1)
-    assert json.loads(unescape(raw)) == {"order": ["matrix", "diagnosis"], "hidden": ["report"]}
+    assert json.loads(unescape(raw)) == {"order": ["matrix", "diagnosis"], "hidden": ["report"], "colours": {}}
     assert not re.search(r"<script(?![^>]*\bsrc=)", html, re.IGNORECASE)
 
 
@@ -433,7 +438,8 @@ async def test_the_page_carries_the_configured_default_layout_in_a_csp_safe_attr
 # touching them, and the page works (the smoke test's `bare` variant) with no devices at all.
 CORE_MODULES = ["main.js", "live.js", "bus.js", "layout.js", "tabs.js", "dispatch.js", "devices.js", "chrome.js", "session.js"]
 # what the core may import: itself, the shared helpers and the one list of panels
-CORE_IMPORTABLE = {*CORE_MODULES, "util.js", "state.js", "help.js", "chart-theme.js", "settings-values.js", "panels/index.js"}
+CORE_IMPORTABLE = {*CORE_MODULES, "util.js", "state.js", "help.js", "chart-theme.js", "themes.js", "settings-values.js",
+                   "panels/index.js"}
 OPTIONAL_WORDS = re.compile(
     r"docsis|modem|router|mesh|grafana|topology|xfinity|asus|channel|dossier|inspector|incident|report|sparkline|"
     r"\bclients?\b|\bservices?\b|\bdiagnosis\b|\bmatrix\b|\blatency\b|\bline\b", re.IGNORECASE)
@@ -465,9 +471,9 @@ def test_every_panel_module_has_the_contract():
 
 
 def test_folders_import_only_the_core_the_shared_library_and_their_own_files():
-    """A panel or dialog folder imports static/js (core and shared library) and files of its own folder, never
-    another panel's or dialog's: removing a folder cannot break another one."""
-    for root in (STATIC / "panels", STATIC / "dialogs"):
+    """A panel, dialog or theme folder imports static/js (core and shared library) and files of its own folder, never
+    another panel's, dialog's or theme's: removing a folder cannot break another one."""
+    for root in (STATIC / "panels", STATIC / "dialogs", STATIC / "themes"):
         for path in root.rglob("*.js"):
             folder = (root / path.relative_to(root).parts[0]).resolve()  # the panel's or dialog's own folder, subfolders included
             for imported in re.findall(r"(?:from|import) '(\.{1,2}/[\w./-]+\.js)'", path.read_text(encoding="utf-8")):
@@ -503,9 +509,11 @@ def test_every_module_is_loaded():
         seen.add(path)
         for imported in re.findall(r"(?:from|import) '(\.{1,2}/[\w./-]+\.js)'", path.read_text(encoding="utf-8")):
             todo.append((path.parent / imported).resolve())
-    # the Settings page's list editors (dialogs/settings/lists/) are imported by its dialog.js; they register no actions
+    # the Settings page's list editors (dialogs/settings/lists/) are imported by its dialog.js; they register no actions.
+    # The page loads js/theme-boot.js as a classic script, and js/themes.js imports a theme's effect by its URL.
     lists = {p.resolve() for p in all_js() if "dialogs/settings/lists/" in p.as_posix()}
-    assert {p.resolve() for p in all_js()} - lists <= seen
+    by_url = {(JS / "theme-boot.js").resolve(), *(p.resolve() for p in (STATIC / "themes").rglob("*.js"))}
+    assert {p.resolve() for p in all_js()} - lists - by_url <= seen
 
 
 # --- device panels: one card per device, chosen by capability (decomposition step 6) -----------------------------------
@@ -529,8 +537,8 @@ def test_shared_device_modules_name_no_technology(name):
 
 
 def test_the_line_panel_takes_its_body_from_an_adapter():
-    """panels/line.js knows technologies only as adapter names; the DOCSIS widgets live in lines/docsis.js."""
-    text = (STATIC / "panels" / "line" / "panel.js").read_text(encoding="utf-8")
+    """The line card's model knows technologies only as adapter names; the DOCSIS readings live in panels/line/docsis.js."""
+    text = (STATIC / "panels" / "line" / "model.js").read_text(encoding="utf-8")
     code = [line for line in text.splitlines() if not line.lstrip().startswith("//")]
     naming = [line.strip() for line in code if re.search(r"docsis", line, re.IGNORECASE)]
     assert naming == ["import docsis from './docsis.js';", "const ADAPTERS = { docsis };",
@@ -617,3 +625,38 @@ def test_the_dispatcher_lets_the_real_handler_replace_a_lazy_stand_in():
     text = (JS / "dispatch.js").read_text(encoding="utf-8")
     assert "export function registerLazy" in text and "stubs.has(" in text
     assert "registerLazy(" in (JS / "panels" / "index.js").read_text(encoding="utf-8")
+
+
+# ---------- colours come from the tokens (docs/themes.md, "Card colours") ----------
+# A colour written into a card's or a dialog's styles, a card's markup or a card's code would stay the same in every theme
+# and under a card's own colours (Layout > Colours). Allowed: the made-up data of a card's fixture (fixture(), its
+# variants), the fallbacks util.js and layout.js document (a token that cannot be read yet), and the colours of targets,
+# which come from the configuration at run time.
+COLOUR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(\s*[\d.]")
+CSS_NAMED_COLOUR = re.compile(r"(?<![\w-])(?:white|black|red|green|blue|yellow|orange|purple|pink|gray|grey|silver|"
+                              r"navy|teal|maroon|olive|lime|aqua|fuchsia|cyan|magenta|gold|brown)(?![\w-])", re.IGNORECASE)
+
+
+def _colour_files() -> list[Path]:
+    css = [*STATIC.glob("panels/**/*.css"), *STATIC.glob("dialogs/**/*.css"), *STATIC.glob("themes/*/skin.css"),
+           *STATIC.glob("themes/*/panels/*.css")]
+    code = [*STATIC.glob("panels/**/*.js"), *STATIC.glob("themes/*/panels/*.js"), *STATIC.glob("panels/**/*.html")]
+    return sorted(css + code)
+
+
+def _without_fixtures(text: str) -> str:
+    """A card module's text without its fixture functions (the parity test's made-up data)."""
+    return re.sub(r"\n(?:export )?function fixture[\s\S]*?\n\}\n", "\n", re.sub(r"\n(?:export )?const \w*[fF]ixture\w* = [\s\S]*?\n\};?\n", "\n", text))
+
+
+@pytest.mark.parametrize("path", [p.relative_to(STATIC).as_posix() for p in _colour_files()])
+def test_cards_and_dialogs_take_their_colours_from_the_tokens(path):
+    text = (STATIC / path).read_text(encoding="utf-8")
+    if path.endswith(".css"):
+        text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+        values = " ".join(m.group(1) for m in re.finditer(r"[\w-]+\s*:\s*([^;{}]+)", re.sub(r"[^{}]*\{", "{", text)))
+        found = COLOUR_LITERAL.findall(values) + CSS_NAMED_COLOUR.findall(values)
+    else:
+        text = re.sub(r"(?m)^\s*//.*$", "", _without_fixtures(text))
+        found = COLOUR_LITERAL.findall(text)
+    assert not found, f"{path}: colour literals {sorted(set(found))}: use a token (var(--...)), docs/themes.md 'The tokens'"

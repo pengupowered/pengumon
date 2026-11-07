@@ -1,0 +1,12 @@
+/* Mission control's Host services: the standard view (panels/services/view.js) restyled: the status word and the
+   response time larger (their columns sized from the same tokens, so the word and the figure fit), the address and
+   the details quiet. A narrow card keeps the standard sizes for the figure. */
+:root[data-look="mission-control"] [data-panel="services"] .svc li { grid-template-columns: calc(var(--fs-sm) * 7.2) minmax(0, 1fr) calc(var(--fs-lg) * 4.2) auto; padding-block: 11px; }
+:root[data-look="mission-control"] [data-panel="services"] .svc-st { font-size: var(--fs-sm); font-weight: var(--fw-bold); }
+:root[data-look="mission-control"] [data-panel="services"] .svc-name { font-size: var(--fs-md); font-weight: var(--fw-semi); color: var(--ink-1); }
+:root[data-look="mission-control"] [data-panel="services"] .svc-ms { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--ink-1); }
+:root[data-look="mission-control"] [data-panel="services"] .svc li.st-crit { background: linear-gradient(90deg, var(--crit-bg), transparent 80%); }
+@container (max-width: 480px) {
+  :root[data-look="mission-control"] [data-panel="services"] .svc li { grid-template-columns: calc(var(--fs-sm) * 7.2) minmax(0, 1fr) calc(var(--fs-md) * 4.2) auto; }
+  :root[data-look="mission-control"] [data-panel="services"] .svc-ms { font-size: var(--fs-md); }
+}

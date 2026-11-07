@@ -22,7 +22,7 @@
 # To upgrade, change the tag below to the new version and run `docker compose up -d` again.
 services:
   pengumon:
-    image: ghcr.io/pengupowered/pengumon:0.23.0
+    image: ghcr.io/pengupowered/pengumon:0.24.0
     container_name: pengumon
     restart: always
     network_mode: host
@@ -45,6 +45,9 @@ services:
       - PENGUMON_ALLOWED_HOSTS=${PENGUMON_ALLOWED_HOSTS:-}
       - PENGUMON_SESSION_MAX_AGE_DAYS=${PENGUMON_SESSION_MAX_AGE_DAYS:-}
       - PENGUMON_VIEW_WITHOUT_TOKEN=${PENGUMON_VIEW_WITHOUT_TOKEN:-}
+      # HTTPS with your own certificate: paths inside the container (mount the files, read-only, in an override file)
+      - PENGUMON_TLS_CERT=${PENGUMON_TLS_CERT:-}
+      - PENGUMON_TLS_KEY=${PENGUMON_TLS_KEY:-}
       - PENGUMON_NOTIFY_URL=${PENGUMON_NOTIFY_URL:-}
       - PENGUMON_NOTIFY_TOKEN=${PENGUMON_NOTIFY_TOKEN:-}
       # OpenTelemetry export (empty: none). This container uses the host network, so a collector on the same host is

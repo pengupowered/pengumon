@@ -3,7 +3,7 @@
 // GET /api/settings/preview/{id}); the page shows its progress and its result, and marks the result stale once the draft
 // changes. Only classifier.*, line.down_mbps / line.up_mbps and alerts.* are rules the replay can judge.
 
-import { escapeHtml } from '../../js/util.js';
+import { escapeHtml, localFormat } from '../../js/util.js';
 import { canon } from './model.js';
 import { S, valueOf } from './store.js';
 
@@ -22,7 +22,7 @@ const stale = () => !!P.job && P.sent !== canon(ruleValues());
 const retention = () => Number(valueOf('database.retention_days')) || 7;
 export const defaultDays = () => Math.min(7, retention());
 
-const when = (ts) => new Date(ts * 1000).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+const when = (ts) => localFormat(ts * 1000, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 const span = (seconds) => (seconds >= 3600 ? `${Math.round(seconds / 360) / 10} h` : seconds >= 60 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)} s`);
 
 // "1 incident instead of 3", or "1 incident, the same as now" when the draft rules change nothing.

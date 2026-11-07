@@ -134,10 +134,15 @@ async def test_the_golden_packs_do_not_change(tmp_path):
     packs = await scenarios(tmp_path)
     check_golden("ai_pack", packs)
     a, b = packs["setup_a"]["markdown"], packs["setup_b"]["markdown"]
-    # loss starting at the Gateway is the gateway or its cable, not the line: the fixed text and the DOCSIS text
-    assert "*gateway* = loss starts at the Gateway while the Router answers: the gateway itself or the link to it, " \
-           "not the line" in a and "strong evidence" not in a
-    assert "Loss starting at the Gateway is the modem itself or the cable from the router to it, not the coaxial" in a
+    # loss starting at the Gateway is the gateway or its cable, not the line, and with a modem restart the unit: the
+    # fixed text and the DOCSIS text
+    assert "*gateway* = loss starts at the Gateway while the Router answers: the gateway or the link to it (a modem " \
+           "restart then: the unit), not the line" in a and "strong evidence" not in a
+    assert ("Loss starting at the Gateway is the modem unit or the cable from the router to it, not the coaxial line; a "
+            "modem restart at that time means the unit.") in a and "(unless it restarted)" not in a
+    # the event log only where it can tell something apart, and never a restart the Gateway's pings rule out
+    assert ("A Gateway that answered every probe during the loss did not restart: do not ask about one." in a
+            and "with no codeword burst or signal fault then" in a)
     # the monitoring computer's own link: ruled out by a clean Router hop (A), worth asking about otherwise (B)
     assert ai_pack.LINK_CLEAN_TEXT in a and "worth asking the user" in b and ai_pack.LINK_CLEAN_TEXT not in b
     # ... slow minutes alone are enough to ask (B's Router hop without its lossy minutes); a hop that is a DNS server,
@@ -149,6 +154,9 @@ async def test_the_golden_packs_do_not_change(tmp_path):
     md = render_pack(dataclasses.replace(facts, hops=tuple(hops)), "vague").markdown
     assert "The Router hop had 12 slow minutes in this window" in md
     assert "| ISP hop 1 | provider DNS server |" in md and "answered in the home (faster than ISP hop 1)" in md
+    # the cable line's restarts and readings it did not answer are in its Findings line, zeros too
+    assert "- Cable line: 3,370 new uncorrectable codewords in 3 of 144 readings; 0 modem restarts; answered every " \
+           "reading." in a
     # new uncorrectables coincide with an incident inside the interval they were counted in, a count below a burst too
     assert "+120 counted between 21:34 and 21:44, with incident #2 (21:34:00) in that interval" in a
     assert "| low (one hop only) | uncorrectable codewords +120 |" in a
@@ -214,3 +222,47 @@ async def test_build_ai_pack_end_to_end_with_no_device_at_vague_in_the_incident_
     assert out["redactions"].keys().isdisjoint({k for k in out["redactions"] if k.startswith("scan:")})
     import json
     json.dumps(out, allow_nan=False)
+
+
+def test_a_section_over_its_budget_keeps_its_first_table_rows_and_their_lead_in():
+    # the cable line's codeword bullets once pushed out the one channel outside typical levels, and left
+    # "1 channel outside typical levels at the last reading:" introducing nothing
+    from ai_pack_helpers import Section
+    facts = canary_facts(week=True)
+    docsis_in = facts.modules[0]
+    rows = [["DS", str(600 + 9 * n), "-1.0", f"{27 + n * 0.1:.1f}"] for n in range(5)]
+    section = Section(headline="Cable line: bursts of uncorrectable codewords.",
+                      findings=["Downstream SNR 25.0-38.6 dB.", "Upstream power 41.0-44.2 dBmV."]
+                      + [f"Reading {n}: +{900 + n:,} new uncorrectable codewords, with an incident in that interval."
+                         for n in range(12)]
+                      + ["5 channels outside typical levels at the last reading:"],
+                      table=(["Dir", "Freq MHz", "Power dBmV", "SNR dB"], rows))
+    small = dataclasses.replace(docsis_in, budget_chars=1100, section=section)
+    md = render_pack(dataclasses.replace(facts, modules=(small,) + facts.modules[1:]), "full").markdown
+    part = md[md.index("### Cable line (DOCSIS)"):md.index("###", md.index("### Cable line (DOCSIS)") + 4)]
+    assert "5 channels outside typical levels at the last reading (the first 3 of 5):" in part
+    assert all(f"| {r[1]} |" in part for r in rows[:3]) and f"| {rows[3][1]} |" not in part
+    assert "Reading 11:" not in part                      # the extra bullets went before the first rows
+    assert part.count("\n- ") >= 3 and "Downstream SNR 25.0-38.6 dB." in part
+
+
+def test_a_timed_list_over_its_budget_gets_shorter_before_any_bullet_goes():
+    # the cable line's restart count once ended a bullet the trimmer dropped whole; a long timed list now shrinks to
+    # its largest few first, and only then does anything go
+    from ai_pack_helpers import Section
+    facts = canary_facts(week=True)
+    times = [f"+{900 + n:,} at 2{n}:00" for n in range(6)]
+    versions = [f"New uncorrectable codewords: {'; '.join(times[:n])}; {6 - n} more." for n in (4, 3, 2)]
+    full = "New uncorrectable codewords: " + "; ".join(times) + "."
+    findings = ["Downstream SNR 25.0-38.6 dB.", full, "Upstream power 41.0-44.2 dBmV, the last bullet."]
+
+    def part(section, budget):
+        module = dataclasses.replace(facts.modules[0], budget_chars=budget, section=section)
+        pack = render_pack(dataclasses.replace(facts, modules=(module,) + facts.modules[1:]), "full")
+        md = pack.markdown
+        return md[md.index("### Cable line (DOCSIS)"):md.index("###", md.index("### Cable line (DOCSIS)") + 4)], pack
+    budget = len(part(Section(findings=findings[:1] + versions[-1:] + findings[2:]), 10 ** 6)[0])
+    text, pack = part(Section(findings=findings, shorter={1: tuple(versions)}), budget)
+    assert versions[-1] in text and "the last bullet." in text and full not in text
+    assert "docsis: bullets shortened 1" in pack.trimmed
+

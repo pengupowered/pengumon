@@ -8,9 +8,10 @@ manifests next to their assets; those are never served as files.
 import hashlib
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 
+from pengumon.web.themes import look_stylesheets
 from pengumon.web.ui import NOT_SERVED
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -70,7 +71,23 @@ def add_versioned_static(target: FastAPI, directory: Path, version: str) -> None
         return await files.get_response(asset_path, request.scope)
 
 
+def add_themes_css(target: FastAPI, version: str) -> None:
+    """/static/v/<version>/themes/<id>/theme.css: a built-in theme's stylesheet (its token blocks, skin and card views'
+    styles), generated from its folder (pengumon.web.themes.look_css); 404 for a theme without one. Those files are part
+    of the tree, so the tree hash versions these too. Registered before the versioned files, which would otherwise answer
+    404 for them."""
+
+    @target.api_route("/static/v/{asset_version}/themes/{theme_id}/theme.css", methods=["GET", "HEAD"], include_in_schema=False)
+    async def theme_stylesheet(asset_version: str, theme_id: str):
+        css = look_stylesheets().get(theme_id)
+        if asset_version != version or css is None:
+            raise HTTPException(status_code=404)
+        return Response(css, media_type="text/css; charset=utf-8")
+
+
 def mount_static(app: FastAPI) -> None:
-    """Both static routes, the versioned one first (the plain mount would otherwise swallow its paths)."""
+    """The static routes: the themes' generated stylesheets, then the versioned files, then the plain mount (each would
+    otherwise swallow the paths of the one before)."""
+    add_themes_css(app, ASSET_VERSION)
     add_versioned_static(app, STATIC_DIR, ASSET_VERSION)
     app.mount("/static", VersionedStaticFiles(directory=str(STATIC_DIR)), name="static")

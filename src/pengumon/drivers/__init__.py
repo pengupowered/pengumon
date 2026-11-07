@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING, Iterable, List, Optional
 from pengumon.drivers.asuswrt import AsusWrtDriver
 from pengumon.drivers.openwrt import OpenWrtDriver
 from pengumon.drivers.snmp import SnmpDriver
+from pengumon.drivers.upnp_igd import UpnpIgdDriver
 from pengumon.drivers.xfinity_xb import XfinityXbDriver
 
 if TYPE_CHECKING:
     from pengumon.devices.settings import DeviceConfig
 
-DRIVERS = {driver.name: driver for driver in (AsusWrtDriver, OpenWrtDriver, SnmpDriver, XfinityXbDriver)}
+DRIVERS = {driver.name: driver for driver in (AsusWrtDriver, OpenWrtDriver, SnmpDriver, UpnpIgdDriver, XfinityXbDriver)}
 
 
 def devices_with(devices: Iterable["DeviceConfig"], capability=None, technology: Optional[str] = None
@@ -35,4 +36,4 @@ def devices_with(devices: Iterable["DeviceConfig"], capability=None, technology:
     return [c for c in found if c.enabled] + [c for c in found if not c.enabled]
 
 
-__all__ = ["DRIVERS", "devices_with", "AsusWrtDriver", "OpenWrtDriver", "SnmpDriver", "XfinityXbDriver"]
+__all__ = ["DRIVERS", "devices_with", "AsusWrtDriver", "OpenWrtDriver", "SnmpDriver", "UpnpIgdDriver", "XfinityXbDriver"]

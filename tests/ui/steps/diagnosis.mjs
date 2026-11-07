@@ -20,6 +20,7 @@ const measurePath = (page) => page.evaluate(() => {
       const k = n.querySelector(".node-kind").getBoundingClientRect(); const s = n.querySelector(".node-st").getBoundingClientRect();
       return k.right > s.left + 0.5 && k.left < s.right && k.bottom > s.top && k.top < s.bottom;
     }),
+    wordless: nodes.filter((n) => { const e = n.querySelector(".node-st"); return !e.querySelector(".st-word") || e.querySelector(".st-word").textContent !== e.title || e.scrollWidth > e.clientWidth + 1; }).length, // a status is its icon and its word, whole
     valuesCut: nodes.some((n) => [...n.querySelectorAll(".node-val, .node-meta")].some((e) => e.scrollWidth > e.clientWidth + 1))
   };
 });
@@ -45,6 +46,35 @@ export const steps = [
     });
     await click("[data-action=closeModal][data-arg=targetHistModal]");
   }, { variants: ALL_VARIANTS }],
+
+  ["the header is written only when the verdict or its figures change: messages that change nothing leave the pill (a live region), the bar, the card and the tab title alone", async ({ eq, nextMessages, page }) => {
+    await page.evaluate(() => {
+      let verdict = null;
+      window.__smokeMutate = (d) => {
+        d.targets.forEach((t) => Object.assign(t, { recent_latencies: Array(60).fill(5), last_ms: 5, loss_pct: 0, loss_recent_pct: 0, jitter_ms: 0.5, status: "up" }));
+        if (d.diagnosis) d.diagnosis = (verdict ||= d.diagnosis);
+      };
+    });
+    await nextMessages(2); // the fixed figures are drawn
+    const writes = await page.evaluate(() => new Promise((resolve) => {
+      const seen = [];
+      const watch = new MutationObserver((records) => records.forEach((r) => seen.push(`${r.type} ${r.target.id || r.target.nodeName} ${r.attributeName || ""}`)));
+      watch.observe(document.getElementById("statusPill"), { subtree: true, childList: true, characterData: true, attributes: true });
+      watch.observe(document.getElementById("topbar"), { attributes: true, attributeFilter: ["class"] });
+      watch.observe(document.body, { attributes: true, attributeFilter: ["data-status"] });
+      watch.observe(document.querySelector("title"), { subtree: true, childList: true, characterData: true });
+      watch.observe(document.getElementById("diagnosisBanner"), { attributes: true, attributeFilter: ["class", "data-status"] });
+      const socket = window.__smokeSockets.at(-1);
+      let n = 0;
+      socket.addEventListener("message", function counted() {
+        if (++n < 3) return;
+        socket.removeEventListener("message", counted);
+        setTimeout(() => { watch.disconnect(); resolve(seen); }, 50);
+      });
+    }));
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    eq("writes to the header over three messages that change nothing", writes.join("; "), "");
+  }],
 
   ["while this host cannot send pings, the path's nodes say Not probed (not No reply) and are not drawn as down", async ({ eq, page, until, waitCount }) => {
     await waitCount("#pathChain .node[data-node]", 3);
@@ -73,6 +103,7 @@ export const steps = [
       ok(`${w}: the origin marker is cut`, !m.originCut);
       ok(`${w}: the origin marker is as wide as a hop (${m.originWidth}px)`, w < 800 || m.originWidth <= 80);
       ok(`${w}: a value or meta line is cut`, !m.valuesCut);
+      eq(`${w}: nodes whose status word is missing, differs from its title or is cut`, m.wordless, 0);
       await (await page.$("#diagnosisBanner")).screenshot({ path: path.join(outDir, shot) });
     }
     await page.setViewport({ width: 1400, height: 1000 });
@@ -125,7 +156,7 @@ export const steps = [
     await page.evaluate(() => { window.__smokeMutate = null; });
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["longpath"] }],
-  ["a long path folds its ISP hops into one node, a hop that ignores ping is not down, other targets show under the chain", async ({ eq, ok, page, text, until }) => {
+  ["a long path folds its ISP hops into one node, a hop that ignores ping is not down, other targets show under the chain", async ({ eq, ok, page, showCard, text, until }) => {
     // the live message gains n ISP hops after the gateway (the second one never answers ping, which the server flags:
     // engine/path_rules.py) and a custom target
     const mutate = (n, flag = true) => page.evaluate((count, quietFlag) => {
@@ -163,6 +194,7 @@ export const steps = [
     });
     ok("a hop that ignores ping is neutral, not down", /st-unknown/.test(quiet.cls) && !/alert/.test(quiet.cls) && quiet.word === "Ignores ping" && !quiet.broken);
     eq("the next link counts from the last hop that answered (5 ms to 7 ms)", quiet.next, "+2.0 ms");
+    await showCard("matrix"); // not drawn while it is off screen
     await until(() => [...document.querySelectorAll("#hopMatrixBody tr")].some((r) => /no ping/.test(r.textContent)));
     const silentRows = await page.$$eval("#hopMatrixBody tr", (rs) => rs.map((r) => r.textContent).filter((t) => t.includes("Example provider router 2")));
     ok("Hop details says no ping, not lost", silentRows.length === 1 && /no ping/.test(silentRows[0]) && !/LOST/.test(silentRows[0]));

@@ -7,10 +7,12 @@ the environment overrides on top), so the devices, the prober and the rest are b
 settings revision, which tells open pages that the settings changed.
 
 The appliers here are the ones whose running parts belong to no feature component: the repository's retention days,
-the log levels and the Grafana links.
+the log levels, the Grafana links and the sign-in (pengumon.access: the password from secrets.json and the viewers
+setting go into the app's SecurityConfig here, before the app answers its first request).
 """
 
 from pengumon import paths
+from pengumon.access.manager import AccessManager
 from pengumon.components import Component, Context, LivePart
 from pengumon.observability import get_logger, grafana
 from pengumon.observability.logs import apply_levels
@@ -30,8 +32,12 @@ def _apply_retention(config, repository) -> None:
     repository.rollup_retention_days = config.database.rollup_retention_days
 
 
-def subscribe(hub: SettingsHub, manager: SettingsManager) -> None:
+def subscribe(hub: SettingsHub, manager: SettingsManager, access: AccessManager) -> None:
     config, repository = manager.config, manager.repository
+
+    @hub.on(["access.allow_viewers"], name="settings.access")
+    async def _viewers(change):
+        await access.apply_viewers(config.access.allow_viewers)
 
     @hub.on(["database.retention_days", "database.rollup_retention_days"], name="settings.retention")
     def _retention(change):
@@ -58,6 +64,10 @@ async def register(ctx: Context) -> Component:
     _apply_retention(ctx.config, ctx.state.repository)  # before the retention component's start-up prune
     apply_levels(ctx.config.server.log_level, ctx.config.server.log_levels)
     grafana.configure_url(ctx.config.display.grafana_url)
-    subscribe(hub, manager)
+    access = AccessManager(security, secret_store, ctx.state.repository)
+    await access.load()
+    await access.apply_viewers(ctx.config.access.allow_viewers)
+    subscribe(hub, manager, access)
     ctx.state.secret_store, ctx.state.settings, ctx.settings = secret_store, manager, hub
+    ctx.state.access = access
     return Component("settings", live_part=live_part(manager))

@@ -13,7 +13,8 @@
 @media (max-width: 720px) {
   .svc li { grid-template-columns: 58px minmax(0, 1fr) 44px auto; }
 }
-.svc li { grid-template-columns: 66px minmax(0, 1fr) 52px auto; row-gap: 4px; }
+/* The status and time columns grow with the theme's text size: 7 x 11 px = 77 px fits the icon and "Degraded" or "Checking"; 4.2 x 12.5 px = 52 px in the default theme. */
+.svc li { grid-template-columns: calc(var(--fs-xs) * 7) minmax(0, 1fr) calc(var(--fs-sm) * 4.2) auto; row-gap: 4px; }
 .svc li > .svc-actions { display: flex; gap: 2px; }
 .svc li .svc-more { grid-column: 2 / -1; font-size: var(--fs-xs); color: var(--ink-3); display: flex; flex-direction: column; gap: 4px; }
 .svc-history { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }

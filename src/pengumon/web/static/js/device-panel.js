@@ -2,7 +2,7 @@
 // error block with what to do, the "reading N min old" chip when the readings stop, and when it was read. Used by
 // panels/line.js and panels/router.js; nothing here knows a technology or a vendor.
 
-import { escapeHtml, formatClock, icon, setBadge, setText } from './util.js';
+import { formatClock, icon, setBadge, setText } from './util.js';
 import { relayout } from './layout.js';
 
 const STALE_FACTOR = 3; // a reading older than three poll intervals (at least 2 min) is stale
@@ -27,24 +27,31 @@ export function statusOf(snap, okWord) {
   }
 }
 
-// Paints the shared part; returns true when the snapshot holds a reading the body can show.
+// What a snapshot's error or missing set-up says, as the view model's `error` part (null: nothing to say): {tone:
+// 'unset' | 'crit', icon, title, text, setup: the fix as an action descriptor or null}. The card's views draw it with
+// js/device-view.js (errorPart); the body behind it stays, dimmed.
+export function errorOf(snap, device) {
+  if (!snap || (snap.status !== 'error' && snap.status !== 'unconfigured')) return null;
+  const unset = snap.status === 'unconfigured';
+  return {
+    tone: unset ? 'unset' : 'crit',
+    icon: unset ? 'lock' : 'warn',
+    title: unset ? 'Not set up yet' : `No reading from ${device.host || device.id}`,
+    text: snap.error_message || (unset ? 'Enter the admin password to start reading this device.' : 'The device did not answer.'),
+    setup: device.needs_sign_in === false ? null
+      : { action: 'openDeviceSetup', arg: device.id, needsEdit: true, label: unset ? 'Set up' : 'Check the sign-in', icon: 'settings', primary: unset }
+  };
+}
+
+// Paints the shared frame (the badge, the stale chip, the read time, the card's status); returns true when the snapshot
+// holds a reading the body can show. The error block and the dimmed body are the card's view model (errorOf).
 export function paintCommon(card, refs, device, snap, okWord) {
   const [level, word] = statusOf(snap, okWord);
   card.dataset.status = level;
   refs.badge.hidden = !word;
   if (word) setBadge(refs.badge, level, word);
   const reading = !!snap && snap.status !== 'error' && snap.status !== 'unconfigured' && snap.status !== undefined;
-  // error or not set up: say so and offer the fix; the last body stays, dimmed
-  if (snap && (snap.status === 'error' || snap.status === 'unconfigured')) {
-    const unset = snap.status === 'unconfigured';
-    refs.error.className = unset ? 'empty' : 'empty st st-crit';
-    refs.error.innerHTML = `${icon(unset ? 'lock' : 'warn')}<div><b>${unset ? 'Not set up yet' : `No reading from ${escapeHtml(device.host || device.id)}`}</b>${escapeHtml(snap.error_message || (unset ? 'Enter the admin password to start reading this device.' : 'The device did not answer.'))}<div class="row-btns"><button type="button" class="btn sm${unset ? ' primary' : ' outline'}" data-action="openDeviceSetup" data-needs-edit data-arg="${escapeHtml(device.id)}">${icon('settings')}${unset ? 'Set up' : 'Check the sign-in'}</button></div></div>`;
-    refs.error.hidden = false;
-  } else {
-    refs.error.hidden = true;
-  }
   card.classList.toggle('is-error', !!snap && snap.status === 'error');
-  refs.body.classList.toggle('dim', !!snap && snap.status === 'error');
   card.dataset.readAt = snap && snap.timestamp ? String(snap.timestamp) : '';
   paintAge(card, refs, device);
   return reading;
@@ -68,12 +75,35 @@ export function paintAge(card, refs, device) {
   card.classList.toggle('is-stale', stale);
 }
 
-// Adds a card for one instance to its panel's section and keeps its age honest.
+// What a device card's model hands its card (cards.js createCard's handle): push(vm) draws `vm` unless no part of it
+// changed, and a part that did not change keeps the object it had, so a view can skip it by identity. The JSON of the
+// parts shown is kept per key, so a message costs one stringify per new part (readings come every few seconds).
+export function partPusher(card) {
+  let shown = null;
+  const json = {};
+  return (next) => {
+    let changed = !shown;
+    Object.keys(next).forEach((k) => {
+      const s = JSON.stringify(next[k]);
+      if (shown && s === json[k]) next[k] = shown[k];
+      else { json[k] = s; changed = true; }
+    });
+    if (!changed) return;
+    shown = next;
+    card.update(next);
+  };
+}
+
+// Adds a card for one instance to its panel's section and keeps its age honest. A device that needs no sign-in (UPnP)
+// has nothing to set up: no Setup button, as its error block and the Settings list have none.
 export function placeCard(section, card, refs, device) {
   card.dataset.device = device.id;
+  refs.setup.hidden = device.needs_sign_in === false;
   refs.setup.dataset.arg = device.id;
   refs.setup.setAttribute('aria-label', `Set up ${device.host || device.id}`);
   section.appendChild(card);
-  setInterval(() => paintAge(card, refs, device), 30000);
+  const age = () => paintAge(card, refs, device);
+  setInterval(age, 30000);
+  document.addEventListener('zonechange', age); // "read 14:02" is on the page's clock
   relayout();
 }

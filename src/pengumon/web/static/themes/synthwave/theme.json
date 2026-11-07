@@ -1,0 +1,28 @@
+{
+  "id": "synthwave",
+  "name": "Synthwave",
+  "description": "Neon pink and cyan on deep purple, with a perspective grid running to the horizon behind the header.",
+  "modes": ["dark"],
+  "tokens": {
+    "dark": {
+      "--bg": "#14072b", "--surface-1": "#1d0b3a", "--surface-2": "#251048", "--surface-3": "#301657",
+      "--line": "#3f1f6e", "--line-strong": "#5e2f9c", "--scrim": "rgba(8, 2, 20, .74)",
+      "--ink-1": "#fbeaff", "--ink-2": "#e0c4f5", "--ink-3": "#c3a2e6", "--ink-4": "#a07fcc",
+      "--accent": "#ff5cd6", "--accent-bg": "rgba(255, 92, 214, .15)", "--on-accent": "#1a0322", "--focus": "#4df3ff",
+      "--good": "#3ff0a0", "--good-bg": "rgba(63, 240, 160, .12)",
+      "--warn": "#ffd447", "--warn-bg": "rgba(255, 212, 71, .12)", "--warn-fill": "#ffd447",
+      "--serious": "#ff9a4d", "--serious-bg": "rgba(255, 154, 77, .13)",
+      "--crit": "#ff4d6a", "--crit-bg": "rgba(255, 77, 106, .14)",
+      "--busy": "#8fa0ff", "--busy-bg": "rgba(143, 160, 255, .14)",
+      "--unknown": "#a08bc4", "--unknown-bg": "rgba(160, 139, 196, .13)",
+      "--nodata": "#2a1450",
+      "--s1": "#2de2ff", "--s2": "#ff5cd6", "--s3": "#ffb347", "--s4": "#8b7bff",
+      "--s5": "#7dff9a", "--s6": "#ff6f91", "--s7": "#4f9dff", "--s8": "#f9f871",
+      "--q0": "#22103f", "--q1": "#3d1f5c", "--q2": "#7a2a7a", "--q3": "#d0408f", "--q4": "#ff4d6a",
+      "--shadow-pop": "0 14px 36px rgba(4, 0, 12, .7), 0 0 0 1px #5e2f9c, 0 0 24px rgba(255, 92, 214, .14)"
+    }
+  },
+  "effect": {"id": "effect", "default_on": true},
+  "chart": {"line_width": 3, "curve": "smooth", "grid": false, "points": 0, "fill": true},
+  "tags": ["skin", "effect", "retro"]
+}

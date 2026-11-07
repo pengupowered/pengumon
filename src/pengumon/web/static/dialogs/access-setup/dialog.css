@@ -1,0 +1,22 @@
+/* Dialog access-setup: the first-run question. Tokens only, so both themes work. */
+.as-choices { border: 0; margin: 0 0 var(--sp-4); padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.as-choice {
+  display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-3) var(--sp-4); cursor: pointer;
+  border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface-2);
+}
+.as-choice:has(input:checked) { border-color: var(--accent); background: var(--accent-bg); }
+.as-choice:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.as-choice input { flex: none; width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--accent); }
+.as-choice > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.as-choice b { color: var(--ink-1); font-weight: var(--fw-semi); }
+.as-why { color: var(--ink-2); font-size: var(--fs-sm); }
+.as-pw { display: flex; flex-direction: column; gap: var(--sp-3); }
+.as-pw[hidden] { display: none; }
+.as-pw-row, .as-shown { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.as-pw-row .input { flex: 1 1 220px; min-width: 0; }
+.as-shown code {
+  flex: 1 1 220px; min-width: 0; padding: 8px 11px; border-radius: var(--r-sm); background: var(--surface-3);
+  color: var(--ink-1); font-size: var(--fs-md); overflow-wrap: anywhere; user-select: all;
+}
+.as-err { margin: var(--sp-3) 0 0; font-size: var(--fs-sm); color: var(--crit); }
+.as-err:empty { display: none; }

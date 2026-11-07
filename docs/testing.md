@@ -116,7 +116,10 @@ final 2.5 s wait for late errors, and the waits before screenshots.
   `tworouters`, `unknownline`, `longpath`, and `token`: the app behind an access token, signed in through the sign-in page,
   where only `steps/sign-out.mjs` runs: sign out, the old cookie refused, sign out everywhere with a second browser
   context; and `viewonly`: the token with `PENGUMON_VIEW_WITHOUT_TOKEN=1`, not signed in, where `steps/sign-out.mjs`
-  checks the view-only page, the server's refusals, and "Sign in to edit" from the header); any failed step, page error, console error, CSP violation or failed request fails it.
+  checks the view-only page, the server's refusals, and "Sign in to edit" from the header; and `firstrun`: a fresh
+  install whose first-run question is still open, where only `steps/access-setup.mjs` runs: the question, both
+  choices, a password set in it, and Settings > Sign-in; every other variant's seed has the question answered); any
+  failed step, page error, console error, CSP violation or failed request fails it.
 - **The browser opens the app as a person on the LAN does.** It browses `http://pengumon-test:<port>`, a single-label name (like `homeserver`, which
   the app accepts by default) that `lib.mjs` maps to 127.0.0.1 (`--host-resolver-rules` in Chromium, the pref
   `network.dns.localDomains` in Firefox; the container has no network and no DNS). A page on `127.0.0.1` or `localhost` is

@@ -8,11 +8,13 @@
 //
 // A dialog whose folder has a dialog.json with a "lazy" entry is not loaded at start (most visits never open most
 // dialogs: about a third of the page's script). The entry says what opens it: the click actions that open it
-// ("actions"), the modals that the generic openModal action opens ("modals"), and a location hash ("hash"). Its module is
-// imported the first time one of those is used, and ahead of the click when the pointer or the keyboard focus reaches
-// the control (so the click rarely waits). pengumon.web.pages puts them on <body data-modules> as `lazy`;
+// ("actions"), the modals that the generic openModal action opens ("modals"), a location hash ("hash"), and a flag of
+// /api/info ("info": the module is imported when the page's /api/info answer has it set; the first-run question). Its
+// module is imported the first time one of those is used, and ahead of the click when the pointer or the keyboard focus
+// reaches the control (so the click rarely waits). pengumon.web.pages puts them on <body data-modules> as `lazy`;
 // tests/test_frontend.py checks that every way in is named.
 import { registerLazy } from '../dispatch.js';
+import { state } from '../state.js';
 
 function list() {
   try {
@@ -59,6 +61,11 @@ function lazyDialog(entry) {
     const check = () => { if (location.hash === `#${entry.hash}`) start().catch(() => {}); };
     window.addEventListener('hashchange', check);
     check(); // the module opens its dialog itself when it finds the hash
+  }
+  if (entry.info) { // chrome.js fetches /api/info once at start, and again after a sign-in change
+    const check = (info) => { if (info && info[entry.info]) start().catch(() => {}); };
+    check(state.networkInfo);
+    document.addEventListener('networkinfo', (ev) => check(ev.detail));
   }
 }
 

@@ -1,12 +1,12 @@
 // Earlier applied paths (GET /api/path/versions) and Export (the saved path as YAML) in the path editor.
 
 import { fetchPath, fetchVersion, fetchVersions } from '../../js/path-api.js';
-import { escapeHtml, exportToggle, icon } from '../../js/util.js';
+import { escapeHtml, exportToggle, icon, localFormat } from '../../js/util.js';
 import { $, pe } from './draft.js';
 import { permissions } from './render.js';
 
 // ---------- earlier paths ----------
-const when = (s) => new Date(s * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+const when = (s) => localFormat(s * 1000, { dateStyle: 'medium', timeStyle: 'short' });
 
 export async function loadVersions() {
   const box = $('pathVersions');

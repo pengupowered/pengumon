@@ -1,0 +1,35 @@
+<!-- The first-run question: who can open this dashboard (dialog.js opens it while /api/info says access_setup). One
+     question, answered once by whoever opens the dashboard first; Settings > Sign-in changes the answer later. -->
+<div class="modal" id="accessSetupModal" role="dialog" aria-modal="true" aria-labelledby="accessSetupTitle" aria-describedby="accessSetupLead">
+  <div class="modal-content" style="--w: 560px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg><h2 class="modal-t" id="accessSetupTitle" tabindex="-1">Who can open this dashboard?</h2></header>
+    <form id="accessSetupForm" data-submit="accessSetupSubmit" novalidate>
+      <div class="modal-b">
+        <div id="accessSetupAsk">
+          <p class="lead-p" id="accessSetupLead">Pengumon shows your network's details and lets people change its settings. You can change this answer later in Settings &gt; Sign-in.</p>
+          <fieldset class="as-choices">
+            <legend class="sr-only">Who can open this dashboard?</legend>
+            <label class="as-choice"><input type="radio" name="accessChoice" value="open" id="accessChoiceOpen" data-change="accessSetupChoice" checked>
+              <span><b>Anyone on my home network</b><span class="as-why">No password. Anyone on your Wi-Fi can see your network's details and change settings. Fine for most homes.</span></span></label>
+            <label class="as-choice"><input type="radio" name="accessChoice" value="password" id="accessChoicePassword" data-change="accessSetupChoice">
+              <span><b>Only people with a password</b><span class="as-why">Pengumon makes a password for you, and you can change it. This browser stays signed in.</span></span></label>
+          </fieldset>
+          <div class="as-pw" id="accessSetupPassword" hidden>
+            <div class="field"><label for="accessSetupPw">Password</label>
+              <div class="as-pw-row"><input class="input mono" type="text" id="accessSetupPw" autocomplete="new-password" spellcheck="false" autocapitalize="off" maxlength="128" aria-describedby="accessSetupPwHint">
+                <button type="button" class="btn" data-action="accessSetupSuggest"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span>New one</span></button></div>
+              <span class="hint" id="accessSetupPwHint">At least 8 characters. Keep this one or type your own.</span></div>
+            <label class="check"><input type="checkbox" id="accessSetupViewers"> Others may look, but not change anything</label>
+          </div>
+        </div>
+        <div id="accessSetupDone" hidden>
+          <p class="lead-p"><b>Done. This browser is signed in.</b> Keep the password somewhere safe, such as a password manager: other browsers and devices need it.</p>
+          <div class="as-shown"><code class="mono" id="accessSetupShown"></code><button type="button" class="btn" data-action="accessSetupCopy" id="btnAccessSetupCopy"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+          <p class="fine" id="accessSetupWhere"></p>
+        </div>
+        <p class="as-err" id="accessSetupError" role="alert"></p>
+      </div>
+      <footer class="modal-f"><button type="submit" class="btn primary" id="btnAccessSetup"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg><span>Continue</span></button></footer>
+    </form>
+  </div>
+</div>

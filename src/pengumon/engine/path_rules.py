@@ -9,8 +9,9 @@ for each other). DNS lookups and custom targets are no stage of the path. "No re
 An IPv6 target this host cannot probe now (TargetStats.ipv6_unavailable: no IPv6 here) is no stage either: it has no
 fresh verdict to give or to vouch with.
 
-The rule judges the targets as they are now (their last ten probes); views over a longer time apply the current
-verdict to all of it. It never decides whether an incident opens: the classifier's verdicts do not read it.
+The rule judges the targets as they are now (their status, from the last probes the outage rules judge,
+classifier.window_probes); views over a longer time apply the current verdict to all of it. It never decides whether
+an incident opens: the classifier's verdicts do not read it.
 
 The hops' role words (`hop_roles`): what the dashboard (`short_label` of /api/targets and the live stream) and the AI
 pack call each hop when they do not use its configured name.

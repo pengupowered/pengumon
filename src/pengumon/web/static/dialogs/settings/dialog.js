@@ -1,4 +1,4 @@
-// Settings: every setting of Pengumon on one page, and the four lists. The page shows the server's state
+// Settings: every setting of Pengumon on one page, and the five lists. The page shows the server's state
 // (GET /api/settings, laid out by GET /api/settings/schema) and keeps a draft of changes; nothing is sent until Save
 // (PUT /api/settings with the revision the page loaded; a 409 means a part you touched changed elsewhere).
 //
@@ -6,14 +6,17 @@
 // everything read-only (the fieldset is disabled and every changing control has data-needs-edit, util.js).
 //
 // store.js holds the state and the draft, model.js the units and range checks, fields.js one row, secrets.js the
-// write-only slots, preview.js the replay of the outage rules, versions.js the kept versions, lists/ the list editors.
+// write-only slots, access.js the sign-in password (applied at once, not through Save), preview.js the replay of the
+// outage rules, versions.js the kept versions, lists/ the list editors.
 
 import { registerActions } from '../../js/dispatch.js';
 import { browserLayout } from '../../js/layout.js';
-import { closeMenus, toast } from '../../js/chrome.js';
+import { closeMenus, fetchNetworkInfo, toast } from '../../js/chrome.js';
 import { refreshSettingsValues } from '../../js/settings-values.js';
+import { refreshThemes } from '../../js/themes.js';
 import { canEdit, closeModal, confirmReplaceDraft, copyExport, escapeHtml, exportToggle, icon, keepKeyboard, openModal, showExport } from '../../js/util.js';
 import { LIST_EDITORS } from './lists/index.js';
+import { accessHtml, loadAccess } from './access.js';
 import { edit, choose, isLayoutKey, layoutRowHtml, refreshRows, resetLayout, rowHtml, useZone } from './fields.js';
 import { cancelPreview, defaultDays, hasRules, afterPreviewChange, previewHtml, runPreview, shown as previewShown, stopPreview } from './preview.js';
 import { applySearch, clearSearch, initSearch } from './search.js';
@@ -60,7 +63,7 @@ async function getJson(url) {
 }
 
 async function fetchState() {
-  const [schema, server] = await Promise.all([S.schema ? Promise.resolve(S.schema) : getJson('/api/settings/schema'), getJson('/api/settings')]);
+  const [schema, server] = await Promise.all([S.schema ? Promise.resolve(S.schema) : getJson('/api/settings/schema'), getJson('/api/settings'), loadAccess()]);
   load(schema, server);
 }
 
@@ -119,7 +122,9 @@ function sectionHtml(section) {
   let head = '';
   let tail = '';
   if (section.id === 'devices') head = listHtml('devices');
+  if (section.id === 'access') head = accessHtml();
   if (section.id === 'probing') tail = listHtml('dns_probes');
+  if (section.id === 'display') tail = listHtml('themes');
   if (section.id === 'alerts' && !groups.some((g) => g.name === 'Channels')) groups = [{ name: 'Channels', specs: [] }, ...groups];
   if (section.id === 'devices' && !groups.some((g) => g.name === 'Host app checks')) groups.push({ name: 'Host app checks', specs: [] });
   const body = `${head}${groups.map((g) => groupHtml(section, g)).join('')}${tail}`;
@@ -132,11 +137,11 @@ function sectionHtml(section) {
 function aboutHtml() {
   const a = S.server.about;
   if (!a) {
-    return `<section class="set-sec" id="set-sec-about" data-section="about"><h3 class="section-t">About this install</h3><p class="fine top">What stays outside this page (the listen address, the data folder, the config file, the access token) is shown to people signed in.</p></section>`;
+    return `<section class="set-sec" id="set-sec-about" data-section="about"><h3 class="section-t">About this install</h3><p class="fine top">What stays outside this page (the listen address, the data folder, the config file) is shown to people signed in.</p></section>`;
   }
   const rows = [
-    ['Version', a.version], ['Listens on', a.listen], ['Data folder', a.data_dir], ['Config file', a.config_path], ['Database', a.db_path || '—'],
-    ['Access token', a.token_set ? 'set' : 'not set'], ['Viewing without the token', a.view_without_token ? 'allowed' : 'not allowed'], ['Metrics export', a.otlp_host || 'off']
+    ['Version', a.version], ['Listens on', a.listen], ['HTTPS', location.protocol === 'https:' ? 'on' : 'off (plain HTTP)'], ['Data folder', a.data_dir],
+    ['Config file', a.config_path], ['Database', a.db_path || '—'], ['Metrics export', a.otlp_host || 'off']
   ];
   const cfg = a.config_yaml && a.config_yaml.differing_keys ? `<p class="fine">The config file only set the first values: ${a.config_yaml.differing_keys} of its value${a.config_yaml.differing_keys === 1 ? '' : 's'} now differ${a.config_yaml.differing_keys === 1 ? 's' : ''} from this page, and this page wins. Edit settings here, not in the file.</p>` : '';
   const report = (a.import_report || []).length ? `<details><summary class="fine">The first import left ${a.import_report.length} thing${a.import_report.length === 1 ? '' : 's'} out</summary><ul class="fine">${a.import_report.map((r) => `<li>${escapeHtml(r.key)}: ${escapeHtml(r.reason)}</li>`).join('')}</ul></details>` : '';
@@ -385,6 +390,7 @@ async function save() {
 async function saved(result) {
   const applied = result.applied || [];
   toast(result.summary || 'Settings saved');
+  fetchNetworkInfo(); // the page's time zone may have changed
   const after = [];
   if ((result.live_failed || []).length) after.push({ level: 'warn', html: `<b>Saved, but not applied yet:</b> ${escapeHtml(sentence(result.live_failed))}. It applies at the next start.` });
   if ((result.restart_needed || []).length) after.push({ level: 'warn', html: `<b>Applies after a restart:</b> ${escapeHtml(sentence(result.restart_needed))}.` });
@@ -395,6 +401,7 @@ async function saved(result) {
   setNotes(after);
   if (S.server) { renderAll(); fetchVersions().then((list) => { versions = list; renderVersions(); updateChrome(); }).catch(() => {}); }
   refreshSettingsValues();
+  refreshThemes(); // the default theme, the effects switch or a custom theme may have changed
   if (applied.includes('display.grafana_url')) grafanaLinks();
   if (applied.includes('devices')) setTimeout(() => location.reload(), 1500);
 }
@@ -495,6 +502,7 @@ function useBrowserLayout() {
   const mine = browserLayout();
   setValue('dashboard.order', mine.order);
   setValue('dashboard.hidden', mine.hidden);
+  setValue('dashboard.colours', mine.colours);
   refreshRows();
   toast('This browser\'s layout is in the draft. Save to make new browsers start with it.');
 }
@@ -562,7 +570,7 @@ document.addEventListener('editaccess', () => {
   if (!isOpen() || !S.server) return;
   syncAccess();
   // a sign-in adds what only an editor is sent (the install's paths)
-  getJson('/api/settings').then((server) => { S.server = server; renderAll(); }).catch(() => {});
+  Promise.all([getJson('/api/settings'), loadAccess(true)]).then(([server]) => { S.server = server; renderAll(); }).catch(() => {});
 });
 
 // Keyboard (util.keepKeyboard): focus moves into the dialog when it opens, Tab stays inside it and Escape closes it (asking

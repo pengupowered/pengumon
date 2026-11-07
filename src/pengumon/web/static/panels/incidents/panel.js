@@ -1,6 +1,7 @@
-// Incident log panel: the table of outages, with the inspector that opens from a row.
+// Incident log panel: the timeline and the table of outages (model.js makes the view model, view.js is the standard view;
+// docs/themes.md, "Drawing a card"), with the inspector that opens from a row (a dialog, not a card).
 
-import { updateIncidentsTable } from './incidents.js';
+import { initIncidentsCard, updateIncidentsTable } from './model.js';
 import { bindIncidents, loadSince, reload } from './list.js';
 import './inspector.js';
 import './help.js';
@@ -13,6 +14,7 @@ export default {
   core: true,
   available: () => true,
   mount(section, ctx) {
+    initIncidentsCard(section);
     // The newest page is fetched at start and whatever is loaded so far whenever the server's incidents_version changes
     // (which includes the first message after a reconnect); older incidents are loaded when something needs them
     // (list.js). The latency chart gets the list too, for its incident windows.

@@ -1,0 +1,70 @@
+/* Digital rain's view of the Path health card (diagnosis.js): a terminal route trace. A shell status line for the verdict,
+   a tree of two-line hop entries with the latency each segment adds on the branch before it. Scoped to this theme and to
+   the card while this view draws it ([data-view="digital-rain"]). Colours are the theme's tokens. */
+
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .panel[data-view="digital-rain"] > .panel-h .panel-t::before { content: "> "; color: var(--good); }
+
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-diag { display: flex; flex-direction: column; gap: var(--sp-2); font-family: var(--mono); font-size: var(--fs-sm); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-prompt { color: var(--good); font-size: var(--fs-xs); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-prompt::after { content: "█"; margin-left: 4px; animation: dr-blink 1.1s steps(1) infinite; }
+@keyframes dr-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-prompt::after { animation: none; } }
+
+/* the verdict: tag, title, then the sentence as a comment */
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--sp-3); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-vtag { display: inline-flex; align-items: center; gap: 6px; color: var(--st); font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .08em; border: 1px solid var(--st); padding: 1px 8px; background: var(--st-bg); text-shadow: none; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-vtag svg.i { width: 14px; height: 14px; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-vwords { display: contents; } /* the title and the sentence are items of the status line */
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-vt { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--ink-1); overflow-wrap: anywhere; flex: 1 1 20ch; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-vp { flex: 1 1 100%; color: var(--ink-3); overflow-wrap: anywhere; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-vp::before { content: "# "; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-inspect { margin-left: auto; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-banner:not([hidden]) { margin: 0; }
+
+/* the tree */
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-path { display: flex; flex-direction: column; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-origin { color: var(--ink-2); padding-bottom: 2px; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-origin b { color: var(--ink-1); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-origin .dr-count { font-size: var(--fs-xs); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-none { color: var(--ink-3); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-tree { list-style: none; margin: 0; padding: 0 0 0 1ch; border-left: 1px solid var(--line-strong); margin-left: 1ch; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-entry { position: relative; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-link { display: flex; gap: var(--sp-2); padding: 1px 0 1px 2ch; color: var(--ink-3); font-size: var(--fs-xs); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-pipe { color: var(--line-strong); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-delta.broken { color: var(--crit); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-hop {
+  position: relative; display: grid; width: 100%; align-items: baseline; gap: 1px var(--sp-3); padding: 5px var(--sp-2) 5px 2ch; text-align: left;
+  font: inherit; color: var(--ink-2); background: none; border: 1px solid transparent; border-radius: var(--r-sm); cursor: pointer;
+  grid-template-columns: 3ch 14ch minmax(11ch, 14ch) 1fr;
+  grid-template-areas: "idx kind st val" ". name name name" ". meta meta spark";
+}
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-hop::before { content: "├─"; position: absolute; left: -2ch; top: 5px; color: var(--line-strong); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-entry:last-child .dr-hop::before { content: "└─"; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-hop:hover { border-color: var(--line-strong); background: color-mix(in srgb, var(--good) 7%, transparent); color: var(--ink-1); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-hop.alert { border-color: color-mix(in srgb, var(--st) 40%, transparent); background: var(--st-bg); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-idx { grid-area: idx; color: var(--ink-4); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-kind { grid-area: kind; color: var(--ink-1); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-st { grid-area: st; display: inline-flex; align-items: center; gap: 5px; color: var(--st); font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-st svg.i { width: 13px; height: 13px; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-val { grid-area: val; justify-self: end; color: var(--ink-1); white-space: nowrap; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-num, :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-pe .dr-n { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--st); text-shadow: 0 0 10px color-mix(in srgb, var(--st) 55%, transparent); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-unit { color: var(--ink-3); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-name { grid-area: name; color: var(--ink-3); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-meta { grid-area: meta; color: var(--ink-3); font-size: var(--fs-xs); display: flex; flex-wrap: wrap; gap: 2px var(--sp-3); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-meta [hidden] { display: none; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-n { color: var(--ink-1); font-weight: var(--fw-semi); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-meta .bad .dr-n { color: var(--warn); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-spark { grid-area: spark; justify-self: end; color: var(--st); font-size: var(--fs-xs); letter-spacing: 0; white-space: nowrap; overflow: hidden; max-width: 100%; }
+
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-extra { padding-top: var(--sp-2); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-extra-h { color: var(--ink-3); font-size: var(--fs-xs); font-weight: var(--fw-regular, 400); margin-bottom: 4px; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-extra-list { display: flex; flex-wrap: wrap; gap: 4px var(--sp-3); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-pe { display: inline-flex; align-items: center; gap: 6px; font: inherit; color: var(--ink-2); background: none; border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 2px 8px; cursor: pointer; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-pe svg.i { color: var(--st); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-pe:hover { color: var(--ink-1); border-color: var(--st); }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-key { color: var(--ink-4); font-size: var(--fs-xs); border-top: 1px dotted var(--line-strong); padding-top: var(--sp-2); }
+
+@media (max-width: 640px) {
+  :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-hop { grid-template-columns: 3ch 1fr auto; grid-template-areas: "idx kind val" ". st st" ". name name" ". meta meta" ". spark spark"; }
+  :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-spark { justify-self: start; }
+}

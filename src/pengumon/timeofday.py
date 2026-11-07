@@ -73,6 +73,13 @@ def viewer_zone(config, tz_name: Optional[str] = None, tz_offset_minutes: int = 
     return timezone.utc, "utc", "UTC"
 
 
+def page_zone_name(config) -> Optional[str]:
+    """The IANA zone Settings names (general.timezone) for the page's own clocks, else None (the browser's zone): only a
+    named zone that is not UTC, since UTC is the default of a container and says nothing about the household."""
+    kind, name = viewer_zone(config)[1:]
+    return name if kind == "named" else None
+
+
 def utc_offset(epoch: float, tz: tzinfo) -> int:
     """Seconds east of UTC the clock in `tz` is at `epoch`."""
     return int(datetime.fromtimestamp(epoch, tz).utcoffset().total_seconds())

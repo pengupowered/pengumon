@@ -27,9 +27,9 @@ Only the latest release gets security fixes. Upgrading is described in [docs/ins
 In scope: the Pengumon app (its web pages and API, the stored credentials and settings, the probes it sends, the device
 drivers), the install scripts, and the published container image and Python package.
 
-Out of scope: a dashboard reachable from outside the home without an access token (see [docs/security.md](docs/security.md)
+Out of scope: a dashboard reachable from outside the home without a password (see [docs/security.md](docs/security.md)
 for the token and sign-in), and vulnerabilities in your modem's or router's own firmware, which belong with their
 vendor.
 
-How Pengumon protects itself (the access token, the request guard, where secrets are kept, the dependency policy) is in
+How Pengumon protects itself (the sign-in password, the request guard, where secrets are kept, the dependency policy) is in
 [docs/security.md](docs/security.md) and [docs/supply-chain.md](docs/supply-chain.md).

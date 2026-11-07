@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-look="{{ theme.look }}" data-look-default="{{ theme.look }}"{% if theme.forced %} data-theme="{{ theme.forced }}"{% endif %} data-effects="{{ 'on' if theme.effects else 'off' }}" data-looks='{{ theme.looks|tojson }}'>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -12,17 +12,24 @@
   <link rel="apple-touch-icon" href="/static/v/{{ v.tree }}/icons/app-180.png">
   <link rel="manifest" href="/static/v/{{ v.tree }}/manifest.webmanifest">
   <link rel="stylesheet" href="/static/v/{{ v.tree }}/tokens.css">
+  <style id="customThemeCss">{{ theme.custom_css|safe }}</style>
   <link rel="stylesheet" href="/static/v/{{ v.tree }}/components.css">
   <link rel="stylesheet" href="/static/v/{{ v.tree }}/page.css">
   <link rel="stylesheet" href="/static/v/{{ v.tree }}/style.css">
   {% for css in ui.css %}<link rel="stylesheet" href="/static/v/{{ v.tree }}/{{ css }}">
   {% endfor %}
+  <!-- this browser's theme on <html> before anything is drawn, and that theme's stylesheet (its tokens, skin and card
+       views' styles) linked here, after the page's own (docs/themes.md, "How the page applies a theme"); a classic
+       script, so it runs here -->
+  <script src="/static/v/{{ v.tree }}/js/theme-boot.js"></script>
   <!-- Chart.js, vendored -->
   <script src="/static/v/{{ v.tree }}/vendor/chart.umd.min.js"></script>
 </head>
 <body data-layout='{{ layout|tojson }}' data-modules='{{ modules|tojson }}' data-settings='{{ (settings_values or {})|tojson }}' data-status="unknown">
   <a class="skip" href="#panels">Skip to panels</a>
   <div class="glow" aria-hidden="true"></div>
+  <!-- a theme's animated effect draws here, behind everything (js/themes.js) -->
+  <div class="fx-layer" id="fxLayer" aria-hidden="true"></div>
 
   <!-- Header: brand, overall status (written by the panel that owns the verdict), live socket, tools -->
   <header id="topbar" class="topbar st-unknown">
@@ -48,13 +55,14 @@
         <span class="tb-sep" aria-hidden="true"></span>
         <button type="button" class="btn" id="btnSettings" data-action="openSettings" title="Settings"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg><span class="lbl">Settings</span></button>
         <button type="button" class="btn" data-action="openLayoutDialog" title="Arrange panels"><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="lbl">Layout</span></button>
-        <button type="button" class="btn icon" id="btnTheme" data-action="toggleTheme" title="Switch theme" aria-label="Switch theme"><svg class="i" aria-hidden="true"><use href="#i-sun"/></svg></button>
+        <button type="button" class="btn icon" id="btnTheme" data-action="toggleMenu" data-arg="themeMenu" title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded="false" aria-controls="themeMenu"><svg class="i" aria-hidden="true"><use href="#i-palette"/></svg></button>
         {% include "features/grafana.html" %}
         <!-- shown by chrome.js when /api/info says this browser is signed in with the access token (dialogs/sign-out) -->
         <button type="button" class="btn" id="btnSignOut" data-action="openModal" data-arg="signOutModal" data-sign-out hidden title="Sign out"><svg class="i" aria-hidden="true"><use href="#i-logout"/></svg><span class="lbl">Sign out</span></button>
       </nav>
       <button type="button" class="btn icon tb-more" data-action="toggleMenu" data-arg="headerMenu" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="headerMenu"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button>
       <div class="menu fixed" id="headerMenu" role="menu" aria-label="More actions" hidden><!-- the tools above, copied by chrome.js --></div>
+      <div class="menu fixed theme-menu" id="themeMenu" role="menu" aria-label="Theme" hidden><!-- filled by js/themes.js when it opens --></div>
     </div>
   </header>
   <div class="conn-banner" id="connBanner" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-stale"/></svg><span><b>Connection lost.</b> Showing the last data; reconnecting every 2 s.</span></div>

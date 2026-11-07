@@ -17,7 +17,7 @@ body:
     id: devices
     attributes:
       label: Your setup, if it matters
-      description: For a new device driver, the modem or router model and its firmware; no addresses or passwords.
+      description: For a new modem or router, use the "Support for a new device" form instead; no addresses or passwords.
   - type: checkboxes
     id: contribute
     attributes:

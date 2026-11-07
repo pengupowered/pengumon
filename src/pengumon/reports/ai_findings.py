@@ -229,6 +229,8 @@ class EventSummary:
     count: int                                          # events in the window
     during: int                                         # of them, those that coincided with such an incident
     starts: List[Tuple[Optional[str], int]]             # (first failing hop of that incident or None, events)
+    blocks: List[Tuple[int, int, int]] = field(default_factory=list)   # (first hour, last hour + 1, events) by
+    #                                                     local start, for a kind marked by_time_of_day; else empty
 
 
 @dataclass
@@ -589,27 +591,31 @@ def event_gap(event: Any, span: Tuple[float, float]) -> float:
 
 
 def event_summaries(events: Sequence[Any], kinds: Mapping[str, Any], sources: Mapping[str, str],
-                    spans: Sequence[Tuple[float, float, Optional[str]]], start: float, end: float
-                    ) -> Dict[str, "EventSummary"]:
+                    spans: Sequence[Tuple[float, float, Optional[str]]], start: float, end: float,
+                    clock: Optional["LocalClock"] = None, block_hours: int = 6) -> Dict[str, "EventSummary"]:
     """Per module event code, its events in [start, end] and how many coincided with an incident (by the rule of
     match_events), with where loss started in those incidents. `spans`: (from, to, first failing hop) of the network
-    incidents, expected ones included (a busy line coincides with the incidents it explains)."""
+    incidents, expected ones included (a busy line coincides with the incidents it explains). For a kind marked
+    `by_time_of_day`, also its events by time of day (blocks of `block_hours`, local to `clock`)."""
     out: Dict[str, Any] = {}
     for ev in events:
         if sources.get(ev.code) != "module" or ev.end < start or ev.start > end:
             continue
         kind = kinds[ev.code]
         reach = kind.reach_seconds
-        acc = out.setdefault(ev.code, [0, 0, Counter()])
+        acc = out.setdefault(ev.code, [0, 0, Counter(), Counter()])
         acc[0] += 1
+        if clock is not None and getattr(kind, "by_time_of_day", False):
+            acc[3][clock.hour(ev.start) // block_hours] += 1
         for lo, hi, first in spans:
             if ev.start <= hi + reach and ev.end >= lo - reach:
                 acc[1] += 1
                 acc[2][first] += 1
                 break
     return {code: EventSummary(code, getattr(kinds[code], "label", "") or code, n, k,
-                               sorted(c.items(), key=lambda kv: (-kv[1], kv[0] or "")))
-            for code, (n, k, c) in out.items()}
+                               sorted(c.items(), key=lambda kv: (-kv[1], kv[0] or "")),
+                               [(b * block_hours, (b + 1) * block_hours, hours[b]) for b in sorted(hours)])
+            for code, (n, k, c, hours) in out.items()}
 
 
 def busy_latency(events: Sequence[Any], kinds: Mapping[str, Any], target_id: Optional[str],
@@ -1032,7 +1038,7 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
                                           None, ignoring, start=start)
     first_public = next((t for t in order if categories[t] == "public" and t in folds), None)
     incident_spans = sorted(((spans[i.id][0], spans[i.id][1], i.shape.first_hop) for i in facts), key=lambda t: t[0])
-    summaries = event_summaries(all_events, kinds, sources, incident_spans, start, end)
+    summaries = event_summaries(all_events, kinds, sources, incident_spans, start, end, clock, rules.block_hours)
     at = folds[first_public].w_at if first_public else None
     loaded = busy_latency(all_events, kinds, first_public, at[0] if at else (), at[1] if at else ())
     return PackFacts(

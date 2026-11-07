@@ -1,7 +1,7 @@
 """The settings document: what the settings store holds, what a version keeps and what an export writes.
 
 `values` holds the keys the owner set ({registry key: value}); a key that is missing means its default. `lists`
-holds the four lists by name (pengumon.settings.registry.LISTS); a list that is missing, or None, means its default
+holds the five lists by name (pengumon.settings.registry.LISTS); a list that is missing, or None, means its default
 (dns_probes: the two default lookups; the others: empty). A document never holds a secret.
 """
 

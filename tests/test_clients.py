@@ -62,7 +62,7 @@ CLIENT_ENTRIES = {
 
 
 def combined_body(entries=None) -> str:
-    """What an RT-AX / ZenWiFi router answers to a combined request: not valid JSON as a whole."""
+    """What an AsusWRT router answers to a combined request: not valid JSON as a whole."""
     entries = CLIENT_ENTRIES if entries is None else entries
     clientlist = json.dumps({**entries, "maclist": list(entries), "ClientAPILevel": "2"})
     return ('{\n"netdev": "INTERNET_rx":"0x5f5e100","INTERNET_tx":"0x2faf080"\n,'
@@ -420,7 +420,7 @@ async def test_privacy_modes(app_state, monkeypatch, setting, token, applied):
     else:
         hint = body["privacy"]["hint"]
         assert "Settings > Privacy" in hint and "config.yaml" not in hint  # Settings is where it is changed
-        assert ("PENGUMON_ACCESS_TOKEN" in hint) == (setting == "token")  # a token does not help under "masked"
+        assert ("Settings > Sign-in" in hint) == (setting == "token")  # a password does not help under "masked"
         assert not any(needle in text for needle in FULL_ONLY)
         assert all("ip" not in c and "mac" not in c for c in body["clients"])
         labels = {c["label"] for c in body["clients"]}

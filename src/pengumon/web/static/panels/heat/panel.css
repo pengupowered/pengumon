@@ -6,3 +6,6 @@
 .insight svg.i { margin-top: 2px; color: var(--warn); }
 .insight b { color: var(--ink-1); }
 .heat > span:not(.hd) { white-space: nowrap; }
+/* the legend's squares: apart from each other (this was once leaked into the card by the channels dialog's own rule) */
+[data-panel="heat"] .scale-legend i { margin-left: var(--sp-3); }
+[data-panel="heat"] .scale-legend i:first-child { margin-left: 0; }

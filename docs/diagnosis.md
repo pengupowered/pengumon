@@ -78,7 +78,17 @@ answered is read as `isp`.
 Each level below is a setting (`classifier.*`); the defaults are what the classifier always used. A change applies
 from the next probe round and never relabels stored incidents.
 
-- **Loss of a role** (the last 10 probes of its targets): degraded from `degraded_loss_pct` (15 %), down from
+- **The window** ("Judge each hop by its last", `window_probes`, 10 probes; 3 to 60, shown in seconds of probe
+  rounds): every level below is judged over each target's last N probes. **Loss** is the share of them lost.
+  **Latency** is the median of the role's answered probes in the window (of an even count the lower middle value),
+  and **jitter** the median change from one answered probe to the next, per target, averaged over the role's targets.
+  So a role counts as slow only when more than half of its probes are slow, and as jittery only when more than half of
+  the changes are large: one stalled probe (a round in which everything past the modem answers after about a second)
+  is no spike and opens no incident. With the defaults, latency must be high in 6 of the last 10 probes for 10 rounds
+  in a row (about 15 s of trouble) before a latency incident opens. Earlier versions averaged latency and jitter, and
+  one such probe lifted the averages over the levels for exactly the 10 rounds it stayed in the window: a 9-second
+  "ISP Latency Spikes / Jitter" incident.
+- **Loss of a role** (the window's probes of its targets): degraded from `degraded_loss_pct` (15 %), down from
   `down_loss_pct` (40 %). DNS lookups are degraded from `dns_degraded_loss_pct` (25 %) and down from the same
   down level.
 - **DNS cooldown:** after trouble upstream of the home network (loss at the gateway, ISP hops or public targets,
@@ -94,7 +104,7 @@ from the next probe round and never relabels stored incidents.
   ISP hop from 30 % ISP-hop loss, otherwise peering; a sample over 150 ms makes its target an affected one.
 
 A hop's own "warn above" level in the path editor (`warn_latency_ms`) changes only that hop's colour on the
-dashboard; the incident rules above still judge its role's average.
+dashboard; the incident rules above still judge its role's median.
 
 ## Load-aware classification
 

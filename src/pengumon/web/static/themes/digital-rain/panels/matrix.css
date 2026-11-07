@@ -1,0 +1,29 @@
+/* Digital rain's Hop details: the standard view (panels/matrix/view.js) restyled as a terminal table: a prompt line, the
+   table in a pane (its header row sticky), the rows as terminal lines, and the count of targets under it (CSS text and a
+   CSS counter; decoration, the table says it all). */
+
+:root[data-look="digital-rain"] [data-panel="matrix"] .panel-h .panel-t::before { content: "> "; color: var(--good); }
+:root[data-look="digital-rain"] [data-panel="matrix"] .panel-b { display: flex; flex-direction: column; gap: var(--sp-2); font-family: var(--mono); counter-reset: dr-targets; }
+:root[data-look="digital-rain"] [data-panel="matrix"] .panel-b::before { content: "$ hops --watch --last 60 █"; color: var(--good); font-size: var(--fs-xs); }
+:root[data-look="digital-rain"] [data-panel="matrix"] .panel-b::after { content: "-- " counter(dr-targets) " targets --"; color: var(--ink-4); font-size: var(--fs-xs); }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops tbody tr[data-item] { counter-increment: dr-targets; }
+
+/* the pane: every row shown (a dashboard is read at a glance) */
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops {
+  font-family: var(--mono); border-collapse: separate; border-spacing: 0; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  padding: var(--sp-2); background: color-mix(in srgb, var(--bg) 75%, transparent);
+}
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops th { position: sticky; top: 0; z-index: 1; background: var(--surface-1); color: var(--good); border-bottom: 1px solid var(--line-strong); padding-top: 4px; letter-spacing: .08em; }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops td { border-top: 1px dotted var(--line); padding-top: 6px; padding-bottom: 6px; }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops td.lead .primary::before { content: "> "; color: var(--good); }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops td.lead .primary { text-transform: uppercase; letter-spacing: .04em; }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops tbody tr.row-click:hover td { background: color-mix(in srgb, var(--good) 10%, transparent); }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops .chip { border-radius: 0; background: none; border-color: var(--line-strong); text-shadow: none; }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops .chip.st { border-color: var(--st); background: var(--st-bg); }
+/* the range as a bar of cells */
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops .range { height: 10px; border-radius: 0; background: repeating-linear-gradient(90deg, var(--line) 0 3px, transparent 3px 5px); }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops .range i { border-radius: 0; background: repeating-linear-gradient(90deg, var(--good) 0 3px, transparent 3px 5px); }
+:root[data-look="digital-rain"] [data-panel="matrix"] .hops .range b { border-radius: 0; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+@container (max-width: 560px) {
+  :root[data-look="digital-rain"] [data-panel="matrix"] .hops { padding: 0 var(--sp-2); }
+}

@@ -28,7 +28,7 @@ def test_fallback_loss_is_unrounded():
 def test_nothing_at_all_gives_zero_and_none():
     m = round_metrics({}, [])
     for category in (m.local, m.gateway, m.isp, m.public, m.dns):
-        assert (category.loss_pct, category.avg_latency_ms, category.jitter_ms) == (0.0, None, None)
+        assert (category.loss_pct, category.latency_ms, category.jitter_ms) == (0.0, None, None)
         assert category.primary is None
         assert category.name("dflt") == "dflt" and category.address("addr") == "addr"
     assert m.failed_targets == ()
@@ -38,7 +38,7 @@ def test_target_without_history_falls_back_to_the_round_samples():
     stats = {"gw": stat("gw", "gateway", [])}
     m = round_metrics(stats, [sample("gw", latency=4.0), sample("gw", success=False)])
     assert m.gateway.loss_pct == 50.0
-    assert m.gateway.avg_latency_ms == 4.0
+    assert m.gateway.latency_ms == 4.0
     assert m.gateway.jitter_ms is None  # jitter has no sample fallback
     assert m.gateway.primary.target_id == "gw"
 
@@ -47,7 +47,7 @@ def test_only_the_last_ten_probes_count():
     window = [None] * 5 + [10.0] * 10
     m = category_metrics("local", [stat("l", "local", window)], [])
     assert m.loss_pct == 0.0
-    assert m.avg_latency_ms == 10.0
+    assert m.latency_ms == 10.0
     assert m.jitter_ms == 0.0
 
 
@@ -59,7 +59,7 @@ def test_short_windows():
         ([1.0, None, 3.0, None, 5.0], 40.0, 3.0),
     ):
         m = category_metrics("local", [stat("l", "local", window)], [])
-        assert (m.loss_pct, m.avg_latency_ms) == (loss, lat), window
+        assert (m.loss_pct, m.latency_ms) == (loss, lat), window
 
 
 def test_jitter_leaves_out_targets_with_fewer_than_two_valid_values():

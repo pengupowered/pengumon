@@ -11,6 +11,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from pengumon.engine.prober_settings import DEFAULT_WINDOW_PROBES, HISTORY_PROBES
 from pengumon.models.hosts import validate_host
 
 _LEVEL = dict(ge=1, le=1000)  # a latency or jitter spike level, ms
@@ -25,8 +26,8 @@ class ClassifierConfig(BaseModel):
     public_jitter_spike_threshold_ms: float = Field(45.0, **_LEVEL)
     # The ISP hops' own latency level; None: the same as the internet's (public_latency_spike_threshold_ms)
     isp_latency_spike_threshold_ms: Optional[float] = Field(None, **_LEVEL)
-    dns_timeout_threshold_ms: float = Field(300.0, ge=10, le=5000)  # "Slow DNS" above this average lookup time
-    # Loss of the last 10 probes of a role: from degraded_loss_pct the role is degraded, from down_loss_pct down
+    dns_timeout_threshold_ms: float = Field(300.0, ge=10, le=5000)  # "Slow DNS" above this median lookup time
+    # Loss of the window's probes of a role: from degraded_loss_pct the role is degraded, from down_loss_pct down
     degraded_loss_pct: float = Field(15.0, ge=1, le=90)
     down_loss_pct: float = Field(40.0, ge=2, le=100)
     dns_degraded_loss_pct: float = Field(25.0, ge=1, le=100)  # DNS lookups lost from which DNS is degraded
@@ -38,6 +39,9 @@ class ClassifierConfig(BaseModel):
     busy_load_pct: float = Field(60.0, ge=10, le=100)
     # Traced (traceroute) when an incident starts, to record the path at that moment.
     path_trace_target: str = "1.1.1.1"
+    # The window: each target's last N probes (one a round), over which loss, the median latency and the jitter are
+    # judged (engine/window.py), here and for the hop colours' loss. At most what the prober keeps.
+    window_probes: int = Field(DEFAULT_WINDOW_PROBES, ge=3, le=HISTORY_PROBES)
 
     @field_validator("path_trace_target")
     @classmethod

@@ -62,4 +62,14 @@ export const steps = [
     eq("hidden and empty on reopening", await page.$eval("#setupPassword", (i) => `${i.type}:${i.value}`), "password:");
     await click("[data-action=closeModal][data-arg=deviceSetupModal]");
   }],
+
+  ["a device that needs no sign-in (UPnP) has no Setup button on its card; the others keep theirs", async ({ LINE, ROUTER, eq, page, stubFetch, until }) => {
+    const devices = await page.evaluate(async () => (await (await fetch("/api/devices")).json()));
+    await stubFetch({ "GET /api/devices": { body: devices.map((d) => (d.id === "router" ? { ...d, needs_sign_in: false } : d)) } });
+    await until((r) => document.querySelector(`${r} [data-action=openDeviceSetup]`), ROUTER);
+    const shown = (card) => page.$eval(`${card} [data-action=openDeviceSetup]`, (b) => b.getClientRects().length > 0);
+    eq("the router's Setup button", await shown(ROUTER), false);
+    eq("the modem's Setup button", await shown(LINE), true);
+    await stubFetch(null);
+  }],
 ];

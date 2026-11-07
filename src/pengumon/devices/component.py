@@ -20,7 +20,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 from pengumon.components import Component, Context, LivePart, log_unexpected_exit
 from pengumon.devices.device import Device
-from pengumon.devices.registry import DeviceRegistry, build_device
+from pengumon.devices.registry import DeviceRegistry, build_device, log_device
 from pengumon.devices.settings import DeviceConfig, unique_device_ids
 from pengumon.devices.summary import LiveSummaries
 from pengumon.observability import get_logger
@@ -106,21 +106,7 @@ class DeviceSupervisor:
         self.registry.errors.clear()
         self.registry.errors.update(errors)
         for device in devices:
-            self._log_built(device)
-
-    @staticmethod
-    def _log_built(device: Device) -> None:
-        offers = ",".join(sorted(c.value for c in device.driver.offers))
-        log = get_logger("pengumon.devices", device=device.id, driver=device.driver.name, host=device.driver.host)
-        if not device.enabled:
-            log.info(f"Device {device.id} ({device.driver.name} at {device.driver.host}) is disabled in configuration",
-                     capabilities=offers)
-            return
-        source = device.credentials_source
-        log.info(f"Device {device.id}: {device.driver.name} at {device.driver.host} every "
-                 f"{device.interval_seconds:g} s, offers {offers}; "
-                 + (f"password from {source}" if source else "no password configured"),
-                 interval_s=device.interval_seconds, capabilities=offers, credentials=source or "none")
+            log_device(device)
 
     @staticmethod
     def _create_task(coro) -> "asyncio.Task":
@@ -193,7 +179,7 @@ class DeviceSupervisor:
                 if (previous is not None and previous.driver.name == device.driver.name
                         and previous.driver.host == device.driver.host):
                     device.inherit_gate(previous)  # (a changed driver or address is another device to the gate)
-                self._log_built(device)
+                log_device(device)
                 self._spawn(device)
             for reason in ("added", "changed", "removed"):
                 for device_id in getattr(result, reason):

@@ -3,10 +3,11 @@ the custom targets), the prober with every target and the probe loop (engine/loo
 component has registered. It owns the app's ICMP backend (engine/icmp_select.shared_backend), which traceroute and
 the incident path trace use too.
 
-Saved settings it applies without a restart (`subscribe`): the probe timeouts and the DNS lookups list (the prober
-keeps copies). Everything else the probe round reads (the hop colours, the outage rules, the busy level) is the live
-config object itself, which the settings manager updates in place before the appliers run; so are the line and router
-levels the device monitors grade by (devices/monitors.py watch_levels, wired by the devices component)."""
+Saved settings it applies without a restart (`subscribe`): the probe timeouts, the window the hop colours judge loss
+over (classifier.window_probes) and the DNS lookups list (the prober keeps copies). Everything else the probe round
+reads (the hop colours, the outage rules, the busy level) is the live config object itself, which the settings manager
+updates in place before the appliers run; so are the line and router levels the device monitors grade by
+(devices/monitors.py watch_levels, wired by the devices component)."""
 
 from pengumon.components import Component, Context
 from pengumon.engine.icmp_base import IcmpUnavailable
@@ -14,6 +15,7 @@ from pengumon.engine.icmp_select import close_shared_backend
 from pengumon.engine.loop import check_live_parts, probe_background_worker
 from pengumon.engine.path import PathManager
 from pengumon.engine.prober import NetworkProber
+from pengumon.engine.prober_settings import HISTORY_PROBES
 
 
 def subscribe(hub, config, prober: NetworkProber) -> None:
@@ -24,6 +26,10 @@ def subscribe(hub, config, prober: NetworkProber) -> None:
     def _timeouts(change) -> None:
         prober.ping_timeout = config.prober.timeout_seconds
         prober.dns_timeout = config.prober.dns_timeout_seconds
+
+    @hub.on(keys=["classifier.window_probes"], name="probing.window")
+    def _window(change) -> None:
+        prober.window = config.classifier.window_probes
 
     @hub.on(lists=["dns_probes"], name="probing.dns_probes")
     def _dns_probes(change) -> None:
@@ -38,9 +44,10 @@ async def register(ctx: Context) -> Component:
 
     prober = NetworkProber(
         ping_timeout=config.prober.timeout_seconds,
-        history_window=60,
+        history_window=HISTORY_PROBES,
         status_thresholds=config.prober.hop_status,
         dns_timeout=config.prober.dns_timeout_seconds,
+        window=config.classifier.window_probes,
     )
     for t in config.targets:
         prober.register_target(t)

@@ -36,7 +36,7 @@ Everything one `pengumon paths` prints (it also says where each value came from)
 
 The container image sets `PENGUMON_DATA=/app/data`, `PENGUMON_CONFIG=/app/config.yaml` and `PENGUMON_HOST=0.0.0.0`, so
 the compose files behave as before. Outside a container the default is this computer only; set `PENGUMON_HOST=0.0.0.0`
-(and an access token) to reach it from the LAN.
+(and a password: Settings > Sign-in) to reach it from the LAN.
 
 `pengumon doctor` checks that this host can probe: the ICMP backend, an echo to 127.0.0.1, a TTL=1 probe, the gateway,
 the data directory and the listen address, and the fix when ICMP is not permitted ([probing.md](probing.md)).
@@ -131,9 +131,9 @@ prober:
   interval_seconds: 1.0
   timeout_seconds: 1.0
   hop_status:                    # when a single target turns amber / red on the dashboard (all optional)
-    degraded_loss_fraction: 0.1  # share of the last 10 probes lost, strictly above: degraded
+    degraded_loss_fraction: 0.1  # share of the judged probes (classifier.window_probes) lost, strictly above: degraded
     down_loss_fraction: 0.4      # strictly above: down
-    local_latency_ms: 20         # average latency / jitter above these turn a target amber:
+    local_latency_ms: 20         # average latency / jitter of the last 60 probes above these turn a target amber:
     local_jitter_ms: 10          #   local_*, gateway_*, public_* and dns_* (ISP hops are judged on loss only)
     gateway_latency_ms: 30
     gateway_jitter_ms: 15
@@ -157,6 +157,7 @@ line:                            # internet line capacity; unset = learned from 
 
 classifier:
   busy_load_pct: 60              # WAN load (% of capacity) from which latency / ISP-hop loss counts as "busy"
+  window_probes: 10              # each target's last N probes (3-60): loss, median latency and jitter judged over them
 ```
 
 ### Route-change checks (`discovery:`)

@@ -268,7 +268,7 @@ def _warnings(manager: "SettingsManager", document: SettingsDocument, out: Valid
                                         f"at the next hourly cleanup."})
     if value("privacy.client_details") == "full" and not manager._token_set():
         out.warnings.append({"where": "values.privacy.client_details",
-                             "message": "With Always and no access token set, anyone who can reach the page sees "
+                             "message": "With Always and no password set, anyone who can reach the page sees "
                                         "the clients' names and addresses."})
 
 def _normalise_webhooks(items: List[dict], current: List[dict]) -> List[dict]:

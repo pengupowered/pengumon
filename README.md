@@ -40,7 +40,7 @@ provider a report instead of a hunch.
   what it cannot see) with instructions, to paste into any chat model; nothing is sent anywhere by Pengumon. Full,
   Vague or Anonymized, from the dashboard (or `GET /api/ai-pack`): [the guide](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md).
 - **Your modem and router.** DOCSIS channel levels and codeword errors; router CPU, memory, WAN traffic, connected
-  clients and mesh nodes. Drivers are pluggable.
+  clients and mesh nodes. Drivers are pluggable: [add your own device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md).
 - **Your own apps too.** HTTP health checks for self-hosted services, with incidents and alerts by [ntfy](https://ntfy.sh) or webhook.
 - **Small and private.** One process (installed natively or in a container) and one SQLite file. Nothing leaves your network unless you turn on
   notifications or the optional OpenTelemetry export. Works on a phone.
@@ -68,15 +68,17 @@ curl -fsSL https://github.com/pengupowered/pengumon/releases/latest/download/ins
 ([details](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#container)).
 
 The scripts download the release, check every file against its hash, set up Pengumon's own Python, start it in the
-background so it survives reboots, and open `http://127.0.0.1:8000` (this computer only until you allow more, with an
-access token). On Linux and macOS the script asks for sudo once, says why, and has a `--user` option to avoid it. Run
+background so it survives reboots, and open `http://127.0.0.1:8000` (this computer only until you allow more, with a
+password). On Linux and macOS the script asks for sudo once, says why, and has a `--user` option to avoid it. Run
 the same command again to upgrade (your data is backed up first). Not tested yet on real Windows, macOS or Raspberry Pi
 hardware: see [what has been tested where](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#what-has-been-tested-where).
 
 Already use uv? `uv tool install pengumon`: no dependency hash check and no background service; see [the uv section](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#quick-way-uv-tool-install).
 
-> **Important:** Anyone who can reach port 8000 can read the data and change settings until you set `PENGUMON_ACCESS_TOKEN`. The
-> default listens on this computer only. See [docs/security.md](https://github.com/pengupowered/pengumon/blob/main/docs/security.md).
+> **Important:** Anyone who can reach port 8000 can read the data and change settings until you set a password. The
+> first visit asks who may open the dashboard ("Anyone on my home network" or "Only people with a password"), and
+> Settings > Sign-in changes it later; `PENGUMON_ACCESS_TOKEN` sets it for containers and scripts. The default listens on
+> this computer only. See [docs/security.md](https://github.com/pengupowered/pengumon/blob/main/docs/security.md).
 
 **Container**, the short version (Linux host with Docker or Podman, x86-64 or arm64; host networking so the probes
 measure the host's own path):
@@ -138,16 +140,19 @@ host" instead of counting as down. Everything is in [docs/configuration.md](http
 
 ### Supported devices
 
-- `xfinity_xb`: Xfinity / Comcast XB6, XB7, XB8 gateways. Reads DOCSIS downstream and upstream levels, SNR and
-  codeword errors.
-- `asuswrt`: AsusWRT routers (RT-AX, ZenWiFi, …). Reads WAN traffic, CPU, memory, clients by band and mesh nodes.
-- `openwrt`: OpenWrt routers (with LuCI, or rpcd and uhttpd-mod-ubus). Reads WAN traffic, CPU, memory, model and
-  clients (DHCP leases, Wi-Fi stations by band).
-- `snmp`: anything with an SNMPv2c agent: routers, switches, NAS boxes. Reads WAN (or uplink) traffic, CPU, memory
-  and model.
+| Driver | Devices | Status | What it reads |
+|---|---|---|---|
+| `xfinity_xb` | Xfinity / Comcast XB6, XB7, XB8 gateways | Tested by the maintainer | DOCSIS downstream and upstream levels, SNR, codeword errors |
+| `asuswrt` | AsusWRT routers (RT-AX and others), with AiMesh | Tested by the maintainer | WAN traffic, CPU, memory, clients by band, mesh nodes |
+| `openwrt` | OpenWrt routers (LuCI, or rpcd and uhttpd-mod-ubus) | Tested by the maintainer on OpenWrt 24.10 (x86-64 image) | WAN traffic, CPU, memory, model, clients |
+| `snmp` | Anything with an SNMPv2c agent: routers, switches, NAS boxes | Generic (tested against net-snmp 5.9) | WAN (or uplink) traffic, CPU, memory, model |
+| `upnp_igd` | Routers and gateways that answer UPnP's Internet Gateway Device profile | Generic (new in 0.24) | WAN traffic |
 
-Probing works with any equipment; devices are an optional extra. Setting up each one, and adding a driver, is
-described in [docs/devices.md](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md).
+**Generic** means written from a standard: it should work with any device that follows it, but a particular device may
+differ. Probing works with any equipment; devices are an optional extra. Setting up each one is described in
+[docs/devices.md](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md#supported-devices). **Have a device that is not listed?** [Adding a device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md)
+shows how to teach Pengumon to read it, with your own hardware and your own tools, and the
+[Support for a new device](https://github.com/pengupowered/pengumon/issues/new/choose) form is the place to start.
 
 ## Alerts
 
@@ -198,6 +203,19 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
   <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/overview-light.png" width="300" alt="The dashboard in the light theme">
 </p>
 
+## Themes
+
+Twelve built in, picked per browser from the header's palette button (Settings > Display sets the one every browser starts
+with). Some only change the colours; some restyle or redraw the cards, and four have a slow animated effect that stops in
+a hidden tab and when the system asks for reduced motion. Every theme keeps every value, button and help link, and is
+tested for readable contrast and chart colours that stay apart, also for colour-blind eyes. Make your own by duplicating
+one and changing its colours, or add one as a folder: [docs/themes.md](https://github.com/pengupowered/pengumon/blob/main/docs/themes.md).
+
+<table>
+<tr><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-starship.png" width="260" alt="Starship console: the cards in one flowing console frame, a coloured rail sweeping into each card's header bar"><br><sub>Starship console</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-mission-control.png" width="260" alt="Mission control: a wall display with a verdict banner in the status colour and large figures"><br><sub>Mission control</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-amber-crt.png" width="260" alt="Amber CRT: path health as terminal lines with text bars, amber on near-black"><br><sub>Amber CRT</sub></td></tr>
+<tr><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-digital-rain.png" width="260" alt="Digital rain: path health as a route trace, green on black, with characters falling behind the cards"><br><sub>Digital rain</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-synthwave.png" width="260" alt="Synthwave: neon hop tiles on a grid floor, pink and cyan on deep purple"><br><sub>Synthwave</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-e-ink.png" width="260" alt="E-ink: near-monochrome paper white and ink black"><br><sub>E-ink</sub></td></tr>
+</table>
+
 ## Documentation
 
 - [Install](https://github.com/pengupowered/pengumon/blob/main/docs/install.md): Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download
@@ -205,7 +223,8 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
 - [Probing](https://github.com/pengupowered/pengumon/blob/main/docs/probing.md): Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step
 - [Path editor](https://github.com/pengupowered/pengumon/blob/main/docs/path-editor.md): Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17
 - [Discovery](https://github.com/pengupowered/pengumon/blob/main/docs/discovery.md): Finding the path and who operates each hop: what is sent where, how roles are judged
-- [Devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md): Modems and routers on the Settings page: drivers, capabilities, TLS, credentials, writing a driver
+- [Devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md): Modems and routers on the Settings page: supported devices, drivers, capabilities, TLS, credentials
+- [Adding a device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md): Teach Pengumon to read your own modem or router: the driver, tests from redacted recordings, the pack, the pull request checklist
 - [Diagnosis](https://github.com/pengupowered/pengumon/blob/main/docs/diagnosis.md): How outages are classified: load-aware rules, incident kinds and causes
 - [Dashboard](https://github.com/pengupowered/pengumon/blob/main/docs/dashboard.md): The panels, the path chain, layout, themes, the phone view
 - [Ask AI](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md): The troubleshooting pack for a chat assistant: what it holds, the three detail levels, device modules
@@ -213,7 +232,7 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
 - [Services](https://github.com/pengupowered/pengumon/blob/main/docs/services.md): Health checks for your own apps and their notifications
 - [Webhooks](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md): Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets
 - [Telemetry](https://github.com/pengupowered/pengumon/blob/main/docs/telemetry.md): What is stored and sent, logging, OpenTelemetry, ntfy
-- [Security](https://github.com/pengupowered/pengumon/blob/main/docs/security.md): Access token, request guard, environment variables
+- [Security](https://github.com/pengupowered/pengumon/blob/main/docs/security.md): Sign-in password, HTTPS, request guard, environment variables
 - [Storage](https://github.com/pengupowered/pengumon/blob/main/docs/storage.md): Database layout, migrations, upgrade notes
 - [API](https://github.com/pengupowered/pengumon/blob/main/docs/api.md): Data and operations endpoints
 - [Architecture](https://github.com/pengupowered/pengumon/blob/main/docs/architecture.md): Components, start-up order, the live message

@@ -137,11 +137,11 @@ async def test_transient_latency_spike_does_not_trigger_incident(classifier):
     stats = {
         "local": TargetStats(target_id="local", name="Local", category="local", address="192.168.1.1", enabled=True, recent_latencies=[1.2]*10),
         "gateway": TargetStats(target_id="gateway", name="Gateway", category="gateway", address="192.168.100.1", enabled=True, recent_latencies=[2.0]*10),
-        "public": TargetStats(target_id="public", name="Public", category="public", address="1.1.1.1", enabled=True, recent_latencies=[14.0]*9 + [500.0]),
+        "public": TargetStats(target_id="public", name="Public", category="public", address="1.1.1.1", enabled=True, recent_latencies=[14.0]*4 + [500.0]*6),
         "dns": TargetStats(target_id="dns", name="DNS", category="dns", address="google.com", enabled=True, recent_latencies=[18.0]*10),
     }
 
-    # Spike for 2 evaluations
+    # Spike for 2 evaluations (6 of the 10 probes judged are slow: the median is high)
     for _ in range(2):
         samples = [
             ProbeSample(target_id="local", success=True, latency_ms=1.2),
@@ -285,3 +285,50 @@ async def test_pings_becoming_blocked_ends_an_open_incident_as_measuring_stopped
     assert incident.resolved and incident.end_time == measured  # ended when probing stopped
     assert "Measuring stopped" in incident.description and "recovered" in incident.description
     assert resolved == []  # not announced as a recovery
+
+
+# --- one stalled probe is no spike: latency and jitter by the middle of the window (classifier.window_probes) ---------
+
+CALM = {"local": 1.0, "gw": 2.0, "isp_a": 9.0, "isp_b": 11.0, "pub_a": 14.0, "pub_b": 16.0}
+# The stalls seen since 2026-10-31: in one round every target past the modem answers in about a second, the LAN does not
+STALL = {"isp_a": 950.0, "isp_b": 930.0, "pub_a": 910.0, "pub_b": 890.0}
+CATEGORY = {"local": "local", "gw": "gateway", "isp_a": "isp", "isp_b": "isp", "pub_a": "public", "pub_b": "public"}
+
+
+async def _run(window, stalled, rounds=60):
+    """A real prober and classifier, one probe per target a round; in the rounds `stalled` (0-based) everything past
+    the modem stalls. Returns each round's status and the rounds in which an incident opened."""
+    from pengumon.engine.prober import NetworkProber
+    from pengumon.models.probes import TargetConfig
+    prober = NetworkProber(window=window)
+    for tid, category in CATEGORY.items():
+        prober.register_target(TargetConfig(id=tid, name=tid, category=category, address="192.0.2.1"))
+    started = []
+    classifier = OutageClassifier(config=ClassifierConfig(window_probes=window), on_incident_started=started.append)
+    statuses, opened = [], []
+    for k in range(rounds):
+        samples = [ProbeSample(target_id=t, success=True, latency_ms=STALL.get(t, ms) if k in stalled else ms)
+                   for t, ms in CALM.items()]
+        for s in samples:
+            prober._update_target_stats(s)
+        statuses.append((await classifier.evaluate(samples, prober.stats)).status)
+        opened += [k] * (len(started) - len(opened))
+    return statuses, opened
+
+
+@pytest.mark.parametrize("window", [5, 10, 20])
+async def test_one_stalled_round_past_the_modem_is_no_spike(window):
+    statuses, opened = await _run(window, {30})
+    assert set(statuses) == {"healthy"} and opened == []
+
+
+@pytest.mark.parametrize("window", [5, 10, 20])
+async def test_latency_is_high_once_more_than_half_the_window_is_slow(window):
+    half = window // 2
+    start = 25  # the window is full by then
+    statuses, opened = await _run(window, set(range(start, start + half)))  # half the window slow: not yet
+    assert set(statuses) == {"healthy"} and opened == []
+    statuses, opened = await _run(window, set(range(start, 60)))  # sustained
+    first = start + half  # the first round with more than half of the window slow
+    assert statuses.index("degraded") == first
+    assert opened == [first + 9]  # after consecutive_failures_for_latency_incident (10) faulty rounds

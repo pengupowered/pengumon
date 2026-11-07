@@ -46,6 +46,6 @@ def validate_color(v: Optional[str]) -> Optional[str]:
     """An optional chart colour: #rrggbb (lower-cased), or None for the category's colour."""
     if v is None:
         return None
-    if not COLOR_PATTERN.match(v):
+    if not COLOR_PATTERN.fullmatch(v):
         raise ValueError("color must be #rrggbb")
     return v.lower()

@@ -1,9 +1,9 @@
 // Earlier versions: every Save is kept (the last 50). "Load" puts one in the page as a draft; Save then restores it.
 
-import { escapeHtml } from '../../js/util.js';
+import { escapeHtml, localFormat } from '../../js/util.js';
 
 const SOURCES = { import: 'first import', save: 'saved', restore: 'restored', yaml_import: 'imported file' };
-const when = (ts) => new Date(ts * 1000).toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const when = (ts) => localFormat(ts * 1000, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 export async function fetchVersions() {
   const res = await fetch('/api/settings/versions', { cache: 'no-store' });

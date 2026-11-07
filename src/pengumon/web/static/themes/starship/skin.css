@@ -1,0 +1,348 @@
+/* Starship console: one flowing frame (docs/themes.md, "Skins"; the page hooks it relies on are listed there under
+   "Page hooks a skin may rely on"). Every selector is under this theme's own data-look. The frame: a coloured rail
+   down the left of every card, sweeping through a rounded inner corner into the card's header bar, and turning into a
+   band at the foot of the page. The header stays fixed while the page scrolls, so it carries no frame of its own (a
+   frame on it would slide over the cards' rails): only a thin rule along its foot. Content sits straight
+   on black; frame parts are flat colour blocks separated by one black gap (--ss-gap), in the frame's colours: the
+   accent (orange; a card's status colour while it has one), --ink-2 (lilac) and --ink-3 (blue). The sweep along the
+   header's rule is effect.js. */
+
+/* labels: a condensed sans where the system has one (no font files: system stacks only) */
+:root[data-look="starship"] {
+  --ss-cond: "Avenir Next Condensed", "Bahnschrift SemiCondensed", "Roboto Condensed", "Arial Narrow", "Liberation Sans Narrow", "Ubuntu Condensed", "DejaVu Sans Condensed", var(--font);
+  --ss-gap: 6px;      /* the one gap: between cards, between the frame's blocks */
+  --ss-rail: 22px;    /* the rail's width */
+  --ss-bar: 34px;     /* a header bar's height */
+  --ss-band: 10px;    /* a band: the foot's, a dialog's */
+  --ss-fillet: 16px;  /* the inner corner where the rail turns into a bar */
+  --ss-elbow: 40px;   /* the outer corner of the frame (the foot of the page, a dialog) */
+  --ss-in: var(--sp-4); /* content's distance from the rail */
+}
+@media (max-width: 720px) {
+  :root[data-look="starship"] { --ss-rail: 12px; --ss-bar: 32px; --ss-band: 8px; --ss-fillet: 12px; --ss-elbow: 28px; --ss-in: var(--sp-3); }
+}
+
+/* ---------- the page: no glow, the cards one gap apart ---------- */
+:root[data-look="starship"] .glow { display: none; }
+:root[data-look="starship"] .page {
+  gap: var(--ss-gap);
+  padding-top: var(--sp-4);
+  padding-bottom: calc(var(--ss-gap) + var(--ss-elbow) + var(--sp-8));
+}
+/* the rail's foot: it turns into a band along the bottom of the page */
+:root[data-look="starship"] .page::after {
+  content: ""; position: absolute; pointer-events: none;
+  left: max(24px, env(safe-area-inset-left, 0px)); bottom: var(--sp-8); width: min(40%, 420px); height: var(--ss-elbow);
+  border: solid var(--accent); border-width: 0 0 var(--ss-band) var(--ss-rail); border-radius: 0 0 0 var(--ss-elbow);
+}
+@media (max-width: 720px) {
+  :root[data-look="starship"] .page { padding-bottom: calc(var(--ss-gap) + var(--ss-elbow) + var(--tabbar-h) + 28px + env(safe-area-inset-bottom, 0px)); }
+  :root[data-look="starship"] .page::after { left: max(12px, env(safe-area-inset-left, 0px)); bottom: calc(var(--tabbar-h) + 28px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ---------- the header: solid black, a thin rule along its foot ---------- */
+:root[data-look="starship"] .topbar::before { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; border-bottom: 2px solid var(--line-strong); }
+/* the sweep: a light running along the header's rule, over it (its layer over the header, which is solid) */
+:root[data-look="starship"] .fx-layer { z-index: calc(var(--z-sticky) + 1); }
+:root[data-look="starship"] .fx-sweep {
+  position: absolute; left: 0; top: 0; will-change: transform; transform: translate3d(-100%, 0, 0);
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent) 85%, transparent) 50%, transparent) left bottom / 100% 2px no-repeat;
+}
+
+/* ---------- labels: upper case, condensed, spaced ---------- */
+:root[data-look="starship"] .panel-t,
+:root[data-look="starship"] .modal-t,
+:root[data-look="starship"] .brand-name,
+:root[data-look="starship"] .rb-t,
+:root[data-look="starship"] .section-t,
+:root[data-look="starship"] .dlist th,
+:root[data-look="starship"] .modal-b table:not(.dlist) th,
+:root[data-look="starship"] .stat .lbl,
+:root[data-look="starship"] .tabbar button,
+:root[data-look="starship"] .theme-menu .tm-h,
+:root[data-look="starship"] .seg button,
+:root[data-look="starship"] .btn.primary,
+:root[data-look="starship"] .badge {
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em;
+}
+:root[data-look="starship"] .modal-t { letter-spacing: .08em; }
+:root[data-look="starship"] .brand-name { letter-spacing: .14em; color: var(--accent); }
+:root[data-look="starship"] .dlist th,
+:root[data-look="starship"] .modal-b table:not(.dlist) th { color: var(--ink-3); font-weight: var(--fw-bold); }
+:root[data-look="starship"] .section-t .muted,
+:root[data-look="starship"] .section-t .tools,
+:root[data-look="starship"] .rb-t .muted { text-transform: none; letter-spacing: 0; font-family: var(--font); font-stretch: normal; }
+
+/* ---------- controls: flat blocks with rounded ends; a switch is its keys side by side, one gap apart ---------- */
+:root[data-look="starship"] .btn,
+:root[data-look="starship"] .seg button,
+:root[data-look="starship"] .info.lbl { border-radius: var(--r-pill); }
+:root[data-look="starship"] .btn.outline { border-color: var(--ink-3); }
+:root[data-look="starship"] .btn.primary { padding-inline: 16px; }
+:root[data-look="starship"] .seg { padding: 0; gap: 3px; border: 0; background: none; border-radius: 0; }
+:root[data-look="starship"] .seg button { background: var(--surface-3); color: var(--ink-2); }
+:root[data-look="starship"] .seg button[aria-pressed="true"],
+:root[data-look="starship"] .seg button.active { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+:root[data-look="starship"] button.chip[aria-pressed="true"] { background: var(--ink-3); color: var(--bg); border-color: transparent; }
+:root[data-look="starship"] .input { border-radius: 0; }
+:root[data-look="starship"] :focus-visible { outline-width: 3px; }
+
+/* ---------- a card: no box. The rail down its left (::after) in three runs: the frame's colour (its status colour
+   while it has one), lilac, a blue foot; the header bar joined to it through a rounded inner corner ---------- */
+:root[data-look="starship"] .panel {
+  --ss-c: var(--accent);
+  background: none; border: 0; border-radius: 0; box-shadow: none;
+}
+:root[data-look="starship"] .panel[data-status="warn"] { --ss-c: var(--warn); }
+:root[data-look="starship"] .panel[data-status="serious"] { --ss-c: var(--serious); }
+:root[data-look="starship"] .panel[data-status="crit"] { --ss-c: var(--crit); }
+:root[data-look="starship"] .panel[data-status="busy"] { --ss-c: var(--busy); }
+:root[data-look="starship"] .panel::before { display: none; } /* the standard status run: the bar's colour says it here */
+:root[data-look="starship"] .panel::after {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--ss-rail); pointer-events: none;
+  background: linear-gradient(to bottom,
+    var(--ss-c) 0 calc(var(--ss-bar) + 64px), transparent 0 calc(var(--ss-bar) + 64px + var(--ss-gap)),
+    var(--ink-2) 0 calc(100% - 28px - var(--ss-gap)), transparent 0 calc(100% - 28px), var(--ink-3) 0);
+}
+/* the header bar */
+:root[data-look="starship"] .panel > .panel-h {
+  --focus: var(--ink-1);
+  position: relative; flex-wrap: nowrap; align-items: center; column-gap: var(--sp-2); row-gap: 0;
+  min-height: var(--ss-bar); margin: 0; padding: 0 0 0 calc(var(--ss-rail) + var(--sp-3));
+  background: var(--ss-c); color: var(--on-accent); border: 0; border-radius: 0;
+}
+/* the inner corner */
+:root[data-look="starship"] .panel > .panel-h::before {
+  content: ""; position: absolute; left: var(--ss-rail); top: 100%; width: var(--ss-fillet); height: var(--ss-fillet); pointer-events: none;
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--ss-fillet) - .5px), var(--ss-c) var(--ss-fillet));
+}
+:root[data-look="starship"] .panel > .panel-h .panel-t { color: var(--on-accent); font-weight: var(--fw-bold); }
+:root[data-look="starship"] .panel > .panel-h .panel-m,
+:root[data-look="starship"] .panel > .panel-h > svg.i { color: var(--on-accent); }
+:root[data-look="starship"] .panel > .panel-h .panel-m { font-weight: var(--fw-semi); flex: 0 1 auto; }
+/* the bar's tools: cut out of the bar, each a flat block one gap from the next; the card's menu the bar's blue end */
+:root[data-look="starship"] .panel > .panel-h .panel-tools {
+  flex: none; align-self: stretch; align-items: stretch; gap: var(--ss-gap); margin-left: auto; padding-left: var(--ss-gap); background: var(--bg);
+}
+:root[data-look="starship"] .panel > .panel-h .panel-tools > *,
+:root[data-look="starship"] .panel > .panel-h .panel-tools .seg button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: auto; min-width: 30px; height: auto; min-height: 0; margin: 0;
+  padding: 0 10px; border: 0; border-radius: 0; background: var(--ink-2); color: var(--bg);
+  font: var(--fw-bold) var(--fs-xs) var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em;
+}
+:root[data-look="starship"] .panel > .panel-h .panel-tools svg.i { color: currentColor; }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .seg { display: flex; align-items: stretch; height: auto; padding: 0; gap: var(--ss-gap); background: none; }
+:root[data-look="starship"] .panel > .panel-h .panel-tools .seg button { min-width: 38px; padding: 0 8px; }
+:root[data-look="starship"] .panel > .panel-h .panel-tools .seg button { background: var(--surface-3); color: var(--ink-2); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools .seg button[aria-pressed="true"],
+:root[data-look="starship"] .panel > .panel-h .panel-tools .seg button.active { background: var(--ss-c); color: var(--on-accent); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > button.chip[aria-pressed="true"] { background: var(--ink-3); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .input { background: var(--surface-2); color: var(--ink-1); box-shadow: inset 0 -3px 0 var(--ink-2); padding: 0 8px; text-transform: none; letter-spacing: 0; font-family: var(--font); font-stretch: normal; font-weight: var(--fw-semi); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .input::placeholder { color: var(--ink-3); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .badge { background: var(--st, var(--ink-2)); color: var(--bg); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .badge svg.i { color: var(--bg); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > *:hover { background: var(--ink-1); color: var(--bg); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .panel-menu-btn { min-width: 40px; background: var(--ink-3); color: var(--bg); }
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .panel-menu-btn:hover,
+:root[data-look="starship"] .panel > .panel-h .panel-tools > .panel-menu-btn[aria-expanded="true"] { background: var(--ink-1); }
+/* a card too narrow for title, note and tools on one line: the note goes on a second line of the bar */
+@container (max-width: 640px) {
+  :root[data-look="starship"] .panel > .panel-h { flex-wrap: wrap; }
+  :root[data-look="starship"] .panel > .panel-h .panel-tools { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  :root[data-look="starship"] .panel > .panel-h .panel-tools > * { min-height: var(--ss-bar); }
+  :root[data-look="starship"] .panel > .panel-h .panel-m {
+    order: 5; flex: 1 0 100%; white-space: normal; font-size: var(--fs-xs); margin: -2px 0 0; padding: 0 var(--sp-2) 5px 24px;
+  }
+}
+/* a phone-width card with three tools or more: the tools take a row of their own under the bar, joined to the rail, and
+   the inner corner moves to the top of that row */
+@container (max-width: 420px) {
+  :root[data-look="starship"] .panel > .panel-h:has(.panel-tools > :nth-child(3)) { padding-bottom: 0; }
+  :root[data-look="starship"] .panel > .panel-h:has(.panel-tools > :nth-child(3))::before { display: none; }
+  :root[data-look="starship"] .panel > .panel-h .panel-tools:has(> :nth-child(3)) {
+    position: relative; order: 6; flex: 1 1 calc(100% + var(--sp-3)); max-width: none; justify-content: flex-end; row-gap: var(--ss-gap);
+    margin: 4px 0 0 calc(var(--sp-3) * -1); padding: var(--ss-gap) 0 0 calc(var(--ss-fillet) + var(--ss-gap));
+  }
+  :root[data-look="starship"] .panel > .panel-h .panel-tools:has(> :nth-child(3))::before {
+    content: ""; position: absolute; left: 0; top: 0; width: var(--ss-fillet); height: var(--ss-fillet); pointer-events: none;
+    background: radial-gradient(circle at 100% 100%, transparent calc(var(--ss-fillet) - .5px), var(--ss-c) var(--ss-fillet));
+  }
+}
+/* the body and the foot: straight on black, clear of the rail */
+:root[data-look="starship"] .panel > .panel-b { padding: calc(var(--ss-fillet) + 2px) var(--sp-4) var(--sp-4) calc(var(--ss-rail) + var(--ss-in)); }
+:root[data-look="starship"] .panel > .panel-f { border-top: 0; margin: 0; padding: 4px var(--sp-4) var(--sp-3) calc(var(--ss-rail) + var(--ss-in)); color: var(--ink-3); }
+/* the foot's buttons: flat lilac blocks with rounded ends, a word in condensed capitals */
+:root[data-look="starship"] .panel > .panel-f .btn {
+  height: 28px; padding: 0 12px 0 10px; background: var(--ink-2); color: var(--bg); border: 0;
+  font: var(--fw-bold) var(--fs-xs) var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .08em;
+}
+:root[data-look="starship"] .panel > .panel-f .btn svg.i { color: currentColor; }
+:root[data-look="starship"] .panel > .panel-f .btn:hover { background: var(--ink-1); }
+:root[data-look="starship"] .panel > .panel-f .btn:disabled { background: var(--surface-3); color: var(--ink-3); }
+@media (max-width: 720px) {
+  :root[data-look="starship"] .panel > .panel-b { padding-right: var(--sp-3); }
+  :root[data-look="starship"] .panel > .panel-f { padding-right: var(--sp-3); }
+}
+
+/* ---------- dialogs: a corner of the same frame (bar on top, rail down the left), on black ---------- */
+:root[data-look="starship"] .modal-content,
+:root[data-look="starship"] dialog.modal {
+  background: var(--bg); border-radius: var(--ss-elbow) 0 0 0; box-shadow: 0 0 0 2px var(--line-strong);
+}
+:root[data-look="starship"] .modal-content::after,
+:root[data-look="starship"] dialog.modal::after {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--ss-rail); pointer-events: none; border-radius: var(--ss-elbow) 0 0 0;
+  background: linear-gradient(to bottom, var(--accent) 0 calc(100% - 40px - var(--ss-gap)), transparent 0 calc(100% - 40px), var(--ink-3) 0);
+}
+:root[data-look="starship"] .modal-h {
+  --focus: var(--ink-1);
+  position: relative; align-items: center; min-height: var(--ss-bar); padding: 0 0 0 calc(var(--ss-rail) + var(--sp-4)); row-gap: 0; column-gap: var(--sp-2);
+  background: var(--accent); color: var(--on-accent); border-bottom: 0;
+}
+:root[data-look="starship"] .modal-h::before {
+  content: ""; position: absolute; left: var(--ss-rail); top: 100%; width: var(--ss-fillet); height: var(--ss-fillet); pointer-events: none;
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--ss-fillet) - .5px), var(--accent) var(--ss-fillet));
+}
+:root[data-look="starship"] .modal-h .modal-t,
+:root[data-look="starship"] .modal-h .modal-m,
+:root[data-look="starship"] .modal-h > svg.i { color: var(--on-accent); }
+:root[data-look="starship"] .modal-h .modal-m { font-weight: var(--fw-semi); }
+/* the bar's tools and its close button: cut out of the bar, flat blocks one gap apart; close the blue end */
+:root[data-look="starship"] .modal-h .tools {
+  align-self: stretch; align-items: stretch; gap: var(--ss-gap); padding-left: var(--ss-gap); background: var(--bg);
+}
+:root[data-look="starship"] .modal-h .tools .seg { display: flex; align-items: stretch; gap: var(--ss-gap); }
+:root[data-look="starship"] .modal-h .tools .seg button,
+:root[data-look="starship"] .modal-h .tools > .btn {
+  height: auto; min-width: 40px; padding: 0 10px; border: 0; border-radius: 0; background: var(--surface-3); color: var(--ink-2);
+  font: var(--fw-bold) var(--fs-xs) var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em;
+}
+:root[data-look="starship"] .modal-h .tools .seg button[aria-pressed="true"],
+:root[data-look="starship"] .modal-h .tools .seg button.active { background: var(--accent); color: var(--on-accent); }
+:root[data-look="starship"] .modal-h .tools .seg button:hover,
+:root[data-look="starship"] .modal-h .tools > .btn:hover { background: var(--ink-1); color: var(--bg); }
+:root[data-look="starship"] .modal-h .m-close {
+  align-self: stretch; height: auto; width: 46px; border: 0; border-left: var(--ss-gap) solid var(--bg); border-radius: 0;
+  background: var(--ink-3); color: var(--bg); box-sizing: content-box;
+}
+:root[data-look="starship"] .modal-h .tools + .m-close { margin-left: calc(var(--sp-2) * -1); }
+:root[data-look="starship"] .modal-h .m-close:hover { background: var(--ink-1); }
+:root[data-look="starship"] .modal-h .m-close svg.i { color: currentColor; }
+:root[data-look="starship"] .modal-b { padding-left: calc(var(--ss-rail) + var(--sp-5)); padding-top: calc(var(--ss-fillet) + var(--sp-3)); }
+:root[data-look="starship"] .modal-f { padding-left: calc(var(--ss-rail) + var(--sp-5)); border-top: 2px solid var(--line-strong); }
+@media (max-width: 720px) {
+  :root[data-look="starship"] .modal-content,
+  :root[data-look="starship"] dialog.modal { border-radius: var(--ss-elbow) var(--ss-elbow) 0 0; }
+  :root[data-look="starship"] .modal-content::before { display: none; }
+  :root[data-look="starship"] .modal-h { padding-left: calc(var(--ss-rail) + var(--sp-3)); }
+  /* the tools on a row of their own under the bar, joined to the rail; the inner corner at the top of that row */
+  :root[data-look="starship"] .modal-h:has(.tools)::before { display: none; }
+  :root[data-look="starship"] .modal-h .tools {
+    position: relative; justify-content: flex-end; flex-wrap: wrap; row-gap: var(--ss-gap);
+    margin: 0 0 0 calc(var(--sp-3) * -1); padding: var(--ss-gap) 0 0 calc(var(--ss-fillet) + var(--ss-gap)); min-height: calc(var(--ss-bar) + var(--ss-gap));
+  }
+  :root[data-look="starship"] .modal-h .tools::before {
+    content: ""; position: absolute; left: 0; top: 0; width: var(--ss-fillet); height: var(--ss-fillet); pointer-events: none;
+    background: radial-gradient(circle at 100% 100%, transparent calc(var(--ss-fillet) - .5px), var(--accent) var(--ss-fillet));
+  }
+  :root[data-look="starship"] .modal-b { padding-left: calc(var(--ss-rail) + var(--sp-3)); }
+  :root[data-look="starship"] .modal-f { padding-left: calc(var(--ss-rail) + var(--sp-3)); }
+}
+
+/* the incident inspector: its summary after a band in its status colour, straight on black like the rest */
+:root[data-look="starship"] .insp-head { background: none; border: 0; border-left: 8px solid var(--st); border-radius: 0; padding: 2px 0 2px var(--sp-4); }
+:root[data-look="starship"] .evidence li { background: none; border-radius: 0; border-top: 1px solid var(--line); }
+:root[data-look="starship"] .modal,
+:root[data-look="starship"] dialog.modal::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ---------- phone tab bar: black, a band along its top, the current tab marked in the accent ---------- */
+:root[data-look="starship"] .tabbar {
+  border-top: 0; background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none;
+  box-shadow: inset 0 var(--ss-band) 0 var(--bg);
+  background-image: linear-gradient(to right, var(--ink-3) 0 calc(100% - 64px - var(--ss-gap)), transparent 0 calc(100% - 64px), var(--ink-2) 0);
+  background-size: 100% 4px; background-repeat: no-repeat;
+}
+:root[data-look="starship"] .tabbar button[aria-selected="true"] { color: var(--accent); }
+:root[data-look="starship"] .tabbar button[aria-selected="true"]::before { top: -6px; height: 4px; width: 100%; border-radius: 0; }
+
+/* ---------- the cards' parts: Starship restyles every card's standard view (panels/<card>.css, docs/themes.md
+   "Restyling a card"); the parts they share are here ---------- */
+
+/* a label (over a readout, at the head of a lane): condensed capitals in the frame's blue, straight on black (lilac and
+   orange ones below) */
+:root[data-look="starship"] [data-panel="services"] .svc-ms::before,
+:root[data-look="starship"] [data-panel="services"] .svc .svc-check-url::before,
+:root[data-look="starship"] [data-panel="strips"] .s-hd:first-child,
+:root[data-look="starship"] [data-panel="incidents"] .tl-l,
+:root[data-look="starship"] [data-panel="report"] .rep-mini .stat .lbl,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-meta .lbl,
+:root[data-look="starship"] [data-panel="heat"] .scale-legend > span,
+:root[data-look="starship"] [data-panel="strips"] .s-hd.r,
+:root[data-look="starship"] [data-panel="report"] .rb-t,
+:root[data-look="starship"] [data-panel="diagnosis"] .pe-h,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-meta > span + span .lbl,
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .chip,
+:root[data-look="starship"] [data-panel="heat"] .insight::before,
+:root[data-look="starship"] [data-panel="report"] .rep-hero > .stat:first-child .lbl,
+:root[data-look="starship"] [data-panel="router"] .rb-t .rb-n {
+  display: inline-block; max-width: 100%; background: none; color: var(--ink-3); border: 0; border-radius: 0; padding: 0;
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .08em;
+  font-size: var(--fs-xs); font-weight: var(--fw-bold); line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-look="starship"] [data-panel="heat"] .scale-legend > span,
+:root[data-look="starship"] [data-panel="strips"] .s-hd.r,
+:root[data-look="starship"] [data-panel="report"] .rb-t,
+:root[data-look="starship"] [data-panel="diagnosis"] .pe-h,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-meta > span + span .lbl,
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .chip { color: var(--ink-2); }
+:root[data-look="starship"] [data-panel="heat"] .insight::before,
+:root[data-look="starship"] [data-panel="report"] .rep-hero > .stat:first-child .lbl,
+:root[data-look="starship"] [data-panel="router"] .rb-t .rb-n { color: var(--accent); }
+/* a pill button: lilac, a word in condensed capitals (an expanded or pressed one, and the main one, in the accent) */
+:root[data-look="starship"] [data-panel="services"] .svc-actions .btn,
+:root[data-look="starship"] [data-panel="incidents"] .inc-window .chip,
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict-act,
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result .btn {
+  display: inline-flex; align-items: center; gap: 5px; width: auto; height: auto; min-height: 28px; padding: 2px 12px 2px 9px; cursor: pointer;
+  background: var(--ink-2); color: var(--bg); border: 0; border-radius: var(--r-pill); text-decoration: none;
+  font: var(--fw-bold) var(--fs-xs) var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .08em;
+}
+:root[data-look="starship"] [data-panel="services"] .svc-actions .btn:hover,
+:root[data-look="starship"] [data-panel="incidents"] .inc-window .chip:hover,
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict-act:hover,
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result .btn:hover { background: var(--ink-1); color: var(--bg); }
+:root[data-look="starship"] [data-panel="services"] .svc-actions .btn[aria-expanded="true"],
+:root[data-look="starship"] [data-panel="incidents"] .inc-window .chip[aria-expanded="true"],
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict-act[aria-expanded="true"],
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result .btn[aria-expanded="true"],
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict-act,
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result .btn.primary { background: var(--accent); color: var(--on-accent); }
+:root[data-look="starship"] [data-panel="services"] .svc-actions .btn svg.i,
+:root[data-look="starship"] [data-panel="incidents"] .inc-window .chip svg.i,
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict-act svg.i,
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result .btn svg.i { color: currentColor; width: 14px; height: 14px; }
+/* a status chip: a flat block in the status colour, its icon and word dark on it */
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .badge,
+:root[data-look="starship"] [data-panel="line"] .g-name [data-f="ic"],
+:root[data-look="starship"] [data-panel="router"] .n-st,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-st,
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend]:not([data-legend="delta"]),
+:root[data-look="starship"] [data-panel="matrix"] .hops .chip {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; max-width: 100%; padding: 2px 9px 2px 7px;
+  background: var(--st, var(--unknown)); color: var(--bg); border: 0; border-radius: 0;
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em;
+  font-size: var(--fs-xs); font-weight: var(--fw-bold); line-height: 1.45; white-space: nowrap;
+}
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .badge svg.i,
+:root[data-look="starship"] [data-panel="line"] .g-name [data-f="ic"] svg.i,
+:root[data-look="starship"] [data-panel="router"] .n-st svg.i,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-st svg.i,
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend]:not([data-legend="delta"]) svg.i,
+:root[data-look="starship"] [data-panel="matrix"] .hops .chip svg.i { width: 13px; height: 13px; color: var(--bg); flex: none; }
+/* an incident that is over, a quiet figure: the word in the status colour after a short block of it */
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .badge.quiet,
+:root[data-look="starship"] [data-panel="matrix"] .hops .chip:not(.st) { background: none; color: var(--st, var(--ink-2)); box-shadow: inset 5px 0 0 var(--st, var(--line-strong)); padding-left: 10px; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .badge.quiet svg.i,
+:root[data-look="starship"] [data-panel="matrix"] .hops .chip:not(.st) svg.i { color: var(--st, var(--ink-2)); }
+/* a help button inside a card: a small blue disc */
+:root[data-look="starship"] .panel-b .info:not(.lbl) { border-radius: 50%; }

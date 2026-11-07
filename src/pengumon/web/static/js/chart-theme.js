@@ -7,23 +7,88 @@
 // and sparklines read the same few tokens on every message, so the values are kept until the theme changes
 // (applyChartTheme, below, empties the cache; it runs at start and after every theme change). An empty result
 // (a token that is not defined yet) is never kept.
-const tokenCache = new Map();
-export const clearTokenCache = () => tokenCache.clear();
-export function token(name) {
-  let v = tokenCache.get(name);
+//
+// A card can have colours of its own (Layout, themes.js: its accent and series colours as custom properties on its
+// <section data-colours>): pass an element of the card as `el` and the token is read there, so its chart follows.
+let tokenCache = new Map();
+let cardCache = new WeakMap(); // card section -> Map
+export const clearTokenCache = () => { tokenCache = new Map(); cardCache = new WeakMap(); };
+export function token(name, el) {
+  const card = el && el.closest ? el.closest('[data-colours]') : null;
+  let cache = tokenCache;
+  if (card) {
+    cache = cardCache.get(card);
+    if (!cache) { cache = new Map(); cardCache.set(card, cache); }
+  }
+  let v = cache.get(name);
   if (v === undefined) {
-    v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    if (v) tokenCache.set(name, v);
+    v = getComputedStyle(card || document.documentElement).getPropertyValue(name).trim();
+    if (v) cache.set(name, v);
   }
   return v;
 }
 
-// The categorical series colours in their fixed order (tokens.css --s1..--s4), for charts whose series are not targets.
-export const series = (i) => token(`--s${(i % 4) + 1}`);
+// The categorical series colours in their fixed order (tokens.css --s1..--s4), for charts whose series are not targets;
+// `el`: an element of the card the chart is in (its own colours, see token).
+export const series = (i, el) => token(`--s${(i % 4) + 1}`, el);
 
-// Chart.js defaults from the tokens: text, grid, font, tooltip. Called at start and after every theme change.
+// ---------- a theme's chart style (theme.json "chart", docs/themes.md "Chart style") ----------
+// {line_width, curve, grid, points, fill, spark}, each optional; null: the charts as their modules draw them. It reshapes
+// every Chart.js line chart (a plugin, below, applies it on each update), so a module keeps giving its datasets its own
+// widths and tensions and never asks for the style itself; `spark` is read by sparkline.js.
+let style = null;
+export const chartStyle = () => style;
+
+function readStyle() {
+  const root = document.documentElement;
+  try {
+    const look = JSON.parse(root.dataset.looks || '[]').find((t) => t && t.id === root.dataset.look);
+    return look && look.chart && typeof look.chart === 'object' ? look.chart : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const own = new WeakMap(); // a dataset -> what its module gave it, before the style changed it
+const ownGrid = new WeakMap(); // a chart -> {scale id: its module's grid.display}
+const HEX6 = /^#[0-9a-f]{6}$/i;
+const stylePlugin = {
+  id: 'themeChartStyle',
+  beforeUpdate(chart) {
+    const s = style || {};
+    chart.data.datasets.forEach((d) => {
+      if ((d.type || chart.config.type) !== 'line') return;
+      let o = own.get(d);
+      if (!o) {
+        o = { borderWidth: d.borderWidth, tension: d.tension, stepped: d.stepped, pointRadius: d.pointRadius, fill: d.fill, backgroundColor: d.backgroundColor };
+        own.set(d, o);
+      }
+      const stroked = typeof o.borderWidth === 'number' && o.borderWidth > 0; // a band or an invisible helper line stays as it is
+      d.borderWidth = stroked && s.line_width ? Math.round(o.borderWidth * s.line_width * 5) / 10 : o.borderWidth; // in proportion to the main lines' 2 px
+      d.tension = stroked && (s.curve === 'straight' || s.curve === 'stepped') ? 0 : o.tension;
+      d.stepped = stroked && s.curve === 'stepped' ? 'middle' : o.stepped;
+      d.pointRadius = stroked && s.points ? s.points : o.pointRadius;
+      const wash = stroked && s.fill && !o.fill && HEX6.test(d.borderColor || '');
+      d.fill = wash ? 'origin' : o.fill;
+      d.backgroundColor = wash ? `${d.borderColor}1f` : o.backgroundColor;
+    });
+    const scales = chart.options.scales || {};
+    if (!ownGrid.has(chart)) ownGrid.set(chart, Object.fromEntries(Object.entries(scales).map(([id, sc]) => [id, sc.grid ? sc.grid.display : undefined])));
+    const mine = ownGrid.get(chart);
+    Object.entries(scales).forEach(([id, sc]) => {
+      if (!sc.grid) return;
+      const was = id in mine ? mine[id] : sc.grid.display;
+      sc.grid.display = s.grid === false ? false : was;
+    });
+  }
+};
+if (typeof Chart !== 'undefined') Chart.register(stylePlugin);
+
+// Chart.js defaults from the tokens: text, grid, font, tooltip; and the theme's chart style. Called at start and after
+// every theme change.
 export function applyChartTheme() {
   clearTokenCache();
+  style = readStyle();
   if (typeof Chart === 'undefined') return;
   const d = Chart.defaults;
   // Chart.js copies the scale defaults into each chart's own options when the chart is made, so a chart made in the other

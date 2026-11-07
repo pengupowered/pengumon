@@ -3,7 +3,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { deviceName, formatClock, keepKeyboard, openModal, setText } from '../../js/util.js';
+import { deviceName, formatClock, keepKeyboard, openModal, setText, zoneOffsetMs } from '../../js/util.js';
 import { series as tone, token } from '../../js/chart-theme.js';
 
 const RANGES = { 3600: true, 21600: true, 86400: true, 604800: true };
@@ -83,7 +83,7 @@ function nearest(ms) {
 }
 
 // The time of a bucket: with seconds while buckets are shorter than a minute, with the date over a day.
-const stamp = (ms) => (bucketSeconds < 60 ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+const stamp = (ms) => (bucketSeconds < 60 ? formatClock(ms, false, true)
   : formatClock(ms, rangeSeconds > 86400));
 
 function setHover(idx) {
@@ -112,7 +112,7 @@ const STEPS_MIN = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880];
 function niceTicks(scale) {
   const { min, max } = scale;
   const step = (STEPS_MIN.find((m) => (max - min) / (m * 60000) <= 7) || 2880) * 60000;
-  const off = new Date(min).getTimezoneOffset() * 60000; // local time is UTC minus this
+  const off = -zoneOffsetMs(min); // the page's clock is UTC minus this
   const ticks = [];
   for (let t = Math.ceil((min - off) / step) * step + off; t <= max; t += step) ticks.push({ value: t });
   scale.ticks = ticks;

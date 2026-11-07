@@ -1,0 +1,10 @@
+/* Mission control's router card: the standard view (panels/router/view.js) restyled: each meter's figure large over a
+   thicker bar, the client count larger; the block titles and notes quiet. */
+:root[data-look="mission-control"] [data-panel="router"] .meter .val { font-size: var(--fs-lg); font-weight: var(--fw-bold); }
+:root[data-look="mission-control"] [data-panel="router"] .meter .val small { font-size: var(--fs-xs); }
+:root[data-look="mission-control"] [data-panel="router"] .meter .track { height: 12px; border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="router"] .meter .fill { border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="router"] .big-count b { font-size: calc(var(--fs-2xl) * 1.15); }
+:root[data-look="mission-control"] [data-panel="router"] .stackbar { height: 14px; border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="router"] .n-c b { font-size: var(--fs-lg); }
+:root[data-look="mission-control"] [data-panel="router"] .cap-note { color: var(--ink-3); }

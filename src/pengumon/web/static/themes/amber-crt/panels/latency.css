@@ -1,0 +1,39 @@
+/* Amber CRT's view of the Latency card (latency.js): a prompt line, a bracketed legend and switch, the chart on a screen
+   with a bezel and corner marks. Scoped to this theme and to the card while this view draws it. */
+
+:root[data-look="amber-crt"] [data-panel="latency"] .panel[data-view="amber-crt"] > .panel-h { border-bottom-style: dashed; }
+:root[data-look="amber-crt"] [data-panel="latency"] .panel[data-view="amber-crt"] > .panel-h .panel-t::before { content: "[ "; color: var(--ink-3); }
+:root[data-look="amber-crt"] [data-panel="latency"] .panel[data-view="amber-crt"] > .panel-h .panel-t::after { content: " ]"; color: var(--ink-3); }
+
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lat { display: flex; flex-direction: column; gap: var(--sp-2); font-family: var(--mono); flex: 1 1 auto; min-height: 0; }
+/* the screen takes the height the row gives the card, as the standard view's chart does */
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-screen { flex: 1 1 auto; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lat .chart-box.lat-main { flex: 1 1 250px; min-height: 250px; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-prompt { color: var(--ink-3); font-size: var(--fs-xs); letter-spacing: .06em; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-prompt::after { content: "_"; margin-left: 2px; animation: ac-blink 1.1s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { :root[data-look="amber-crt"] [data-panel="latency"] .ac-prompt::after { animation: none; } }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lat-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-2) var(--sp-4); }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lg-list { flex: 1 1 320px; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px var(--sp-3); font-size: var(--fs-xs); color: var(--ink-3); }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lg { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lg-n { color: var(--ink-1); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .04em; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lg-s { color: var(--ink-3); max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lg-now { color: var(--ink-1); font-weight: var(--fw-bold); }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-modes { flex: none; margin-left: auto; display: inline-flex; gap: var(--sp-2); }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-modes > button { font: inherit; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); background: none; border: 1px solid var(--line-strong); border-radius: var(--r-xs); padding: 3px 10px; cursor: pointer; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-modes > button::before { content: "[ "; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-modes > button::after { content: " ]"; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-modes > button:hover { color: var(--ink-1); border-color: var(--ink-3); }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-modes > button[aria-pressed="true"] { background: var(--ink-1); color: var(--bg); text-shadow: none; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lat-note { color: var(--ink-3); font-size: var(--fs-xs); }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-lat-note:empty { display: none; }
+
+/* the screen: a bezel, with L-shaped corner marks */
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-screen {
+  position: relative; display: flex; flex-direction: column; padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+  box-shadow: inset 0 0 30px -12px color-mix(in srgb, var(--ink-1) 35%, transparent);
+}
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-screen::before, :root[data-look="amber-crt"] [data-panel="latency"] .ac-screen::after { content: ""; position: absolute; width: 14px; height: 14px; border: 2px solid var(--ink-2); pointer-events: none; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-screen::before { left: 4px; top: 4px; border-right: 0; border-bottom: 0; }
+:root[data-look="amber-crt"] [data-panel="latency"] .ac-screen::after { right: 4px; bottom: 4px; border-left: 0; border-top: 0; }
+@media (max-width: 720px) { :root[data-look="amber-crt"] [data-panel="latency"] .ac-lg-s { white-space: normal; max-width: none; } :root[data-look="amber-crt"] [data-panel="latency"] .ac-modes { margin-left: 0; } }

@@ -113,8 +113,8 @@ class FakeRepository:
 
 
 def metrics_text(metrics):
-    """category:loss_pct/avg_latency_ms/number of targets"""
-    avg = "-" if metrics.avg_latency_ms is None else f"{metrics.avg_latency_ms}"
+    """category:loss_pct/latency_ms/number of targets"""
+    avg = "-" if metrics.latency_ms is None else f"{metrics.latency_ms}"
     return f"{metrics.category}:{metrics.loss_pct}/{avg}/{len(metrics.targets)}"
 
 
@@ -190,7 +190,7 @@ def test_empty_category_is_not_measured():
     rules do not read it as a healthy segment."""
     metrics = category_metrics("gateway", (), [])
     assert metrics.loss_pct == 0.0
-    assert metrics.avg_latency_ms is None
+    assert metrics.latency_ms is None
     assert metrics.targets == () and not metrics.measured
 
 

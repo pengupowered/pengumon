@@ -30,7 +30,7 @@ let serverErrors = {};   // _key -> { field: message } from problems()
 let seq = 0;
 
 const spec = () => (ctx && ctx.schema && ctx.schema.lists && ctx.schema.lists.devices) || { drivers: {}, item_fields: [] };
-const driverOf = (item) => drivers[item.driver] || { label: item.driver, options: [], url_schemes: ['http', 'https'], default_poll_seconds: null, min_poll_seconds: 0, default_username: 'admin' };
+const driverOf = (item) => drivers[item.driver] || { label: item.driver, options: [], url_schemes: ['http', 'https'], default_poll_seconds: null, min_poll_seconds: 0, default_username: 'admin', needs_sign_in: true };
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
 function fromSaved(raw) {
@@ -131,14 +131,17 @@ function formMarkup(item) {
   const floor = d.min_poll_seconds > 0 ? ` At least ${e(d.min_poll_seconds)} s: a lower value is raised to it.` : '';
   const driverSelect = `<select class="input" data-f="driver">${Object.keys(drivers).sort().map((k) => `<option value="${e(k)}"${k === item.driver ? ' selected' : ''}>${e(drivers[k].label || k)}</option>`).join('')}</select>`;
   const placeholder = (d.url_schemes || ['http']).includes('snmp') ? 'snmp://192.0.2.1' : 'http://192.0.2.1';
+  const signIn = d.needs_sign_in !== false;
   return `<div class="dv-form">`
     + field(item, 'id', 'Id', `<input class="input mono" data-f="id" value="${e(item.id)}" maxlength="64" autocomplete="off" spellcheck="false"${item._saved ? ' readonly' : ''}>`,
       item._saved ? 'Fixed once saved: its history and sign-in are kept under this id.' : 'Letters, digits, - and _. Fixed once saved.')
     + field(item, 'driver', 'Kind of device', driverSelect)
     + field(item, 'url', 'Address', `<input class="input mono" data-f="url" value="${e(item.url)}" maxlength="255" placeholder="${placeholder}" autocomplete="off" spellcheck="false">`,
-      `Must start with ${(d.url_schemes || ['http', 'https']).map((s) => `${e(s)}://`).join(' or ')}. No user name or password: the sign-in is entered with Set up.`)
+      `Must start with ${(d.url_schemes || ['http', 'https']).map((s) => `${e(s)}://`).join(' or ')}. `
+      + (signIn ? 'No user name or password: the sign-in is entered with Set up.'
+        : 'The router\'s address is enough; if it does not answer, use the address of its UPnP description, such as http://192.0.2.1:5000/rootDesc.xml. This device needs no password.'))
     + field(item, 'model', 'Display name', `<input class="input" data-f="model" value="${e(item.model || '')}" maxlength="100" placeholder="Optional">`, 'Shown on the device card when the device does not report a model.')
-    + field(item, 'username', 'User name', `<input class="input" data-f="username" value="${e(item.username || '')}" maxlength="64" placeholder="${e(d.default_username || 'admin')}" autocomplete="off">`)
+    + (signIn ? field(item, 'username', 'User name', `<input class="input" data-f="username" value="${e(item.username || '')}" maxlength="64" placeholder="${e(d.default_username || 'admin')}" autocomplete="off">`) : '')
     + field(item, 'poll_interval_seconds', 'Poll every (seconds)', `<input class="input" type="number" inputmode="decimal" min="0" step="any" data-f="poll_interval_seconds" value="${item.poll_interval_seconds === null || item.poll_interval_seconds === undefined ? '' : e(item.poll_interval_seconds)}" placeholder="Standard: ${e(d.default_poll_seconds)}">`,
       `Standard: ${e(d.default_poll_seconds)} s.${floor}`)
     + `<div class="field dv-f dv-check"><label><input type="checkbox" data-f="enabled"${item.enabled === false ? '' : ' checked'}><span>Poll this device</span></label><span class="hint">Switched off, it stays listed and says so.</span></div>`
@@ -178,7 +181,8 @@ function cardMarkup(item, index) {
     + (local ? `<div class="dv-fail" role="alert">${icon('warn')}<span>${e(Object.values(localProblems(item))[0] || Object.values(serverErrors[item._key])[0])}</span></div>` : '')
     + `<div class="dv-body" id="dv-body-${e(item._key)}"${expanded ? '' : ' hidden'}>${expanded ? formMarkup(item) : ''}`
     + `<div class="dv-actions">`
-    + (item._saved ? `<button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="setup" data-needs-edit>${icon('lock')}Set up the sign-in</button>`
+    + (driverOf(item).needs_sign_in === false ? ''
+      : item._saved ? `<button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="setup" data-needs-edit>${icon('lock')}Set up the sign-in</button>`
       : '<span class="hint">Save first, then use Set up to enter the device\'s password.</span>')
     + `<button type="button" class="btn sm danger" data-action="settingsDeviceAct" data-act="remove" data-needs-edit>Remove</button></div></div></li>`;
 }

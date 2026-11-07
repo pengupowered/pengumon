@@ -8,6 +8,7 @@ export const steps = [
     await waitText(`${LINE} [data-f=badge]`, /Warning/);
     await waitText(`${LINE} [data-f=g_ds_power] [data-f=val]`, /^1\.3$/);
     ok("gauge zones drawn", (await count(`${LINE} [data-f=g_ds_power] .g-zone`)) >= 1);
+    eq("the gauge's status shows its word beside the icon", await page.$eval(`${LINE} [data-f=g_ds_power] .g-name [data-v=status] .st-word`, (e) => e.textContent), "Healthy");
     eq("ds power graded by the server", await page.$eval(`${LINE} [data-f=g_ds_power]`, (e) => e.className), "gauge st-good");
     await waitText(`${LINE} [data-f=note]`, /^Brief error burst on 1 channel \(537 MHz\) in the last 30 min, no measurable loss\.$/);
     eq("a short burst is not a big red number", await page.$eval(`${LINE} [data-f=g_uncorr]`, (e) => e.classList.contains("serious")), false);

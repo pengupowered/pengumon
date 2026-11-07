@@ -1,0 +1,46 @@
+/* Starship console's Incidents: the standard view (panels/incidents/view.js) restyled, straight on black: the week as a
+   sensor log (a lane per cause after its label, the incidents as blocks on a ruler of days), the window bar as an alert
+   line after a lilac block, and the table as a log under column labels, each status a flat block (an incident that is
+   over: its word after a short block). */
+
+/* the week */
+:root[data-look="starship"] [data-panel="incidents"] .tl { margin: 0 0 var(--sp-4); border-radius: 0; background: none; box-shadow: none; }
+:root[data-look="starship"] [data-panel="incidents"] .tl-lane { height: 22px; column-gap: 0; }
+:root[data-look="starship"] [data-panel="incidents"] .tl .tl-l { margin-right: 4px; text-align: right; padding: 0 3px; font-size: 10px; letter-spacing: 0; }
+:root[data-look="starship"] [data-panel="incidents"] .tl-track {
+  height: 18px; border-radius: 2px;
+  background: repeating-linear-gradient(90deg, var(--surface-2) 0 calc(100% / 7 - 2px), var(--bg) calc(100% / 7 - 2px) calc(100% / 7));
+}
+:root[data-look="starship"] [data-panel="incidents"] .tl-bar { border-radius: 2px; background: var(--st); }
+:root[data-look="starship"] [data-panel="incidents"] .tl-bar.exp { background: repeating-linear-gradient(135deg, var(--busy) 0 3px, transparent 3px 5px); }
+:root[data-look="starship"] [data-panel="incidents"] .tl-bar.ongoing { top: -1px; bottom: -1px; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--st); }
+:root[data-look="starship"] [data-panel="incidents"] .tl-axis > div span {
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold);
+  padding-left: 3px; border-left: 2px solid var(--line-strong);
+}
+:root[data-look="starship"] [data-panel="incidents"] .tl-now { width: 3px; }
+:root[data-look="starship"] [data-panel="incidents"] .tl-win { background: color-mix(in srgb, var(--ink-2) 22%, transparent); border: 2px solid var(--ink-2); border-radius: 3px; }
+/* the window bar: an alert line after a lilac block */
+:root[data-look="starship"] [data-panel="incidents"] .inc-window { gap: var(--sp-3); padding: 0; background: none; border: 0; border-radius: 0; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-window[hidden] { display: none; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-window > svg.i { box-sizing: content-box; align-self: stretch; height: auto; min-height: 18px; padding: 8px 12px; background: var(--ink-2); color: var(--bg); border-radius: 0; }
+/* the log: column labels, then a line per incident */
+:root[data-look="starship"] [data-panel="incidents"] .inc-list th { padding-bottom: 4px; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list td { border-top: 1px solid var(--line); background: none; padding-block: 0; height: 36px; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list tbody tr.row-click:hover td { background: var(--surface-2); }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list tr.expected td { background: repeating-linear-gradient(135deg, var(--surface-1) 0 8px, var(--bg) 8px 12px); }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .primary:hover { color: var(--accent); }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .when,
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .dur { font-variant-numeric: tabular-nums; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .dur { background: none; padding: 0; border-radius: 0; color: var(--ink-2); }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .go { color: var(--ink-3); }
+@container (max-width: 560px) {
+  :root[data-look="starship"] [data-panel="incidents"] .inc-list tr { border-top: 1px solid var(--line); padding: 6px 0; background: none; border-radius: 0; }
+  :root[data-look="starship"] [data-panel="incidents"] .inc-list td,
+  :root[data-look="starship"] [data-panel="incidents"] .inc-list td:first-child,
+  :root[data-look="starship"] [data-panel="incidents"] .inc-list td:last-child { background: none; height: auto; padding: 0; border: 0; }
+}
+/* the header's filter and page size (and the expected-events chip) never run out of the card: on a narrow card the bar
+   takes a second row and the tools wrap inside it */
+:root[data-look="starship"] [data-panel="incidents"] .panel > .panel-h { flex-wrap: wrap; }
+:root[data-look="starship"] [data-panel="incidents"] .panel > .panel-h .panel-tools { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; row-gap: 4px; }

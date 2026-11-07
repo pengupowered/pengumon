@@ -155,7 +155,7 @@ button.chip[aria-pressed="true"] { color: var(--ink-1); background: var(--accent
 .meter .val { font-size: var(--fs-sm); font-weight: var(--fw-semi); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .meter .val small { color: var(--ink-3); font-weight: var(--fw-medium); }
 .meter .track { grid-column: 1 / -1; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--mc, var(--accent)) 16%, var(--surface-3)); position: relative; overflow: hidden; }
-.meter .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--mc, var(--accent)); transition: width var(--t-med) var(--ease); }
+.meter .fill { position: absolute; inset: 0 auto 0 0; width: var(--v, 0); border-radius: 4px; background: var(--mc, var(--accent)); transition: width var(--t-med) var(--ease); }
 .meter .mark { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink-3); }
 
 /* Range gauge: full scale, good zone, marginal zones, spread whisker, value marker */
@@ -225,7 +225,7 @@ svg.spark { display: block; width: 100%; height: 30px; overflow: visible; }
 
 /* Heatmap */
 .heat { display: grid; grid-template-columns: 30px repeat(24, minmax(0, 1fr)); gap: 2px; font-size: var(--fs-xs); color: var(--ink-3); align-items: center; }
-.heat > i, .heat > .cell { aspect-ratio: 1.45; border-radius: 2px; background: var(--q0); min-width: 0; }
+.heat > i, .heat > .cell { aspect-ratio: 1.45; border-radius: 2px; background: var(--f, var(--q0)); min-width: 0; }
 .heat .hd { text-align: center; }
 .scale-legend { display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--ink-3); }
 .scale-legend i { width: 16px; height: 8px; border-radius: 2px; display: inline-block; }
@@ -379,3 +379,19 @@ dialog.modal::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 /* Small uppercase heading of a titled block inside a panel */
 .rb-t { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: var(--fw-semi); display: flex; align-items: center; gap: 6px; }
 .rb-t .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+/* The header's theme menu (js/themes.js): headings, radio and check items with a mark, short notes */
+.theme-menu { min-width: 232px; max-height: calc(100vh - 80px); overflow-y: auto; }
+.theme-menu .tm-h { padding: 6px 10px 2px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.theme-menu .tm-mark { flex: none; width: 14px; height: 14px; border-radius: var(--r-pill); border: 1.5px solid var(--ink-3); display: grid; place-items: center; }
+.theme-menu [role="menuitemcheckbox"] .tm-mark { border-radius: var(--r-xs); }
+.theme-menu [aria-checked="true"] .tm-mark { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 2px var(--surface-1); }
+.theme-menu [aria-checked="true"] { color: var(--ink-1); }
+.theme-menu button:disabled { cursor: default; opacity: .55; }
+.theme-menu .tm-text { display: flex; flex: 1; justify-content: space-between; gap: 8px; min-width: 0; }
+.theme-menu .tm-note { color: var(--ink-3); font-size: var(--fs-xs); white-space: nowrap; }
+.theme-menu .tm-why { padding: 2px 10px 6px 32px; font-size: var(--fs-xs); color: var(--ink-3); max-width: 260px; }
+
+/* A theme's animated effect (js/themes.js) draws in this layer, behind the page; nothing in it takes a click */
+.fx-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; contain: strict; }
+[data-view="loading"] { visibility: hidden; } /* a card body while its theme view loads (js/cards.js) */

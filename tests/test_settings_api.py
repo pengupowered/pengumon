@@ -53,7 +53,7 @@ async def test_schema_serves_the_registry_with_ranges_and_an_etag(app_state, tmp
     assert [s.key for s in body.settings] == [s.key for s in registry.SETTINGS]
     retention = next(s for s in body.settings if s.key == "database.retention_days")
     assert (retention.min, retention.max, retention.default, retention.unit) == (1, 90, 7, "days")
-    assert set(body.lists) == {"devices", "services", "webhooks", "dns_probes"}
+    assert set(body.lists) == {"devices", "services", "webhooks", "dns_probes", "themes"}
     assert "url" not in {f.name for f in body.lists["webhooks"].item_fields}
 
 

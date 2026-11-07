@@ -58,7 +58,8 @@ export const steps = [
     await page.screenshot({ path: path.join(outDir, "dashboard.png") });
   }, { variants: [...ALL_VARIANTS, "longpath"], fatal: true }],
 
-  ["a subscriber that throws does not stop the others: the matrix keeps updating, a late subscriber gets the last value", async ({ moduleUrl, eq, page, text, until, waitCount }) => {
+  ["a subscriber that throws does not stop the others: the matrix keeps updating, a late subscriber gets the last value", async ({ moduleUrl, eq, page, showCard, text, until, waitCount }) => {
+    await showCard("matrix"); // Hop details is not drawn while it is off screen
     await waitCount("#hopMatrixBody tr", 5); // the first targets message has arrived (the bus keeps it for a late subscriber)
     const seen = await page.evaluate(async (src) => {
       const { bus } = await import(src);
@@ -71,6 +72,7 @@ export const steps = [
     const before = await text("#hopMatrixBody tr:first-child [data-f=total]");
     await until((b) => document.querySelector("#hopMatrixBody tr:first-child [data-f=total]").textContent !== b, before);
     await until(() => window.__busCalls >= 3); // a subscriber after the thrower still runs on every message
+    await page.evaluate(() => window.scrollTo(0, 0)); // the later steps start at the page's top
   }, { variants: ALL_VARIANTS }],
 
   ["lan pill shows the access URL and copies it", async ({ click, eq, ok, page, text, until }) => {
@@ -156,21 +158,25 @@ export const steps = [
     await click("#mobileTabs [data-arg=live]");
   }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
 
-  ["theme: toggle switches light and dark, is stored, survives a reload and beats the OS setting", async ({ SHOTS, click, eq, ok, page, shot, waitCount }) => {
+  ["theme menu: light and dark are picked there, kept, survive a reload and beat the OS setting", async ({ SHOTS, click, eq, ok, page, pickMode, shot, until, waitCount }) => {
     await page.setViewport({ width: 1400, height: 1000 });
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
     await page.evaluate(() => localStorage.removeItem("pengumon.theme"));
     await page.reload({ waitUntil: "load" });
     ok("light by the OS setting", lum(await bgOf(page)) > 200);
-    await click("#btnTheme");
+    await pickMode("dark");
     eq("dark chosen", await page.evaluate(() => document.documentElement.dataset.theme), "dark");
     ok("dark background", lum(await bgOf(page)) < 60);
     eq("stored", await page.evaluate(() => localStorage.getItem("pengumon.theme")), "dark");
     await page.reload({ waitUntil: "load" });
     ok("still dark after reload (OS says light)", lum(await bgOf(page)) < 60);
-    ok("the button names the next theme", /light/i.test(await page.$eval("#btnTheme", (b) => b.getAttribute("aria-label"))));
-    if (SHOTS) await shot("desktop-dark");
     await click("#btnTheme");
+    await until(() => !document.getElementById("themeMenu").hidden);
+    eq("the menu marks Dark", await page.$eval("#themeMenu [data-action=pickMode][data-arg=dark]", (b) => b.getAttribute("aria-checked")), "true");
+    eq("and the default theme", await page.$eval('#themeMenu [data-action=pickLook][data-arg=""]', (b) => b.getAttribute("aria-checked")), "true");
+    await page.keyboard.press("Escape");
+    if (SHOTS) await shot("desktop-dark");
+    await pickMode("light");
     eq("light chosen", await page.evaluate(() => localStorage.getItem("pengumon.theme")), "light");
     await page.reload({ waitUntil: "load" });
     ok("light after reload", lum(await bgOf(page)) > 200);
@@ -178,6 +184,310 @@ export const steps = [
     if (SHOTS) await shot("desktop-light", { fullPage: true });
     await page.evaluate(() => localStorage.removeItem("pengumon.theme"));
   }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
+
+  ["themes: a theme picked in the menu applies at once (charts too), is kept, and is on the page before its first paint; only its stylesheet is loaded", async ({ click, eq, ok, page, pickLook, until }) => {
+    // the theme <html> carries when <body> starts, and its colours then: what the first paint shows (js/theme-boot.js
+    // runs in <head> and links the theme's stylesheet there)
+    const { identifier } = await page.evaluateOnNewDocument(() => {
+      new MutationObserver((_, obs) => {
+        if (!document.body) return;
+        window.__lookAtBody = `${document.documentElement.dataset.look}/${document.documentElement.dataset.theme || ""}`;
+        window.__bgAtBody = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+        obs.disconnect();
+      }).observe(document, { childList: true, subtree: true });
+    });
+    const linked = () => page.$$eval("link[data-look-css]", (ls) => ls.map((l) => l.dataset.lookCss).join());
+    eq("the default theme links no theme stylesheet", await linked(), "");
+    // the colours at the moment the page changes theme: the new theme's stylesheet has loaded first (no flash)
+    await page.evaluate(() => new MutationObserver(() => {
+      window.__bgAtSwitch = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-look"] }));
+    await pickLook("nord");
+    eq("Nord on the page", await page.evaluate(() => document.documentElement.dataset.look), "nord");
+    const nordBg = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
+    ok(`Nord's background (${nordBg})`, ["#242933", "#e5e9f0"].includes(nordBg));
+    eq("Nord's colours were there when the page changed to it", await page.evaluate(() => window.__bgAtSwitch), nordBg);
+    eq("only Nord's stylesheet is linked", await linked(), "nord");
+    eq("the charts' grid follows", await page.evaluate(() => Chart.defaults.scale.grid.color), await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--line").trim()));
+    eq("kept in this browser", await page.evaluate(() => localStorage.getItem("pengumon.look")), "nord");
+    await page.reload({ waitUntil: "load" });
+    eq("on <html> before the body is drawn", (await page.evaluate(() => window.__lookAtBody)).split("/")[0], "nord");
+    eq("with its colours", await page.evaluate(() => window.__bgAtBody), nordBg);
+    eq("and only its stylesheet", await linked(), "nord");
+    // a theme with one look forces it, and the menu says why light and dark cannot be picked
+    await pickLook("digital-rain");
+    eq("digital rain is dark", await page.evaluate(() => document.documentElement.dataset.theme), "dark");
+    eq("its stylesheet instead of Nord's", await linked(), "digital-rain");
+    await click("#btnTheme");
+    await until(() => !document.getElementById("themeMenu").hidden);
+    ok("light and dark are off", await page.$$eval("#themeMenu [data-action=pickMode]", (bs) => bs.every((b) => b.disabled)));
+    ok("and the menu says why", /dark look only/.test(await page.$eval("#themeMenu", (m) => m.textContent)));
+    await page.keyboard.press("Escape");
+    await page.reload({ waitUntil: "load" });
+    eq("forced before the first paint too", await page.evaluate(() => window.__lookAtBody), "digital-rain/dark");
+    await pickLook("");
+    eq("back to the default", await page.evaluate(() => [document.documentElement.dataset.look, localStorage.getItem("pengumon.look")].join()), "default,");
+    eq("with no theme stylesheet", await linked(), "");
+    await page.removeScriptToEvaluateOnNewDocument(identifier);
+  }],
+
+  ["effects: digital rain falls, stops while the tab is hidden and with reduced motion, and the menu turns it off", async ({ click, eq, ok, page, pickLook, sleep, until }) => {
+    const frame = () => page.evaluate(() => document.querySelector("#fxLayer canvas")?.toDataURL() ?? "");
+    // the rain draws a few frames a second: wait up to 5 s for a frame other than `from` (a slow runner gets its time)
+    const moves = async (from) => { for (let i = 0; i < 25; i++) { if ((await frame()) !== from) return true; await sleep(200); } return false; };
+    await pickLook("digital-rain");
+    await until(() => document.getElementById("fxLayer").dataset.state === "running" && document.querySelector("#fxLayer canvas"));
+    ok("it moves", await moves(await frame()));
+    // hidden: the browser reports the tab hidden (as when another tab is in front)
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    eq("paused while hidden", await page.evaluate(() => document.getElementById("fxLayer").dataset.state), "paused");
+    await sleep(150); // a frame already on its way
+    const b = await frame();
+    await sleep(600);
+    ok("nothing drawn while hidden", (await frame()) === b);
+    await page.evaluate(() => {
+      delete document.hidden;
+      delete document.visibilityState;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await until(() => document.getElementById("fxLayer").dataset.state === "running");
+    ok("and again once visible", await moves(b));
+    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+    await until(() => !document.querySelector("#fxLayer canvas"));
+    await page.reload({ waitUntil: "load" });
+    await sleep(800);
+    eq("never started with reduced motion", await page.evaluate(() => document.getElementById("fxLayer").childElementCount), 0);
+    await click("#btnTheme");
+    await until(() => !document.getElementById("themeMenu").hidden);
+    ok("the menu says why", /reduced motion/.test(await page.$eval("#themeMenu", (m) => m.textContent)));
+    await page.keyboard.press("Escape");
+    await page.emulateMediaFeatures([]);
+    await until(() => document.querySelector("#fxLayer canvas"));
+    await click("#btnTheme");
+    await until(() => !document.getElementById("themeMenu").hidden);
+    await click("#themeMenu [data-action=toggleEffects]");
+    await until(() => !document.querySelector("#fxLayer canvas"));
+    eq("off for this browser", await page.evaluate(() => localStorage.getItem("pengumon.effects")), "off");
+    await pickLook(""); // the steps after this one start from the default theme
+    await page.evaluate(() => localStorage.removeItem("pengumon.effects"));
+  }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
+
+  ["card views: a switch between two themes that draw cards their own way shows the new theme's views from the moment the page takes the new theme (never the old view without its styles)", async ({ eq, page, pickLook, stubFetch, until }) => {
+    // a fresh page, so the second theme's views have not been loaded by anything before the switch
+    await page.evaluate(() => localStorage.removeItem("pengumon.look"));
+    await stubFetch(null);
+    await pickLook("amber-crt");
+    await until(() => ["diagnosis", "latency"].every((p) => document.querySelector(`[data-panel=${p}] .panel-b`).dataset.view === "amber-crt"));
+    await page.evaluate(() => {
+      window.__switched = null;
+      document.addEventListener("themechange", () => {
+        if (window.__switched || document.documentElement.dataset.look !== "synthwave") return;
+        // after the cards' own handling of this change (its promise jobs), before the page is painted again
+        queueMicrotask(() => { window.__switched = ["diagnosis", "latency"].map((p) => document.querySelector(`[data-panel=${p}] .panel-b`).dataset.view).join(); });
+      });
+    });
+    await pickLook("synthwave");
+    await until(() => window.__switched);
+    eq("the cards' views as the page took the new theme", await page.evaluate(() => window.__switched), "synthwave,synthwave");
+    await pickLook("");
+  }],
+
+  ["card views: every theme's view of a card shows every value, status, action and help of the card's standard view (each card's fixture)", async ({ eq, moduleUrl, ok, page }) => {
+    // docs/themes.md, "Drawing a card": the standard view and each theme view drawn apart from the page from the same view
+    // model (the card's fixture); a theme view that lacks a mark of the standard one fails here
+    const found = await page.evaluate(async (u, t) => {
+      const { compareMarks, drawApart, registeredCards } = await import(u);
+      const { loadView } = await import(t);
+      const cards = registeredCards();
+      const out = { checked: [], problems: [], untested: [], standard: {} };
+      // a card may add fixture.variants (functions): other made-up view models of the same card, e.g. a device with the
+      // fewest capabilities; each is drawn by the standard view and by every theme view like the main one
+      const fixtures = (c) => [c.fixture, ...(c.fixture.variants || [])];
+      cards.filter((c) => c.fixture).forEach((c) => {
+        const ours = drawApart(c.panel, c.standard, c.fixture());
+        out.standard[c.panel] = { values: Object.keys(ours.marks.values).length, actions: ours.marks.actions.length, status: Object.keys(ours.marks.status).length };
+        ours.remove();
+        (c.fixture.variants || []).forEach((variant, i) => {
+          const minimal = drawApart(c.panel, c.standard, variant());
+          out.standard[`${c.panel}#${i + 1}`] = { values: Object.keys(minimal.marks.values).length, actions: minimal.marks.actions.length, status: Object.keys(minimal.marks.status).length };
+          minimal.remove();
+        });
+      });
+      for (const look of JSON.parse(document.documentElement.dataset.looks)) {
+        for (const [panel, url] of Object.entries(look.views || {})) {
+          const card = cards.find((c) => c.panel === panel && c.fixture);
+          if (!card) { out.untested.push(`${look.id}/${panel}`); continue; }
+          const view = await loadView(url);
+          if (!view) { out.problems.push(`${look.id}/${panel}: could not be loaded`); continue; }
+          for (const [n, make] of fixtures(card).entries()) {
+            const vm = make();
+            const ours = drawApart(panel, card.standard, vm);
+            try {
+              const theirs = drawApart(panel, view, vm, { look: look.id });
+              out.problems.push(...compareMarks(ours.marks, theirs.marks).map((p) => `${look.id}/${panel}${n ? `#${n}` : ''}: ${p}`));
+              theirs.remove();
+              out.checked.push(`${look.id}/${panel}${n ? `#${n}` : ''}`);
+            } catch (e) {
+              out.problems.push(`${look.id}/${panel}${n ? `#${n}` : ''}: threw ${e.message}`);
+            } finally {
+              ours.remove();
+            }
+          }
+        }
+      }
+      return out;
+    }, await moduleUrl("cards.js"), await moduleUrl("themes.js"));
+    eq("what the theme views lack", found.problems.join("; "), "");
+    eq("theme views of a card without a model fixture", found.untested.join(", "), "");
+    ok(`Amber CRT's incidents view is checked (${found.checked})`, found.checked.includes("amber-crt/incidents"));
+    // a fixture that draws nothing would let any view pass: each standard view shows values, statuses and actions
+    ok(`the reference cards have fixtures (${Object.keys(found.standard)})`, ["diagnosis", "services", "latency"].every((p) => p in found.standard));
+    ok(`the device cards have fixtures, each with a minimal-driver variant (${Object.keys(found.standard)})`, ["router", "router#1", "line", "line#1"].every((p) => p in found.standard));
+    // (the reliability report has no control in its body: its range buttons and the dossier button are the frame's)
+    for (const [panel, n] of Object.entries(found.standard)) {
+      if (panel.includes("#")) ok(`${panel}: the minimal fixture draws a mark (${JSON.stringify(n)})`, n.values >= 1);
+      else ok(`${panel}: its fixture draws marks (${JSON.stringify(n)}; cards ${Object.keys(found.standard)})`, n.values >= 3 && (n.actions >= 1 || panel === "report"));
+    }
+  }],
+
+  ["card views: after Settings has read the theme list again (a Save), a theme picked in the header menu still draws its own views and chart style", async ({ moduleUrl, page, pickLook, until }) => {
+    await page.evaluate(async (u) => { await (await import(u)).refreshThemes(); }, await moduleUrl("themes.js"));
+    await pickLook("amber-crt");
+    await until(() => document.querySelector("[data-panel=incidents] .panel-b").dataset.view === "amber-crt");
+    await until(() => document.querySelector('link[data-look-css="amber-crt"]')?.sheet); // its stylesheet too
+    // the latency card's line chart, found in the card's body (docs/themes.md, "Finding a card's parts"): Amber CRT's steps
+    await until(() => [...document.querySelectorAll("[data-panel=latency] .panel-b canvas")].map((c) => Chart.getChart(c)).find((c) => c?.config.type === "line")
+      ?.data.datasets.find((x) => x.id === "path_router")?.stepped === "middle");
+    await pickLook("");
+    await until(() => document.querySelector("[data-panel=incidents] .panel-b").dataset.view === "standard");
+  }],
+
+  ["themes: a Save that changes nothing about themes, and a layout change that keeps the cards' colours, redraw nothing", async ({ eq, moduleUrl, page }) => {
+    const redraws = await page.evaluate(async (u) => {
+      const { refreshThemes, setCardColours } = await import(u);
+      let n = 0;
+      const count = () => { n++; };
+      document.addEventListener("themechange", count);
+      const colours = { latency: { custom: { "--accent": "#336699" } } };
+      setCardColours(colours); // new colours: the cards are painted and the charts drawn again
+      const changed = n;
+      setCardColours(JSON.parse(JSON.stringify(colours))); // the same colours (layout.js calls this on every layout change)
+      const same = n - changed;
+      setCardColours({});
+      n = 0;
+      await refreshThemes(); // what Settings does after a Save; nothing about themes changed
+      const refreshed = n;
+      document.removeEventListener("themechange", count);
+      return { changed, same, refreshed };
+    }, await moduleUrl("themes.js"));
+    eq("redraws for new colours, the same colours, a Save without theme changes", `${redraws.changed},${redraws.same},${redraws.refreshed}`, "1,0,0");
+  }],
+
+  ["card views: a theme switch swaps a card's view without a reload, keeping focus and the model's state; live data patches it; a restyled card (Starship) keeps the standard view and its live patching; the chart style reshapes the charts; a view that throws gives way to the standard one", async ({ ROUTER, click, eq, moduleUrl, ok, page, phone, until, waitText }) => {
+    const card = "[data-panel=incidents]";
+    await until((c) => document.querySelectorAll(`${c} #incidentsBody tr.incident-row`).length >= 2, card);
+    // the model's state: the latency card's Each target, chosen in the standard view
+    await click("[data-panel=latency] .panel-b [data-action=setLatencyView][data-arg=targets]");
+    const themes = await moduleUrl("themes.js");
+    // focus on an incident's title, then the theme changes (as from another tab or Settings: the header menu would take the focus)
+    const first = await page.evaluate(async (c, u) => {
+      const button = document.querySelector(`${c} #incidentsBody tr.incident-row button.primary`);
+      button.focus();
+      (await import(u)).setLook("amber-crt");
+      return button.dataset.arg;
+    }, card, themes);
+    await until((c) => document.querySelector(`${c} .panel-b`).dataset.view === "amber-crt", card);
+    eq("the focus stays on the same action", await page.evaluate(() => `${document.activeElement.className}|${document.activeElement.dataset.action}|${document.activeElement.dataset.arg}`), `ac-what|inspectIncident|${first}`);
+    await until(() => document.querySelector("[data-panel=latency] .panel-b").dataset.view === "amber-crt");
+    eq("the model's line mode stays", await page.$eval("[data-panel=latency] .panel-b", (b) => b.querySelector("[data-action=setLatencyView][aria-pressed=true]")?.dataset.arg), "targets");
+    // live data: a redraw keeps an unchanged line as it is (the same element), and draws a changed one again
+    const kept = await page.evaluate(async (c, u) => {
+      const { updateIncidentsTable } = await import(u);
+      const lines = [...document.querySelectorAll(`${c} .ac-ln`)];
+      lines[1].__kept = true;
+      const list = await (await fetch("/api/incidents?limit=500")).json();
+      const changed = list.map((i) => (String(i.id) === lines[0].dataset.item ? { ...i, title: "Renamed incident" } : i));
+      updateIncidentsTable(changed);
+      const now = [...document.querySelectorAll(`${c} .ac-ln`)];
+      const out = { same: now[1].__kept === true, redrawn: now[0].__kept === undefined && now[0].textContent.includes("Renamed incident") };
+      updateIncidentsTable(list);
+      return out;
+    }, card, await moduleUrl("../panels/incidents/model.js"));
+    eq("the unchanged line is the same element", kept.same, true);
+    eq("the changed line is drawn again", kept.redrawn, true);
+    await phone(async () => {
+      await click("#mobileTabs [data-arg=incidents]"); // the incidents card's tab
+      await until((c) => document.querySelector(`${c} .ac-ln`)?.offsetParent, card);
+      eq("no sideways scroll on a phone", await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth <= 1), true);
+    });
+    // a restyled card: Starship draws no view of its own, it restyles the standard one (docs/themes.md, "Restyling a card")
+    await page.evaluate(async (u) => (await import(u)).setLook("starship"), themes);
+    await until(() => document.documentElement.dataset.look === "starship" && document.querySelector('link[data-look-css="starship"]')?.sheet);
+    await until((r) => document.querySelector(`${r} .panel-b`)?.dataset.view === "standard" && document.querySelector(`${r} .wan-chart .chart`), ROUTER);
+    const bar = await page.evaluate(() => {
+      const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+      const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
+      return { bg: getComputedStyle(document.querySelector("[data-panel=services] .panel-h")).backgroundColor, want: [rgb(css("--accent")), rgb(css("--crit"))] };
+    });
+    ok(`the header is a bar in the frame's colour (${bar.bg})`, bar.want.includes(bar.bg));
+    // a new reading patches the restyled router card: the changed figure is written (its tank follows), a part that did not
+    // change (the hour's traffic) is kept
+    await page.evaluate((r) => {
+      document.querySelector(`${r} .wan-chart .chart`).__kept = true;
+      document.querySelector(`${r} .rblock.sys [data-f=cpu] .fill`).style.transition = "none"; // measured at once below
+    }, ROUTER);
+    // the demo network's own readings keep arriving, so the figure and the tank are read in the same moment as the
+    // injected reading is drawn (two frames later), and the tank is compared with the figure it shows
+    // (a real reading can still land between the two: then the injection is tried again, up to five times)
+    const seen = await page.evaluate(async (b, f, r) => {
+      let got = null;
+      for (let i = 0; i < 5 && (!got || got.cpu !== "77"); i++) {
+        const last = (await import(b)).bus.last("device:router");
+        (await import(f)).publishDevice("router", { ...last, cpu_usage_pct: 77, timestamp: last.timestamp + 1 });
+        await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+        const t = document.querySelector(`${r} .rblock.sys [data-f=cpu] .track`);
+        got = { cpu: document.querySelector(`${r} .rblock.sys [data-v=cpu]`).textContent.trim(),
+          tank: Math.round((t.querySelector(".fill").getBoundingClientRect().height / t.getBoundingClientRect().height) * 100) };
+      }
+      return got;
+    }, await moduleUrl("bus.js"), await moduleUrl("device-feed.js"), ROUTER);
+    eq("the new reading is drawn", seen.cpu, "77");
+    eq("the router's unchanged traffic chart is the same element", await page.$eval(`${ROUTER} .wan-chart .chart`, (b) => b.__kept === true), true);
+    // how full the CPU tank is, in % of its height (its transition was turned off before the reading)
+    ok(`Starship's CPU tank is 77 % full (${seen.tank} %)`, Math.abs(seen.tank - 77) <= 2);
+    // the chart style (theme.json "chart"): Starship's lines are 3 px and straight, the standard ones 2 px and curved
+    // the router's line in the latency card's line chart, whichever view draws it: found in the card's body, not by an id
+    // (docs/themes.md, "Finding a card's parts")
+    const routerLine = () => {
+      const chart = [...document.querySelectorAll("[data-panel=latency] .panel-b canvas")].map((c) => Chart.getChart(c)).find((c) => c?.config.type === "line");
+      const d = chart?.data.datasets.find((x) => x.id === "path_router");
+      return d ? `${d.borderWidth}/${d.tension}` : "";
+    };
+    await until(() => document.querySelector("[data-panel=latency] .panel-b").dataset.view === "standard");
+    await click("[data-panel=latency] .panel-b [data-action=setLatencyView][data-arg=path]");
+    await until(routerLine);
+    eq("Starship's chart lines", await page.evaluate(routerLine), "3/0");
+    await page.evaluate(async (u) => (await import(u)).setLook(""), themes);
+    await until((c) => document.querySelector(`${c} .panel-b`).dataset.view === "standard", card);
+    await until(routerLine);
+    eq("the standard chart lines again", await page.evaluate(routerLine), "2/0.25");
+    // a theme view that throws: the standard view stands in for it (logged once as a warning)
+    const view = await page.evaluate(() => JSON.parse(document.documentElement.dataset.looks).find((t) => t.id === "amber-crt").views.incidents);
+    await page.evaluate(async (u, v) => {
+      const mod = (await import(v)).default;
+      mod.mount = () => { throw new Error("a broken view"); };
+      (await import(u)).setLook("amber-crt");
+      await new Promise((r) => setTimeout(r, 300)); // the view is loaded (from the module cache) and fails
+    }, themes, view);
+    await until((c) => document.documentElement.dataset.look === "amber-crt" && document.querySelector(`${c} .panel-b`).dataset.view === "standard", card);
+    ok("the standard rows instead", await page.$$eval(`${card} #incidentsBody tr.incident-row`, (els) => els.length) >= 2);
+    await page.evaluate(async (u) => (await import(u)).setLook(""), themes);
+    await page.reload({ waitUntil: "load" }); // the broken module is forgotten
+  }],
 
   ["loading: before any data the pill and the verdict are grey 'Connecting', the path is skeletons, nothing green", async ({ layoutMounted, PHONE, SHOTS, count, eq, ok, page, shot, text }) => {
     await page.evaluate(() => sessionStorage.setItem("smokeWs", "dead"));
@@ -357,6 +667,41 @@ export const steps = [
     eq("shown: and its targets", shown.targets, 1);
     await until((h) => performance.getEntriesByType("resource").filter((r) => /\/api\/history\?/.test(r.name)).length > h, hidden.history);
     await until(() => window.__seen.message >= 3); // and the feed goes on
+  }],
+
+  ["Hop details off screen is not drawn: live messages change nothing in its body, and it shows the newest values once scrolled into view", async ({ eq, moduleUrl, ok, page, until, waitCount }) => {
+    const body = "[data-panel=matrix] .panel-b"; // the last card: off screen while the page is at its top
+    await waitCount(`${body} [data-item] [data-v=jitter]`, 5);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    ok("the matrix is well below the window", await page.$eval(body, (b) => b.getBoundingClientRect().top > innerHeight + 400));
+    await page.evaluate(async (b, u) => {
+      window.__writes = 0;
+      window.__offObs = new MutationObserver((records) => { window.__writes += records.length; });
+      window.__offObs.observe(document.querySelector(b), { subtree: true, childList: true, attributes: true, characterData: true });
+      window.__targets = 0;
+      (await import(u)).bus.subscribe("targets", () => { window.__targets++; });
+      window.__targets = 0; // subscribing replays the last value
+    }, body, await moduleUrl("bus.js"));
+    await setMutate(page, "d.targets.forEach((t) => { t.jitter_ms = 54321.5; });");
+    await until(() => window.__targets >= 3); // three messages published, each with the new jitter
+    eq("no DOM writes in the off-screen card", await page.evaluate(() => window.__writes), 0);
+    // no further message may draw it: the tab is hidden (live.js then holds the targets), so what shows is the kept one
+    const held = await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      return window.__targets;
+    });
+    await page.$eval(body, (b) => b.scrollIntoView({ block: "center" }));
+    await until((b) => [...document.querySelectorAll(`${b} [data-item] [data-v=jitter]`)].every((e) => /54321/.test(e.textContent)), body);
+    eq("drawn from the view model it kept, with no new message", await page.evaluate(() => window.__targets), held);
+    await setMutate(page, null);
+    await page.evaluate(() => {
+      delete document.visibilityState; delete document.hidden;
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.__offObs.disconnect();
+      window.scrollTo(0, 0);
+    });
   }],
 
   ["dialogs load when first opened: only the alerts dialog at start, a control the pointer reaches loads its dialog ahead of the click, and #settings opens on load", async ({ click, eq, ok, page, layoutMounted, until }) => {

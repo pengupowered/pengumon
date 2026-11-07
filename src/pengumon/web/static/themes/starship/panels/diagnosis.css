@@ -1,0 +1,110 @@
+/* Starship console's Path health: the standard view (panels/diagnosis/view.js) restyled, straight on black: the verdict
+   as a status deck (a tall block in the status colour, the title, Inspect a pill), the notice as an alert line after a
+   block in its colour, the path as console stations joined by conduit bars (each node's kind and status chip on a flat
+   lilac cap, the big value, loss and jitter as labelled readouts, the last probes as bars: theme.json "chart":
+   {"spark": "bars"}, a band in its status colour under it), the other targets after a block in their status colour and
+   the key as status chips. */
+
+/* ---------- the status deck ---------- */
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict {
+  align-items: stretch; gap: var(--sp-4); padding: 0; margin-bottom: var(--sp-4); background: none; border: 0; border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict .badge {
+  flex: 0 0 calc(var(--fs-xs) * 10); margin: 0; flex-direction: column; justify-content: center; gap: 4px; padding: var(--sp-3) var(--sp-2);
+  background: var(--st); color: var(--bg); border: 0; border-radius: 0;
+  font-size: var(--fs-sm); letter-spacing: .08em; text-align: center;
+}
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict .badge svg.i { width: 26px; height: 26px; color: var(--bg); }
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict-txt { padding: var(--sp-3) 0; }
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict h3 {
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .05em; line-height: 1.15;
+}
+:root[data-look="starship"] [data-panel="diagnosis"] .verdict-act { align-self: center; margin: 0; }
+/* ---------- the alert strip ---------- */
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result {
+  gap: var(--sp-3); padding: 0; background: none; color: var(--ink-2); border: 0; border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result > svg.i {
+  box-sizing: content-box; align-self: stretch; height: auto; min-height: 18px; margin: 0; padding: 9px 14px 9px 16px;
+  background: var(--st); color: var(--bg); border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result > span { padding: 6px 0; }
+:root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result b { color: var(--ink-1); font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; }
+/* ---------- the path: this host, then a station per node, conduits between ---------- */
+:root[data-look="starship"] [data-panel="diagnosis"] .origin {
+  padding: var(--sp-2) 6px; background: var(--ink-3); color: var(--bg); border: 0; border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="diagnosis"] .origin-ic { background: none; color: var(--bg); margin-bottom: 0; }
+:root[data-look="starship"] [data-panel="diagnosis"] .origin-t { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; }
+:root[data-look="starship"] [data-panel="diagnosis"] .origin-m { color: var(--bg); font-weight: var(--fw-semi); }
+/* a conduit: a segmented bar in the link's status colour (no flowing dashes), what the segment adds on it */
+:root[data-look="starship"] [data-panel="diagnosis"] .link .wirebox { height: 8px; background: repeating-linear-gradient(90deg, var(--st) 0 10px, transparent 10px 13px); }
+:root[data-look="starship"] [data-panel="diagnosis"] .link.broken .wirebox { background: repeating-linear-gradient(90deg, var(--crit) 0 4px, transparent 4px 10px); }
+:root[data-look="starship"] [data-panel="diagnosis"] .link .wire,
+:root[data-look="starship"] [data-panel="diagnosis"] .chain.is-live .link:not(.broken) .wirebox::after { display: none; }
+:root[data-look="starship"] [data-panel="diagnosis"] .link .delta { border: 0; border-radius: 0; padding: 0 2px; color: var(--ink-2); }
+:root[data-look="starship"] [data-panel="diagnosis"] .chain .link,
+:root[data-look="starship"] [data-panel="diagnosis"] .chain[data-dense="1"] .link { flex-basis: 30px; }
+/* a node: a station */
+:root[data-look="starship"] [data-panel="diagnosis"] .node,
+:root[data-look="starship"] [data-panel="diagnosis"] .chain[data-dense="1"] .node {
+  padding: 0 0 var(--sp-2); gap: 6px; border: 0; border-bottom: 4px solid var(--st); border-radius: 0; box-shadow: none; background: none;
+}
+:root[data-look="starship"] [data-panel="diagnosis"] .node::before { display: none; }
+:root[data-look="starship"] [data-panel="diagnosis"] button.node:hover { transform: none; background: var(--surface-2); }
+:root[data-look="starship"] [data-panel="diagnosis"] .node.alert { box-shadow: inset 0 0 0 2px var(--st); }
+/* its cap: the kind on a lilac bar with the status chip at its end */
+:root[data-look="starship"] [data-panel="diagnosis"] .node-top,
+:root[data-look="starship"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-top {
+  gap: 6px; padding: 4px 4px 4px 8px; background: var(--ink-2); color: var(--bg); border-radius: 0;
+}
+/* many stations on one row: the status chip goes under the kind, so both keep their words */
+:root[data-look="starship"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-top { flex-wrap: wrap; row-gap: 3px; }
+:root[data-look="starship"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-id { flex: 1 1 calc(100% - 30px); min-width: 0; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-ic,
+:root[data-look="starship"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-ic,
+:root[data-look="starship"] [data-panel="diagnosis"] .node.alert .node-ic { width: auto; height: auto; background: none; color: var(--bg); }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-ic svg.i { width: 15px; height: 15px; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-kind { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold); }
+:root[data-look="starship"] [data-panel="diagnosis"] .node .node-st { padding: 1px 6px 1px 4px; gap: 3px; font-size: 10px; letter-spacing: .03em; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node .node-st svg.i { width: 12px; height: 12px; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-name,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-val,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-meta,
+:root[data-look="starship"] [data-panel="diagnosis"] .node-spark { padding: 0 var(--sp-2); }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-val b { color: var(--accent); font-variant-numeric: tabular-nums; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node.alert .node-val b { color: var(--st); }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-val b.node-word { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .04em; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-meta { gap: 4px 6px; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-meta b { color: var(--ink-1); }
+:root[data-look="starship"] [data-panel="diagnosis"] .node .node-meta .lbl { font-size: 10px; margin-right: 2px; }
+:root[data-look="starship"] [data-panel="diagnosis"] .node-spark svg.spark { height: 22px; border-bottom: 1px solid var(--line-strong); }
+/* ---------- the other targets: after a block in their status colour ---------- */
+:root[data-look="starship"] [data-panel="diagnosis"] .pe { padding: 0 10px 0 0; min-height: 26px; border: 0; border-radius: 0; background: none; font-size: var(--fs-xs); }
+:root[data-look="starship"] [data-panel="diagnosis"] .pe:hover { background: var(--surface-2); }
+:root[data-look="starship"] [data-panel="diagnosis"] .pe > svg.i {
+  box-sizing: content-box; align-self: stretch; height: auto; padding: 0 6px 0 8px; background: var(--st); color: var(--bg); border-radius: 0;
+}
+/* ---------- the key ---------- */
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot { gap: 6px var(--sp-3); border-top: 0; }
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot svg.i { color: var(--bg); }
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend="good"] { --st: var(--good); }
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend="warn"] { --st: var(--warn); }
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend="crit"] { --st: var(--crit); }
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend="busy"] { --st: var(--busy); }
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend="delta"] svg.i { color: inherit; }
+:root[data-look="starship"] [data-panel="diagnosis"] .hero-foot .grow { flex: 1 1 320px; text-align: right; }
+
+/* ---------- narrow: the stations stack, the conduit runs down the left ---------- */
+@container (max-width: 860px) {
+  :root[data-look="starship"] [data-panel="diagnosis"] .verdict .badge { flex: 1 0 100%; flex-direction: row; justify-content: flex-start; padding: 6px var(--sp-3); }
+  :root[data-look="starship"] [data-panel="diagnosis"] .verdict .badge svg.i { width: 18px; height: 18px; }
+  :root[data-look="starship"] [data-panel="diagnosis"] .verdict-txt { padding: 0 0 var(--sp-2); }
+  :root[data-look="starship"] [data-panel="diagnosis"] .verdict-act { margin: 0 0 var(--sp-2) auto; }
+  :root[data-look="starship"] [data-panel="diagnosis"] .origin { padding: 6px var(--sp-3); }
+  :root[data-look="starship"] [data-panel="diagnosis"] .link::before { left: 23px; border-left: 8px solid transparent; border-image: repeating-linear-gradient(180deg, var(--st) 0 6px, transparent 6px 8px) 8; }
+  :root[data-look="starship"] [data-panel="diagnosis"] .link.broken::before { border-image: repeating-linear-gradient(180deg, var(--crit) 0 3px, transparent 3px 7px) 8; }
+  :root[data-look="starship"] [data-panel="diagnosis"] .node,
+  :root[data-look="starship"] [data-panel="diagnosis"] .chain[data-dense="1"] .node { padding: 0 0 var(--sp-2); }
+  :root[data-look="starship"] [data-panel="diagnosis"] .node-name { margin-top: 0; }
+}

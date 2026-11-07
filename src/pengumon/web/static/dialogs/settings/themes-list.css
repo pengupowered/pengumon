@@ -1,0 +1,28 @@
+/* Settings > Display > Themes (lists/themes.js): the built-in themes, your themes' colour editors, the export box */
+.th-list { list-style: none; display: flex; flex-direction: column; gap: 6px; margin: var(--sp-2) 0 var(--sp-4); }
+.th-row { display: grid; grid-template-columns: minmax(140px, 200px) minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.th-name { display: flex; flex-direction: column; min-width: 0; }
+.th-name span { font-size: var(--fs-xs); color: var(--ink-3); }
+.th-desc { font-size: var(--fs-sm); color: var(--ink-2); min-width: 0; }
+.th-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.th-add { margin-top: var(--sp-2); }
+.th-mode { margin-top: var(--sp-4); }
+.th-mode-t { font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--ink-1); margin-bottom: var(--sp-2); }
+.th-group { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: var(--sp-2); align-items: start; margin-bottom: var(--sp-2); }
+.th-group-t { font-size: var(--fs-xs); color: var(--ink-3); padding-top: 6px; }
+.th-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px var(--sp-3); }
+.th-c { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--ink-2); min-width: 0; }
+.th-c span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-c input[type="color"] { flex: none; width: 30px; height: 26px; padding: 2px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface-1); cursor: pointer; }
+.th-c.th-text { grid-column: 1 / -1; order: 1; } /* after the colour pickers of its group */
+.th-c.th-text span { flex: none; width: 112px; }
+.th-c input.input { flex: 0 1 220px; min-width: 0; width: auto; height: 28px; font-size: var(--fs-xs); padding: 0 6px; }
+.th-c input[aria-invalid="true"] { outline: 2px solid var(--crit); }
+.th-msg:empty { display: none; }
+.th-export { margin-top: var(--sp-4); }
+@container (max-width: 560px) {
+  .th-row { grid-template-columns: minmax(0, 1fr); }
+  .th-acts { justify-content: flex-start; }
+  .th-group { grid-template-columns: minmax(0, 1fr); }
+}

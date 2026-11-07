@@ -134,12 +134,21 @@ class SecretStore:
         the file (tests)."""
         self.path = Path(path) if path is not None else SECRETS_PATH
         self._data = data
+        self._problem: Optional[str] = None
 
     def data(self) -> dict:
         """The parsed file, read on first use; {} when it is missing or unusable (logged, without its content)."""
         if self._data is None:
-            self._data = self._convert(_read_store(self.path)[0])
+            data, self._problem = _read_store(self.path)
+            self._data = self._convert(data)
         return self._data
+
+    @property
+    def problem(self) -> Optional[str]:
+        """Why the file could not be used when it was read ("is not valid JSON"), else None (also for a missing file).
+        The sign-in reads it: a damaged file must not open a dashboard that had a password (pengumon.access)."""
+        self.data()
+        return self._problem
 
     def _convert(self, data: dict) -> dict:
         """Remove after the owner's first start: the flat keys moved under devices.<id> and the file rewritten."""

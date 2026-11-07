@@ -12,6 +12,7 @@ the user ones use the per-user default.
 """
 
 import getpass
+import json
 import os
 import plistlib
 import re
@@ -730,9 +731,10 @@ def cmd_install(args, run: Runner = default_runner) -> int:
 
 
 def _token_is_set(kind: str, scope: str, home: Path) -> bool:
-    """Whether an access token is already given to this service (or to this shell): its unit, a systemd drop-in
-    (`systemctl edit`), a launchd plist or the environment mention PENGUMON_ACCESS_TOKEN. False when unknown."""
-    if os.environ.get("PENGUMON_ACCESS_TOKEN"):
+    """Whether a password already protects this service: its secrets.json holds one set on the page (Settings >
+    Sign-in), or its unit, a systemd drop-in (`systemctl edit`), a launchd plist or this shell's environment mention
+    PENGUMON_ACCESS_TOKEN. False when unknown."""
+    if os.environ.get("PENGUMON_ACCESS_TOKEN") or _password_stored(kind, scope):
         return True
     try:
         if kind == "linux":
@@ -745,6 +747,17 @@ def _token_is_set(kind: str, scope: str, home: Path) -> bool:
         return any("PENGUMON_ACCESS_TOKEN" in f.read_text(encoding="utf-8", errors="replace") for f in files)
     except OSError:
         return False
+
+
+def _password_stored(kind: str, scope: str) -> bool:
+    """Whether the service's secrets.json holds a password set on the page (`access_token`, pengumon.access). Read
+    only: never converted or rewritten here (as root, a rewrite would leave a file the service cannot read)."""
+    folder = Path(service_data_dir(kind)) if scope == SYSTEM else paths.default_data_dir()
+    try:
+        data = json.loads((folder / "secrets.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("access_token"), str) and bool(data["access_token"])
 
 
 def _other_devices_lines(port: int, has_token: bool) -> List[str]:
@@ -766,8 +779,9 @@ def _other_devices_lines(port: int, has_token: bool) -> List[str]:
     if urls:
         lines.append("From other devices on your network, open " + " or ".join(urls))
     lines.append("It listens on every network connection of this computer, so anyone on the network can reach it."
-                 + (" The access token you set protects it." if has_token
-                    else " Set an access token first (see docs/install.md)."))
+                 + (" The password you set protects it." if has_token
+                    else " Set a password first, in the dashboard under Settings > Sign-in, unless everyone on the "
+                         "network may see and change it (see docs/security.md)."))
     return lines
 
 

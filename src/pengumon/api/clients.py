@@ -33,11 +33,11 @@ _RATE = rate_limit("clients", 30, 60)  # the open modal asks once a minute; one 
 MAX_HISTORY_POINTS = 300
 DEFAULT_HISTORY_SECONDS = 24 * 3600
 _KEY_SALT = secrets.token_bytes(16)  # row keys are opaque and change on restart: a MAC cannot be recovered from one
-HINT = ("Names, IP and MAC addresses are hidden because no access token is set. Set one (PENGUMON_ACCESS_TOKEN) and "
-        "sign in, or choose \"full\" for Connected clients' names and addresses under Settings > Privacy.")
+HINT = ("Names, IP and MAC addresses are hidden because no password is set. Set one under Settings > Sign-in, or choose "
+        "Always for Connected clients' names and addresses under Settings > Privacy.")
 MASKED_HINT = ("Names, IP and MAC addresses are hidden by a setting. To see them, change Connected clients' names and "
                "addresses under Settings > Privacy.")
-VIEWER_HINT = "Names, IP and MAC addresses are hidden. Sign in with the access token to see them."
+VIEWER_HINT = "Names, IP and MAC addresses are hidden. Sign in with the password to see them."
 
 
 def _token_set(request: Request) -> bool:

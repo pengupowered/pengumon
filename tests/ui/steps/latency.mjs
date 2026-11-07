@@ -41,6 +41,23 @@ export const steps = [
     ok("legend", /Internet/.test(await text("#latencyLegend")));
   }],
 
+  ["a view model's tooltips read the data it was made from, not the live chart's (a fixture's tooltips show no live data)", async ({ eq, moduleUrl, ok, page }) => {
+    const said = await page.evaluate(async (u) => {
+      const { present } = await import(u);
+      const all = [
+        { id: "fx_router", name: "Example router", category: "local", address: "192.168.88.1", enabled: true, color: "#3987e5" },
+        { id: "fx_a", name: "Example resolver A", category: "public", address: "192.0.2.53", enabled: true, color: "#3ac0a0" },
+        { id: "fx_b", name: "Example resolver B", category: "public", address: "192.0.2.54", enabled: true, color: "#c05ac0" }];
+      const data = { times: [1767225600, 1767225601], series: { path_router: [1, 1], path_internet: [14, 14.5] },
+        byTarget: { fx_router: [1, 1], fx_a: [13.5, 14.5], fx_b: [14.5, null] }, lo: [null, null], hi: [null, null], loss: [0, 50],
+        lossBy: [null, "fx_b"], wan: [null, null] };
+      const vm = present({ data, mode: "path", all, live: true, quiet: false, windows: [] });
+      return { members: vm.memberLines("path_internet", 1).map((l) => l.split(": ").pop()), loss: vm.lossLabel(1, 50) };
+    }, await moduleUrl("../panels/latency/charts.js"));
+    eq("each member's value at that moment, from the view model's data", said.members.join(" | "), "14.5 ms | no reply");
+    ok(`the loss lane names the data's worst target (${said.loss})`, / at Internet 192\.0\.2\.54$/.test(said.loss));
+  }],
+
   ["an empty chart says Not probing while this host cannot send pings, and \"every probe was lost\" otherwise", async ({ layoutMounted, moduleUrl, ok, page, text, until, waitText }) => {
     const url = await moduleUrl("../panels/latency/charts.js");
     const noReplies = (flag) => page.evaluate(async (u, f) => {
@@ -57,6 +74,24 @@ export const steps = [
     await page.reload({ waitUntil: "load" });
     await waitText("#wsText", /^Live/);
     await layoutMounted();
+  }],
+
+  ["a theme's own latency view fills the card's height too (no blank band under its charts)", async ({ ok, page, pickLook, until }) => {
+    const views = await page.evaluate(() => JSON.parse(document.documentElement.dataset.looks || "[]").filter((t) => t.views && t.views.latency).map((t) => t.id));
+    ok(`themes with their own latency view: ${views}`, views.length >= 1);
+    for (const look of views) {
+      await pickLook(look);
+      await until((l) => document.querySelector("[data-panel=latency] .panel-b").dataset.view === l && document.querySelector("[data-panel=latency] .lat-loss"), look);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const r = await page.evaluate(() => {
+        const body = document.querySelector("[data-panel=latency] .panel-b").getBoundingClientRect();
+        const lane = document.querySelector("[data-panel=latency] .lat-loss").getBoundingClientRect();
+        const row = Math.max(...[...document.querySelectorAll("[data-panel] .panel")].filter((p) => Math.abs(p.getBoundingClientRect().top - document.querySelector("[data-panel=latency] .panel").getBoundingClientRect().top) < 4).map((p) => p.getBoundingClientRect().height));
+        return { gap: Math.round(body.bottom - lane.bottom), card: Math.round(document.querySelector("[data-panel=latency] .panel").getBoundingClientRect().height), row: Math.round(row) };
+      });
+      ok(`${look}: blank space under the loss lane ${r.gap}px (card ${r.card}px, tallest in its row ${r.row}px)`, r.gap <= 40);
+    }
+    await pickLook("");
   }],
 
   ["time ranges switch the main chart", async ({ click, eq, page, until, waitText }) => {

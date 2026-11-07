@@ -1,0 +1,38 @@
+/* Synthwave's view of the Latency card (latency.js): neon outlined readouts over a glowing screen. Scoped to this theme
+   and to the card while this view draws it. */
+
+:root[data-look="synthwave"] [data-panel="latency"] .panel[data-view="synthwave"] > .panel-h { border-bottom-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lat { display: flex; flex-direction: column; gap: var(--sp-3); flex: 1 1 auto; min-height: 0; }
+/* the screen takes the height the row gives the card, as the standard view's chart does */
+:root[data-look="synthwave"] [data-panel="latency"] .sw-screen { flex: 1 1 auto; }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lat .chart-box.lat-main { flex: 1 1 250px; min-height: 250px; }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lat-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-3); }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lg-list { flex: 1 1 320px; min-width: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lg {
+  --c: var(--accent); display: flex; flex-direction: column; gap: 1px; min-width: 120px; max-width: 100%; padding: 4px var(--sp-3) 5px;
+  border: 1px solid var(--c); border-radius: var(--r-md); background: color-mix(in srgb, var(--c) 8%, transparent);
+  box-shadow: 0 0 12px -4px var(--c), inset 0 0 12px -9px var(--c);
+}
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lg.minor { min-width: 0; border-color: var(--line-strong); box-shadow: none; background: none; justify-content: center; }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lg-top { display: flex; align-items: center; gap: 6px; }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lg-n { color: var(--ink-1); font-size: var(--fs-xs); font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .12em; }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lg-now { color: var(--ink-1); font-size: var(--fs-lg); font-weight: var(--fw-bold); text-shadow: 0 0 10px var(--c); }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lg-s { color: var(--ink-3); font-size: var(--fs-xs); max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-modes { flex: none; margin-left: auto; display: inline-flex; gap: var(--sp-2); }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-modes > button { font: inherit; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-2); background: none; border: 1px solid color-mix(in srgb, var(--s1) 55%, transparent); border-radius: var(--r-pill); padding: 3px 14px; cursor: pointer; }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-modes > button:hover { color: var(--ink-1); border-color: var(--s1); }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-modes > button[aria-pressed="true"] { color: var(--ink-1); border-color: var(--accent); box-shadow: 0 0 10px -2px var(--accent), inset 0 0 8px -4px var(--accent); }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lat-note { color: var(--ink-3); font-size: var(--fs-xs); }
+:root[data-look="synthwave"] [data-panel="latency"] .sw-lat-note:empty { display: none; }
+
+/* the screen: a frame lit pink to cyan, a faint grid behind the plot */
+:root[data-look="synthwave"] [data-panel="latency"] .sw-screen {
+  position: relative; display: flex; flex-direction: column; padding: var(--sp-3) var(--sp-3) var(--sp-2); border-radius: var(--r-md);
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--bg), var(--bg)) padding-box,
+    linear-gradient(120deg, var(--accent), var(--s1)) border-box;
+  box-shadow: 0 0 22px -8px var(--accent), 0 0 22px -12px var(--s1);
+}
+@media (max-width: 720px) { :root[data-look="synthwave"] [data-panel="latency"] .sw-lg-s { white-space: normal; max-width: none; } :root[data-look="synthwave"] [data-panel="latency"] .sw-modes { margin-left: 0; } :root[data-look="synthwave"] [data-panel="latency"] .sw-lg { min-width: 0; flex: 1 1 130px; } }

@@ -1,30 +1,35 @@
-"""Per-category probe metrics for one classifier round (rolling loss, latency and jitter).
+"""Per-category probe metrics for one classifier round: loss, latency and jitter over each target's window, its last
+`window` probes (classifier.window_probes).
 
-The arithmetic (window, rounding, summation order, the unrounded fallback) is pinned by the characterization
-golden and by a randomised equivalence test; do not reorder operations.
+Latency is the middle value (engine/window.py `middle`, the lower median) of the category's answered probes in the
+window, and jitter the mean over its targets of each one's middle probe-to-probe change (`jitter`): a level counts as
+passed only when more than half of the probes (or changes) pass it, so one stalled probe is no spike. Loss stays the
+share of the window's probes lost. The arithmetic (rounding, the unrounded fallback) is pinned by the
+characterization golden; do not reorder operations.
 """
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from pengumon.engine.classifier_settings import ClassifierConfig
+from pengumon.engine.prober_settings import DEFAULT_WINDOW_PROBES
+from pengumon.engine.window import jitter as window_jitter, middle
 from pengumon.incidents.model import StatusCode
 from pengumon.models.probes import ProbeSample, TargetStats
 
-WINDOW = 10  # the last 10 probes per target
 AFFECTED_LATENCY_MS = 150  # internal (H9): a sample slower than this makes its target an affected one
 CATEGORIES = ("local", "gateway", "isp", "public", "dns")
 
 
 @dataclass(frozen=True)
 class CategoryMetrics:
-    """Rolling loss, latency and jitter of one target category, over the last WINDOW probes of each target."""
+    """Loss, latency and jitter of one target category, over the window (the last N probes) of each target."""
 
     category: str
     targets: Tuple[TargetStats, ...]  # enabled targets of the category, in stats order (not ipv6_unavailable)
     loss_pct: float
-    avg_latency_ms: Optional[float]
-    jitter_ms: Optional[float]
+    latency_ms: Optional[float]  # the middle (lower median) answered latency of the window
+    jitter_ms: Optional[float]  # the mean over the targets of each one's middle probe-to-probe change
     samples: int = 0  # this round's samples of the category (the fallback while targets have no history)
 
     @property
@@ -79,12 +84,12 @@ class RoundMetrics:
     def upstream_issue(self, config: ClassifierConfig) -> bool:
         """Trouble upstream of the home network (starts the DNS cooldown)."""
         degraded = config.degraded_loss_pct
-        avg = self.public.avg_latency_ms
+        latency = self.public.latency_ms
         return bool(
             self.gateway.loss_pct >= degraded
             or self.isp.loss_pct >= degraded
             or self.public.loss_pct >= degraded
-            or (avg and avg > config.public_latency_spike_threshold_ms)
+            or (latency and latency > config.public_latency_spike_threshold_ms)
         )
 
 
@@ -95,11 +100,12 @@ def _fallback_loss(samples: Sequence[ProbeSample]) -> float:
 
 
 def category_metrics(
-    category: str, targets: Sequence[TargetStats], fallback_samples: Sequence[ProbeSample]
+    category: str, targets: Sequence[TargetStats], fallback_samples: Sequence[ProbeSample],
+    window: int = DEFAULT_WINDOW_PROBES,
 ) -> CategoryMetrics:
-    """Metrics of one category. `fallback_samples` are this round's samples of the category, used for loss and
-    latency while the targets have no history yet (jitter has no fallback)."""
-    windows = [st.recent_latencies[-WINDOW:] for st in targets]
+    """Metrics of one category over each target's last `window` probes. `fallback_samples` are this round's samples
+    of the category, used for loss and latency while the targets have no history yet (jitter has no fallback)."""
+    windows = [st.recent_latencies[-window:] for st in targets]
     total: List[Optional[float]] = [v for window in windows for v in window]
 
     if not total:
@@ -110,21 +116,18 @@ def category_metrics(
     valid = [v for window in windows for v in window if v is not None]
     if not valid:
         valid = [s.latency_ms for s in fallback_samples if s.success and s.latency_ms is not None]
-    avg_latency = round(sum(valid) / len(valid), 2) if valid else None
+    latency = round(middle(valid), 2) if valid else None
 
-    jitters = []
-    for window in windows:
-        lats = [v for v in window if v is not None]
-        if len(lats) > 1:
-            diffs = [abs(lats[i] - lats[i - 1]) for i in range(1, len(lats))]
-            jitters.append(sum(diffs) / len(diffs))
+    jitters = [j for j in (window_jitter(w) for w in windows) if j is not None]
     jitter = round(sum(jitters) / len(jitters), 2) if jitters else None
 
-    return CategoryMetrics(category, tuple(targets), loss, avg_latency, jitter, len(fallback_samples))
+    return CategoryMetrics(category, tuple(targets), loss, latency, jitter, len(fallback_samples))
 
 
-def round_metrics(stats: Dict[str, TargetStats], samples: List[ProbeSample]) -> RoundMetrics:
-    """All category metrics for one round, from one pass over the stats and one over the samples."""
+def round_metrics(stats: Dict[str, TargetStats], samples: List[ProbeSample],
+                  window: int = DEFAULT_WINDOW_PROBES) -> RoundMetrics:
+    """All category metrics for one round over each target's last `window` probes (classifier.window_probes), from
+    one pass over the stats and one over the samples."""
     targets: Dict[str, List[TargetStats]] = {c: [] for c in CATEGORIES}
     for st in stats.values():
         # an IPv6 target while this host has no IPv6 is not probed: its last window is no evidence either way
@@ -142,5 +145,5 @@ def round_metrics(stats: Dict[str, TargetStats], samples: List[ProbeSample]) -> 
         if st is not None and st.category in cat_samples:
             cat_samples[st.category].append(s)
 
-    per = {c: category_metrics(c, targets[c], cat_samples[c]) for c in CATEGORIES}
+    per = {c: category_metrics(c, targets[c], cat_samples[c], window) for c in CATEGORIES}
     return RoundMetrics(per["local"], per["gateway"], per["isp"], per["public"], per["dns"], tuple(failed))

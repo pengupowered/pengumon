@@ -201,8 +201,8 @@ class OutageClassifier:
         """Evaluates the latest probe samples against the diagnostic matrix."""
         ts = self._last_measured_ts = time.time()
 
-        # Rolling metrics across the last 10 samples of each category, computed once for the round
-        m = round_metrics(stats, samples)
+        # Each target's window (its last classifier.window_probes probes), summed up once for the round
+        m = round_metrics(stats, samples, self.config.window_probes)
         reading = self.load.current(ts) if self.load else None
         result = await self.core.step(m, ts, reading)
         verdict, outcome = result.verdict, result.outcome

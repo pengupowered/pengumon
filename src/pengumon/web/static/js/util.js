@@ -119,13 +119,44 @@ export const deviceName = (d) => (d.model ? String(d.model).replace(/_/g, ' ') :
 // A clock time (hours and minutes, with seconds on request) in the viewer's locale; with the date for ranges over a day.
 // The formatters are made once: toLocaleTimeString with options built a new Intl.DateTimeFormat on every call, and a
 // chart relabels hundreds of points on every message.
-const CLOCK = {};
-const clockFormat = (key, options) => (CLOCK[key] ||= new Intl.DateTimeFormat([], options));
-export function formatClock(ms, withDate = false, seconds = false) {
-  const hm = clockFormat(seconds ? 'hms' : 'hm', seconds ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' }).format(ms);
-  return withDate ? `${clockFormat('day', { month: 'short', day: 'numeric' }).format(ms)} ${hm}` : hm;
+// The zone Settings names (general.timezone, from /api/info `timezone`), else null: the browser's own. Every time on the
+// page is cut on this clock, so a page opened from another zone agrees with the reports and the AI pack. A change (the
+// first answer of /api/info, a Save in Settings) is told as a `zonechange` event on the document: the cards that write
+// times draw again.
+let pageZoneName = null;
+let CLOCK = {};
+export function setPageZone(name) {
+  let zone = name || null;
+  if (zone) { try { new Intl.DateTimeFormat([], { timeZone: zone }); } catch { zone = null; } } // a zone this browser cannot name
+  if (zone === pageZoneName) return;
+  pageZoneName = zone;
+  CLOCK = {};
+  document.dispatchEvent(new CustomEvent('zonechange'));
 }
-
+// Milliseconds -> text in the page's zone, `options` as for Intl.DateTimeFormat (through zonedFormat, below).
+export function localFormat(ms, options) {
+  const key = JSON.stringify(options);
+  return (CLOCK[key] ||= zonedFormat({ zone: pageZoneName }, options))(ms / 1000);
+}
+// Milliseconds east of UTC the page's clock is at `ms` (the browser's own when Settings names no zone).
+export function zoneOffsetMs(ms) {
+  if (!pageZoneName) return -new Date(ms).getTimezoneOffset() * 60000;
+  const parts = Object.fromEntries((CLOCK.parts ||= new Intl.DateTimeFormat('en-US', {
+    timeZone: pageZoneName, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric'
+  })).formatToParts(ms).map((p) => [p.type, +p.value]));
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - Math.floor(ms / 1000) * 1000;
+}
+// The next midnight on the page's clock after `ms`, in epoch milliseconds.
+export function nextMidnight(ms) {
+  if (!pageZoneName) { const d = new Date(ms); d.setHours(24, 0, 0, 0); return d.getTime(); }
+  const DAY_MS = 86400000;
+  const guess = Math.floor((ms + zoneOffsetMs(ms)) / DAY_MS) * DAY_MS + DAY_MS; // that midnight as wall-clock time read as UTC
+  return guess - zoneOffsetMs(guess - zoneOffsetMs(ms)); // minus the offset in force then (a daylight saving day may differ)
+}
+export function formatClock(ms, withDate = false, seconds = false) {
+  const hm = localFormat(ms, seconds ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+  return withDate ? `${localFormat(ms, { month: 'short', day: 'numeric' })} ${hm}` : hm;
+}
 // Epoch seconds -> text on the clock a report answer was cut on (data.zone: the zone set in Settings, else this
 // browser's), which need not be this browser's. A zone this browser cannot name (a fixed offset, in an older one):
 // shifted by data.tz_offset_minutes and read as UTC.
@@ -279,6 +310,22 @@ export function hostProblem(v) {
   if (v.includes(':')) return /^[0-9A-Fa-f:.]+(%[A-Za-z0-9_.-]+)?$/.test(v) && (v.match(/:/g) || []).length >= 2 ? '' : 'That is not a valid IPv6 address.';
   if (/^[0-9.]+$/.test(v)) return v.split('.').length === 4 && v.split('.').every((p) => p !== '' && Number(p) <= 255 && String(Number(p)) === p) ? '' : 'That is not a valid IPv4 address.';
   return HOST_RE.test(v) && v.length <= 255 ? '' : 'That is not a valid host name.';
+}
+
+// A password Pengumon proposes for the sign-in (the first-run question, Settings > Sign-in): 16 characters in four groups,
+// from letters and digits that cannot be mistaken for one another (no 0/o, 1/l/i), about 79 bits. crypto.getRandomValues
+// works over plain HTTP too (a LAN address is not a secure context).
+const PASSWORD_LETTERS = 'abcdefghjkmnpqrstuvwxyz23456789';
+export function suggestPassword() {
+  const bytes = new Uint8Array(32);
+  let out = '';
+  while (out.length < 16) {
+    crypto.getRandomValues(bytes);
+    for (const b of bytes) {
+      if (out.length < 16 && b < 248) out += PASSWORD_LETTERS[b % PASSWORD_LETTERS.length]; // 248 = 8 x 31: no bias
+    }
+  }
+  return out.match(/.{4}/g).join('-');
 }
 
 // Copies `text` to the clipboard; resolves true when it did. The Clipboard API exists only in a secure context (HTTPS or

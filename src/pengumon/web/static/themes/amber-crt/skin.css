@@ -1,0 +1,65 @@
+/* Amber CRT: shapes and texture (docs/themes.md, "Skins"). Every selector is under this theme's own data-look.
+   Colours come from the tokens in theme.json. The refresh band that rolls down the screen is effect.js; the scanlines
+   and the glow here are still. */
+
+/* the tube: faint scanlines over the page, a little brighter in the middle */
+:root[data-look="amber-crt"] body {
+  background-image:
+    repeating-linear-gradient(to bottom, transparent 0 2px, color-mix(in srgb, var(--ink-1) 4%, transparent) 2px 3px),
+    radial-gradient(120% 90% at 50% 30%, color-mix(in srgb, var(--ink-1) 5%, transparent), transparent 70%);
+  /* phosphor: every glyph glows a little in its own colour */
+  text-shadow: 0 0 5px color-mix(in srgb, currentColor 32%, transparent);
+}
+/* the status glow behind the header stays, in the tube's colours */
+:root[data-look="amber-crt"] .glow { opacity: .7; }
+
+/* cards: scanlines on the glass, a hairline and a soft inner glow (opaque: see-through cards over the moving band cost
+   a compositing pass of the whole page each frame, and the band hardly showed through them) */
+:root[data-look="amber-crt"] .panel {
+  background-image: repeating-linear-gradient(to bottom, transparent 0 2px, color-mix(in srgb, var(--ink-1) 3%, transparent) 2px 3px);
+  border-color: var(--line-strong);
+  box-shadow: inset 0 0 36px -18px color-mix(in srgb, var(--ink-1) 35%, transparent), 0 0 24px -14px color-mix(in srgb, var(--ink-1) 40%, transparent);
+}
+:root[data-look="amber-crt"] .panel-h { border-bottom-color: var(--line-strong); }
+
+/* titles: upper case, spaced, brighter glow */
+:root[data-look="amber-crt"] .panel-t,
+:root[data-look="amber-crt"] .brand-name,
+:root[data-look="amber-crt"] .modal-t {
+  text-transform: uppercase; letter-spacing: .08em;
+  text-shadow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent);
+}
+:root[data-look="amber-crt"] .brand-name { letter-spacing: .12em; }
+:root[data-look="amber-crt"] .node-val b,
+:root[data-look="amber-crt"] .big-count b,
+:root[data-look="amber-crt"] .verdict h3 {
+  letter-spacing: 0; text-shadow: 0 0 10px color-mix(in srgb, currentColor 50%, transparent);
+}
+
+/* controls: square, outlined like a terminal's fields; the primary one in reverse video */
+:root[data-look="amber-crt"] .btn.outline,
+:root[data-look="amber-crt"] .input { border-color: var(--line-strong); }
+:root[data-look="amber-crt"] .btn.primary { text-shadow: none; box-shadow: 0 0 14px -4px color-mix(in srgb, var(--accent) 60%, transparent); }
+:root[data-look="amber-crt"] .seg button[aria-pressed="true"],
+:root[data-look="amber-crt"] .seg button.active { background: var(--ink-1); color: var(--bg); text-shadow: none; box-shadow: none; }
+:root[data-look="amber-crt"] .badge,
+:root[data-look="amber-crt"] .chip { text-shadow: none; }
+
+/* dialogs and menus: the same glass */
+:root[data-look="amber-crt"] .modal-content,
+:root[data-look="amber-crt"] dialog.modal,
+:root[data-look="amber-crt"] .menu,
+:root[data-look="amber-crt"] .help-popover { background-image: repeating-linear-gradient(to bottom, transparent 0 2px, color-mix(in srgb, var(--ink-1) 3%, transparent) 2px 3px); }
+
+/* the header: nearly solid and not blurred (a blur over the rolling band would cost a compositing pass a frame) */
+:root[data-look="amber-crt"] .topbar::before {
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  border-bottom-color: var(--line-strong);
+}
+
+/* the refresh band (effect.js moves it): its own layer, so moving it repaints nothing */
+:root[data-look="amber-crt"] .fx-roll {
+  position: absolute; left: 0; right: 0; top: 0; height: 240px; will-change: transform, opacity;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--ink-1) 7%, transparent) 55%, color-mix(in srgb, var(--ink-1) 16%, transparent) 92%, transparent);
+}

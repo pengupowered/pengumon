@@ -4,7 +4,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { maxLivePoints, state } from '../../js/state.js';
-import { median, targetList } from '../../js/util.js';
+import { localFormat, median, targetList } from '../../js/util.js';
 import { SERIES, combine, seriesMembers } from '../../js/path.js';
 import { pingTargets, renderCharts, resetView, setLineMode, view } from './charts.js';
 import { primaryDevice } from '../../js/devices.js';
@@ -154,7 +154,7 @@ async function loadHistory(durationSeconds) {
 // On a phone the chart sits on the Live tab, which is not shown while the Incidents tab is: open it, or the window is
 // drawn where nobody sees it.
 function showLatencyTab() {
-  const section = document.getElementById('latencyChart').closest('[data-panel]');
+  const section = document.querySelector('[data-panel="latency"]');
   if (!section || !section.hidden) return;
   selectTab((section.dataset.tab || '').split(/\s+/)[0]);
   applyTabs();
@@ -163,7 +163,7 @@ function showLatencyTab() {
 export async function loadHistoricalRange(startTime, endTime) {
   const seq = ++requestSeq;
   state.currentMode = 'custom';
-  const t = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const t = (s) => localFormat(s * 1000, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   label(`incident window ${t(startTime)} – ${t(endTime)}`);
   markRange('');
   showLatencyTab();
@@ -173,7 +173,7 @@ export async function loadHistoricalRange(startTime, endTime) {
     const times = fill(samples, true);
     attachLoadOverlay(seq, times, startTime, endTime, 30);
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    document.getElementById('latencyChart').closest('.panel').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
+    document.querySelector('[data-panel="latency"] .panel').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
   } catch (err) {
     console.error('Error loading custom range:', err);
   }

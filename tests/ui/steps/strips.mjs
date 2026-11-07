@@ -3,6 +3,27 @@
 export const subject = "panel:strips";
 export const variants = ["full"];
 
+// The model's own fetch of /api/uptime answered with made-up answers, in the page: window.__answer(answer, window) presses
+// the window's button (the model fetches it then) and resolves once the answer is drawn; window.__answered() puts the
+// real fetch back and shows the 24 h window again.
+const answering = () => {
+  const real = window.fetch;
+  let next = null;
+  let served = 0;
+  window.fetch = (u, ...a) => (String(u).startsWith("/api/uptime") && next ? (served++, Promise.resolve(new Response(JSON.stringify(next)))) : real(u, ...a));
+  window.__answer = async (answer, win = "24h") => {
+    next = answer;
+    const n = served;
+    document.querySelector(`[data-action=setUptimeWindow][data-arg="${win}"]`).click();
+    while (served === n) await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 100));
+  };
+  window.__answered = () => {
+    window.fetch = real;
+    document.querySelector('[data-action=setUptimeWindow][data-arg="24h"]').click();
+  };
+};
+
 export const steps = [
   ["uptime strips: availability per row, 96 blocks a day, the 7 d and 24 h windows", async ({ click, eq, ok, page, text, until }) => {
     await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
@@ -17,52 +38,64 @@ export const steps = [
     await until(() => document.getElementById("stripsBody").dataset.blocks === "96");
   }],
 
-  ["uptime strips: the same answer again does not rebuild the blocks; a different one does", async ({ moduleUrl, ok, page, until }) => {
-    await until(() => document.querySelectorAll("#stripsBody .strip .cell").length >= 288);
-    const url = await moduleUrl("../panels/strips/panel.js");
-    const result = await page.evaluate(async (u) => {
-      const { renderStrips } = await import(u);
-      const data = await (await fetch("/api/uptime?window=24h")).json();
-      const cell = document.querySelector("#stripsBody .strip .cell");
-      cell.dataset.mark = "kept";
-      renderStrips(JSON.parse(JSON.stringify(data))); // what the five-minute refresh brings when nothing moved
-      const same = document.querySelector("#stripsBody .strip .cell").dataset.mark === "kept";
-      const next = JSON.parse(JSON.stringify(data));
-      next.targets[0].cells[0] = next.targets[0].cells[0] === "outage" ? "ok" : "outage";
-      renderStrips(next);
-      const changed = document.querySelector("#stripsBody .strip .cell").dataset.mark === undefined;
-      renderStrips(data); // the real answer again, for the steps after this one
-      return { same, changed };
-    }, url);
-    ok("an identical answer leaves the blocks alone", result.same);
-    ok("a changed block is drawn", result.changed);
+  ["uptime strips: an answer that fails says so in the card (no page error), and the next one draws the blocks again", async ({ click, ok, page, text, until }) => {
+    await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
+    await page.evaluate(() => {
+      window.__realFetch = window.fetch;
+      window.fetch = (u, ...a) => (String(u).startsWith("/api/uptime") ? Promise.resolve(new Response("", { status: 503 })) : window.__realFetch(u, ...a));
+    });
+    await click('[data-action=setUptimeWindow][data-arg="7d"]');
+    await until(() => /Could not load the uptime: HTTP 503/.test(document.getElementById("stripsBody").textContent));
+    ok("the key is still there", /No loss/.test(await text("[data-panel=strips] .strip-legend")));
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await click('[data-action=setUptimeWindow][data-arg="24h"]');
+    await until(() => document.getElementById("stripsBody").dataset.blocks === "96");
   }],
 
-  ["uptime strips: a day block opens the server's day, on the clock of the zone it used, also after a 25-hour day", async ({ eq, moduleUrl, ok, page, text, until }) => {
+  ["uptime strips: the same answer again does not rebuild the blocks; a different one does", async ({ ok, page, until }) => {
+    await until(() => document.querySelectorAll("#stripsBody .strip .cell").length >= 288);
+    // the model fetches the answers (made up here) when a window button asks it to
+    await page.evaluate(answering);
+    const result = await page.evaluate(async () => {
+      const real = await (await fetch("/api/uptime?window=24h")).json();
+      const cell = () => document.querySelector("#stripsBody .strip .cell");
+      await window.__answer(real);
+      cell().dataset.mark = "kept";
+      await window.__answer(JSON.parse(JSON.stringify(real))); // what the five-minute refresh brings when nothing moved
+      const same = cell().dataset.mark === "kept";
+      const next = JSON.parse(JSON.stringify(real));
+      next.targets[0].cells[0] = next.targets[0].cells[0] === "outage" ? "ok" : "outage";
+      await window.__answer(next);
+      return { same, changed: cell().dataset.mark === undefined };
+    }).finally(() => page.evaluate(() => window.__answered()));
+    ok("an identical answer leaves the blocks alone", result.same);
+    ok("a changed block is drawn", result.changed);
+    await until(() => document.getElementById("stripsBody").dataset.blocks === "96");
+  }],
+
+  ["uptime strips: a day block opens the server's day, on the clock of the zone it used, also after a 25-hour day", async ({ eq, ok, page, text, until }) => {
     await until(() => document.querySelectorAll("#stripsBody .strip .cell").length >= 288);
     // Berlin, 25 October 2026: the clocks go back (25 hours), so 26 October begins at 23:00 UTC, not 22:00; this
     // browser runs in another zone (UTC), and the labels are Berlin's dates all the same
-    const got = await page.evaluate(async ([strips, util]) => {
-      const { renderStrips } = await import(strips);
-      const { zoneParams } = await import(util);
+    await page.evaluate(answering);
+    const got = await page.evaluate(async () => {
       const real = await (await fetch("/api/uptime?window=24h")).json();
       const at = (d, h) => Date.UTC(2026, 9, d, h) / 1000;
       const bounds = [at(23, 22), at(24, 22), at(25, 23), at(26, 23), at(27, 23)];
-      renderStrips({ ...real, window: "7d", block_seconds: 86400, blocks: 4, start: bounds[0], end: bounds[4], bounds, zone: "Europe/Berlin",
-        tz_offset_minutes: 60, targets: [{ ...real.targets[1], cells: ["ok", "ok", "outage", "ok"] }] });
+      await window.__answer({ ...real, window: "7d", block_seconds: 86400, blocks: 4, start: bounds[0], end: bounds[4], bounds, zone: "Europe/Berlin",
+        tz_offset_minutes: 60, targets: [{ ...real.targets[1], cells: ["ok", "ok", "outage", "ok"] }] }, "7d");
       const cell = document.querySelectorAll("#stripsBody .strip .cell")[2];
-      const out = { browser: Intl.DateTimeFormat().resolvedOptions().timeZone, start: Number(cell.dataset.start), end: Number(cell.dataset.end), want: [at(25, 23), at(26, 23)],
-        day: new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric", timeZone: "Europe/Berlin" }).format(at(25, 23) * 1000) };
       cell.click();
-      renderStrips(await (await fetch(`/api/uptime?window=24h&${zoneParams()}`)).json()); // the real answer again
-      return out;
-    }, [await moduleUrl("../panels/strips/panel.js"), await moduleUrl("util.js")]);
+      return { browser: Intl.DateTimeFormat().resolvedOptions().timeZone, start: Number(cell.dataset.start), end: Number(cell.dataset.end), want: [at(25, 23), at(26, 23)],
+        day: new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric", timeZone: "Europe/Berlin" }).format(at(25, 23) * 1000) };
+    }).finally(() => page.evaluate(() => window.__answered()));
     ok(`the browser runs in another zone (${got.browser})`, got.browser !== "Europe/Berlin");
     eq("the block's window is the server's 26 October", `${got.start}-${got.end}`, got.want.join("-"));
     await until(() => !document.getElementById("incidentWindow").hidden);
     ok(`the window names Berlin's day (${got.day})`, (await text("#incidentWindow")).includes(got.day));
     await page.evaluate(() => document.querySelector("[data-action=clearIncidentWindow]").click());
     await until(() => document.getElementById("incidentWindow").hidden);
+    await until(() => document.getElementById("stripsBody").dataset.blocks === "96");
   }],
 
   ["uptime strips: every block opens its incidents", async ({ click, ok, page, text, until }) => {
@@ -159,7 +192,7 @@ export const steps = [
     ok("answering again: blocks again", (await text("#stripsBody")).includes("%"));
   }],
 
-  ["an IPv6 target while this host has no IPv6 is neutral on the path, in Uptime, Hop details and its history, with its own words", async ({ click, eq, ok, page, text, until }) => {
+  ["an IPv6 target while this host has no IPv6 is neutral on the path, in Uptime, Hop details and its history, with its own words", async ({ click, eq, ok, page, showCard, text, until }) => {
     await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
     // the internet target as an IPv6 one the server cannot probe (engine/prober.py): its last figures are stale, its
     // stale status "down" must not show; and a second public target keeps answering, so the Internet node stays judged
@@ -183,6 +216,7 @@ export const steps = [
     eq("the internet's uptime row", row.name, "Internet");
     ok(`with the same words (${row.text})`, /^IPv6 unavailable on this host · not probed, not counted$/.test(row.text));
     eq("no availability, no blocks", `${row.pct}|${row.cells}`, "–|0");
+    await showCard("matrix"); // not drawn while it is off screen
     const hop = await page.evaluate(() => {
       const tr = [...document.querySelectorAll("#hopMatrixBody tr")].find((r) => r.textContent.includes("Cloudflare"));
       return { loss: tr.querySelector("[data-f=loss]").textContent, title: tr.querySelector("[data-f=loss]").title, last: tr.querySelector("[data-f=last]").textContent };

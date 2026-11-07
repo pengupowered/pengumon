@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Optional
 from starlette.requests import HTTPConnection
 
 if TYPE_CHECKING:
+    from pengumon.access.manager import AccessManager
     from pengumon.config import AppConfig
     from pengumon.db.repository import DatabaseRepository
     from pengumon.devices.component import DeviceSupervisor
@@ -50,6 +51,7 @@ class AppState:
     drift: Optional["DriftChecker"] = None  # the background route-change checks (engine/discovery/drift.py)
     settings: Optional["SettingsManager"] = None  # the settings store (pengumon.settings.manager)
     preview: Optional["PreviewJobs"] = None  # the outage-rules preview jobs (settings/preview.py)
+    access: Optional["AccessManager"] = None  # the sign-in password and the first-run question (access/manager.py)
 
 
 def get_state(connection: HTTPConnection) -> AppState:

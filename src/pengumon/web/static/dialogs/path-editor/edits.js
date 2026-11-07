@@ -202,7 +202,7 @@ export function connect(el) {
   h.autoLinked = false;
   h.device_unlinked = false;
   render({ id: h.id, selector: '[data-action=changePathDevice]' });
-  openSetup(single.id);
+  if (single.needs_sign_in !== false) openSetup(single.id); // a device with no password has nothing to set up
 }
 
 export function pickDevice(el) {

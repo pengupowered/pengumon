@@ -4,9 +4,50 @@ All notable changes to Pengumon are listed here. The format follows [Keep a Chan
 and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.24.0] - 2026-11-06
 ### Added
-- A contributing guide, a code of conduct (Contributor Covenant 2.1), a security policy (private reports through
-  GitHub), and forms for bug reports, ideas and pull requests.
+- **Themes.** The header's palette button picks this browser's theme, light or dark, and whether animated effects run;
+  Settings > Display sets the theme every browser starts with. Twelve built in: Pengumon (the standard look); the
+  palettes Blueprint, E-ink, High contrast, Nord, Dracula and Solarized; **Mission control**, a wall display (a verdict
+  banner in the status colour, large figures, a status band on every card); and four with their own shapes and a slow
+  animated effect. **Starship console** restyles every card into one flowing console frame (a coloured rail sweeping into
+  each card's header bar, flat blocks, segmented gauges, tank meters); **Amber CRT** (a terminal: bracketed readouts,
+  text bars, the incidents as a log) and **Synthwave** (neon readouts on a horizon grid) redraw path health, latency and
+  one more card each; **Digital rain** redraws path health and latency as a terminal trace, with rain falling over the
+  whole page. A theme may redraw a card, restyle it, or leave it to the standard look in its colours and frame; every
+  value, button and help link a card has stays in every theme (a test checks it). Themes can also change the charts'
+  lines (width, straight or stepped, grid). Effects stop while the tab is hidden and when the system asks for reduced
+  motion, and can be turned off per browser. Your own themes: duplicate one and change its colours, or import a theme
+  file; any theme exports as one. In Layout, each card can take another theme's colours or its own. A theme is a folder
+  (docs/themes.md), and every theme is tested for text contrast and for chart colours that stay apart, also for
+  colour-blind eyes. Each page loads only the theme in use.
+### Changed
+- **Every status shows its word next to its icon**: path health's hops and the cable modem's gauges showed an icon only
+  (the word was in the tooltip). **Host services** is a warning while a service is only degraded, and an outage only
+  when one is down (it showed an outage for both).
+- **Hop details is not redrawn while it is off screen** (it is drawn when it scrolls into view): about 10 to 15 % less
+  work for the page while it runs.
+- **Latency and jitter incidents are judged by the median, over a window you set.** Each part of the path counts as
+  slow only when more than half of its last probes are slow (Settings > Outage rules, "Judge each hop by its last":
+  10 probes, 10 s at one probe a second, by default). One stalled probe, such as a round in which everything past the
+  modem answers after a second, no longer opens a 9-second "ISP Latency Spikes / Jitter" incident; trouble that lasts
+  still does (with the defaults: 6 of the last 10 probes slow, for 10 rounds in a row). Jitter, in incidents and on
+  the page, is now the median change from one probe to the next, so one slow probe no longer turns a hop amber for a
+  minute either (stored samples keep the figure they had, an average). The Settings preview can try another window
+  on your stored samples.
+- **Every time on the page follows the Settings time zone** when one is set (incidents, charts, the inspector, lists);
+  with none set, your browser's zone, as before.
+- **Ask AI reads better** (tested with three AI models on three simulated faults; mean score 4.44 -> 4.70 of 5):
+  Wi-Fi drops are listed with their times, a mesh node's falls and minutes at 0 clients are told apart, the modem's
+  restart count is always shown, a bad cable channel names every way it is bad, and a section over its size limit
+  keeps its table's first rows instead of leaving an introduction with nothing under it.
+- The router panel and the path editor name the device ("ASUS router") instead of a driver id.
+
+### Fixed
+- **Uptime keeps its key when its data cannot be loaded**, and says so in the card (it threw a page error).
+- **The header pill never cuts its figures** ("ms to internet"): the verdict's title gives way first, and on a narrow
+  window the name beside the logo and the live tick make room.
 
 ## [0.23.0] - 2026-11-05
 ### Fixed
@@ -434,7 +475,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/pengupowered/pengumon/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/pengupowered/pengumon/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/pengupowered/pengumon/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/pengupowered/pengumon/compare/v0.20.2...v0.21.0

@@ -128,6 +128,8 @@ VALUES = {
     "classifier.gateway_jitter_spike_threshold_ms": (22, classifier("gateway_jitter_spike_threshold_ms")),
     "classifier.public_jitter_spike_threshold_ms": (50, classifier("public_jitter_spike_threshold_ms")),
     "classifier.dns_timeout_threshold_ms": (400, classifier("dns_timeout_threshold_ms")),
+    # the classifier reads its config each round; the prober's hop colours get it through the probing.window applier
+    "classifier.window_probes": (20, lambda st: st.prober.window),
     "notifications.public_url": ("https://pengumon.example.com", lambda st: st.notifier.public_url),
     "alerts.min_severity": ("critical", policy("min_severity")),
     "alerts.delay_seconds": (120, policy("delay_seconds")),
@@ -154,6 +156,9 @@ VALUES = {
     "display.default_latency_range": ("1h", cfg("display.default_latency_range")),
     "dashboard.order": (["matrix", "line"], cfg("dashboard.order")),
     "dashboard.hidden": (["report"], cfg("dashboard.hidden")),
+    "dashboard.colours": ({"latency": {"theme": "nord", "custom": {}}}, lambda st: st.config.dashboard.model_dump()["colours"]),
+    "display.theme": ("nord", cfg("display.theme")),
+    "display.effects": (False, cfg("display.effects")),
     "display.grafana_url": ("https://grafana.example.com:3000", grafana_base),
     "prober.hop_status.down_loss_fraction": (0.5, hop("down_loss_fraction")),
     "prober.hop_status.degraded_loss_fraction": (0.2, hop("degraded_loss_fraction")),
@@ -189,7 +194,15 @@ VALUES = {
     "router_levels.wan_critical_pct": (96, router_level("wan_critical_pct")),
     "server.log_level": ("warning", root_level),
     "server.log_levels": ("pengumon.devices=debug", devices_level),
+    "access.allow_viewers": (True, lambda st: main.security_config.view_without_token),
 }
+
+def _custom_theme() -> dict:
+    """A custom theme made from the built-in Nord, as Settings' Duplicate makes one."""
+    from pengumon.web.themes import builtin_themes
+    nord = next(t for t in builtin_themes() if t.id == "nord").exported()
+    return nord | {"id": "custom-test", "name": "Test"}
+
 
 # list -> (items, secrets to save with them, observer, expected)
 LISTS = {
@@ -204,6 +217,7 @@ LISTS = {
                  [("Hook", "hooks.example.com")]),  # the notifier's sender, its URL from the slot (notify.reconfigure)
     "dns_probes": ([{"id": "dns_x", "name": "X", "domain": "example.com"}], {},
                    lambda st: [i for i, t in st.prober.stats.items() if t.category == "dns"], ["dns_x"]),
+    "themes": ([_custom_theme()], {}, lambda st: [t.id for t in st.config.display.themes], ["custom-test"]),
 }
 
 # secret slot -> (value, observer, expected): the ntfy slots reach the notifier (notify.reconfigure)
@@ -241,9 +255,10 @@ def _start(tmp_path, monkeypatch, extra: str = "") -> list:
                       encoding="utf-8")
     monkeypatch.setenv("PENGUMON_CONFIG", str(config))
     for name in ("PENGUMON_LOG_LEVEL", "PENGUMON_LOG_LEVELS", "PENGUMON_GRAFANA_URL", "PENGUMON_ACCESS_TOKEN",
-                 "PENGUMON_NOTIFY_URL", "PENGUMON_NOTIFY_TOKEN"):
+                 "PENGUMON_NOTIFY_URL", "PENGUMON_NOTIFY_TOKEN", "PENGUMON_VIEW_WITHOUT_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(main.security_config, "access_token", "")
+    monkeypatch.setattr(main.security_config, "view_without_token", False)
     monkeypatch.setattr(main.security_config, "allowed_hosts", [])
     monkeypatch.setattr(main.security_config, "allowed_origins", [])
     parts: list = []

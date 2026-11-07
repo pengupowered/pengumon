@@ -1,0 +1,59 @@
+{
+  "id": "dracula",
+  "name": "Dracula",
+  "description": "The Dracula palette (MIT licence): purple, pink and cyan accents on a dark grey-violet ground. Dark.",
+  "modes": [
+    "dark"
+  ],
+  "tokens": {
+    "dark": {
+      "--bg": "#21222c",
+      "--surface-1": "#282a36",
+      "--surface-2": "#2f3140",
+      "--surface-3": "#383a4c",
+      "--line": "#343746",
+      "--line-strong": "#565a73",
+      "--scrim": "rgba(12, 12, 20, .7)",
+      "--ink-1": "#f8f8f2",
+      "--ink-2": "#e2e2dc",
+      "--ink-3": "#c4c8e0",
+      "--ink-4": "#9aa0c4",
+      "--accent": "#bd93f9",
+      "--accent-bg": "rgba(189, 147, 249, 0.1)",
+      "--on-accent": "#21222c",
+      "--focus": "#8be9fd",
+      "--good": "#50fa7b",
+      "--good-bg": "rgba(80, 250, 123, 0.1)",
+      "--warn": "#f1fa8c",
+      "--warn-bg": "rgba(241, 250, 140, 0.1)",
+      "--warn-fill": "#f1fa8c",
+      "--serious": "#ffb86c",
+      "--serious-bg": "rgba(255, 184, 108, 0.1)",
+      "--crit": "#ff7a7a",
+      "--crit-bg": "rgba(255, 122, 122, 0.1)",
+      "--busy": "#caa9fa",
+      "--busy-bg": "rgba(202, 169, 250, 0.1)",
+      "--unknown": "#9aa0c4",
+      "--unknown-bg": "rgba(154, 160, 196, 0.1)",
+      "--nodata": "#383a4c",
+      "--s1": "#bd93f9",
+      "--s2": "#ffb86c",
+      "--s3": "#8be9fd",
+      "--s4": "#ff79c6",
+      "--s5": "#f1fa8c",
+      "--s6": "#6272a4",
+      "--s7": "#50fa7b",
+      "--s8": "#ff5555",
+      "--q0": "#2d2f3d",
+      "--q1": "#4a4a3a",
+      "--q2": "#7d7650",
+      "--q3": "#ffb86c",
+      "--q4": "#ff5555"
+    }
+  },
+  "effect": null,
+  "tags": [
+    "palette",
+    "colourful"
+  ]
+}

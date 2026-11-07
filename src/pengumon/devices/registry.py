@@ -95,18 +95,25 @@ def build_devices(configs: Sequence[DeviceConfig], repository=None,
     devices = [build_device(cfg, repository, secrets) for cfg in configs]
     registry = DeviceRegistry(devices)
     for device in devices:
-        offers = ",".join(sorted(c.value for c in device.driver.offers))
-        log = get_logger("pengumon.devices", device=device.id, driver=device.driver.name, host=device.driver.host)
-        if not device.enabled:
-            log.info(f"Device {device.id} ({device.driver.name} at {device.driver.host}) is disabled in configuration",
-                     capabilities=offers)
-            continue
-        source = device.credentials_source
-        log.info(f"Device {device.id}: {device.driver.name} at {device.driver.host} every "
-                 f"{device.interval_seconds:g} s, offers {offers}; "
-                 + (f"password from {source}" if source else "no password configured"),
-                 interval_s=device.interval_seconds, capabilities=offers, credentials=source or "none")
+        log_device(device)
     return registry
+
+
+def log_device(device: Device) -> None:
+    """The one log line of a device once it is built (here and by the devices component's supervisor): what it is, how
+    often it is polled, what it offers, where its credentials came from (never what they are)."""
+    offers = ",".join(sorted(c.value for c in device.driver.offers))
+    log = get_logger("pengumon.devices", device=device.id, driver=device.driver.name, host=device.driver.host)
+    if not device.enabled:
+        log.info(f"Device {device.id} ({device.driver.name} at {device.driver.host}) is disabled in configuration",
+                 capabilities=offers)
+        return
+    source = device.credentials_source
+    log.info(f"Device {device.id}: {device.driver.name} at {device.driver.host} every "
+             f"{device.interval_seconds:g} s, offers {offers}; "
+             + (f"password from {source}" if source else
+                ("no password configured" if device.needs_sign_in else "needs no password")),
+             interval_s=device.interval_seconds, capabilities=offers, credentials=source or "none")
 
 
 class DeviceRegistry:

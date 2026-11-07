@@ -1,0 +1,56 @@
+/* Starship console's Host services: the standard view (panels/services/view.js) restyled, each service a console block
+   straight on black: its status a flat block in its colour (icon and word), the name, the figures as readouts under
+   labels, the actions as pill buttons with a word. The row's parts are laid out on one grid (its inner boxes are display: contents). The pill
+   labels and the buttons' words are this theme's (CSS text); every button keeps its own accessible name. */
+
+:root[data-look="starship"] [data-panel="services"] .svc { gap: var(--sp-3); }
+:root[data-look="starship"] [data-panel="services"] .svc li {
+  grid-template-columns: calc(var(--fs-xs) * 8) minmax(calc(var(--fs-xs) * 8), auto) minmax(0, 1fr);
+  grid-template-areas: "tab name name" "tab desc desc" "tab why why" "tab ms url" "tab facts facts" "tab acts acts" "tab log log";
+  gap: 0 var(--sp-3); align-items: start; padding: 0; border: 0; background: none; border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="services"] .svc li .svc-id,
+:root[data-look="starship"] [data-panel="services"] .svc li .svc-more { display: contents; }
+/* the status tab: a flat block in the status colour, its icon and word dark on it */
+:root[data-look="starship"] [data-panel="services"] .svc-st {
+  grid-area: tab; align-self: stretch; flex-direction: column; justify-content: center; gap: 4px; padding: var(--sp-2) 6px;
+  background: var(--st); color: var(--bg); border-radius: 0;
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em;
+  font-weight: var(--fw-bold); text-align: center; overflow-wrap: anywhere;
+}
+:root[data-look="starship"] [data-panel="services"] .svc-st svg.i { color: var(--bg); width: 20px; height: 20px; }
+:root[data-look="starship"] [data-panel="services"] .svc-name {
+  grid-area: name; margin-top: var(--sp-2); color: var(--accent); font-family: var(--ss-cond); font-stretch: condensed;
+  text-transform: uppercase; letter-spacing: .06em; font-size: var(--fs-md); font-weight: var(--fw-bold); overflow-wrap: anywhere;
+}
+:root[data-look="starship"] [data-panel="services"] .svc-more > [data-v="description"] { grid-area: desc; margin-top: 6px; color: var(--ink-2); font-size: var(--fs-sm); }
+:root[data-look="starship"] [data-panel="services"] .svc-why {
+  grid-area: why; margin-top: 6px; color: var(--crit); font-size: var(--fs-sm); font-weight: var(--fw-semi);
+  border-left: 4px solid var(--crit); padding-left: var(--sp-2);
+}
+/* the readouts: a label over the figure */
+:root[data-look="starship"] [data-panel="services"] .svc-ms,
+:root[data-look="starship"] [data-panel="services"] .svc .svc-check-url {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px; margin-top: 6px; min-width: 0; text-align: left;
+}
+:root[data-look="starship"] [data-panel="services"] .svc-ms { grid-area: ms; color: var(--ink-1); font-size: var(--fs-md); font-weight: var(--fw-semi); padding-left: 4px; }
+:root[data-look="starship"] [data-panel="services"] .svc .svc-check-url { grid-area: url; font-size: var(--fs-xs); color: var(--ink-2); white-space: normal; overflow-wrap: anywhere; }
+:root[data-look="starship"] [data-panel="services"] .svc-ms::before { content: "Response"; margin-left: -4px; max-width: none; }
+:root[data-look="starship"] [data-panel="services"] .svc .svc-check-url::before { content: "Health check"; }
+:root[data-look="starship"] [data-panel="services"] .svc-facts { grid-area: facts; margin-top: 6px; color: var(--ink-3); font-size: var(--fs-xs); }
+/* the actions: pill buttons with a word */
+:root[data-look="starship"] [data-panel="services"] .svc li > .svc-actions { grid-area: acts; flex-wrap: wrap; gap: 6px; margin: 6px 0 var(--sp-3); }
+:root[data-look="starship"] [data-panel="services"] .svc-open::after { content: "Open"; }
+:root[data-look="starship"] [data-panel="services"] [data-action="copyServiceUrl"]::after { content: "Copy"; }
+:root[data-look="starship"] [data-panel="services"] [data-action="toggleServiceHistory"]::after { content: "Log"; }
+:root[data-look="starship"] [data-panel="services"] [data-action="toggleServiceHistory"][aria-expanded="true"]::after { content: "Hide log"; }
+:root[data-look="starship"] [data-panel="services"] .svc-history { grid-area: log; margin: -6px 0 var(--sp-3); }
+
+/* a narrow card (a phone): the tab goes over the block as a bar */
+@container (max-width: 340px) {
+  :root[data-look="starship"] [data-panel="services"] .svc li {
+    grid-template-columns: auto minmax(0, 1fr); padding: 0;
+    grid-template-areas: "tab tab" "name name" "desc desc" "why why" "ms url" "facts facts" "acts acts" "log log";
+  }
+  :root[data-look="starship"] [data-panel="services"] .svc-st { flex-direction: row; justify-content: flex-start; padding: 4px var(--sp-3); }
+}

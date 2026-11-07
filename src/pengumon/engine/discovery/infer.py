@@ -209,6 +209,7 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         igd = igd_at.get(g.address)
         if igd is not None:
             g.evidence.append(Evidence("upnp", f"It {igd.describe()}.", HOME if i <= edge else None))
+            g.suggested_driver = g.suggested_driver or "upnp_igd"
 
     if step is not None:
         if step.before in guesses:

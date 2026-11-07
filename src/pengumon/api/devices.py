@@ -49,6 +49,8 @@ async def _set_credentials(state: AppState, device: Device, payload: Credentials
     above secrets.json (the environment, a secret file) supplies this device's credentials, the saved ones are used
     until the next start only: the answer says so in `overridden_by`."""
     device_id = device.id
+    if not device.needs_sign_in:
+        raise HTTPException(status_code=400, detail="This device has no sign-in: there is no password to set.")
     store = state.secret_store or SecretStore()
     try:
         store.write(credential_updates(device_id, payload.username, payload.password))
@@ -100,11 +102,13 @@ def device_summary(device: Device) -> Dict[str, Any]:
         "url": getattr(device.config, "url", None),  # validated to carry no credentials
         "model": getattr(device.config, "model", None),
         "label": device_label(device),
+        "kind": getattr(device.driver, "label", None) or device.driver.name,  # what it is: "ASUS router"
         "enabled": device.enabled,
         "offers": sorted(c.value for c in offers),
         "line_technology": getattr(device.driver, "line_technology", None) if Capability.ACCESS_LINE in offers else None,
         "poll_interval_seconds": device.interval_seconds,
         "has_credentials": device.has_credentials,
+        "needs_sign_in": device.needs_sign_in,
         "status": snapshot.status if snapshot else None,  # None: not polled yet
         "last_poll": snapshot.timestamp if snapshot else None,
         "ranges": device_ranges(device),

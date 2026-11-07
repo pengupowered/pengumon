@@ -16,7 +16,7 @@
 - `GET /api/targets`: Live statistics (WinMTR style) for every monitored target; 503 while the prober starts. Each target's `short_label` is its role words (Router, Gateway, ISP hop 2, Internet, DNS lookup, Other hop 1; never a name or an address; `null` while it is switched off), the rule the AI pack uses too (`engine/path_rules.py` `hop_roles`); the live stream's targets carry it as well. `POST /api/targets` and `DELETE /api/targets/{id}` are the add and remove above
 - `GET /api/incidents/count?scope=network`: `{"total", "expected"}`, how many incidents are recorded (`expected`: those explained by heavy line load); `scope` as for `/api/incidents`. The list loads a page at a time, so the dashboard asks here for the real figure
 - `GET /api/incidents/{id}/inspect`: The post-mortem data of one incident (the incident inspector); 404 for an unknown id
-- `GET /api/info`: The listen port, this host's LAN addresses and URLs, the ISP name, the sign-in state (`session`), `can_edit` and how probes are sent (`probe`: backend, resolution, and the fix when probing does not work)
+- `GET /api/info`: The listen port, this host's LAN addresses and URLs, the ISP name, the sign-in state (`session`), `can_edit`, `timezone` (the named zone Settings sets, else null: every time on the page follows it), whether the first-run question is open (`access_setup`) and how probes are sent (`probe`: backend, resolution, and the fix when probing does not work)
 - `GET /api/services`: The state of your own apps (status, timings, last five incidents): [services.md](services.md)
 - `POST /api/mtr/trace`: `{"target_host", "family"}`: an on-demand traceroute, hop by hop (the Trace dialog). Rate limited (6 a minute)
 - `WS /ws`: The live stream the dashboard listens to (one message per probe round); the message is described in [architecture.md](architecture.md)
@@ -24,6 +24,7 @@
 - `GET /api/incidents/dossier`: Evidence dossier for the ISP (window up to 30 days); conclusions are derived from the data, expected incidents are excluded and counted
 - `GET /api/ai-pack?scope=window&hours=24&level=full&detail=short`: The AI troubleshooting pack, one Markdown document for a chat model (`markdown`, the exact text), with `modules` (`id`, `title`, `chars`, `budget_chars`, `trimmed` per module section included) and `roles`, the "who is who" key that is never part of the text. `scope=window` takes `hours` (1 to 168; the dashboard offers 1, 24 and 168), `scope=incident` takes `incident_id` (an hour on each side; 404 for an unknown id, 422 when `incident_id` and `scope` disagree). `level`: `full` (the default), `vague` or `anonymized`; `detail`: `short` (the default) or `detailed`; times in the zone set in Settings (`general.timezone`), else in `tz` (the viewer's IANA zone, `America/New_York`; the dialog sends the browser's), else at `tz_offset_minutes` (as in `/api/report`), else UTC, which the header then says; a named zone's daylight-saving changes are followed and named. Anyone who can view the dashboard may ask for any level; with viewing without the token on, that includes Full. Rate limited (6 a minute) and one build at a time (429 while another runs). Counted in `pengumon_ai_pack_exports_total`.
 - `GET /api/status`: Current diagnosis, including `load_pct`
+- `GET /api/themes`: Every theme, built in and custom: `{"default" (the theme id Settings sets, `default` when it names none), "effects" (Settings > Display > Animated effects), "themes": [{id, name, description, modes, tags, custom, skin, effect (the effect module's URL or null), effect_on, css (its stylesheet's URL, built-in themes with one), views (card id: the URL of the theme's drawing of that card), chart (its chart style), theme (the theme as an importable theme.json: every colour per mode)}], "looks" (the page's short list, as <html data-looks>)}`. The page itself starts from `<html data-looks>`; docs/themes.md
 - `GET /api/devices`: Every configured device: id, driver, host, url, model, `label` (what it is and its model, e.g. "ASUS router · RT-AX88U"; its id when no model is set), enabled, capabilities (`offers`), line technology, poll interval, `has_credentials`, and its last poll (`status`, `last_poll`, `error_kind`, `error_message`). Never a credential
 - `GET /api/devices/{id}`: The device's latest snapshot (polled once if there is none yet); 404 for an unknown id
 - `POST /api/devices/{id}/credentials`: `{"username", "password"}`: stored in `data/secrets.json` and tested with one poll (`success`, `snapshot`, and `overridden_by` when a higher-ranked source will win at the next start); same-origin only, rate limited with the other credential endpoints; a 422 never echoes the submitted values
@@ -40,7 +41,7 @@
 
 ## Where the routes live
 
-One router module per feature in `src/pengumon/api/`: `targets.py`, `path.py` (the path editor's routes), `incidents.py` (list, inspect, dossier), `history.py`, `reports.py` (report, loss grid, uptime, AI pack), `ops.py` (info, status, health, traceroute, `/metrics`), `notifications.py` (the alert channels and the test message), `settings.py` (the Settings page; its bodies are in `settings_models.py`), `settings_preview.py` (the outage-rules preview), `devices.py`, `services.py`, `clients.py`, `discovery.py` and `live.py` (the `/ws` websocket). `common.py` has what they share (`StateDep`, `json_response`, `device_or_404`). `api/router.py` lists every router in `ROUTERS` and mounts them; it holds no handlers (`tests/test_api_routers.py`). A new endpoint goes in its feature's module in `api/`, also for a feature that is a component (docs/architecture.md, "Where things live").
+One router module per feature in `src/pengumon/api/`: `targets.py`, `path.py` (the path editor's routes), `incidents.py` (list, inspect, dossier), `history.py`, `reports.py` (report, loss grid, uptime, AI pack), `ops.py` (info, status, health, traceroute, `/metrics`), `notifications.py` (the alert channels and the test message), `settings.py` (the Settings page; its bodies are in `settings_models.py`), `settings_preview.py` (the outage-rules preview), `themes.py` (the themes list), `devices.py`, `services.py`, `clients.py`, `discovery.py`, `live.py` (the `/ws` websocket) and `access.py` (the sign-in). `common.py` has what they share (`StateDep`, `json_response`, `device_or_404`). `api/router.py` lists every router in `ROUTERS` and mounts them; it holds no handlers (`tests/test_api_routers.py`). A new endpoint goes in its feature's module in `api/`, also for a feature that is a component (docs/architecture.md, "Where things live").
 
 ## The probe path's history, preview and route check
 
@@ -94,9 +95,9 @@ where from, and for a URL its host.
   "secrets"}`. Each setting has its registry entry (`key`, `section`, `group`, `label`, `effect`, `unit`, `scale`,
   `rounds`, `live`, `env`, `advanced`, `export`, `order`, `related`, `also_in`, `choice_labels`: the words shown for
   each stored choice, `empty`: what an empty value means) and, read from its field, `type`
-  (number, integer, boolean, text, choice, time, timezone, layout), `nullable`, `min`, `max`, `exclusive_min`,
-  `exclusive_max`, `max_length`, `step`, `choices` and `default`. `lists` has `devices`, `services`, `webhooks` and
-  `dns_probes`, each with its `item_fields` and `default_items`; devices also have `drivers` (label, poll defaults,
+  (number, integer, boolean, text, choice, time, timezone, layout, theme), `nullable`, `min`, `max`, `exclusive_min`,
+  `exclusive_max`, `max_length`, `step`, `choices` and `default`. `lists` has `devices`, `services`, `webhooks`,
+  `dns_probes` and `themes` (the custom themes, docs/themes.md), each with its `item_fields` and `default_items`; devices also have `drivers` (label, poll defaults,
   default user name, URL schemes and the driver's `options` as fields; `mesh_node_labels` is type `map`). Webhook
   items have no `url`: it is the secret slot `webhook.<id>.url`. Sent with an ETag of the app version.
 - **`GET /api/settings`**: `{"revision", "values", "lists", "secrets", "learned", "about", "can_edit"}`. `values`:
@@ -141,3 +142,21 @@ where from, and for a URL its host.
 
 Errors of the settings endpoints that change things use one shape: `{"detail", "errors": [{"where": "values.<key>" |
 "lists.<name>[<i>].<field>" | "secrets.<slot>", "message"}]}`; a message never repeats the submitted value.
+
+## Sign-in
+
+Who can open the dashboard ([security.md](security.md#who-can-open-the-dashboard); `api/access.py`). The password itself
+is never in an answer, except the one that set it. Every route but the GET needs the password
+once one is set; the three that change something share a limit of 10 a minute (bucket `access`).
+
+- **`GET /api/access`**: `{"mode": "open" | "password" | "locked", "from_environment", "pending", "https"}`.
+  `locked`: secrets.json is damaged or missing and a password was set, so nobody can sign in. `pending`: the first-run
+  question is open.
+- **`POST /api/access/setup`**: `{choice: "open" | "password", password?, viewers?}`, the first-run question. 409 once
+  it has been answered (by anyone). With a password: `{mode, password, viewers_saved}` and a session cookie for this
+  browser; `viewers` turns on `access.allow_viewers` as a settings save of its own.
+- **`PUT /api/access/password`**: `{password}` (8 to 128 characters, no control characters; surrounding spaces are
+  dropped) sets or changes it, in force at once: every other browser is signed out, this one gets a new session cookie.
+  409 while `PENGUMON_ACCESS_TOKEN` sets it. **`DELETE /api/access/password`** removes it.
+
+Errors: `{"detail": "<sentence>"}`. A 422 never repeats the submitted value.

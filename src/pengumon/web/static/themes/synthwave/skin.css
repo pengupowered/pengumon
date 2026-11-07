@@ -1,0 +1,102 @@
+/* Synthwave: shapes and texture (docs/themes.md, "Skins"). Every selector is under this theme's own data-look.
+   Colours come from the tokens in theme.json. A perspective grid runs from a horizon behind the header: here a still
+   one; while the effect runs (effect.js), its rows move towards you and the still rows here are hidden. The geometry
+   is shared with effect.js: the horizon at 34 px from the top of the window, a row at 34 + 290 / depth px. */
+
+:root[data-look="synthwave"] {
+  --sw-line: color-mix(in srgb, var(--accent) 45%, transparent);
+  --sw-ray: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+/* ---------- the horizon grid, behind everything (the status glow's fixed band) ---------- */
+/* the band's own background: the sky down to the horizon (it hides the rays above it), a glow on the horizon, and the
+   rays running from the vanishing point towards you */
+:root[data-look="synthwave"] .glow {
+  background:
+    linear-gradient(to bottom, var(--bg) 0, color-mix(in srgb, var(--accent) 22%, var(--bg)) 34px, transparent 34px),
+    linear-gradient(color-mix(in srgb, var(--accent) 80%, transparent), color-mix(in srgb, var(--accent) 80%, transparent)) 0 34px / 100% 1px no-repeat,
+    repeating-conic-gradient(from 90deg at 50% 34px, var(--sw-ray) 0deg .35deg, transparent .35deg 6deg);
+}
+/* the still rows (the effect draws moving ones instead) */
+:root[data-look="synthwave"] .glow::before {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line)),
+    linear-gradient(var(--sw-line), var(--sw-line));
+  background-repeat: no-repeat;
+  background-size: 100% 1px;
+  background-position: 0 324px, 0 215px, 0 166px, 0 138px, 0 119px, 0 106px, 0 97px, 0 90px, 0 84px, 0 79px, 0 75px, 0 72px, 0 69px, 0 67px, 0 65px, 0 63px, 0 61px, 0 59px, 0 57px, 0 55px, 0 53px, 0 51px, 0 49px, 0 47px;
+}
+:root[data-look="synthwave"]:has(#fxLayer[data-fx="synthwave"]) .glow::before { display: none; }
+/* over the grid: a haze at the horizon and a fade into the page below, then the page's status glow */
+:root[data-look="synthwave"] .glow::after {
+  content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(900px 260px at 22% -80px, color-mix(in srgb, var(--gst, var(--accent)) 16%, transparent), transparent 70%),
+    linear-gradient(to bottom, transparent 0 34px, color-mix(in srgb, var(--bg) 90%, transparent) 34px, transparent 74px, transparent 160px, var(--bg) 324px);
+}
+/* the moving rows' canvas: its own layer, so a frame repaints the canvas and not the cards over it */
+:root[data-look="synthwave"] .fx-grid { position: absolute; left: 0; top: 0; will-change: transform; }
+
+/* the header lets the grid show through (and blurs it a little) */
+:root[data-look="synthwave"] .topbar::before {
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  border-bottom-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* ---------- cards: a neon edge, pink to cyan, and a soft glow ---------- */
+:root[data-look="synthwave"] .panel {
+  border-color: var(--line-strong);
+  background-image: linear-gradient(to right, var(--accent), var(--s1));
+  background-repeat: no-repeat; background-size: 100% 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent), 0 10px 34px -18px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* titles: upper case, spaced, glowing pink */
+:root[data-look="synthwave"] .panel-t,
+:root[data-look="synthwave"] .brand-name,
+:root[data-look="synthwave"] .modal-t {
+  text-transform: uppercase; letter-spacing: .1em;
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+:root[data-look="synthwave"] .brand-name { letter-spacing: .16em; text-shadow: 0 0 8px var(--accent), 0 0 18px color-mix(in srgb, var(--s1) 50%, transparent); }
+:root[data-look="synthwave"] .node-val b,
+:root[data-look="synthwave"] .big-count b,
+:root[data-look="synthwave"] .verdict h3 { text-shadow: 0 0 12px color-mix(in srgb, currentColor 45%, transparent); }
+
+/* controls: neon outlines; the primary one lit */
+:root[data-look="synthwave"] .btn.primary { box-shadow: 0 0 16px -3px color-mix(in srgb, var(--accent) 75%, transparent); }
+:root[data-look="synthwave"] .btn.outline { border-color: color-mix(in srgb, var(--s1) 55%, transparent); }
+:root[data-look="synthwave"] .seg button[aria-pressed="true"],
+:root[data-look="synthwave"] .seg button.active { box-shadow: 0 0 0 1px var(--accent), 0 0 10px -2px color-mix(in srgb, var(--accent) 70%, transparent); }
+:root[data-look="synthwave"] :focus-visible { box-shadow: 0 0 10px color-mix(in srgb, var(--focus) 60%, transparent); }
+
+/* dialogs: the same neon edge */
+:root[data-look="synthwave"] .modal-content,
+:root[data-look="synthwave"] dialog.modal {
+  background-image: linear-gradient(to right, var(--accent), var(--s1));
+  background-repeat: no-repeat; background-size: 100% 2px;
+}

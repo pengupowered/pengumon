@@ -1,0 +1,73 @@
+/* Synthwave's view of the Path health card (diagnosis.js): a lit sign for the verdict and glowing tiles on the horizon
+   grid, one per hop. Scoped to this theme and to the card while this view draws it ([data-view="synthwave"]).
+   Colours are the theme's tokens. */
+
+:root[data-look="synthwave"] [data-panel="diagnosis"] .panel[data-view="synthwave"] > .panel-h { border-bottom-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-diag { display: flex; flex-direction: column; gap: var(--sp-3); }
+
+/* the verdict: an outlined sign with a glow in the verdict's colour */
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-verdict {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); padding: var(--sp-3) var(--sp-4);
+  border: 2px solid var(--st); border-radius: var(--r-md); background: linear-gradient(90deg, var(--st-bg), transparent 70%);
+  box-shadow: 0 0 18px -4px color-mix(in srgb, var(--st) 60%, transparent), inset 0 0 18px -10px var(--st);
+}
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-vtag { display: inline-flex; align-items: center; gap: 6px; flex: none; color: var(--st); font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .14em; text-shadow: 0 0 10px var(--st); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-vtag svg.i { width: 18px; height: 18px; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-vwords { flex: 1 1 24ch; min-width: 0; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-vt { font-size: var(--fs-xl); font-weight: var(--fw-bold); color: var(--ink-1); line-height: 1.2; overflow-wrap: anywhere; text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 45%, transparent); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-vp { color: var(--ink-2); margin-top: 3px; overflow-wrap: anywhere; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-inspect { flex: none; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-banner:not([hidden]) { margin: 0; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-host { color: var(--ink-3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .1em; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-host b { color: var(--s1); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-none { color: var(--ink-3); }
+
+/* the horizon: the tiles stand on a perspective-like grid that fades upwards */
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-floor {
+  position: relative; padding: var(--sp-4) var(--sp-3) var(--sp-3); border-radius: var(--r-md); border: 1px solid var(--line-strong);
+  background:
+    linear-gradient(to bottom, var(--surface-1) 0, color-mix(in srgb, var(--surface-1) 40%, transparent) 100%),
+    repeating-linear-gradient(to bottom, color-mix(in srgb, var(--accent) 22%, transparent) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(to right, color-mix(in srgb, var(--s1) 16%, transparent) 0 1px, transparent 1px 44px);
+}
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-tiles { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-6, 28px) var(--sp-3); grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-cell { position: relative; display: flex; min-width: 0; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-tile {
+  position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  text-align: left; font: inherit; color: var(--ink-2); cursor: pointer; background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--st) 70%, transparent); border-radius: var(--r-md);
+  box-shadow: 0 0 14px -5px color-mix(in srgb, var(--st) 65%, transparent), inset 0 0 14px -10px var(--st);
+}
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-tile:hover { border-color: var(--st); box-shadow: 0 0 20px -3px color-mix(in srgb, var(--st) 80%, transparent), inset 0 0 18px -8px var(--st); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-tile.alert { background: linear-gradient(180deg, var(--st-bg), color-mix(in srgb, var(--bg) 82%, transparent) 70%); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px var(--sp-2); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-kind { color: var(--ink-1); font-size: var(--fs-xs); font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .12em; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-st { display: inline-flex; align-items: center; gap: 4px; color: var(--st); font-size: var(--fs-xs); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .06em; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-st svg.i { width: 13px; height: 13px; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-val { color: var(--ink-1); white-space: nowrap; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-num { font-size: var(--fs-2xl, 28px); font-weight: var(--fw-bold); line-height: 1.1; color: var(--ink-1); text-shadow: 0 0 6px var(--st), 0 0 18px color-mix(in srgb, var(--st) 70%, transparent); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-unit { color: var(--ink-3); font-size: var(--fs-sm); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-name { color: var(--ink-3); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-meta { display: flex; flex-wrap: wrap; gap: 0 var(--sp-3); color: var(--ink-3); font-size: var(--fs-xs); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-meta [hidden] { display: none; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-meta b { color: var(--ink-1); font-weight: var(--fw-semi); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-meta .bad b { color: var(--warn); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-trace { display: block; width: 100%; height: 22px; overflow: visible; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-trace-l { fill: none; stroke: var(--st); stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; filter: drop-shadow(0 0 2px var(--st)); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-trace-x { stroke: var(--crit); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+/* the latency the segment adds: a tag on the tile's top edge */
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-delta {
+  position: absolute; bottom: -10px; right: 10px; padding: 0 8px; font-size: var(--fs-xs); font-weight: var(--fw-semi); white-space: nowrap;
+  color: var(--ink-1); background: var(--surface-1); border: 1px solid var(--s1); border-radius: var(--r-pill); box-shadow: 0 0 8px -2px var(--s1);
+}
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-delta.broken { border-color: var(--crit); color: var(--crit); box-shadow: 0 0 8px -2px var(--crit); }
+
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-extra-h { color: var(--ink-3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 4px; }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-extra-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-pe { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: var(--fs-sm); color: var(--ink-2); background: none; border: 1px solid color-mix(in srgb, var(--st) 60%, transparent); border-radius: var(--r-pill); padding: 2px 12px; cursor: pointer; box-shadow: 0 0 8px -4px var(--st); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-pe svg.i { color: var(--st); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-pe b { color: var(--ink-1); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-pe:hover { color: var(--ink-1); border-color: var(--st); }
+:root[data-look="synthwave"] [data-panel="diagnosis"] .sw-key { color: var(--ink-4); font-size: var(--fs-xs); }
+@media (max-width: 520px) { :root[data-look="synthwave"] [data-panel="diagnosis"] .sw-tiles { grid-template-columns: minmax(0, 1fr); } :root[data-look="synthwave"] [data-panel="diagnosis"] .sw-floor { padding-inline: var(--sp-2); } }

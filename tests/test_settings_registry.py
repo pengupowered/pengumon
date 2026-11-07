@@ -11,8 +11,9 @@ from pengumon.settings import env as settings_env
 from pengumon.settings import registry
 from pengumon.settings.registry import LISTS, NOT_ON_PAGE, SECRET_SLOTS, SECTION_IDS, SETTINGS, Setting
 
-# What the inventory (~/ops/pengumon-settings/inventory.md) marks Expose or Advanced, as registry keys. The judging
-# window (H8) stays internal and prober.interval_seconds is a bootstrap key (design section 1), so neither is here.
+# What the settings inventory marks Expose or Advanced, as registry keys, plus the judging
+# window (H8, a setting since 0.24: classifier.window_probes). prober.interval_seconds is a bootstrap key (design
+# section 1), so it is not here.
 INVENTORY_EXPOSED = {
     # config.yaml keys
     "server.log_level", "prober.timeout_seconds",
@@ -44,8 +45,12 @@ INVENTORY_EXPOSED = {
     "alerts.repeat_window_seconds", "alerts.min_severity", "alerts.delay_seconds", "alerts.quiet_hours.enabled",
     "alerts.quiet_hours.start", "alerts.quiet_hours.end", "alerts.quiet_hours.critical_still",
     "discovery.daily_check_time", "display.default_latency_range",
+    # themes (0.24)
+    "display.theme", "display.effects", "dashboard.colours",
+    # the judging window (0.24)
+    "classifier.window_probes",
 }
-INVENTORY_LISTS = {"devices", "services", "webhooks", "dns_probes"}
+INVENTORY_LISTS = {"devices", "services", "webhooks", "dns_probes", "themes"}
 INVENTORY_SECRETS = {"ntfy.url", "ntfy.token"}
 
 
@@ -108,7 +113,7 @@ def test_keys_are_unique_and_sections_known_and_ordered():
         orders = [s.order for s in SETTINGS if s.section == section]
         assert orders == list(range(1, len(orders) + 1)), section
     assert [s.id for s in registry.SECTIONS] == ["outage", "alerts", "line", "devices", "probing", "retention",
-                                                 "privacy", "discovery", "display", "advanced"]
+                                                 "access", "privacy", "discovery", "display", "advanced"]
 
 
 def test_asn_lookup_is_one_value_shown_in_privacy_and_discovery():
@@ -117,9 +122,9 @@ def test_asn_lookup_is_one_value_shown_in_privacy_and_discovery():
     assert "discovery.asn_lookup" in [s.key for s in registry.in_section("discovery")]
 
 
-def test_every_env_name_is_one_of_the_five_override_variables():
+def test_every_env_name_is_one_of_the_six_override_variables():
     five = {"PENGUMON_LOG_LEVEL", "PENGUMON_LOG_LEVELS", "PENGUMON_GRAFANA_URL", "PENGUMON_NOTIFY_URL",
-            "PENGUMON_NOTIFY_TOKEN"}
+            "PENGUMON_NOTIFY_TOKEN", "PENGUMON_VIEW_WITHOUT_TOKEN"}
     used = {s.env for s in SETTINGS if s.env} | {s.env for s in SECRET_SLOTS if s.env}
     assert used == five == set(settings_env.OVERRIDE_VARIABLES)
     assert {s.key: s.env for s in SETTINGS if s.env} == settings_env.SETTING_ENV

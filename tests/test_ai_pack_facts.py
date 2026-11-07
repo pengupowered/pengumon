@@ -194,3 +194,23 @@ async def test_the_minute_rows_come_in_chunks_without_a_gap_or_a_repeat(tmp_path
 
 async def _chunks(repo, end, chunk_minutes):
     return [ch async for ch in minute_row_chunks(repo, end - 7 * DAY, end, chunk_minutes)]
+
+
+def test_with_no_incident_the_events_of_a_timed_kind_say_when_in_the_day():
+    """A mesh node's falls to 0 clients in a week with no incident: "none of 6 during an incident" says nothing, when
+    in the day they fell ties them to the user's evenings. A kind not so marked keeps the incident wording."""
+    from pengumon.capabilities.contrib import EventKind
+    from pengumon.reports.ai_findings import LocalClock, event_summaries
+    from pengumon.reports.ai_pack import module_findings
+    kinds = {"mesh.node_empty": EventKind("mesh.node_empty", "{subject} at 0 clients", frozenset({"router"}), 120.0,
+                                          "mesh nodes falling to 0 clients", by_time_of_day=True),
+             "line.errors": EventKind("line.errors", "codewords +{value:,.0f}", frozenset(), 1.0, "smaller counts")}
+    midnight = 1_700_006_400.0          # a UTC midnight
+    events = [event("mesh.node_empty", midnight + h * 3600, subject="mesh_node:3") for h in (19, 20, 20.5, 21, 22, 3)]
+    events.append(event("line.errors", midnight + 3600, 2.0))
+    summaries = event_summaries(events, kinds, {c: "module" for c in kinds}, [], midnight - DAY, midnight + DAY,
+                                LocalClock(timezone.utc), 6)
+    assert module_findings(SimpleNamespace(event_summaries=summaries, incidents=[]), list(kinds)) == [
+        "Mesh nodes falling to 0 clients: 5 of 6 between 18:00 and 00:00, 1 between 00:00 and 06:00.",
+        "Smaller counts: not during an incident."]
+

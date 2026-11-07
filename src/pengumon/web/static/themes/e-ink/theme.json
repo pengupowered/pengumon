@@ -1,0 +1,60 @@
+{
+  "id": "e-ink",
+  "name": "E-ink",
+  "description": "Near-monochrome paper white and ink black with muted status hues; calm and print-friendly. Light.",
+  "modes": [
+    "light"
+  ],
+  "tokens": {
+    "light": {
+      "--bg": "#ecebe6",
+      "--surface-1": "#fbfaf6",
+      "--surface-2": "#f3f2ec",
+      "--surface-3": "#e6e4dc",
+      "--line": "#d2cfc4",
+      "--line-strong": "#8f8b7e",
+      "--scrim": "rgba(30, 30, 28, .4)",
+      "--ink-1": "#141414",
+      "--ink-2": "#2b2b29",
+      "--ink-3": "#45443f",
+      "--ink-4": "#66645c",
+      "--accent": "#222222",
+      "--accent-bg": "rgba(34, 34, 34, 0.12)",
+      "--on-accent": "#ffffff",
+      "--focus": "#000000",
+      "--good": "#25704a",
+      "--good-bg": "rgba(37, 112, 74, 0.12)",
+      "--warn": "#8a5a00",
+      "--warn-bg": "rgba(138, 90, 0, 0.12)",
+      "--warn-fill": "#c9a24a",
+      "--serious": "#99480f",
+      "--serious-bg": "rgba(153, 72, 15, 0.12)",
+      "--crit": "#a31f1f",
+      "--crit-bg": "rgba(163, 31, 31, 0.12)",
+      "--busy": "#554a8a",
+      "--busy-bg": "rgba(85, 74, 138, 0.12)",
+      "--unknown": "#5f5d56",
+      "--unknown-bg": "rgba(95, 93, 86, 0.12)",
+      "--nodata": "#dedbd1",
+      "--s1": "#222222",
+      "--s2": "#8a4b1c",
+      "--s3": "#3f6b8a",
+      "--s4": "#7a7a2a",
+      "--s5": "#7a3f6b",
+      "--s6": "#2f7a6b",
+      "--s7": "#a1a09a",
+      "--s8": "#a31f1f",
+      "--q0": "#eceae2",
+      "--q1": "#e3dcc4",
+      "--q2": "#cdbf92",
+      "--q3": "#a08a5a",
+      "--q4": "#6b3f2a"
+    }
+  },
+  "effect": null,
+  "tags": [
+    "palette",
+    "monochrome",
+    "print"
+  ]
+}

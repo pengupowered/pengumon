@@ -9,6 +9,7 @@ app imports.
 from fastapi import HTTPException, Request
 
 from pengumon import paths
+from pengumon.access.tls import tls_files, tls_requested
 from pengumon._vendor.homeguard.security import (
     AppProfile,
     CacheRule,
@@ -48,7 +49,8 @@ def rate_limit(name: str, calls: int, per_seconds: float):
 
 __all__ = ["CSP", "PROFILE", "PUBLIC_PATHS", "SESSION_COOKIE", "SESSIONS_PATH", "VIEWER_POLICY", "FileSessionStore",
            "LoginThrottle", "SecurityConfig", "SecurityMiddleware", "can_edit", "host_allowed", "origin_allowed",
-           "rate_limit", "reset_rate_limits", "session_status"]
+           "rate_limit", "reset_rate_limits", "session_cookie", "session_status", "tls_files",
+           "tls_requested"]
 
 # Kept in one place. No inline scripts or handlers anywhere (the dashboard delegates events), so script-src
 # stays strict; 'self' in connect-src covers the same-origin websocket in current browsers. The dashboard has
@@ -66,7 +68,8 @@ CSP = (
 # Open even when a token is configured: container health check, the login page and its icon (and /static/).
 PUBLIC_PATHS = ("/api/health", "/login", "/favicon.ico")
 
-# PENGUMON_VIEW_WITHOUT_TOKEN=1 (off by default; only with an access token): someone without the token may see the
+# Viewing without the password (Settings > Sign-in: access.allow_viewers, or PENGUMON_VIEW_WITHOUT_TOKEN=1; off by
+# default; only with a password, pengumon.access): someone without the token may see the
 # dashboard (the page, every GET of the API, /metrics and the live socket, which is receive-only for them) but change
 # nothing: every POST/PUT/DELETE/PATCH needs the token, and so do the reads below, which give away more than the
 # dashboard shows (the path and the settings as files to import elsewhere; anything under a device's credentials). Client names, IP and
@@ -86,10 +89,9 @@ PROFILE = AppProfile(
     csp=CSP,
     public_paths=PUBLIC_PATHS,
     referrer_policy="strict-origin-when-cross-origin",
-    no_token_warning=(
-        "No PENGUMON_ACCESS_TOKEN set: anyone who can reach this port can read your "
-        "network data and the modem/router credential settings. Set a token if the port is reachable beyond this PC."
-    ),
+    # Logged when the middleware is built, at the very start: before the password set on the Settings page is read
+    # (pengumon.access logs the rule in force once the start is done).
+    no_token_warning="PENGUMON_ACCESS_TOKEN is not set: the sign-in follows Settings > Sign-in (logged once the start is done)",
     cache_rules=(
         # content-addressed: the tree hash is part of the path, so the bytes behind it never change.
         # Errors are never cached: a 404 for an old hash must not outlive a rollback.
@@ -108,3 +110,11 @@ SESSIONS_PATH = paths.sessions_path()
 
 class SecurityConfig(_BaseConfig):
     PROFILE = PROFILE
+
+
+def session_cookie(cfg: _BaseConfig) -> str:
+    """A Set-Cookie value that signs a browser in with the current token, as homeguard's POST /login sets it (the same
+    attributes: HttpOnly, SameSite=Strict, the maximum age, Secure with cookie_secure). For the browser that has just
+    set the password (pengumon.access): it must not be locked out by its own choice."""
+    return (f"{cfg.PROFILE.cookie_name}={cfg.issue_session()}; Path=/; HttpOnly; SameSite=Strict; "
+            f"Max-Age={cfg.session_max_age_seconds}" + ("; Secure" if cfg.cookie_secure else ""))

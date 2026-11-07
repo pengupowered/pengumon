@@ -1,5 +1,5 @@
 """What `GET /api/settings/schema` sends: the registry as the page needs it, with each setting's type, range,
-choices and default read from its pydantic field, the four lists' item fields, the device drivers and their options,
+choices and default read from its pydantic field, the five lists' item fields, the device drivers and their options,
 and the secret slots. The same for every request of a build (only `round_seconds` comes from the config)."""
 
 from typing import Any, Dict, List, Type
@@ -48,6 +48,7 @@ def driver_spec(driver) -> Dict[str, Any]:
     return {"label": driver.label, "default_poll_seconds": driver.default_poll_seconds,
             "min_poll_seconds": getattr(driver, "min_poll_seconds", 0.0),
             "default_username": getattr(driver, "default_username", None) or "admin",
+            "needs_sign_in": getattr(driver, "needs_sign_in", True),
             "url_schemes": list(getattr(driver, "url_schemes", ("http", "https"))),
             "options": model_fields(driver.options_model)}
 

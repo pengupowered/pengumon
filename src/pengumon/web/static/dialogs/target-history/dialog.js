@@ -13,7 +13,7 @@
 // under the charts lists it.
 
 import { registerActions } from '../../js/dispatch.js';
-import { badge, escapeHtml, formatClock, formatMs, getTargetInfo, icon, keepKeyboard, median, openModal, zonedFormat, zoneParams } from '../../js/util.js';
+import { badge, escapeHtml, formatClock, formatMs, getTargetInfo, icon, keepKeyboard, localFormat, median, openModal, zonedFormat, zoneParams } from '../../js/util.js';
 import { token } from '../../js/chart-theme.js';
 import { bus } from '../../js/bus.js';
 import { pathNodes, quietTargets } from '../../js/path.js';
@@ -327,7 +327,7 @@ function paintMarks(marks) {
   lossChart.pgMarks = marks;
   const list = document.getElementById('targetHistEvents');
   list.hidden = !marks.length;
-  list.innerHTML = marks.map((m) => `<li>${icon('warn', 'sm')}<span>${escapeHtml(m.text)}</span> <span class="muted">${escapeHtml(new Date(m.x).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</span></li>`).join('');
+  list.innerHTML = marks.map((m) => `<li>${icon('warn', 'sm')}<span>${escapeHtml(m.text)}</span> <span class="muted">${escapeHtml(localFormat(m.x, { dateStyle: 'medium', timeStyle: 'short' }))}</span></li>`).join('');
 }
 
 async function showOne(mine, id, rows, c, { end, bucket, uptime, events = Promise.resolve([]) }) {

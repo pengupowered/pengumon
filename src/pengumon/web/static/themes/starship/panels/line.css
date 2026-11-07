@@ -1,0 +1,59 @@
+/* Starship console's Line card: the standard view (panels/line/view.js) restyled, straight on black: each gauge a sensor
+   row (its name on a flat lilac bar with a status chip at its end, the figure a big readout, the range a segmented track with the good zone lit and
+   the reading a bright needle), the new errors with their bars, the channels as segment blocks. */
+
+:root[data-look="starship"] [data-panel="line"] .line-docsis { display: flex; flex-direction: column; gap: var(--sp-2); }
+:root[data-look="starship"] [data-panel="line"] .line-docsis > [hidden] { display: none; }
+:root[data-look="starship"] [data-panel="line"] [data-f="body"].dim { opacity: .55; filter: saturate(.5); }
+:root[data-look="starship"] [data-panel="line"] .cap-note { padding: 2px var(--sp-3); border-left: 6px solid var(--ink-2); background: none; border-radius: 0; color: var(--ink-2); }
+/* a sensor row */
+:root[data-look="starship"] [data-panel="line"] .gauge {
+  column-gap: var(--sp-2); row-gap: 6px; padding: 0 0 var(--sp-2) 0; border: 0; background: none; border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="line"] .g-name {
+  align-self: stretch; padding: 5px 6px 5px 12px; background: var(--ink-2); color: var(--bg); border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="line"] .g-name [data-f="name"] {
+  flex: 1; min-width: 0; font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em;
+  font-size: var(--fs-sm); font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-look="starship"] [data-panel="line"] .g-name .info { background: var(--bg); color: var(--ink-2); flex: none; }
+/* the status chip: the icon (the status mark) and its word (.st-word) */
+:root[data-look="starship"] [data-panel="line"] .g-name [data-f="ic"] { order: 3; box-shadow: 0 0 0 2px var(--ink-2); }
+:root[data-look="starship"] [data-panel="line"] .g-name [data-f="ic"] svg.i,
+:root[data-look="starship"] [data-panel="line"] .gauge.fec .g-name [data-f="ic"] svg.i { color: var(--bg); }
+:root[data-look="starship"] [data-panel="line"] .g-val { align-self: center; color: var(--accent); font-size: var(--fs-xl); }
+:root[data-look="starship"] [data-panel="line"] .gauge.st-warn .g-val { color: var(--warn); }
+:root[data-look="starship"] [data-panel="line"] .gauge.st-crit .g-val { color: var(--crit); }
+:root[data-look="starship"] [data-panel="line"] .gauge.na .g-val { color: var(--ink-3); }
+/* the track: segmented, the zones lit, the spread a band, the reading a needle */
+:root[data-look="starship"] [data-panel="line"] .g-bar,
+:root[data-look="starship"] [data-panel="line"] .g-scale,
+:root[data-look="starship"] [data-panel="line"] .g-bar-free,
+:root[data-look="starship"] [data-panel="line"] .fec-note,
+:root[data-look="starship"] [data-panel="line"] .fec-detail { margin-left: var(--sp-3); }
+:root[data-look="starship"] [data-panel="line"] .g-bar { height: 14px; border-radius: 2px; }
+:root[data-look="starship"] [data-panel="line"] .g-bar::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(90deg, transparent 0 8px, var(--bg) 8px 10px);
+}
+:root[data-look="starship"] [data-panel="line"] .g-zone { border-radius: 0; }
+:root[data-look="starship"] [data-panel="line"] .g-zone.ok { background: color-mix(in srgb, var(--good) 55%, var(--surface-3)); }
+:root[data-look="starship"] [data-panel="line"] .g-zone.mid { background: color-mix(in srgb, var(--warn) 40%, var(--surface-3)); }
+:root[data-look="starship"] [data-panel="line"] .g-spread { top: 3px; height: 8px; background: var(--ink-1); opacity: .7; z-index: 1; }
+:root[data-look="starship"] [data-panel="line"] .g-mark { top: -4px; height: 22px; width: 5px; z-index: 2; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+/* the errors */
+:root[data-look="starship"] [data-panel="line"] .gauge.fec .g-val { color: var(--ink-1); font-size: var(--fs-lg); }
+:root[data-look="starship"] [data-panel="line"] .gauge.fec.serious .g-val { color: var(--crit); font-size: var(--fs-xl); }
+/* the channels */
+:root[data-look="starship"] [data-panel="line"] .chan-sum { padding-top: var(--sp-2); border-top: 0; }
+:root[data-look="starship"] [data-panel="line"] .chan-txt b { color: var(--accent); }
+:root[data-look="starship"] [data-panel="line"] .chan-strip { height: 14px; gap: 2px; }
+:root[data-look="starship"] [data-panel="line"] .chan-strip > * { opacity: 1; border-radius: 1px; }
+:root[data-look="starship"] [data-panel="line"] .chan-strip > .w { background: var(--warn); }
+
+/* a narrow card: the cap across the row, the figure under it */
+@container (max-width: 460px) {
+  :root[data-look="starship"] [data-panel="line"] .gauge { grid-template-columns: minmax(0, 1fr); }
+  :root[data-look="starship"] [data-panel="line"] .g-name [data-f="name"] { white-space: normal; overflow-wrap: anywhere; }
+  :root[data-look="starship"] [data-panel="line"] .g-val { justify-self: start; margin-left: var(--sp-3); }
+}

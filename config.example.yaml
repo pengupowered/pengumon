@@ -95,6 +95,9 @@ classifier:
   dns_timeout_threshold_ms: 300.0
   consecutive_failures_for_incident: 3
   consecutive_failures_for_latency_incident: 10
+  # Each target's last N probes (3-60) that loss, latency and jitter are judged over. Latency and jitter are medians:
+  # high only when more than half of those probes are, so one stalled probe is no spike.
+  window_probes: 10
   # Latency (and loss seen only at ISP hops) while the WAN runs at or above this share of the line
   # capacity is expected queueing delay (bufferbloat): status "busy", no incident.
   busy_load_pct: 60

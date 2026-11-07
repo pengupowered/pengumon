@@ -91,6 +91,16 @@
 .set-hdr-add { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); flex-wrap: wrap; }
 .set-hdr-add .input { flex: 1 1 200px; width: auto; }
 
+/* ---- the sign-in password (access.js) ---- */
+.set-access-box { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.set-access-box .set-sub { display: block; margin-top: 0; }
+.set-access-box .fine { margin-top: var(--sp-2); }
+.set-access-b { display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap; margin-top: var(--sp-2); }
+.set-access-shown { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.set-access-shown code { flex: 1 1 200px; min-width: 0; padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-3); color: var(--ink-1); overflow-wrap: anywhere; user-select: all; }
+.set-access-confirm { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: center; justify-content: space-between; background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 45%, transparent); font-size: var(--fs-sm); }
+.set-access-confirm .set-access-b { margin-top: 0; }
+
 /* ---- list editors: cards ---- */
 .set-list { margin: var(--sp-4) 0; }
 .set-list-h { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-2); }

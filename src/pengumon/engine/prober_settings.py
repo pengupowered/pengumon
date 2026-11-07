@@ -13,12 +13,15 @@ from pengumon.models.hosts import ID_PATTERN, validate_color, validate_host
 
 _MS = dict(ge=0, le=10000)  # a hop colour level, ms
 DNS_RECORD_TYPES = ("A", "AAAA", "CNAME", "MX", "NS", "TXT")
+HISTORY_PROBES = 60  # the probes the prober keeps per target (TargetStats.recent_latencies): about the last minute
+DEFAULT_WINDOW_PROBES = 10  # the default of classifier.window_probes: the last probes loss and latency are judged over
 
 
 class HopStatusConfig(BaseModel):
     """Per-target status colours (up / degraded / down) on the dashboard. Stricter than the classifier's spike
-    thresholds on purpose: one hop turns amber before the line as a whole counts as degraded."""
-    down_loss_fraction: float = Field(default=0.4, ge=0, le=1)       # share of the last 10 probes lost, strictly above: down
+    thresholds on purpose: one hop turns amber before the line as a whole counts as degraded. Loss is judged over
+    the classifier's window (classifier.window_probes), latency and jitter over the prober's whole history."""
+    down_loss_fraction: float = Field(default=0.4, ge=0, le=1)       # share of the window lost, strictly above: down
     degraded_loss_fraction: float = Field(default=0.1, ge=0, le=1)   # strictly above: degraded
     local_latency_ms: float = Field(default=20.0, **_MS)
     local_jitter_ms: float = Field(default=10.0, **_MS)
@@ -73,7 +76,7 @@ class DnsProbeConfig(BaseModel):
     @classmethod
     def _valid_id(cls, v: str) -> str:
         v = v.strip()
-        if not ID_PATTERN.match(v):
+        if not ID_PATTERN.fullmatch(v):
             raise ValueError("id must be 1-64 letters, digits, hyphens or underscores")
         return v
 

@@ -39,7 +39,9 @@ scripts/test-ui.sh                 # browser tests in headless Chromium and Fire
 ```
 
 [docs/testing.md](docs/testing.md) explains the test suites, and [docs/architecture.md](docs/architecture.md) where things
-live. A new device driver is described in [docs/devices.md](docs/devices.md) ("Adding a driver").
+live. To support a new modem or router, follow [docs/adding-a-device.md](docs/adding-a-device.md), and open a
+"Support for a new device" [issue](https://github.com/pengupowered/pengumon/issues/new/choose) first. Recordings from your
+device must be redacted before they go into a test or an issue; the guide says how.
 
 ### What a good pull request looks like
 

@@ -54,6 +54,8 @@ class EventKind:
     reach_seconds: float         # how far from an incident it still counts (about one reading interval)
     label: str = ""              # what the events are, in a few plain words, plural ("codeword bursts"): the pack's
     #                              "What coincided" names them by it (empty: the code's words)
+    by_time_of_day: bool = False  # in a window with no incident, the pack relates these events to the time of day
+    #                              ("6 of 6 between 18:00 and 00:00") instead of saying none was during an incident
 
     def render(self, event: "ModuleEvent") -> str:
         return self.phrase.format(subject=event.subject, value=event.value)
@@ -74,6 +76,9 @@ class ModuleSection:
     findings: List[str]          # bullets, role keys and numbers only
     table: Optional[Tuple[List[str], List[List[str]]]]   # header, rows; the core renders it and cuts rows to the budget
     day_columns: Dict[str, Dict[str, str]]                # column -> day (YYYY-MM-DD) -> cell, at most 2 columns
+    shorter: Mapping[int, Tuple[str, ...]] = field(default_factory=dict)   # index into findings -> shorter versions
+    #                                         of that bullet, longest first: over its budget, the core uses them in
+    #                                         turn before it leaves anything out (a timed list down to its top 2)
 
 
 @dataclass(frozen=True)

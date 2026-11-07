@@ -4,7 +4,7 @@ A `Setting` names a dotted key of the settings document, which is its config.yam
 Type, range, choices and default are *not* repeated here: they are read from the pydantic field the key names
 (`Setting.field()`, `.default()`, `.constraints()`), so a range exists in one place, the section model.
 
-Also here: the sections (`SECTIONS`), the four lists (`LISTS`), the secret slots (`SECRET_SLOTS`) and the fields of
+Also here: the sections (`SECTIONS`), the five lists (`LISTS`), the secret slots (`SECRET_SLOTS`) and the fields of
 the stored sections that are deliberately not on the page (`NOT_ON_PAGE`). tests/test_settings_registry.py fails
 when a section model gains a field that is in none of them.
 """
@@ -25,6 +25,8 @@ from pengumon.engine.prober_settings import DnsProbeConfig
 from pengumon.notify.settings import WebhookItem
 from pengumon.services.settings import ServiceCheckConfig
 from pengumon.settings import env as settings_env
+from pengumon.web import themes as theme_rules
+from pengumon.web.settings import ThemeItem
 
 @dataclass(frozen=True)
 class Section:
@@ -40,6 +42,7 @@ SECTIONS: Tuple[Section, ...] = tuple(Section(id, title, n) for n, (id, title) i
     ("devices", "Devices and services"),
     ("probing", "Probing"),
     ("retention", "Retention"),
+    ("access", "Sign-in"),
     ("privacy", "Privacy"),
     ("discovery", "Discovery"),
     ("display", "Display"),
@@ -76,7 +79,7 @@ def unwrap_optional(annotation) -> Tuple[Any, bool]:
 
 def field_constraints(info: FieldInfo) -> Dict[str, Any]:
     """What the page needs to know of a field: {type, nullable, min, max, exclusive_min, exclusive_max, max_length,
-    step, choices}. type is number | integer | boolean | text | choice | time | timezone | layout | list | object |
+    step, choices}. type is number | integer | boolean | text | choice | time | timezone | layout | theme | list | object |
     map (the last three only for list-item fields). Read from the annotation and its pydantic metadata."""
     annotation, nullable = unwrap_optional(info.annotation)
     extra = info.json_schema_extra if isinstance(info.json_schema_extra, dict) else {}
@@ -159,7 +162,7 @@ class Setting:
 
 @dataclass(frozen=True)
 class ListSpec:
-    """One of the four lists. `path` is its place in AppConfig / config.yaml; `item_model` validates one item;
+    """One of the five lists. `path` is its place in AppConfig / config.yaml; `item_model` validates one item;
     `default` gives the items of a list nobody set."""
     name: str
     path: str
@@ -190,6 +193,11 @@ def _s(key: str, label: str, effect: str, group: Optional[str] = None, **kw) -> 
     return Setting(key=key, section="", group=group, label=label, effect=effect, **kw)
 
 
+def _theme_names() -> Dict[str, str]:
+    """The built-in themes' names by id (the custom ones are named on the page, from the list)."""
+    return {t.id: t.name for t in theme_rules.builtin_themes()}
+
+
 _ROUNDS = dict(unit="s", rounds=True)
 _MINUTES = dict(unit="min", scale=1 / 60)
 _PCT_OF_FRACTION = dict(unit="%", scale=100.0)
@@ -197,8 +205,12 @@ _PER_MILLION = dict(unit="per million", scale=1e6)  # a tiny ratio (0.000001) sh
 
 SETTINGS: Tuple[Setting, ...] = tuple(
     _entries("outage", [
+        _s("classifier.window_probes", "Judge each hop by its last",
+           "Loss, latency and jitter are measured over each hop's probes from this time, one a round. Latency and "
+           "jitter take the middle value, so they count as high only when more than half the probes are: one stalled "
+           "probe is no spike. Hop colours judge loss over it too.", **_ROUNDS),
         _s("classifier.degraded_loss_pct", "Loss counts as degraded from",
-           "Share of a stage's last 10 probes lost from which that stage is degraded (a warning).", "Loss", unit="%"),
+           "Share of a stage's judged probes lost from which that stage is degraded (a warning).", "Loss", unit="%"),
         _s("classifier.down_loss_pct", "Loss counts as down from",
            "Share lost from which the stage is down: a critical outage.", "Loss", unit="%"),
         _s("classifier.consecutive_failures_for_incident", "Loss outage starts after",
@@ -210,16 +222,16 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "How long the line must stay healthy before an incident ends. Applies to loss and latency incidents.",
            "When incidents start and end", **_ROUNDS),
         _s("classifier.local_latency_spike_threshold_ms", "Router",
-           "Average latency to the router hops above this is a local latency fault.", "Latency spike levels",
+           "Median latency to the router hops above this is a local latency fault.", "Latency spike levels",
            unit="ms"),
         _s("classifier.gateway_latency_spike_threshold_ms", "Modem / gateway",
-           "Average latency to the modem or gateway above this is a fault there.", "Latency spike levels",
+           "Median latency to the modem or gateway above this is a fault there.", "Latency spike levels",
            unit="ms"),
         _s("classifier.isp_latency_spike_threshold_ms", "ISP hops",
-           "Average latency to the ISP's hops above this is an ISP fault.", "Latency spike levels", unit="ms",
+           "Median latency to the ISP's hops above this is an ISP fault.", "Latency spike levels", unit="ms",
            empty="same as internet"),
         _s("classifier.public_latency_spike_threshold_ms", "Internet",
-           "Average latency to the internet targets above this is a fault upstream.", "Latency spike levels",
+           "Median latency to the internet targets above this is a fault upstream.", "Latency spike levels",
            unit="ms"),
         _s("classifier.local_jitter_spike_threshold_ms", "Router",
            "Jitter to the router hops above this is a local fault.", "Jitter spike levels", unit="ms"),
@@ -228,7 +240,7 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("classifier.public_jitter_spike_threshold_ms", "Internet",
            "Jitter to the internet targets above this is a fault upstream.", "Jitter spike levels", unit="ms"),
         _s("classifier.dns_timeout_threshold_ms", "Slow DNS above",
-           "Average DNS lookup time above which DNS counts as slow.", "DNS", unit="ms"),
+           "Median DNS lookup time above which DNS counts as slow.", "DNS", unit="ms"),
     ])
     + _entries("alerts", [
         _s("notifications.public_url", "Dashboard address in alerts",
@@ -281,9 +293,15 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Long-range charts, uptime strips, the report and the dossier. Older ones are deleted at the next hourly "
            "cleanup.", unit="days"),
     ])
+    + _entries("access", [
+        # the section's password controls are the page's own (dialogs/settings/access.js): they apply at once
+        _s("access.allow_viewers", "Others may look, but not change anything",
+           "While a password is set: people without it see the dashboard, read only. Off: they get the sign-in page. "
+           "No effect without a password.", "Without the password", env="PENGUMON_VIEW_WITHOUT_TOKEN"),
+    ])
     + _entries("privacy", [
         _s("privacy.client_details", "Show connected clients' names and addresses",
-           "Signed-in viewers only: to people signed in with the access token (to no one while no token is set). "
+           "Signed-in viewers only: to people signed in with the password (to no one while no password is set). "
            "Always: to everyone who can open the page. Never: a client shows as its maker and the last 4 characters "
            "of its hardware address.",
            choice_labels={"token": "Signed-in viewers only", "full": "Always", "masked": "Never"}),
@@ -301,21 +319,29 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("general.timezone", "Time zone",
            "Quiet hours and the daily route check follow this clock. The reports count their days and hours in it "
            "too, unless it is UTC: then each browser uses its own zone."),
+        _s("display.theme", "Theme",
+           "The colours and look every browser starts with. A browser's own choice in the header's theme menu wins.",
+           choice_labels=_theme_names()),
+        _s("display.effects", "Animated effects",
+           "Themes that have one show a slow animation, such as falling characters. It stops while the tab is hidden and "
+           "when the system asks for reduced motion; a browser can turn it off in the header's theme menu."),
         _s("display.default_latency_range", "Latency chart opens on",
            "The range the latency chart shows first. A browser's own choice still wins.",
            choice_labels={"live": "Live", "15m": "15 minutes", "1h": "1 hour", "24h": "24 hours"}),
-        # the page shows these two as one row, "Layout for new browsers" (dialogs/settings/fields.js layoutRowHtml)
+        # the page shows these three as one row, "Layout for new browsers" (dialogs/settings/fields.js layoutRowHtml)
         _s("dashboard.order", "Panel order for new browsers",
            "The panel order a browser starts with; a browser's own Layout choice wins."),
         _s("dashboard.hidden", "Hidden panels for new browsers",
            "The panels a browser starts without; a browser's own Layout choice wins."),
+        _s("dashboard.colours", "Card colours for new browsers",
+           "The colours each card starts with; a browser's own Layout choice wins."),
         _s("display.grafana_url", "Grafana address",
            "Adds Dashboard, Logs and Traces links to the page header, at once.", env="PENGUMON_GRAFANA_URL",
            empty="no links"),
     ])
     + _entries("advanced", [
         _s("prober.hop_status.down_loss_fraction", "Hop shows down above",
-           "Share of a hop's last 10 probes lost above which its dot turns red.", "Hop colours",
+           "Share of a hop's judged probes lost above which its dot turns red.", "Hop colours",
            related="classifier.down_loss_pct", **_PCT_OF_FRACTION),
         _s("prober.hop_status.degraded_loss_fraction", "Hop shows degraded above",
            "Share lost above which a hop's dot turns amber.", "Hop colours",
@@ -406,6 +432,7 @@ LISTS: Dict[str, ListSpec] = {spec.name: spec for spec in (
     ListSpec("services", "service_checks.services", "devices", "Host app checks", ServiceCheckConfig, list),
     ListSpec("webhooks", "notifications.webhooks", "alerts", "Webhooks", WebhookItem, list),
     ListSpec("dns_probes", "dns_probes", "probing", "DNS lookups", DnsProbeConfig, default_dns_probes),
+    ListSpec("themes", "display.themes", "display", "Custom themes", ThemeItem, list),
 )}
 
 SECRET_SLOTS: Tuple[SecretSlot, ...] = (

@@ -6,7 +6,8 @@ export const variants = ["full"];
 export const runsLast = true;
 
 export const steps = [
-  ["add-target form posts, closes and the new target gets a row", async ({ click, eq, page, until, waitCount }) => {
+  ["add-target form posts, closes and the new target gets a row", async ({ click, eq, page, showCard, until, waitCount }) => {
+    await showCard("matrix"); // not drawn while it is off screen
     await click("[data-action=openModal][data-arg=addTargetModal]");
     await page.type("#targetId", "smoke_extra");
     await page.type("#targetName", "Smoke extra");

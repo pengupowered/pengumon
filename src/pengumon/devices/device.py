@@ -114,8 +114,13 @@ class Device:
         return self.monitor.latest_snapshot
 
     @property
+    def needs_sign_in(self) -> bool:
+        """Whether the device has a password at all (UPnP has none: the settings page asks for none)."""
+        return getattr(self.driver, "needs_sign_in", True)
+
+    @property
     def has_credentials(self) -> bool:
-        return self.credentials_source is not None
+        return self.credentials_source is not None or not self.needs_sign_in
 
     def set_credentials(self, username: str, password: str, *, source: Optional[str] = None) -> None:
         self.driver.set_credentials(username, password)

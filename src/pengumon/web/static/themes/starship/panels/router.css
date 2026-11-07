@@ -1,0 +1,54 @@
+/* Starship console's Router card: the standard view (panels/router/view.js) restyled, straight on black: one console
+   station per part the device offers under an orange band, its name an orange label; the meters as segmented gauges (--v, the fill's share), the system's as upright
+   tanks; the clients as a big count over a segmented band bar; the mesh nodes as lines after a flat block, a status
+   chip and a client gauge. */
+
+:root[data-look="starship"] [data-panel="router"] .rgrid { gap: var(--sp-3); }
+:root[data-look="starship"] [data-panel="router"] .rblock {
+  gap: var(--sp-2); padding: var(--sp-2) 0 0; background: none; border: 0; border-top: 4px solid var(--accent); border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="router"] .rblock[hidden] { display: none; }
+:root[data-look="starship"] [data-panel="router"] .rblock > .rb-t > svg.i { display: none; }
+:root[data-look="starship"] [data-panel="router"] .rblock > .rb-t .muted { color: var(--ink-3); background: none; }
+:root[data-look="starship"] [data-panel="router"] [data-f="body"].dim { opacity: .55; filter: saturate(.5); }
+/* a meter: its label, the figure, a segmented gauge */
+:root[data-look="starship"] [data-panel="router"] .meter .lbl {
+  color: var(--ink-1); font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold); font-size: var(--fs-xs);
+}
+:root[data-look="starship"] [data-panel="router"] .meter .val [data-f="v"] { color: var(--mc); font-size: var(--fs-lg); font-weight: var(--fw-bold); }
+:root[data-look="starship"] [data-panel="router"] .meter .track { height: 12px; border-radius: 2px; background: var(--surface-3); }
+:root[data-look="starship"] [data-panel="router"] .meter .fill { border-radius: 0; }
+:root[data-look="starship"] [data-panel="router"] .meter .track::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(90deg, transparent 0 7px, var(--bg) 7px 9px);
+}
+/* the system: upright tanks */
+:root[data-look="starship"] [data-panel="router"] .rblock.sys { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+:root[data-look="starship"] [data-panel="router"] .rblock.sys > .rb-t { grid-column: 1 / -1; }
+:root[data-look="starship"] [data-panel="router"] .sys .meter { grid-template-columns: 34px auto; grid-template-areas: "lbl lbl" "track val"; align-items: end; justify-content: start; column-gap: var(--sp-2); }
+:root[data-look="starship"] [data-panel="router"] .sys .meter .lbl { grid-area: lbl; }
+:root[data-look="starship"] [data-panel="router"] .sys .meter .val { grid-area: val; }
+:root[data-look="starship"] [data-panel="router"] .sys .meter .val [data-f="v"] { font-size: var(--fs-2xl); }
+:root[data-look="starship"] [data-panel="router"] .sys .meter .track { grid-area: track; height: 84px; }
+:root[data-look="starship"] [data-panel="router"] .sys .meter .fill { inset: auto 0 0 0; width: auto; height: var(--v, 0); transition: height var(--t-med) var(--ease); }
+:root[data-look="starship"] [data-panel="router"] .sys .meter .track::after { background: repeating-linear-gradient(0deg, transparent 0 7px, var(--bg) 7px 9px); }
+/* the WAN's last hour */
+:root[data-look="starship"] [data-panel="router"] .wan-chart text { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; }
+/* the clients */
+:root[data-look="starship"] [data-panel="router"] .big-count b { color: var(--accent); font-size: calc(var(--fs-2xl) * 1.3); }
+:root[data-look="starship"] [data-panel="router"] .big-count span {
+  color: var(--ink-1); font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold);
+}
+:root[data-look="starship"] [data-panel="router"] .stackbar { height: 14px; border-radius: var(--r-pill); }
+:root[data-look="starship"] [data-panel="router"] .stackbar i { background: repeating-linear-gradient(90deg, var(--c) 0 7px, transparent 7px 9px); }
+:root[data-look="starship"] [data-panel="router"] .clients .legend .key { width: 16px; height: 10px; border-radius: 2px; }
+/* the mesh nodes: lines after a flat block */
+:root[data-look="starship"] [data-panel="router"] .nodes { gap: 4px; }
+:root[data-look="starship"] [data-panel="router"] .nodes li { grid-template-columns: 38px minmax(0, 1fr) auto 104px; padding: 0; border: 0; background: none; border-radius: 0; }
+:root[data-look="starship"] [data-panel="router"] .n-ic { align-self: stretch; width: auto; height: auto; min-height: 42px; border-radius: 0; background: var(--ink-3); color: var(--bg); }
+:root[data-look="starship"] [data-panel="router"] .nodes li.st-warn .n-ic { background: var(--warn); color: var(--bg); }
+:root[data-look="starship"] [data-panel="router"] .n-id b { color: var(--ink-1); }
+:root[data-look="starship"] [data-panel="router"] button.n-c { width: 104px; flex-direction: row; align-items: center; gap: 6px; padding: 3px 0 3px 10px; background: none; border-radius: 0; }
+:root[data-look="starship"] [data-panel="router"] button.n-c b { color: var(--accent); }
+:root[data-look="starship"] [data-panel="router"] .n-c i { height: 10px; border-radius: 0; align-self: center; background: repeating-linear-gradient(90deg, var(--accent) 0 5px, transparent 5px 7px); }
+:root[data-look="starship"] [data-panel="router"] .cap-note { color: var(--ink-2); }
+:root[data-look="starship"] [data-panel="router"] .n-st:empty { display: none; }

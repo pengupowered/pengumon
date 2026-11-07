@@ -87,7 +87,7 @@ def test_the_override_is_colour_only_the_classifier_still_judges_the_role_averag
     prober.register_target(_hop("public", warn=500.0))
     _feed(prober, "far", [120.0] * 10)
     assert prober.stats["far"].status == "up"
-    assert round_metrics(prober.stats, []).public.avg_latency_ms == 120.0
+    assert round_metrics(prober.stats, []).public.latency_ms == 120.0
 
 
 # --- the DNS lookups list -----------------------------------------------------------------------------------------
@@ -247,7 +247,7 @@ async def test_the_line_and_router_levels_apply_in_place():
 async def test_the_appliers_subscribe_to_what_they_apply():
     config = AppConfig()
     hub, _ = _wired(config)
-    assert hub.names == ["probing.timeouts", "probing.dns_probes"]
+    assert hub.names == ["probing.timeouts", "probing.window", "probing.dns_probes"]
     assert hub.subscribers(Change.of(keys=["prober.hop_status.local_latency_ms"])) == []  # live through the config
     assert hub.subscribers(Change.of(keys=["line_signal.ds_snr_critical_db"])) == []  # the monitors read the config
 

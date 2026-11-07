@@ -1,0 +1,6 @@
+/* Mission control's Latency: the standard view (panels/latency/view.js) restyled: a taller chart (its lines are
+   thicker by the chart style in theme.json), the legend's names brighter, the note quiet. */
+:root[data-look="mission-control"] [data-panel="latency"] .chart-box.lat-main { min-height: 300px; }
+:root[data-look="mission-control"] [data-panel="latency"] .lat-legend .lg { font-size: var(--fs-sm); }
+:root[data-look="mission-control"] [data-panel="latency"] .lat-legend .key.line { width: 18px; height: 4px; }
+:root[data-look="mission-control"] [data-panel="latency"] .lat-note { color: var(--ink-3); }

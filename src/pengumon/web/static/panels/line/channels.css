@@ -5,6 +5,6 @@
 @container (max-width: 640px) { .ch-sum { grid-template-columns: 1fr; gap: 0; } .ch-sum .gauge { border-bottom: 1px solid var(--line); } }
 .ch-hist-canvas { display: block; width: 100%; }
 .dlist tr.has-errors td { background: color-mix(in srgb, var(--warn) 6%, transparent); }
-.heat-foot { display: flex; justify-content: flex-end; margin-top: var(--sp-3); }
-.scale-legend i { margin-left: var(--sp-3); }
-.scale-legend i:first-child { margin-left: 0; }
+#channelsModal .heat-foot { display: flex; justify-content: flex-end; margin-top: var(--sp-3); }
+#channelsModal .scale-legend i { margin-left: var(--sp-3); }
+#channelsModal .scale-legend i:first-child { margin-left: 0; }

@@ -16,36 +16,31 @@ ends (public: this device is the edge; private or CGNAT: another NAT follows) an
 """
 
 import asyncio
-import re
 import socket
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Collection, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlsplit
-from xml.etree import ElementTree
-from xml.parsers import expat
 
 import httpx
 
-from pengumon.drivers.common import clean_text
+from pengumon.drivers.http import read_capped
+from pengumon.drivers.upnp_wire import (
+    COMMON_CONFIG, DATAGRAM_MAX, IGD_TYPES, IP_CONNECTION, PPP_CONNECTION, SSDP_GROUP, XML_MAX, msearch,
+    parse_description, parse_soap_answer, soap_body, ssdp_location,
+)
 from pengumon.engine.discovery.addresses import CGNAT, LINK_LOCAL, PRIVATE, address_class, parse
-from pengumon.engine.discovery.devices import read_capped
+from pengumon.observability import get_logger
 
-SSDP_GROUP = ("239.255.255.250", 1900)
-IGD_TYPES = ("urn:schemas-upnp-org:device:InternetGatewayDevice:1",
-             "urn:schemas-upnp-org:device:InternetGatewayDevice:2")
+_log = get_logger("pengumon.discovery")
+
 SEARCH_WAIT_S = 2.0
-DATAGRAM_MAX = 2048
 MAX_ANSWERS = 16
-XML_MAX = 64 * 1024
-
 # service type prefix -> the read-only actions asked of it
 SERVICE_ACTIONS = {
-    "urn:schemas-upnp-org:service:WANIPConnection:": ("GetExternalIPAddress", "GetStatusInfo"),
-    "urn:schemas-upnp-org:service:WANPPPConnection:": ("GetExternalIPAddress", "GetStatusInfo"),
-    "urn:schemas-upnp-org:service:WANCommonInterfaceConfig:": ("GetCommonLinkProperties",),
+    IP_CONNECTION: ("GetExternalIPAddress", "GetStatusInfo"),
+    PPP_CONNECTION: ("GetExternalIPAddress", "GetStatusInfo"),
+    COMMON_CONFIG: ("GetCommonLinkProperties",),
 }
-_ANSWER_FIELDS = ("NewExternalIPAddress", "NewConnectionStatus", "NewUptime", "NewWANAccessType",
-                  "NewLayer1UpstreamMaxBitRate", "NewLayer1DownstreamMaxBitRate", "NewPhysicalLinkStatus")
 
 Search = Callable[[], Awaitable[List[Tuple[str, bytes]]]]  # -> (source address, datagram) of each answer
 
@@ -88,28 +83,12 @@ class IgdInfo:
 
 # --- SSDP -------------------------------------------------------------------------------------------------------
 
-def msearch(st: str, mx: int = 2) -> bytes:
-    return ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\n"
-            f"MX: {mx}\r\nST: {st}\r\n\r\n").encode("ascii")
-
-
 def parse_ssdp_answer(source: str, datagram: bytes) -> Optional[str]:
     """The description URL of an IGD's search answer, or None when the answer is not one, or its LOCATION is not
     plain http on the private address it came from."""
-    if not isinstance(datagram, (bytes, bytearray)) or len(datagram) > DATAGRAM_MAX:
+    location = ssdp_location(datagram)
+    if location is None:
         return None
-    text = bytes(datagram).decode("latin-1")
-    lines = text.split("\r\n") if "\r\n" in text else text.split("\n")
-    if not re.match(r"^HTTP/1\.[01] 200\b", lines[0] if lines else ""):
-        return None
-    headers: Dict[str, str] = {}
-    for line in lines[1:]:
-        name, sep, value = line.partition(":")
-        if sep:
-            headers[name.strip().lower()] = value.strip()
-    if headers.get("st") not in IGD_TYPES:
-        return None
-    location = headers.get("location", "")
     parts = urlsplit(location)
     if parts.scheme != "http" or address_class(source) not in (PRIVATE, LINK_LOCAL):
         return None
@@ -170,114 +149,16 @@ async def ssdp_search(wait: float = SEARCH_WAIT_S) -> List[Tuple[str, bytes]]:
     return collector.answers
 
 
-# --- XML ----------------------------------------------------------------------------------------------------------
-
-class _Refused(Exception):
-    """The document declares a DTD or an entity."""
-
-
-def _refuse(*_args) -> None:
-    raise _Refused
-
-
-def safe_xml(body: bytes) -> Optional[ElementTree.Element]:
-    """The parsed document, or None for one that is too big, declares a DOCTYPE or an entity or is not well-formed.
-    A first pass with an expat parser whose DOCTYPE and entity handlers raise decides on what the parser itself reads,
-    whatever the encoding (a byte search for "<!DOCTYPE" misses UTF-16); only a document without a DTD is then built."""
-    if not isinstance(body, (bytes, bytearray)) or len(body) > XML_MAX:
-        return None
-    data = bytes(body)
-    guard = expat.ParserCreate()
-    guard.StartDoctypeDeclHandler = _refuse
-    guard.EntityDeclHandler = _refuse
-    guard.UnparsedEntityDeclHandler = _refuse
-    guard.ExternalEntityRefHandler = _refuse
-    guard.SkippedEntityHandler = _refuse
-    try:
-        guard.Parse(data, True)
-        return ElementTree.fromstring(data)
-    except (_Refused, expat.ExpatError, ElementTree.ParseError, ValueError):
-        return None
-
+# --- XML: see drivers/upnp_wire.py ----------------------------------------
 
 def _key(address: str) -> str:
     ip = parse(address)
     return str(ip) if ip is not None else (address or "").strip().lower()
 
 
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
-
-
-def _child_text(element: ElementTree.Element, name: str) -> Optional[str]:
-    for child in element:
-        if _local(child.tag) == name:
-            return clean_text(child.text or "", limit=100)
-    return None
-
-
-@dataclass
-class Description:
-    device_type: Optional[str]
-    friendly_name: Optional[str]
-    manufacturer: Optional[str]
-    model: Optional[str]
-    services: List[Tuple[str, str]]  # (service type, control URL as written)
-    url_base: Optional[str] = None
-
-
-def parse_description(body: bytes) -> Optional[Description]:
-    """The root device and every WAN service listed anywhere in its device tree, or None when the document is not
-    an IGD description (or is unsafe, see safe_xml)."""
-    root = safe_xml(body)
-    if root is None or _local(root.tag) != "root":
-        return None
-    device = next((c for c in root if _local(c.tag) == "device"), None)
-    if device is None:
-        return None
-    device_type = _child_text(device, "deviceType")
-    if device_type not in IGD_TYPES:
-        return None
-    services = []
-    for element in device.iter():
-        if _local(element.tag) != "service":
-            continue
-        st, control = _child_text(element, "serviceType"), _child_text(element, "controlURL")
-        if st and control and any(st.startswith(prefix) for prefix in SERVICE_ACTIONS):
-            services.append((st, control))
-    model = " ".join(p for p in (_child_text(device, "modelName"), _child_text(device, "modelNumber")) if p)
-    return Description(device_type=device_type, friendly_name=_child_text(device, "friendlyName"),
-                       manufacturer=_child_text(device, "manufacturer"), model=clean_text(model) if model else None,
-                       services=services[:8], url_base=_child_text(root, "URLBase"))
-
-
-def soap_body(service_type: str, action: str) -> bytes:
-    return ('<?xml version="1.0"?>'
-            '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
-            's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
-            f'<s:Body><u:{action} xmlns:u="{service_type}"/></s:Body></s:Envelope>').encode("utf-8")
-
-
-def parse_soap_answer(body: bytes, action: str) -> Dict[str, str]:
-    """The known output arguments of an action's response ({} for a fault, an unsafe or a malformed answer)."""
-    root = safe_xml(body)
-    if root is None:
-        return {}
-    response = next((e for e in root.iter() if _local(e.tag) == f"{action}Response"), None)
-    if response is None:
-        return {}
-    out = {}
-    for child in response:
-        name = _local(child.tag)
-        if name in _ANSWER_FIELDS:
-            value = clean_text(child.text or "", limit=64)
-            if value:
-                out[name] = value
-    return out
-
-
 def _int(value: Optional[str]) -> Optional[int]:
-    return int(value) if value and value.isdigit() and len(value) < 16 else None
+    """Plain ASCII digits as a number, else None (str.isdigit alone takes "²", which int() refuses)."""
+    return int(value) if value and value.isascii() and value.isdigit() and len(value) < 16 else None
 
 
 async def read_igd(location: str, client: httpx.AsyncClient, source: str) -> Optional[IgdInfo]:
@@ -328,7 +209,7 @@ async def discover_igds(client: httpx.AsyncClient, search: Optional[Search] = No
     """Every IGD that answers on the LAN (one per address). `skip(address)` leaves a device alone after its
     search answer (no description fetched). With `allowed` (the addresses of the traced path), an answer from any
     other address is ignored: nothing is fetched from it, so a device that merely claims to be a gateway is never
-    asked anything."""
+    asked anything. A gateway whose answers break the reading is left out (logged); the others are still read."""
     answers = await (search or ssdp_search)()
     locations: Dict[str, str] = {}
     for source, datagram in answers:
@@ -337,5 +218,10 @@ async def discover_igds(client: httpx.AsyncClient, search: Optional[Search] = No
             continue
         if location and source not in locations and not skip(source):
             locations[source] = location
-    found = await asyncio.gather(*(read_igd(loc, client, src) for src, loc in locations.items()))
-    return [igd for igd in found if igd is not None]
+    found = await asyncio.gather(*(read_igd(loc, client, src) for src, loc in locations.items()),
+                                 return_exceptions=True)
+    for source, result in zip(locations, found):
+        if isinstance(result, Exception):
+            _log.warning("A UPnP gateway's answers could not be read; it is left out", address=source,
+                         error=type(result).__name__)
+    return [igd for igd in found if isinstance(igd, IgdInfo)]

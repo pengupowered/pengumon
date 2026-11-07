@@ -18,12 +18,13 @@ except ImportError:
     HAS_DNSPYTHON = False
 
 from pengumon.models.probes import TargetConfig, ProbeSample, TargetStats
-from pengumon.engine.prober_settings import DnsProbeConfig, HopStatusConfig
+from pengumon.engine.prober_settings import DEFAULT_WINDOW_PROBES, HISTORY_PROBES, DnsProbeConfig, HopStatusConfig
 from pengumon.engine.icmp_base import IcmpBackend, IcmpUnavailable
 from pengumon.engine.icmp_packet import ip_literal
 from pengumon.engine.icmp_select import resolve_address, shared_backend
 from pengumon.engine.netinfo import Ipv6Availability, is_no_ipv6_error, needs_route_check
 from pengumon.engine.path_rules import hop_roles, ignoring_ping
+from pengumon.engine.window import jitter as window_jitter
 
 
 logger = logging.getLogger("pengumon.prober")
@@ -56,17 +57,19 @@ class NetworkProber:
     def __init__(
         self,
         ping_timeout: float = 1.0,
-        history_window: int = 60,
+        history_window: int = HISTORY_PROBES,
         stagger_seconds: float = 0.025,
         status_thresholds: Optional[HopStatusConfig] = None,
         backend: Optional[IcmpBackend] = None,
         ipv6: Optional[Ipv6Availability] = None,
         dns_timeout: Optional[float] = None,
+        window: int = DEFAULT_WINDOW_PROBES,
     ):
         self.ping_timeout = ping_timeout
         self.dns_timeout = dns_timeout  # a lookup is lost after this; None: ping_timeout (prober.dns_timeout_seconds)
         self.status_thresholds = status_thresholds or HopStatusConfig()
         self.history_window = history_window
+        self.window = window  # the probes a hop's loss colour is judged over (classifier.window_probes)
         self.stagger_seconds = stagger_seconds
         self.stats: Dict[str, TargetStats] = {}
         self.last_samples: Dict[str, ProbeSample] = {}
@@ -433,10 +436,11 @@ class NetworkProber:
             valid_lats = [x for x in stat.recent_latencies if x is not None]
             if valid_lats:
                 stat.avg_ms = round(sum(valid_lats) / len(valid_lats), 2)
-                # Jitter = Mean absolute difference between consecutive samples
-                if len(valid_lats) > 1:
-                    diffs = [abs(valid_lats[i] - valid_lats[i-1]) for i in range(1, len(valid_lats))]
-                    stat.jitter_ms = round(sum(diffs) / len(diffs), 2)
+                # Jitter = the middle change between consecutive answered probes (engine/window.py): one stalled
+                # probe does not lift it, as it lifted the mean change
+                jitter = window_jitter(valid_lats)
+                if jitter is not None:
+                    stat.jitter_ms = round(jitter, 2)
                     sample.jitter_ms = stat.jitter_ms
         else:
             stat.recent_latencies.append(None)
@@ -456,10 +460,10 @@ class NetworkProber:
 
         # Category-aware status evaluation (latency & jitter)
 
-        recent_10 = stat.recent_latencies[-10:] if len(stat.recent_latencies) >= 10 else stat.recent_latencies
-        if recent_10:
-            lost_recent = recent_10.count(None)
-            loss_rate_recent = lost_recent / len(recent_10)
+        recent = stat.recent_latencies[-self.window:]  # the classifier's window (all of it while shorter)
+        if recent:
+            lost_recent = recent.count(None)
+            loss_rate_recent = lost_recent / len(recent)
             # Loss thresholds are fractions, compared strictly: as percentages 0.4 * 100 is 40.00000000000001.
             t = self.status_thresholds
             limits = t.latency_limits(stat.category)

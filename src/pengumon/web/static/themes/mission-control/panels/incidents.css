@@ -1,0 +1,7 @@
+/* Mission control's Incidents: the standard view (panels/incidents/view.js) restyled: taller lanes in the week, the
+   current time a thicker line; the list as the standard. */
+:root[data-look="mission-control"] [data-panel="incidents"] .tl-lane { height: 30px; }
+:root[data-look="mission-control"] [data-panel="incidents"] .tl-track { height: 22px; border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="incidents"] .tl-bar { border-radius: 1px; min-width: 6px; }
+:root[data-look="mission-control"] [data-panel="incidents"] .tl-now { width: 3px; }
+:root[data-look="mission-control"] [data-panel="incidents"] .inc-list .primary { font-size: var(--fs-md); }

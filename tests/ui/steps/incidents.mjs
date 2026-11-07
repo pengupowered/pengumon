@@ -313,4 +313,83 @@ export const steps = [
     await page.reload({ waitUntil: "load" });
     await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 10);
   }],
+
+  ["one zone for every time: Settings names Tokyo, this browser is in New York, the incident times are Tokyo's", async ({ eq, page, stubFetch, until }) => {
+    await page.emulateTimezone("America/New_York");
+    const info = await page.evaluate(async () => (await (await fetch("/api/info")).json()));
+    await stubFetch({ "GET /api/info": { body: { ...info, timezone: "Asia/Tokyo" } } });
+    const row = await page.evaluate(async () => {
+      const first = (await (await fetch("/api/incidents?limit=1")).json())[0];
+      const at = (timeZone) => new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", timeZone }).format(first.start_time * 1000);
+      return { id: first.id, tokyo: at("Asia/Tokyo"), newYork: at("America/New_York") };
+    });
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length > 0);
+    const shown = await page.$eval("#incidentsBody tr.incident-row .when", (e) => e.textContent);
+    eq(`the first incident's time is Tokyo's (${shown})`, shown.endsWith(row.tokyo), true);
+    eq("and not the browser's", shown.endsWith(row.newYork), false);
+    await stubFetch(null);
+    await page.emulateTimezone();
+  }, { chromiumOnly: "page.emulateTimezone is CDP only" }],
+
+  ["a change of the page's time zone (a Save in Settings) redraws the times already shown: the incidents and a device card's read time", async ({ LINE, eq, moduleUrl, ok, page, until }) => {
+    await until((l) => document.querySelectorAll("#incidentsBody tr.incident-row").length > 0 && document.querySelector(`${l}`)?.dataset.readAt, LINE);
+    const shown = await page.evaluate(async (u, l) => {
+      const { setPageZone } = await import(u);
+      const first = (await (await fetch("/api/incidents?limit=1")).json())[0];
+      const zone = (await (await fetch("/api/info")).json()).timezone || undefined; // the page's zone now (Settings)
+      const card = document.querySelector(l);
+      const at = (ms, timeZone) => new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", timeZone }).format(ms);
+      const read = Number(card.dataset.readAt) * 1000;
+      const now = () => ({ when: document.querySelector("#incidentsBody tr.incident-row .when").textContent, read: card.querySelector("[data-f=read]").textContent });
+      setPageZone("Asia/Tokyo"); // as fetchNetworkInfo does with the zone Settings names; read at once, before any new data
+      const tokyo = now();
+      setPageZone(zone);
+      const back = now();
+      return { tokyo, back, want: { when: at(first.start_time * 1000, "Asia/Tokyo"), read: at(read, "Asia/Tokyo") },
+        before: { when: at(first.start_time * 1000, zone), read: at(read, zone) } };
+    }, await moduleUrl("util.js"), LINE);
+    ok(`Tokyo's clock differs from the page's here (${shown.want.when} / ${shown.before.when})`, shown.want.when !== shown.before.when);
+    ok(`the first incident at once on Tokyo's clock (${shown.tokyo.when}, want ${shown.want.when})`, shown.tokyo.when.endsWith(shown.want.when));
+    ok(`the line card's read time at once on Tokyo's clock (${shown.tokyo.read})`, shown.tokyo.read.startsWith(`read ${shown.want.read}`));
+    eq("and back on the page's own clock", [shown.back.when.endsWith(shown.before.when), shown.back.read.startsWith(`read ${shown.before.read}`)].join(), "true,true");
+  }],
+
+  ["card model and view: the five cards of this group have fixtures that draw marks; a refresh of the list keeps unchanged rows and the focus on a row", async ({ eq, moduleUrl, ok, page, until }) => {
+    // docs/themes.md, "Drawing a card": incidents, heat, matrix, strips and report are drawn from a view model
+    const cards = await page.evaluate(async (u) => {
+      const { drawApart, registeredCards } = await import(u);
+      const out = {};
+      for (const c of registeredCards().filter((r) => ["incidents", "heat", "matrix", "strips", "report"].includes(r.panel))) {
+        const drawn = drawApart(c.panel, c.standard, c.fixture());
+        out[c.panel] = { values: Object.keys(drawn.marks.values).length, status: Object.keys(drawn.marks.status).length, actions: drawn.marks.actions.length };
+        drawn.remove();
+      }
+      return out;
+    }, await moduleUrl("cards.js"));
+    eq("every card has a fixture", Object.keys(cards).sort().join(), "heat,incidents,matrix,report,strips");
+    for (const [panel, n] of Object.entries(cards)) ok(`${panel}: ${JSON.stringify(n)}`, n.values >= 5 && (n.actions >= 1 || panel === "report"));
+    ok("incidents and the hop rows mark a status", cards.incidents.status >= 3 && cards.matrix.status >= 3);
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length >= 3);
+    const kept = await page.evaluate(async (u) => {
+      const { updateIncidentsTable } = await import(u);
+      const list = await (await fetch("/api/incidents?limit=500")).json();
+      const rows = [...document.querySelectorAll("#incidentsBody tr.incident-row")];
+      rows.forEach((tr, i) => { tr.__kept = i; });
+      const first = rows[0].querySelector("button.primary");
+      first.focus();
+      updateIncidentsTable(JSON.parse(JSON.stringify(list))); // the same list again: nothing is drawn again
+      const same = [...document.querySelectorAll("#incidentsBody tr.incident-row")].every((tr, i) => tr.__kept === i) && document.activeElement === first;
+      const last = rows[rows.length - 1];
+      const changed = JSON.parse(JSON.stringify(list));
+      changed.find((i) => String(i.id) === last.dataset.arg).title = "Renamed incident";
+      updateIncidentsTable(changed); // one incident changed: its row is drawn again, the others stay
+      const now = [...document.querySelectorAll("#incidentsBody tr.incident-row")];
+      const result = { same, kept: now.slice(0, -1).every((tr, i) => tr.__kept === i), redrawn: now[now.length - 1].__kept === undefined, title: now[now.length - 1].textContent.includes("Renamed incident"),
+        focus: document.activeElement === first };
+      updateIncidentsTable(list);
+      return result;
+    }, await moduleUrl("../panels/incidents/model.js"));
+    ok("the same list leaves every row and the focus alone", kept.same);
+    ok("a changed incident redraws only its row", kept.kept && kept.redrawn && kept.title && kept.focus);
+  }],
 ];

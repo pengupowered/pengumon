@@ -34,11 +34,11 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
              line: LineWording = GENERIC) -> Verdict:
     """Determines the specific root-cause code and explanation. `line` phrases the gateway and the possible causes of
     a fault on the access line for its technology (pengumon.lines)."""
-    local_loss, local_avg_lat, local_jitter = m.local.loss_pct, m.local.avg_latency_ms, m.local.jitter_ms
-    gateway_loss, gateway_avg_lat, gateway_jitter = m.gateway.loss_pct, m.gateway.avg_latency_ms, m.gateway.jitter_ms
-    isp_loss, isp_avg_lat, isp_jitter = m.isp.loss_pct, m.isp.avg_latency_ms, m.isp.jitter_ms
-    public_loss, public_avg_lat, public_jitter = m.public.loss_pct, m.public.avg_latency_ms, m.public.jitter_ms
-    dns_loss, dns_avg_lat = m.dns.loss_pct, m.dns.avg_latency_ms
+    local_loss, local_lat, local_jitter = m.local.loss_pct, m.local.latency_ms, m.local.jitter_ms
+    gateway_loss, gateway_lat, gateway_jitter = m.gateway.loss_pct, m.gateway.latency_ms, m.gateway.jitter_ms
+    isp_loss, isp_lat, isp_jitter = m.isp.loss_pct, m.isp.latency_ms, m.isp.jitter_ms
+    public_loss, public_lat, public_jitter = m.public.loss_pct, m.public.latency_ms, m.public.jitter_ms
+    dns_loss, dns_lat = m.dns.loss_pct, m.dns.latency_ms
     degraded, down = config.degraded_loss_pct, config.down_loss_pct
     isp_latency_level = config.isp_latency_spike_threshold_ms or config.public_latency_spike_threshold_ms
 
@@ -71,13 +71,13 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="warning",
             affected=m.failed_targets,
         )
-    if (local_avg_lat and local_avg_lat > config.local_latency_spike_threshold_ms) or (local_jitter and local_jitter > config.local_jitter_spike_threshold_ms):
+    if (local_lat and local_lat > config.local_latency_spike_threshold_ms) or (local_jitter and local_jitter > config.local_jitter_spike_threshold_ms):
         return Verdict(
             kind="local_latency",
             status="degraded",
             cause="local_wifi_mesh_drop",
             title=f"{local_name} Latency Spike",
-            description=f"Latency to {local_name} ({local_addr}) is {local_avg_lat}ms (jitter {local_jitter}ms; a wired LAN is typically under 2ms). Possible causes: local Wi-Fi or network interference.",
+            description=f"Latency to {local_name} ({local_addr}) is {local_lat}ms (jitter {local_jitter}ms; a wired LAN is typically under 2ms). Possible causes: local Wi-Fi or network interference.",
             severity="warning",
             affected=m.failed_targets,
         )
@@ -105,13 +105,13 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="warning",
             affected=m.failed_targets,
         )
-    if (gateway_avg_lat and gateway_avg_lat > config.gateway_latency_spike_threshold_ms) or (gateway_jitter and gateway_jitter > config.gateway_jitter_spike_threshold_ms):
+    if (gateway_lat and gateway_lat > config.gateway_latency_spike_threshold_ms) or (gateway_jitter and gateway_jitter > config.gateway_jitter_spike_threshold_ms):
         return Verdict(
             kind="gateway_latency",
             status="degraded",
             cause="double_nat_congestion",
             title=f"{gw_name} Latency Delay",
-            description=f"Latency to {gw_side} is {gateway_avg_lat}ms (jitter {gateway_jitter}ms). Possible causes: a busy gateway or a busy link from the router to it.",
+            description=f"Latency to {gw_side} is {gateway_lat}ms (jitter {gateway_jitter}ms). Possible causes: a busy gateway or a busy link from the router to it.",
             severity="warning",
             affected=m.failed_targets,
         )
@@ -176,8 +176,8 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="warning",
             affected=m.failed_targets,
         )
-    if (isp_avg_lat and isp_avg_lat > isp_latency_level) or (public_avg_lat and public_avg_lat > config.public_latency_spike_threshold_ms) or (public_jitter and public_jitter > config.public_jitter_spike_threshold_ms):
-        lat = max(isp_avg_lat or 0, public_avg_lat or 0)
+    if (isp_lat and isp_lat > isp_latency_level) or (public_lat and public_lat > config.public_latency_spike_threshold_ms) or (public_jitter and public_jitter > config.public_jitter_spike_threshold_ms):
+        lat = max(isp_lat or 0, public_lat or 0)
         jit = max(isp_jitter or 0, public_jitter or 0)
         return Verdict(
             kind="upstream_latency",
@@ -215,13 +215,13 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
                     severity="warning",
                     affected=m.failed_targets,
                 )
-            if dns_avg_lat and dns_avg_lat > config.dns_timeout_threshold_ms:
+            if dns_lat and dns_lat > config.dns_timeout_threshold_ms:
                 return Verdict(
                     kind="dns_slow",
                     status="degraded",
                     cause="dns_resolver_failure",
                     title="Slow DNS Queries",
-                    description=f"DNS queries take {dns_avg_lat}ms on average. Possible causes: slow upstream resolvers or cold-cache authoritative lookups.",
+                    description=f"DNS queries take {dns_lat}ms (the median of the recent lookups). Possible causes: slow upstream resolvers or cold-cache authoritative lookups.",
                     severity="warning",
                     affected=m.failed_targets,
                 )
@@ -288,8 +288,9 @@ def apply_hop_deprioritisation(verdict: Verdict, m: RoundMetrics, config: Classi
     isp_loss, public_loss, dns_loss = m.isp.loss_pct, m.public.loss_pct, m.dns.loss_pct
     if public_loss >= config.degraded_loss_pct or public_loss >= isp_loss / 2 or dns_loss >= config.dns_degraded_loss_pct:
         return verdict
-    worst = max(m.isp.targets, key=lambda st: st.recent_latencies[-10:].count(None), default=None)
-    hop = worst.name if worst and worst.recent_latencies[-10:].count(None) else "An ISP hop"
+    window = config.window_probes
+    worst = max(m.isp.targets, key=lambda st: st.recent_latencies[-window:].count(None), default=None)
+    hop = worst.name if worst and worst.recent_latencies[-window:].count(None) else "An ISP hop"
     return Verdict(
         kind="hop_deprioritised",
         status="healthy",

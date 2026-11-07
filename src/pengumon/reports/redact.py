@@ -359,8 +359,9 @@ class Redactor:
         return f" {name}" if name else (" (2nd)" if d.fold else " (1st)")
 
     def when(self, ts: float, style: str = "full") -> str:
-        """style: full (weekday, date and clock), dayclock, clock, day. Anonymized: "Day n" and the clock. A time in
-        an hour that happened twice (the clocks went back) carries its repeated_mark."""
+        """style: full (weekday, date and clock), dayclock, dayminute (dayclock without seconds), clock, day.
+        Anonymized: "Day n" and the clock. A time in an hour that happened twice (the clocks went back) carries its
+        repeated_mark."""
         d = self._dt(ts)
         clock = d.strftime("%H:%M:%S") if style in ("dayclock", "clock_s") else d.strftime("%H:%M")
         clock += self.repeated_mark(ts) if style != "day" else ""
@@ -370,7 +371,7 @@ class Redactor:
             return f"Day {self.day_number(ts)}" if style == "day" else f"Day {self.day_number(ts)} {clock}"
         if style == "day":
             return d.strftime("%a %m-%d")
-        if style == "dayclock":
+        if style in ("dayclock", "dayminute"):
             return f"{d.strftime('%a')} {clock}"
         return f"{d.strftime('%a %Y-%m-%d')} {clock}"
 

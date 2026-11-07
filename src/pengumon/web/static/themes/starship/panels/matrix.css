@@ -1,0 +1,34 @@
+/* Starship console's Hop details: the standard view (panels/matrix/view.js) restyled, straight on black: every target a
+   line, its short name on a flat lilac block, the recent loss a status chip, the latency range a segmented gauge with the average a bright
+   tick, the figures as readouts and the last probes a bank of bars (theme.json "chart": {"spark": "bars"}). */
+
+:root[data-look="starship"] [data-panel="matrix"] .hops th { padding-bottom: 4px; }
+:root[data-look="starship"] [data-panel="matrix"] .hops td { border-top: 1px solid var(--line); background: none; height: 46px; padding-block: 3px; }
+:root[data-look="starship"] [data-panel="matrix"] .hops td:first-child { padding-left: 0; }
+:root[data-look="starship"] [data-panel="matrix"] .hops tbody tr.row-click:hover td { background: var(--surface-2); }
+/* the name block */
+:root[data-look="starship"] [data-panel="matrix"] .hops td.lead .primary {
+  display: inline-block; max-width: 100%; padding: 4px 10px 4px 14px; margin-bottom: 2px;
+  background: var(--ink-2); color: var(--bg); border-radius: 0;
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold);
+}
+:root[data-look="starship"] [data-panel="matrix"] .hops tr.row-click:hover td.lead .primary { background: var(--accent); }
+:root[data-look="starship"] [data-panel="matrix"] .hops td.lead .sub { padding-left: 0; }
+/* the range: a segmented gauge, the average a bright tick */
+:root[data-look="starship"] [data-panel="matrix"] .range { height: 10px; border-radius: 2px; background: repeating-linear-gradient(90deg, var(--surface-3) 0 7px, var(--bg) 7px 9px); }
+:root[data-look="starship"] [data-panel="matrix"] .range i { min-width: 3px; border-radius: 0; background: repeating-linear-gradient(90deg, var(--ink-3) 0 7px, transparent 7px 9px); }
+:root[data-look="starship"] [data-panel="matrix"] .range b { top: -3px; height: 16px; width: 4px; margin-left: -2px; background: var(--accent); }
+:root[data-look="starship"] [data-panel="matrix"] .range-n { color: var(--ink-2); }
+/* the readouts */
+:root[data-look="starship"] [data-panel="matrix"] .hops td.num { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+:root[data-look="starship"] [data-panel="matrix"] .hops td [data-f="last"] { color: var(--accent); font-size: var(--fs-md); }
+:root[data-look="starship"] [data-panel="matrix"] .hops td [data-f="last"].ink-crit { color: var(--crit); }
+:root[data-look="starship"] [data-panel="matrix"] .hops td [data-f="last"].ink-muted { color: var(--ink-3); }
+:root[data-look="starship"] [data-panel="matrix"] .hops .sparkline { display: block; width: 100%; }
+/* narrow: the table's rows are blocks (components.css .dlist) */
+@container (max-width: 560px) {
+  :root[data-look="starship"] [data-panel="matrix"] .hops tr { padding: 0 0 var(--sp-2); margin-top: 4px; background: none; border-top: 0; border-radius: 0; }
+  :root[data-look="starship"] [data-panel="matrix"] .hops td,
+  :root[data-look="starship"] [data-panel="matrix"] .hops td:first-child,
+  :root[data-look="starship"] [data-panel="matrix"] .hops td:last-child { background: none; height: auto; padding: 0; border: 0; }
+}

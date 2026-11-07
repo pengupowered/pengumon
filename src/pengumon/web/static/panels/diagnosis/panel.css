@@ -30,7 +30,7 @@ button.node:hover { transform: translateY(-2px); border-color: var(--line-strong
 .node-id { display: flex; flex-direction: column; min-width: 0; }
 .node-kind { font-size: var(--fs-sm); font-weight: var(--fw-semi); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .node-name { font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.node-st { margin-left: auto; flex: none; color: var(--st); display: inline-flex; }
+.node-st { margin-left: auto; flex: none; color: var(--st); display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: var(--fw-semi); line-height: 1.2; white-space: nowrap; }
 .node-val { display: flex; align-items: baseline; gap: 4px; min-height: 30px; }
 .node-val b { font-size: var(--fs-2xl); font-weight: var(--fw-bold); letter-spacing: -.03em; line-height: 1; }
 .node-val b.node-word { font-size: var(--fs-lg); letter-spacing: -.01em; }
@@ -60,7 +60,7 @@ button.node:hover { transform: translateY(-2px); border-color: var(--line-strong
   background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 10px 3px 8px; cursor: pointer; }
 .pe:hover, .pe:focus-visible { border-color: var(--line-strong); }
 .pe .i { color: var(--st); flex: none; }
-.pe-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+[data-panel="diagnosis"] .pe-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .pe b { font-weight: var(--fw-semi); color: var(--ink-2); flex: none; }
 .hero-foot { display: flex; gap: var(--sp-2) var(--sp-5); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px dashed var(--line); font-size: var(--fs-xs); color: var(--ink-3); flex-wrap: wrap; align-items: center; }
 .hero-foot span { display: inline-flex; align-items: center; gap: 5px; }
@@ -117,7 +117,11 @@ button.node:hover { transform: translateY(-2px); border-color: var(--line-strong
 .node-spark { display: block; margin-top: auto; }
 .node-spark svg.spark { margin-top: 0; }
 .ink-busy { color: var(--busy); }
-.node .node-st svg.i { width: 18px; height: 18px; }
+.node .node-st svg.i { width: 16px; height: 16px; }
+/* the status is its icon and its word: in a crowded chain the word goes under the kind, not beside it */
+.chain[data-dense="1"] .node-top { flex-wrap: wrap; row-gap: 3px; }
+.chain[data-dense="1"] .node-id { flex: 1 1 0; }
+.chain[data-dense="1"] .node-st { flex-basis: 100%; margin-left: 0; }
 @container (max-width: 860px) {
   .node { grid-template-areas: "top top top" "name name name" "val meta spark"; }
   .node-spark { grid-area: spark; width: 100%; max-width: 150px; justify-self: end; margin: 0; }

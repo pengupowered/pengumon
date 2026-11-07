@@ -1,4 +1,4 @@
-"""The Settings API (~/ops/pengumon-settings/design.md section 4): the settings store (pengumon.settings.manager)
+"""The Settings API: the settings store (pengumon.settings.manager)
 read, validated, saved, versioned, exported and imported. Bodies: api/settings_models.py.
 
 GET  /api/settings/schema         the registry with types, ranges, defaults, the lists' fields, drivers, secret slots

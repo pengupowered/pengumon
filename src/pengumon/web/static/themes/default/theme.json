@@ -1,0 +1,9 @@
+{
+  "id": "default",
+  "name": "Pengumon",
+  "description": "The standard look: calm blue on dark slate, or on light grey.",
+  "modes": ["dark", "light"],
+  "tokens": {},
+  "effect": null,
+  "tags": ["standard"]
+}

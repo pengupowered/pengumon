@@ -1,0 +1,90 @@
+/* Mission control: a wall display (docs/themes.md, "Skins"). Every selector is under this theme's own data-look.
+   Near-black ground, crisp white figures, saturated status colours (theme.json). The big figures lead; captions, notes,
+   footers and help buttons are small and dim (--ink-3, --ink-4: the contrast checks still hold). A card with a status
+   carries a thick band in its colour across its top. The cards' own figures are restyled in panels/<card>.css. */
+
+:root[data-look="mission-control"] {
+  --mc-band: 8px;     /* the status band across a card's top */
+  --mc-label: .09em;  /* the letter spacing of a label in capitals */
+}
+@media (max-width: 720px) {
+  :root[data-look="mission-control"] { --mc-band: 6px; }
+}
+:root[data-look="mission-control"] body { font-variant-numeric: tabular-nums; }
+/* the page's one ambient flourish stays, fainter: the ground is black */
+:root[data-look="mission-control"] .glow { opacity: .55; }
+
+/* ---------- the header: solid black over a rule; the pill filled with the verdict's colour ---------- */
+:root[data-look="mission-control"] .topbar::before {
+  background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; border-bottom: 2px solid var(--line-strong);
+}
+:root[data-look="mission-control"] .brand-name { text-transform: uppercase; letter-spacing: .12em; font-size: var(--fs-md); }
+:root[data-look="mission-control"] .status-pill {
+  height: 44px; padding: 0 18px 0 14px; gap: 9px;
+  background: var(--st); border: 0; color: var(--bg); font-size: var(--fs-md);
+}
+:root[data-look="mission-control"] .status-pill b { font-weight: var(--fw-bold); }
+:root[data-look="mission-control"] .status-pill .sp-metrics { color: var(--bg); font-weight: var(--fw-bold); font-size: var(--fs-lg); gap: 9px; }
+:root[data-look="mission-control"] .status-pill .sep { color: color-mix(in srgb, var(--bg) 55%, transparent); }
+:root[data-look="mission-control"] .status-pill .dot { width: 12px; height: 12px; background: var(--bg); }
+:root[data-look="mission-control"] .status-pill .dot::after { background: var(--bg); }
+:root[data-look="mission-control"] .live { color: var(--ink-3); }
+@media (max-width: 720px) {
+  :root[data-look="mission-control"] .status-pill { height: 40px; padding: 0 12px 0 10px; gap: 7px; }
+  :root[data-look="mission-control"] .status-pill .sp-metrics { font-size: var(--fs-md); gap: 7px; }
+}
+
+/* ---------- cards: crisp edges, a thick status band, the title a label ---------- */
+:root[data-look="mission-control"] .panel { border-color: var(--line); border-radius: var(--r-md); }
+:root[data-look="mission-control"] .panel[data-status="good"] { --mc-st: var(--good); }
+:root[data-look="mission-control"] .panel[data-status="warn"] { --mc-st: var(--warn); }
+:root[data-look="mission-control"] .panel[data-status="serious"] { --mc-st: var(--serious); }
+:root[data-look="mission-control"] .panel[data-status="crit"] { --mc-st: var(--crit); }
+:root[data-look="mission-control"] .panel[data-status="busy"] { --mc-st: var(--busy); }
+:root[data-look="mission-control"] .panel[data-status="unknown"] { --mc-st: var(--unknown); }
+:root[data-look="mission-control"] .panel[data-status]::before {
+  left: -1px; right: -1px; top: -1px; height: var(--mc-band); opacity: 1;
+  background: var(--mc-st, transparent); border-radius: var(--r-md) var(--r-md) 0 0;
+}
+:root[data-look="mission-control"] .panel[data-status] > .panel-h { padding-top: calc(10px + var(--mc-band)); }
+:root[data-look="mission-control"] .panel-h { border-bottom-color: var(--line); }
+:root[data-look="mission-control"] .panel-h > svg.i { color: var(--ink-3); width: 16px; height: 16px; }
+:root[data-look="mission-control"] .panel-t {
+  font-size: var(--fs-sm); font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: var(--mc-label); color: var(--ink-1);
+}
+:root[data-look="mission-control"] .panel-m { font-size: var(--fs-xs); color: var(--ink-3); }
+:root[data-look="mission-control"] .panel-f { padding-block: 7px; border-top-color: var(--line); font-size: var(--fs-xs); color: var(--ink-3); }
+:root[data-look="mission-control"] .panel-f .btn { color: var(--ink-3); }
+:root[data-look="mission-control"] .panel-f .btn:hover { color: var(--ink-1); }
+
+/* ---------- quiet detail: help buttons, small labels, notes ---------- */
+:root[data-look="mission-control"] .info { width: 16px; height: 16px; color: var(--ink-4); }
+:root[data-look="mission-control"] .info svg.i { width: 12px; height: 12px; }
+:root[data-look="mission-control"] .info.lbl { width: auto; color: var(--ink-3); }
+:root[data-look="mission-control"] .info:hover,
+:root[data-look="mission-control"] .info[aria-expanded="true"] { color: var(--accent); }
+:root[data-look="mission-control"] .panel-menu-btn { color: var(--ink-4); }
+:root[data-look="mission-control"] .rb-t,
+:root[data-look="mission-control"] .dlist th,
+:root[data-look="mission-control"] .stat .lbl { color: var(--ink-3); letter-spacing: var(--mc-label); }
+:root[data-look="mission-control"] .fine,
+:root[data-look="mission-control"] .dlist .sub { color: var(--ink-3); }
+
+/* ---------- status words: a solid chip, the word dark on its colour ---------- */
+:root[data-look="mission-control"] .badge[class*="st-"]:not(.quiet) { background: var(--st); color: var(--bg); border-color: transparent; }
+:root[data-look="mission-control"] .badge.quiet { background: transparent; border-color: color-mix(in srgb, var(--st, var(--line)) 70%, transparent); }
+
+/* ---------- controls: square-cut, the pressed one in the accent ---------- */
+:root[data-look="mission-control"] .seg { background: var(--bg); border-color: var(--line-strong); }
+:root[data-look="mission-control"] .seg button[aria-pressed="true"],
+:root[data-look="mission-control"] .seg button.active { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+:root[data-look="mission-control"] .btn.outline { border-color: var(--line-strong); }
+:root[data-look="mission-control"] :focus-visible { outline-width: 3px; }
+
+/* ---------- dialogs: the same black frame ---------- */
+:root[data-look="mission-control"] .modal-content,
+:root[data-look="mission-control"] dialog.modal { border: 1px solid var(--line-strong); }
+:root[data-look="mission-control"] .modal-t { text-transform: uppercase; letter-spacing: var(--mc-label); font-size: var(--fs-md); }
+
+/* ---------- phone tab bar: black, the current tab in the accent ---------- */
+:root[data-look="mission-control"] .tabbar { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; border-top: 2px solid var(--line-strong); }

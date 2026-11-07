@@ -32,6 +32,26 @@ devices:
       #   "02:00:00:00:11:22": "Hall"
 ```
 
+## Supported devices
+
+| Driver | Devices | Status | What it reads |
+|---|---|---|---|
+| `xfinity_xb` | Xfinity / Comcast XB6, XB7, XB8 gateways | Tested by the maintainer | The cable line (`access_line`): DOCSIS downstream and upstream levels, SNR, codeword errors |
+| `asuswrt` | AsusWRT routers (RT-AX and others), with AiMesh | Tested by the maintainer | WAN traffic, CPU, memory, connected clients by band, mesh nodes |
+| `openwrt` | OpenWrt routers (LuCI, or rpcd and uhttpd-mod-ubus) | Tested by the maintainer on OpenWrt 24.10 (x86-64 image); other releases untested | WAN traffic, CPU, memory, model, clients (DHCP leases, Wi-Fi stations by band) |
+| `snmp` | Anything with an SNMPv2c agent: routers, switches, NAS boxes | Generic: a standard protocol, tested against net-snmp 5.9 | WAN (or uplink) traffic, CPU, memory, model; no client list |
+| `upnp_igd` | Routers and gateways that answer UPnP's Internet Gateway Device profile | Generic: a standard profile, new in 0.24; some routers have UPnP switched off | WAN traffic (32-bit counters, wraps handled); no client list |
+
+The status says who has seen the driver work. **Tested by the maintainer**: on the maintainer's own hardware.
+**Tested by a contributor**: on a contributor's hardware (none listed yet). **Generic**: written from a standard, so it
+should work with any device that follows it, but a particular device may differ; if you try one, tell us the model and
+firmware in an [issue](https://github.com/pengupowered/pengumon/issues/new/choose) and it can be listed here.
+
+Have a device that is not here? [Adding a device](adding-a-device.md) shows how to teach Pengumon to read it, and the
+"Support for a new device" issue form is the place to start.
+
+### Connection details
+
 - `xfinity_xb`
   - Devices: Xfinity/Comcast XB6, XB7, XB8
   - Capabilities: `access_line` (DOCSIS)
@@ -39,7 +59,7 @@ devices:
   - Username: `admin`
   - Password: the gateway's admin password
 - `asuswrt`
-  - Devices: AsusWRT routers (RT-AX, ZenWiFi, ...)
+  - Devices: AsusWRT routers (RT-AX and others)
   - Capabilities: `wan_counters`, `router_system`, `client_inventory`, `mesh`
   - URL: `http(s)://`
   - Username: `admin`
@@ -179,6 +199,28 @@ certificate as `ca_file` (`/etc/uhttpd.crt`, converted to PEM) or set `verify: f
 
 Tested against OpenWrt 24.10 (rpcd, uhttpd and LuCI as its x86-64 image ships them); older releases are untested.
 
+## UPnP router (`upnp_igd`)
+
+Most home routers and ISP boxes answer UPnP's Internet Gateway Device profile without a password. This driver reads
+their WAN traffic, so Pengumon shows line load and notices a router restart with no vendor code. Add a device of kind
+"UPnP router"; there is no sign-in to set up.
+
+* **Address.** The router's address (`http://192.168.88.1`) is enough: Pengumon asks that router, and only that one,
+  over UDP where its UPnP description is. Some routers do not answer; then give the description's own address, as the
+  router's UPnP page or a discovery run shows it (`http://192.168.88.1:5000/rootDesc.xml`). Some routers pick a new
+  port at every start; with a bare host Pengumon finds it again, with a full address you must update it.
+* **What it reads**, every 30 s by default: the WAN byte counters (`GetTotalBytesReceived`, `GetTotalBytesSent`) and
+  the connection's uptime (`GetStatusInfo`), used only to tell a counter wrap from a router restart. It never asks
+  for the external IP address. It does not read the link speed (`GetCommonLinkProperties`): that is the router's
+  claim, not a measurement, and there is no place for it in the stored readings; set the line capacity in Settings.
+* **Limits.** UPnP counters are 32 bits wide, so they wrap at 4.3 GB (a few minutes at 100 Mbit/s): a counter that
+  goes back is a wrap, unless the uptime went back too (a restart). Polling more slowly than every few minutes on a
+  fast line can miss a whole wrap. Many routers have UPnP switched off and answer nothing. There is no CPU, memory or
+  client list.
+* **Safety.** Only the configured address is contacted; no redirect is followed; a control address on another host is
+  never called; answers are read up to 64 KB and XML with a DOCTYPE or entity is refused. Network discovery proposes
+  this driver for a router that answers UPnP and matches no vendor driver.
+
 ## SNMP
 
 The `snmp` driver reads any SNMPv2c agent (most routers, managed switches and NAS boxes) over UDP, port 161 unless the
@@ -212,14 +254,9 @@ when a row it names disappears. A wrong community string looks like no answer at
 says so. On net-snmp, `rocommunity <community> <pengumon's address>` in `snmpd.conf` is enough. Tested against
 net-snmp 5.9.
 
-**Adding a driver:** a module in `src/pengumon/drivers/` with a class that has `name`, `offers` (its
-capabilities), `options_model` (a pydantic model of its `options:`, extra keys forbidden), `default_poll_seconds`,
-a `from_config(cfg, credentials, client=None)` classmethod that builds it from a `devices:` entry (use
-`drivers.http.DeviceHttp` and `tls_verify(cfg.tls)` for the HTTP client), and `host`, `missing_configuration()`,
-`set_credentials()`, `poll()` (returning readings per capability, `capabilities.PollResult`) and `aclose()`. Two
-class attributes are optional: `url_schemes` (default `("http", "https")`; snmp has `("snmp",)`) and
-`default_username` (used when the entry sets no `username`; openwrt has `root`). Add it to `DRIVERS` in
-`drivers/__init__.py`. Its test feeds recorded device answers through an
-`httpx.MockTransport` (see `tests/test_router.py` and `tests/test_driver_http.py`). Scheduling, rates, health,
-storage, logging and tracing come from the shared device runner. Its capabilities also bring their sections of the AI
-troubleshooting pack; a driver may add `pack_notes` about itself ([ai-pack.md](ai-pack.md#adding-a-module-developers)).
+## Adding a driver
+
+Your device is not listed above? A driver is one Python module, and nothing else in Pengumon needs to change for it.
+[adding-a-device.md](adding-a-device.md) is the full guide: how Pengumon talks to devices, choosing capabilities, writing
+the driver, recording and redacting your device's answers into tests, the Ask AI pack and the pull request checklist.
+Start by opening the "Support for a new device" issue.

@@ -6,9 +6,10 @@
 // Every fetch of the page passes through here (this module is imported first by main.js and wraps window.fetch).
 
 let leaving = false;
+let held = 0; // changes of the sign-in in flight (holdSignIn)
 
 export function sessionEnded() {
-  if (leaving) return;
+  if (leaving || held) return;
   leaving = true;
   window.location.assign('/login');
 }
@@ -21,3 +22,11 @@ window.fetch = async (...args) => {
   if (refusedSignIn(res)) sessionEnded();
   return res;
 };
+
+// While this browser sets or changes the password (the first-run question, Settings > Sign-in), the server switches to
+// the new one a moment before the answer that carries this browser's new cookie arrives: a request the page makes in
+// between is refused, and must not send the page to the sign-in page (the new password, still on screen, would be lost).
+export async function holdSignIn(work) {
+  held += 1;
+  try { return await work(); } finally { held -= 1; }
+}

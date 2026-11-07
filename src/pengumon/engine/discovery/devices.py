@@ -30,6 +30,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from pengumon.drivers.common import clean_text
+from pengumon.drivers.http import read_capped
 from pengumon.engine.discovery.addresses import parse
 
 PAGE_MAX = 64 * 1024
@@ -110,20 +111,6 @@ def fingerprint(body: str, title: Optional[str], location: str = "") -> Optional
         if matches(body, title, location):
             return fp
     return None
-
-
-async def read_capped(client: httpx.AsyncClient, method: str, url: str, limit: int = PAGE_MAX, **kwargs):
-    """(status, headers, body bytes) of one request, the body cut at `limit` bytes (the rest is never read) and
-    `truncated` True when it was longer."""
-    async with client.stream(method, url, **kwargs) as response:
-        body = bytearray()
-        truncated = False
-        async for chunk in response.aiter_bytes():
-            body += chunk
-            if len(body) > limit:
-                truncated = True
-                break
-        return response.status_code, response.headers, bytes(body[:limit]), truncated
 
 
 def _text(headers: httpx.Headers, body: bytes) -> str:

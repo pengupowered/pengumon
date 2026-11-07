@@ -191,3 +191,21 @@ def test_the_dossier_reads_as_words_in_the_viewers_zone():
     assert "- 1 event during heavy line load was excluded (expected)." in text
     assert "| Hop 1 | Example ISP |" in text and "Hop 3" not in text
     assert "recorded 1 incident totalling none" in text
+
+
+def test_the_dossier_and_the_ai_pack_judge_a_channel_by_one_set_of_findings(monkeypatch):
+    """docsis.channel_findings is the one judgement: the dossier's reason is its first, the pack's text every one of
+    them worst first, and both follow its named thresholds."""
+    from pengumon.lines import docsis
+    from pengumon.lines.docsis_contrib import _finding
+    worst = chan(unc=900, snr=29.0)
+    assert channel_finding(worst) == "High uncorrectable count"
+    assert _finding(worst, docsis.DEFAULT_LEVELS) == ("SNR below 30 dB (errors likely); high uncorrectable count since "
+                                                      "the modem started")
+    some = chan(unc=300)
+    assert channel_finding(some) == "Uncorrectables present" and docsis.is_degraded(some)
+    monkeypatch.setattr(docsis, "UNCORRECTABLES_HIGH", 200)
+    assert channel_finding(some) == "High uncorrectable count"
+    assert _finding(some, docsis.DEFAULT_LEVELS) == "High uncorrectable count since the modem started"
+    monkeypatch.setattr(docsis, "UNCORRECTABLES_LISTED", 400)
+    assert not docsis.is_degraded(chan(unc=150)) and channel_finding(chan(unc=150)) == "Power level out of range"

@@ -1,0 +1,54 @@
+/* Mission control's Path health: the standard view (panels/diagnosis/view.js) restyled for a wall display: the verdict a
+   banner filled with its status colour (the card's own, st-<level> on the card), its title large and dark on it; each
+   hop's figure as large as the card's width allows (container units: larger on a wide screen), its name a label, the
+   status band on each node thicker. Loss, jitter, the key and the notes stay small. */
+
+/* ---------- the verdict: a banner in the status colour ---------- */
+:root[data-look="mission-control"] [data-panel="diagnosis"] .verdict {
+  --focus: var(--bg); /* a dark ring on the bright banner */
+  align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5);
+  background: var(--st, var(--unknown)); color: var(--bg); border-radius: var(--r-md);
+}
+:root[data-look="mission-control"] [data-panel="diagnosis"] .verdict .badge {
+  margin: 0; padding: 6px 12px 6px 10px; background: var(--bg); color: var(--st, var(--ink-1)); border: 0;
+  font-size: var(--fs-sm); letter-spacing: var(--mc-label);
+}
+:root[data-look="mission-control"] [data-panel="diagnosis"] .verdict .badge svg.i { width: 16px; height: 16px; }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .verdict h3 {
+  color: var(--bg); font-size: clamp(var(--fs-xl), 2.6cqi, 56px); font-weight: var(--fw-bold); line-height: 1.1; letter-spacing: -.02em;
+}
+:root[data-look="mission-control"] [data-panel="diagnosis"] .verdict p { color: var(--bg); font-weight: var(--fw-medium); margin-top: 4px; }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .verdict-act,
+:root[data-look="mission-control"] [data-panel="diagnosis"] .verdict-act:hover { background: var(--bg); color: var(--ink-1); border-color: transparent; }
+
+/* ---------- the path: big figures ---------- */
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node { gap: 8px; background: var(--surface-2); border-color: var(--line); }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node::before { height: 6px; }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node-kind { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold); }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node-st svg.i { width: 22px; height: 22px; }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node-val { min-height: 0; gap: 5px; }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node-val b,
+:root[data-look="mission-control"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-val b {
+  font-size: clamp(26px, 3.3cqi, 76px); color: var(--ink-1); letter-spacing: -.015em; line-height: .95;
+}
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node-val b.node-word,
+:root[data-look="mission-control"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-val b.node-word {
+  font-size: clamp(var(--fs-lg), 2.2cqi, 44px); letter-spacing: -.01em; color: var(--st, var(--ink-1));
+}
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node-val span { font-size: var(--fs-sm); color: var(--ink-3); }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .node.alert .node-val b { color: var(--st); }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .origin-t { text-transform: uppercase; letter-spacing: .06em; font-size: var(--fs-xs); }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .link .wire line { stroke-width: 3; }
+:root[data-look="mission-control"] [data-panel="diagnosis"] .chain.is-live .link:not(.broken) .wirebox::after { top: 3px; height: 4px; }
+/* the key under the path: quiet */
+:root[data-look="mission-control"] [data-panel="diagnosis"] .hero-foot { color: var(--ink-3); border-top-color: var(--line); }
+
+/* a narrow card (the chain stands up): the figure beside the node's name, still large */
+@container (max-width: 860px) {
+  :root[data-look="mission-control"] [data-panel="diagnosis"] .verdict { padding: var(--sp-3) var(--sp-4); row-gap: var(--sp-2); }
+  :root[data-look="mission-control"] [data-panel="diagnosis"] .verdict h3 { font-size: var(--fs-lg); }
+  :root[data-look="mission-control"] [data-panel="diagnosis"] .node-val b,
+  :root[data-look="mission-control"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-val b { font-size: 40px; }
+  :root[data-look="mission-control"] [data-panel="diagnosis"] .node-val b.node-word,
+  :root[data-look="mission-control"] [data-panel="diagnosis"] .chain[data-dense="1"] .node-val b.node-word { font-size: var(--fs-lg); }
+}

@@ -32,7 +32,8 @@ def test_env_value_reads_the_process_environment_by_default(monkeypatch):
 
 def test_the_overrides_map_keys_and_slots_to_their_variables():
     assert SETTING_ENV == {"server.log_level": "PENGUMON_LOG_LEVEL", "server.log_levels": "PENGUMON_LOG_LEVELS",
-                           "display.grafana_url": "PENGUMON_GRAFANA_URL"}
+                           "display.grafana_url": "PENGUMON_GRAFANA_URL",
+                           "access.allow_viewers": "PENGUMON_VIEW_WITHOUT_TOKEN"}
     assert SECRET_ENV == {"ntfy.url": "PENGUMON_NOTIFY_URL", "ntfy.token": "PENGUMON_NOTIFY_TOKEN"}
     environ = {"PENGUMON_LOG_LEVEL": "debug", "PENGUMON_LOG_LEVELS": "", "PENGUMON_NOTIFY_TOKEN": "tk-example"}
     assert setting_overrides(environ) == {"server.log_level": "debug"}

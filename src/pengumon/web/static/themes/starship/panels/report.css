@@ -1,0 +1,48 @@
+/* Starship console's Reliability: the standard view (panels/report/view.js) restyled, straight on black: the availability as
+   the main display (a big readout under a label, after an orange band; downtime and incidents as readouts), each day's loss as a column
+   of stacked segments, the causes as segmented gauges and every hop as console strips in the fold-out. */
+
+:root[data-look="starship"] [data-panel="report"] .rep-grid { gap: var(--sp-4); }
+/* the main display */
+:root[data-look="starship"] [data-panel="report"] .rep-hero {
+  flex-direction: column; align-items: flex-start; gap: var(--sp-2); padding: 2px 0 2px var(--sp-3);
+  background: none; border: 0; border-left: 8px solid var(--accent); border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="report"] .rep-hero .stat { align-items: flex-start; gap: 4px; }
+:root[data-look="starship"] [data-panel="report"] .hero-num { color: var(--accent); font-size: calc(var(--fs-2xl) * 1.6) !important; }
+:root[data-look="starship"] [data-panel="report"] .hero-num small { font-size: .45em; color: var(--ink-2); }
+:root[data-look="starship"] [data-panel="report"] .rep-mini .val { font-size: var(--fs-md); font-weight: var(--fw-semi); padding-left: 4px; }
+/* the days: columns of stacked segments (a clean day has none) */
+:root[data-look="starship"] [data-panel="report"] .days { gap: 3px; border-bottom: 0; }
+:root[data-look="starship"] [data-panel="report"] .day { padding-bottom: 18px; }
+:root[data-look="starship"] [data-panel="report"] .day::after { content: ""; position: absolute; left: 0; right: 0; bottom: 15px; border-bottom: 3px solid var(--ink-3); }
+:root[data-look="starship"] [data-panel="report"] .day i { max-width: none; border-radius: 0; opacity: 1; background: repeating-linear-gradient(0deg, var(--accent) 0 5px, transparent 5px 7px); }
+:root[data-look="starship"] [data-panel="report"] .day.nodata i { background: none; }
+:root[data-look="starship"] [data-panel="report"] .day.nodata::after { border-bottom: 3px dotted var(--line-strong); }
+:root[data-look="starship"] [data-panel="report"] .day span { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; font-weight: var(--fw-bold); }
+:root[data-look="starship"] [data-panel="report"] .rep-note { color: var(--ink-2); }
+/* the causes: a segmented gauge each */
+:root[data-look="starship"] [data-panel="report"] .causes li { grid-template-columns: minmax(0, 1.2fr) minmax(60px, 1fr) 44px; color: var(--ink-1); }
+:root[data-look="starship"] [data-panel="report"] .causes b { color: var(--accent); }
+:root[data-look="starship"] [data-panel="report"] .cbar { position: relative; height: 10px; border-radius: 2px; }
+:root[data-look="starship"] [data-panel="report"] .cbar i { border-radius: 0; background: var(--ink-2); }
+:root[data-look="starship"] [data-panel="report"] .cbar::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(90deg, transparent 0 7px, var(--surface-1) 7px 9px);
+}
+:root[data-look="starship"] [data-panel="report"] .panel-b > .rep-note { border-left: 4px solid var(--busy); padding-left: var(--sp-2); }
+/* every hop: a fold-out of lines */
+:root[data-look="starship"] [data-panel="report"] .rep-hops-box summary {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 2px 14px; cursor: pointer; border-radius: var(--r-pill);
+  background: var(--surface-3); color: var(--ink-1); font: var(--fw-bold) var(--fs-xs) var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .08em;
+}
+:root[data-look="starship"] [data-panel="report"] .rep-hops-box[open] summary { background: var(--accent); color: var(--on-accent); }
+:root[data-look="starship"] [data-panel="report"] .rep-hops { margin-top: var(--sp-2); }
+:root[data-look="starship"] [data-panel="report"] .rep-hops td { border-top: 1px solid var(--line); background: none; padding: 4px var(--sp-2); }
+:root[data-look="starship"] [data-panel="report"] .rep-hops td:first-child { padding-left: 0; }
+:root[data-look="starship"] [data-panel="report"] .rep-hops td:last-child { color: var(--ink-2); font-size: var(--fs-xs); }
+:root[data-look="starship"] [data-panel="report"] .rep-hops td.aside:not(.muted) { color: var(--accent); font-weight: var(--fw-semi); }
+@container (max-width: 560px) {
+  :root[data-look="starship"] [data-panel="report"] .rep-hops tr { border-top: 1px solid var(--line); padding: 4px 0; background: none; }
+  :root[data-look="starship"] [data-panel="report"] .rep-hops td,
+  :root[data-look="starship"] [data-panel="report"] .rep-hops td:first-child { background: none; border: 0; padding: 0; }
+}

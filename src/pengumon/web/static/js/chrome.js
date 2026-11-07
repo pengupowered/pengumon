@@ -1,9 +1,9 @@
-// Page chrome: the light/dark theme, the chart colours that follow it, and the header's pop-up menus.
+// Page chrome: the header's pop-up menus (the theme menu among them), the LAN address, View only and Sign out.
 //
-// Theme: the operating system's choice applies until the person picks one with the header button; the pick is kept
-// in this browser (localStorage `pengumon.theme`) and set as <html data-theme>, which tokens.css reads. Charts are
-// drawn on canvas and cannot read CSS variables, so Chart.js's defaults are set from the tokens here and every chart
-// is redrawn when the theme changes; modules give their charts no colours of their own except series colours.
+// Theme: themes.js (the theme, light or dark, the effect, the cards' colours); the header's theme button opens its menu.
+// Charts are drawn on canvas and cannot read CSS variables, so Chart.js's defaults are set from the tokens
+// (chart-theme.js) and every chart is redrawn when the theme changes; modules give their charts no colours of their own
+// except series colours.
 //
 // Sign out: the header button shows only for a browser signed in with the access token (/api/info `session`).
 // View only: a viewer without the token (/api/info `can_edit` false) sees "View only · Sign in to edit" in the header,
@@ -14,58 +14,16 @@
 
 import { registerActions } from './dispatch.js';
 import { state } from './state.js';
-import { applyChartTheme, token } from './chart-theme.js';
-import { VIEW_ONLY_TIP, copyText, setCanEdit } from './util.js';
+import { fillThemeMenu, initThemes } from './themes.js';
+import { VIEW_ONLY_TIP, copyText, setCanEdit, setPageZone } from './util.js';
 
-const THEME_KEY = 'pengumon.theme';
-const dark = window.matchMedia('(prefers-color-scheme: dark)');
-
-
-function storedTheme() {
-  try {
-    const t = localStorage.getItem(THEME_KEY);
-    return t === 'light' || t === 'dark' ? t : '';
-  } catch (e) {
-    return '';
-  }
-}
-
-export const isDark = () => (document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : dark.matches);
-
-function themeButton() {
-  const button = document.getElementById('btnTheme');
-  if (!button) return;
-  const next = isDark() ? 'light' : 'dark';
-  button.setAttribute('aria-label', `Switch to the ${next} theme`);
-  button.title = `Switch to the ${next} theme`;
-  button.querySelector('use')?.setAttribute('href', isDark() ? '#i-sun' : '#i-moon');
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = token('--bg');
-}
-
-function setTheme(theme) {
-  if (theme) document.documentElement.dataset.theme = theme;
-  else delete document.documentElement.dataset.theme;
-  themeButton();
-  applyChartTheme();
-  document.dispatchEvent(new CustomEvent('themechange'));
-}
-
-export function toggleTheme() {
-  const next = isDark() ? 'light' : 'dark';
-  try {
-    localStorage.setItem(THEME_KEY, next);
-  } catch (e) {
-    // not kept; applies until the page is closed
-  }
-  setTheme(next);
-}
 
 // ---------- the LAN address chip (/api/info) ----------
 let lanUrl = '';
 
-function fetchNetworkInfo() {
-  fetch('/api/info')
+// Also after the sign-in changed (the first-run question, Settings > Sign-in): Sign out and View only follow it.
+export function fetchNetworkInfo() {
+  fetch('/api/info', { cache: 'no-store' })
     .then(r => r.json())
     .then(info => {
       if (info.primary_lan_url) {
@@ -81,6 +39,7 @@ function fetchNetworkInfo() {
       showSignOut(info.session);
       showAccess(info.can_edit !== false); // an older server without the field: editable, as before
       // for any module that needs it (one request per page load): state.networkInfo, then a `networkinfo` event
+      setPageZone(info.timezone); // Settings' zone: every time on the page follows it
       state.networkInfo = info;
       document.dispatchEvent(new CustomEvent('networkinfo', { detail: info }));
     })
@@ -184,13 +143,13 @@ function placeMenu(menu, button) {
   menu.style.left = `${Math.max(8, Math.min(b.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8))}px`;
 }
 
-// Opens `menu` (a .menu.fixed element) under `button`; a second press on the same button closes it.
-export function showMenu(menu, button) {
+// Opens `menu` (a .menu.fixed element) under `button` (or under `anchor`); a second press on the same button closes it.
+export function showMenu(menu, button, anchor = button) {
   const same = openMenu && openMenu.menu === menu && openMenu.button === button;
   closeMenus();
   if (same) return;
   menu.hidden = false;
-  placeMenu(menu, button);
+  placeMenu(menu, anchor);
   button.setAttribute('aria-expanded', 'true');
   openMenu = { menu, button };
   menu.querySelector('a, button:not([disabled])')?.focus();
@@ -200,7 +159,10 @@ export function toggleMenu(button) {
   const menu = document.getElementById(button.dataset.arg);
   if (!menu) return;
   if (menu.id === 'headerMenu') { fillHeaderMenu(menu); lanMenuItem(menu); }
-  showMenu(menu, button);
+  if (menu.id === 'themeMenu') fillThemeMenu(menu);
+  // a button in the phone's "more" menu: that menu closes, so the new one opens under the "more" button
+  const anchor = button.closest('.menu') ? document.querySelector('.tb-more') || button : button;
+  showMenu(menu, button, anchor);
 }
 
 // A short confirmation at the bottom of the screen.
@@ -222,7 +184,6 @@ export function toast(message) {
 
 registerActions('click', {
   copyLanUrl: () => copyLanUrl(),
-  toggleTheme: () => toggleTheme(),
   toggleMenu: (el) => toggleMenu(el)
 });
 
@@ -288,8 +249,7 @@ export function initChrome() {
   watchHeader();
   initRovingCells();
   fetchNetworkInfo();
-  setTheme(storedTheme());
-  dark.addEventListener('change', () => { if (!document.documentElement.dataset.theme) setTheme(''); });
+  initThemes();
   document.addEventListener('click', (ev) => {
     if (!openMenu) return;
     const t = ev.target instanceof Element ? ev.target : null;
@@ -305,6 +265,3 @@ export function initChrome() {
   });
   window.addEventListener('resize', closeMenus);
 }
-
-// The theme as early as possible (this module loads before the page is shown).
-if (storedTheme()) document.documentElement.dataset.theme = storedTheme();

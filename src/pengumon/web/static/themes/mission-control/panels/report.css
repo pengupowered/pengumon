@@ -1,0 +1,12 @@
+/* Mission control's Reliability: the standard view (panels/report/view.js) restyled: the availability a very large
+   figure, downtime and incidents large, the bars taller; the notes quiet. */
+:root[data-look="mission-control"] [data-panel="report"] .hero-num { font-size: clamp(56px, 15cqi, 88px) !important; color: var(--ink-1); letter-spacing: -.04em; }
+:root[data-look="mission-control"] [data-panel="report"] .hero-num small { font-size: var(--fs-lg); }
+:root[data-look="mission-control"] [data-panel="report"] .rep-mini { gap: var(--sp-5); }
+:root[data-look="mission-control"] [data-panel="report"] .rep-mini .stat .val { font-size: calc(var(--fs-lg) * 1.4); }
+:root[data-look="mission-control"] [data-panel="report"] .days { height: 84px; gap: 5px; }
+:root[data-look="mission-control"] [data-panel="report"] .day i { max-width: 34px; border-radius: 2px 2px 0 0; opacity: 1; }
+:root[data-look="mission-control"] [data-panel="report"] .cbar { height: 10px; }
+:root[data-look="mission-control"] [data-panel="report"] .causes b { font-size: var(--fs-md); }
+:root[data-look="mission-control"] [data-panel="report"] .rep-note { color: var(--ink-3); }
+@container (min-width: 760px) { :root[data-look="mission-control"] [data-panel="report"] .rep-grid .days { height: 110px; } }

@@ -82,4 +82,39 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=layoutModal]");
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["full", "bare"] }],
+
+  ["card colours: a card takes another theme's colours or its own, its chart follows, and the browser keeps them", async ({ click, eq, layoutMounted, ok, openLayout, outDir, page, path, until }) => {
+    const prop = (name) => page.$eval("[data-panel=latency]", (e, n) => getComputedStyle(e).getPropertyValue(n).trim(), name);
+    const lineColours = () => page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.filter((d) => d.pathLabel).map((d) => d.borderColor));
+    await layoutMounted();
+    const page1 = await prop("--s1");
+    await openLayout();
+    await page.select("#layColours-latency", "nord");
+    await until(() => document.querySelector("[data-panel=latency]").dataset.colours === "nord");
+    const nord = await page.evaluate(async () => (await (await fetch("/api/themes")).json()).themes.find((t) => t.id === "nord").theme.tokens);
+    const mode = await page.evaluate(() => (document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")));
+    eq("the card has Nord's first series colour", await prop("--s1"), nord[mode]["--s1"]);
+    ok("the rest of the page keeps its own", await page.$eval("[data-panel=matrix]", (e) => getComputedStyle(e).getPropertyValue("--s1").trim()) === page1);
+    await until(() => document.getElementById("latencyChart") && Chart.getChart(document.getElementById("latencyChart")));
+    const lines = await lineColours();
+    ok(`the latency chart draws in the card's colours (${lines.join(" ")})`, lines.length > 0 && lines.every((c) => Object.values(nord[mode]).includes(c)));
+    // custom: the accent and eight series colours, as colour pickers
+    await page.select("#layColours-latency", "custom");
+    await until(() => document.querySelectorAll('#layoutList input[type=color][data-arg="latency"]').length === 9);
+    await page.$eval('#layoutList input[type=color][data-arg="latency"][data-arg2="--s1"]', (e) => { e.value = "#c03aa0"; e.dispatchEvent(new Event("change", { bubbles: true })); });
+    await until(() => getComputedStyle(document.querySelector("[data-panel=latency]")).getPropertyValue("--s1").trim() === "#c03aa0");
+    await page.screenshot({ path: path.join(outDir, "layout-colours.png") });
+    await click("[data-action=closeModal][data-arg=layoutModal]");
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await until(() => getComputedStyle(document.querySelector("[data-panel=latency]")).getPropertyValue("--s1").trim() === "#c03aa0");
+    ok("kept after a reload", true);
+    await until(() => Chart.getChart(document.getElementById("latencyChart"))?.data.datasets.some((d) => d.borderColor === "#c03aa0"));
+    ok("and the chart's first line is that colour", true);
+    await openLayout();
+    await page.select("#layColours-latency", "");
+    await until(() => !document.querySelector("[data-panel=latency]").dataset.colours);
+    eq("page theme again", await prop("--s1"), page1);
+    await click("[data-action=closeModal][data-arg=layoutModal]");
+  }],
 ];

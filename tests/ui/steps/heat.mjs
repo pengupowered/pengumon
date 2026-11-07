@@ -73,22 +73,23 @@ export const steps = [
     await until(() => document.querySelectorAll("#heatGrid .cell").length >= 1);
     // Berlin, 25 October 2026: 03:00 CEST becomes 02:00 CET at 01:00 UTC, so 02:00-03:00 happens twice (00:00-02:00 UTC)
     // and 03:00 is 02:00 UTC; this browser runs in another zone (UTC in the test image), where 03:00 is an hour later
-    const got = await page.evaluate(async ([heat, util]) => {
-      const { renderHeat } = await import(heat);
-      const { zoneParams } = await import(util);
+    // the made-up answer goes through the model's present() and is drawn by the card's standard view, apart from the page
+    const got = await page.evaluate(async ([model, cards]) => {
+      const { present } = await import(model);
+      const { drawApart, registeredCards } = await import(cards);
       const at = (d, h) => Date.UTC(2026, 9, d, h) / 1000;
       const sunday = Array.from({ length: 25 }, (_, h) => (h < 3 ? at(24, 22) + h * 3600 : at(25, h - 1)));
       const rows = (v) => Array.from({ length: 3 }, () => Array(24).fill(v));
-      renderHeat({ days: ["2026-10-24", "2026-10-25", "2026-10-26"], weekdays: [5, 6, 0], zone: "Europe/Berlin", tz_offset_minutes: 60,
-        day_starts: [at(23, 22), at(24, 22), at(25, 23), at(26, 23)], hour_starts: [null, sunday, null], sent: rows(0), lost: rows(0), loss_pct: rows(null) });
-      const cells = [...document.querySelectorAll("#heatGrid .cell")];
+      const apart = drawApart("heat", registeredCards().find((c) => c.panel === "heat").standard, present({ days: ["2026-10-24", "2026-10-25", "2026-10-26"], weekdays: [5, 6, 0], zone: "Europe/Berlin", tz_offset_minutes: 60,
+        day_starts: [at(23, 22), at(24, 22), at(25, 23), at(26, 23)], hour_starts: [null, sunday, null], sent: rows(0), lost: rows(0), loss_pct: rows(null) }, Date.now() / 1000));
+      const cells = [...apart.root.querySelectorAll(".cell")];
       const span = (c) => `${Number(c.dataset.start) - at(25, 0)}-${Number(c.dataset.end) - at(25, 0)}`;
       const out = { browser: Intl.DateTimeFormat().resolvedOptions().timeZone, twice: span(cells[24 + 2]), three: span(cells[24 + 3]),
         monday: span(cells[48]), tip: cells[24 + 2].dataset.tip };
-      cells[24 + 3].click();
-      renderHeat(await (await fetch(`/api/report/loss-grid?days=7&${zoneParams()}`)).json()); // the real answer again
+      cells[24 + 3].click(); // its action is the page's, wherever the button is
+      apart.remove();
       return out;
-    }, [await moduleUrl("../panels/heat/panel.js"), await moduleUrl("util.js")]);
+    }, [await moduleUrl("../panels/heat/model.js"), await moduleUrl("cards.js")]);
     ok(`the browser runs in another zone (${got.browser})`, got.browser !== "Europe/Berlin");
     eq("Sunday 02:00-03:00 is two hours: 00:00-02:00 UTC", got.twice, "0-7200");
     ok(`and says why (${got.tip})`, /twice: the clocks went back/.test(got.tip));
@@ -113,5 +114,28 @@ export const steps = [
     await until(() => !document.getElementById("incidentWindow").hidden);
     await page.evaluate(() => document.querySelector("[data-action=clearIncidentWindow]").click());
     await until(() => document.getElementById("incidentWindow").hidden);
+  }],
+
+  ["loss heatmap: the same answer again leaves the cells alone, a different one draws them", async ({ moduleUrl, ok, page, until }) => {
+    await until(() => document.querySelectorAll("#heatGrid .cell").length >= 1);
+    // the answers go through the model's present() into the standard view's grid part, as the model's refresh does
+    const result = await page.evaluate(async ([model, cards]) => {
+      const { present } = await import(model);
+      const { registeredCards } = await import(cards);
+      const box = document.createElement("div");
+      const grid = registeredCards().find((c) => c.panel === "heat").standard.parts.grid(box);
+      const answer = await (await fetch("/api/report/loss-grid?days=7")).json();
+      const now = Date.now() / 1000;
+      grid.update(present(answer, now));
+      box.querySelector(".cell").dataset.mark = "kept";
+      grid.update(present(JSON.parse(JSON.stringify(answer)), now));
+      const same = box.querySelector(".cell").dataset.mark === "kept";
+      const next = JSON.parse(JSON.stringify(answer));
+      next.lost[0][0] += 1;
+      grid.update(present(next, now));
+      return { same, changed: box.querySelector(".cell").dataset.mark === undefined };
+    }, [await moduleUrl("../panels/heat/model.js"), await moduleUrl("cards.js")]);
+    ok("an identical answer leaves the cells alone", result.same);
+    ok("a changed answer draws them", result.changed);
   }],
 ];

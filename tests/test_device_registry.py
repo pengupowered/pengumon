@@ -123,6 +123,19 @@ def test_build_devices_logs_one_line_per_device_without_secrets(caplog):
     assert SECRET not in caplog.text
 
 
+def test_the_supervisor_logs_each_built_device_with_the_same_line(caplog):
+    """The devices component's supervisor (the running app) and build_devices write one line per device, the same."""
+    from pengumon.devices.component import DeviceSupervisor
+    configs = [_cfg("wifi", "asuswrt"), _cfg("old", "asuswrt", url="http://192.168.2.1", enabled=False)]
+    with caplog.at_level(logging.INFO, logger="pengumon.devices"):
+        build_devices(configs, None, _with_password("wifi"))
+        built = [(r.getMessage(), r.pengumon_context) for r in caplog.records]
+        caplog.clear()
+        DeviceSupervisor(DeviceRegistry(), credentials=_with_password("wifi")).build_all(configs)
+        supervised = [(r.getMessage(), r.pengumon_context) for r in caplog.records]
+    assert len(built) == 2 and supervised == built
+
+
 def test_two_enabled_devices_of_one_kind_are_accepted_and_the_first_one_feeds_the_line_load():
     """Storage is keyed by device id (schema v9), so nothing mixes their rows (tests/test_device_storage.py)."""
     configs = [_cfg("off", "asuswrt", url="http://192.168.3.1", enabled=False), _cfg("a", "asuswrt"),

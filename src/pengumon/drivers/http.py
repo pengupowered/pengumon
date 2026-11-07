@@ -6,7 +6,7 @@ size) without the query string or any body: login requests carry credentials.
 
 import ssl
 import time
-from typing import Callable, Optional, Union
+from typing import Awaitable, Callable, List, Optional, Tuple, Union
 from urllib.parse import urlsplit
 
 import httpx
@@ -17,6 +17,7 @@ from pengumon.observability.telemetry import tracer
 
 
 Verify = Union[bool, ssl.SSLContext]
+BODY_MAX = 64 * 1024  # the most `read_capped` reads of a body unless asked for another limit
 
 
 def tls_verify(tls) -> Verify:
@@ -64,6 +65,20 @@ def host_of(url: str) -> str:
     return urlsplit(url if "://" in url else f"http://{url}").hostname or url
 
 
+async def read_capped(client: httpx.AsyncClient, method: str, url: str, limit: int = BODY_MAX, **kwargs):
+    """(status, headers, body bytes) of one request, the body cut at `limit` bytes (the rest is never read) and
+    `truncated` True when it was longer."""
+    async with client.stream(method, url, **kwargs) as response:
+        body = bytearray()
+        truncated = False
+        async for chunk in response.aiter_bytes():
+            body += chunk
+            if len(body) > limit:
+                truncated = True
+                break
+        return response.status_code, response.headers, bytes(body[:limit]), truncated
+
+
 class DeviceHttp:
     """Wraps the driver's AsyncClient. The client is created on first use by `factory` (or given, for tests) and
     kept for the process lifetime: one TCP connection and one cookie jar instead of a new one per poll."""
@@ -86,7 +101,8 @@ class DeviceHttp:
     def cookies(self) -> httpx.Cookies:
         return self.client.cookies
 
-    async def request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    async def _exchange(self, method: str, path: str, send: Callable[[str], Awaitable[Tuple[int, int]]]) -> None:
+        """One request under its span and debug line. `send(url)` makes it and returns (status code, body size)."""
         url = path if "://" in path else f"{self.base_url}/{path.lstrip('/')}"
         url_path = urlsplit(url).path or "/"
         attributes = {"http.request.method": method, "server.address": self.host, "url.path": url_path}
@@ -94,19 +110,41 @@ class DeviceHttp:
         with tracer.start_as_current_span(f"{method} {url_path}", kind=SpanKind.CLIENT,
                                           attributes=attributes) as span:
             try:
-                response = await self.client.request(method, url, **kwargs)
+                status, size = await send(url)
             except httpx.HTTPError as exc:
                 span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
                 span.set_attribute("error.type", type(exc).__name__)
                 self._log.debug("request failed", method=method, path=url_path, error=type(exc).__name__,
                                 detail=str(exc) or None, duration_ms=round((time.perf_counter() - started) * 1000))
                 raise
-            span.set_attribute("http.response.status_code", response.status_code)
-            if response.status_code >= 400:
-                span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
-            self._log.debug("request", method=method, path=url_path, status=response.status_code,
-                            bytes=len(response.content), duration_ms=round((time.perf_counter() - started) * 1000))
-            return response
+            span.set_attribute("http.response.status_code", status)
+            if status >= 400:
+                span.set_status(Status(StatusCode.ERROR, f"HTTP {status}"))
+            self._log.debug("request", method=method, path=url_path, status=status, bytes=size,
+                            duration_ms=round((time.perf_counter() - started) * 1000))
+
+    async def request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        done: List[httpx.Response] = []
+
+        async def send(url: str) -> Tuple[int, int]:
+            done.append(await self.client.request(method, url, **kwargs))
+            return done[0].status_code, len(done[0].content)
+
+        await self._exchange(method, path, send)
+        return done[0]
+
+    async def request_capped(self, method: str, path: str, limit: int = BODY_MAX, **kwargs
+                             ) -> Tuple[int, httpx.Headers, bytes, bool]:
+        """Like `request`, but the body is read only up to `limit` bytes (the rest never is): (status, headers,
+        body, truncated). For devices whose answers are small and fixed in shape."""
+        done: List[Tuple[int, httpx.Headers, bytes, bool]] = []
+
+        async def send(url: str) -> Tuple[int, int]:
+            done.append(await read_capped(self.client, method, url, limit, **kwargs))
+            return done[0][0], len(done[0][2])
+
+        await self._exchange(method, path, send)
+        return done[0]
 
     async def get(self, path: str, **kwargs) -> httpx.Response:
         return await self.request("GET", path, **kwargs)

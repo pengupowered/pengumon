@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from pengumon import paths
+from pengumon.access.settings import AccessConfig
 from pengumon.clients.settings import PrivacyConfig
 from pengumon.devices.levels import RouterLevelsConfig
 from pengumon.devices.settings import DeviceConfig, unique_device_ids
@@ -94,6 +95,7 @@ class AppConfig(BaseModel):
     devices: List[DeviceConfig] = Field(default_factory=list)  # the modems and routers to read; none by default
     line: LineConfig = Field(default_factory=LineConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    access: AccessConfig = Field(default_factory=AccessConfig)
     service_checks: ServiceChecksConfig = Field(default_factory=ServiceChecksConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)

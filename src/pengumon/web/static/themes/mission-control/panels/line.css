@@ -1,0 +1,12 @@
+/* Mission control's line card: the standard view (panels/line/view.js) restyled: each reading a large figure over a
+   thicker gauge with a taller marker; the scales and notes quiet. */
+:root[data-look="mission-control"] [data-panel="line"] .g-val { font-size: var(--fs-xl); line-height: 1; letter-spacing: -.02em; }
+:root[data-look="mission-control"] [data-panel="line"] .g-val small { font-size: var(--fs-xs); letter-spacing: 0; }
+:root[data-look="mission-control"] [data-panel="line"] .g-name { font-size: var(--fs-md); color: var(--ink-1); }
+:root[data-look="mission-control"] [data-panel="line"] .g-bar { height: 14px; border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="line"] .g-zone { border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="line"] .g-spread { top: 4px; height: 6px; }
+:root[data-look="mission-control"] [data-panel="line"] .g-mark { top: -5px; height: 24px; width: 5px; margin-left: -2.5px; }
+:root[data-look="mission-control"] [data-panel="line"] .gauge.fec .g-val { font-size: var(--fs-xl); color: var(--ink-1); }
+:root[data-look="mission-control"] [data-panel="line"] .chan-txt { font-size: var(--fs-md); }
+:root[data-look="mission-control"] [data-panel="line"] .chan-strip { height: 18px; }

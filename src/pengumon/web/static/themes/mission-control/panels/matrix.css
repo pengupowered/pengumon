@@ -1,0 +1,8 @@
+/* Mission control's Hop details: the standard view (panels/matrix/view.js) restyled: the last round trip of each hop a
+   larger figure (its fixed column a little wider), the range thicker; the addresses quiet. */
+:root[data-look="mission-control"] [data-panel="matrix"] [data-f="last"] { font-size: calc(var(--fs-md) * 1.15); font-weight: var(--fw-bold); }
+:root[data-look="mission-control"] [data-panel="matrix"] .hops .primary { font-size: var(--fs-md); }
+:root[data-look="mission-control"] [data-panel="matrix"] .range { height: 10px; border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="matrix"] .range i { border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="matrix"] .range b { top: -4px; height: 18px; width: 4px; margin-left: -2px; }
+@container (min-width: 561px) { :root[data-look="mission-control"] [data-panel="matrix"] .hops .c-last { width: 104px; } }

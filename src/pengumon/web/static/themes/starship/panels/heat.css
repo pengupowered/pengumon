@@ -1,0 +1,42 @@
+/* Starship console's When it breaks: the standard view (panels/heat/view.js) restyled as a sensor array: a flat lilac
+   block with each day's name, hour blocks in their step of the loss scale (--f), an hour ruler, the scale between its labels and the
+   sentence as a readout under a "Pattern" label (this theme's word, CSS text), after an orange band. */
+
+:root[data-look="starship"] [data-panel="heat"] .heat { grid-template-columns: 46px repeat(24, minmax(0, 1fr)); gap: 3px 2px; align-items: stretch; }
+/* the hour ruler: a tick per hour, the quarter days named */
+:root[data-look="starship"] [data-panel="heat"] .heat .hd {
+  height: 18px; border-bottom: 3px solid var(--ink-3); margin-bottom: 2px; text-align: left; overflow: visible; white-space: nowrap;
+  font-family: var(--ss-cond); font-stretch: condensed; font-weight: var(--fw-bold); color: var(--ink-3);
+}
+:root[data-look="starship"] [data-panel="heat"] .heat .hd:not(:empty) { border-bottom-color: var(--accent); color: var(--accent); }
+/* a day: a flat block at the head of its row */
+:root[data-look="starship"] [data-panel="heat"] .heat > [data-v="day"] {
+  display: flex; align-items: center; justify-content: flex-end; padding: 0 6px; margin-right: 2px; min-width: 0;
+  background: var(--ink-2); color: var(--bg); border-radius: 0;
+  font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold);
+}
+/* an hour: a block in its step of the loss scale */
+:root[data-look="starship"] [data-panel="heat"] .heat > .cell,
+:root[data-look="starship"] [data-panel="heat"] .heat > i { aspect-ratio: 1.15; padding: 0; border: 0; }
+:root[data-look="starship"] [data-panel="heat"] .heat > .cell { cursor: pointer; border-radius: 0; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink-3) 18%, transparent); }
+:root[data-look="starship"] [data-panel="heat"] .heat > .cell:hover { box-shadow: inset 0 0 0 2px var(--ink-1); }
+:root[data-look="starship"] [data-panel="heat"] .heat > i.later { background: repeating-linear-gradient(135deg, var(--surface-2) 0 2px, var(--bg) 2px 4px); }
+/* the foot: the scale as five blocks between its labels, the hint */
+:root[data-look="starship"] [data-panel="heat"] .scale-legend { gap: 2px; }
+:root[data-look="starship"] [data-panel="heat"] .scale-legend > span:first-child { margin-right: 4px; }
+:root[data-look="starship"] [data-panel="heat"] .scale-legend > span:last-child { margin-left: 4px; }
+:root[data-look="starship"] [data-panel="heat"] .scale-legend i { width: 22px; height: 12px; margin: 0; box-shadow: inset 0 0 0 1px var(--line-strong); }
+/* the sentence: a readout under a label, after an orange band */
+:root[data-look="starship"] [data-panel="heat"] .insight {
+  flex-direction: column; gap: 4px; padding: 2px 0 2px var(--sp-3); margin-top: var(--sp-3);
+  background: none; border: 0; border-left: 8px solid var(--accent); border-radius: 0;
+}
+:root[data-look="starship"] [data-panel="heat"] .insight[hidden] { display: none; }
+:root[data-look="starship"] [data-panel="heat"] .insight > svg.i { display: none; }
+:root[data-look="starship"] [data-panel="heat"] .insight::before { content: "Pattern"; }
+:root[data-look="starship"] [data-panel="heat"] .insight b { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+@container (max-width: 380px) {
+  :root[data-look="starship"] [data-panel="heat"] .heat { grid-template-columns: 38px repeat(24, minmax(0, 1fr)); gap: 2px 1px; }
+  :root[data-look="starship"] [data-panel="heat"] .heat > [data-v="day"] { padding: 0 4px; }
+}

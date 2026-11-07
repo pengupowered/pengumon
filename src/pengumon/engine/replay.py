@@ -10,10 +10,13 @@ What it reuses, so that "the same rules" give "the same incidents" (tests/test_r
 classifier on the characterization scenario):
 
 * the prober's targets (`NetworkProber.stats`, for their order, names and categories), kept up by `_Target.add`, which
-  does the part of `NetworkProber._update_target_stats` that a verdict can read: the window of the last ten probes and
-  the "down" status that `ignoring_ping` reads. The averages, the jitter and the lifetime counters, which no verdict
-  reads, are not kept (tests/test_replay.py checks `_Target` against the prober probe by probe);
-* `round_metrics` once per round, shared by both rule sets (it depends on the window only, which is no setting);
+  does the part of `NetworkProber._update_target_stats` that a verdict can read: the last probes (as many as the longer
+  of the two rule sets' windows, `classifier.window_probes`) and the "down" status that `ignoring_ping` reads, judged
+  over each rule set's own window, as the live prober would judge it under those rules. The averages, the jitter and
+  the lifetime counters, which no verdict reads, are not kept (tests/test_replay.py checks `_Target` against the prober
+  probe by probe);
+* `ignoring_ping` and `round_metrics` once per round per window (one call when both rule sets judge the same number
+  of probes);
 * `ClassifierCore.step` once per round per rule set, each with its own tracker and DNS-cooldown state and no repository;
 * the load constants of engine/load.py, applied to the stored WAN rates of the router;
 * the notifier's `AlertPolicy` (notify/policy.py) to count the alerts each rule set's incidents would have sent.
@@ -47,7 +50,7 @@ from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.load import LineLoad, LoadReading, Rate
 from pengumon.engine.load_settings import LineConfig
 from pengumon.engine.prober import NetworkProber
-from pengumon.engine.prober_settings import DnsProbeConfig, HopStatusConfig
+from pengumon.engine.prober_settings import DEFAULT_WINDOW_PROBES, DnsProbeConfig, HopStatusConfig
 from pengumon.incidents.model import Incident
 from pengumon.incidents.taxonomy import kinds_in_scope
 from pengumon.lines import wording
@@ -73,36 +76,41 @@ class _Sample(NamedTuple):
 
 
 class _Target:
-    """What the classifier reads of a TargetStats: the last ten probes (`recent_latencies`, None for a lost one), the
+    """What the classifier reads of a TargetStats: the last `keep` probes (`recent_latencies`, None for a lost one), the
     path flags and the identity, and the "down" status. `add` is NetworkProber._update_target_stats reduced to that:
-    the window holds latency or None (a probe that succeeded without a latency counts as lost), and the status is
-    "down" when more than `down_fraction` of the window is lost, else "up" (the prober's "degraded" is not "down"
-    either, which is all `ignoring_ping` asks)."""
+    the window holds latency or None (a probe that succeeded without a latency counts as lost). `judge` sets the status
+    over a rule set's window: "down" when more than `down_fraction` of its last probes is lost, else "up" (the
+    prober's "degraded" is not "down" either, which is all `ignoring_ping` asks)."""
 
     __slots__ = ("target_id", "name", "category", "address", "enabled", "recent_latencies", "status", "ignores_ping",
-                 "ipv6_unavailable", "hot", "calm_below")
+                 "ipv6_unavailable", "hot", "calm_below", "keep")
 
-    def __init__(self, stat, calm_below: float = 0.0):
+    def __init__(self, stat, calm_below: float = 0.0, keep: int = DEFAULT_WINDOW_PROBES):
         self.calm_below = calm_below
+        self.keep = keep  # the longest window a rule set judges
         self.target_id, self.name, self.category = stat.target_id, stat.name, stat.category
         self.address, self.enabled = stat.address, stat.enabled
         self.recent_latencies: List[Optional[float]] = []
         self.status = "up"
         self.ignores_ping = False
         self.ipv6_unavailable = False
-        self.hot = 0  # probes still to come until the last ten are all answered and under the calm level
+        self.hot = 0  # probes still to come until the last `keep` are all answered and under the calm level
 
-    def add(self, latency: Optional[float], down_fraction: float) -> None:
+    def add(self, latency: Optional[float]) -> None:
         """Adds a probe. A latency under `calm_below` (and answered) is calm; see `_calm_below`."""
         window = self.recent_latencies
         window.append(latency)
-        if len(window) > 10:
+        if len(window) > self.keep:
             del window[0]
-        self.status = "down" if window.count(None) / len(window) > down_fraction else "up"
         if latency is None or latency >= self.calm_below or latency < 0:
-            self.hot = 10
+            self.hot = self.keep
         elif self.hot:
             self.hot -= 1
+
+    def judge(self, window: int, down_fraction: float) -> None:
+        """The status over the last `window` probes (the prober's, with a rule set's `window_probes`)."""
+        judged = self.recent_latencies[-window:]
+        self.status = "down" if judged and judged.count(None) / len(judged) > down_fraction else "up"
 
 
 SKIP_CALM_ROUNDS = True  # tests turn it off to prove the skipping changes nothing
@@ -111,9 +119,9 @@ CALM_MARGIN_MS = 0.01  # the metrics are rounded to 0.01 ms; stay clear of that
 
 def _calm_below(config: ClassifierConfig) -> Dict[str, float]:
     """Per category, a latency (ms) under which probes cannot make `diagnose` find a fault: with no probe lost, the
-    category's average, and its jitter (a mean of differences, at most the largest latency), cannot pass any latency
-    or jitter level of the config, and its loss is 0. For latencies >= 0. Categories the metrics don't read: no
-    limit."""
+    category's median latency, and its jitter (a mean of median differences, at most the largest latency), cannot pass
+    any latency or jitter level of the config, and its loss is 0. For latencies >= 0. Categories the metrics don't
+    read: no limit."""
     public = config.public_latency_spike_threshold_ms
     return {
         "local": min(config.local_latency_spike_threshold_ms, config.local_jitter_spike_threshold_ms),
@@ -347,6 +355,8 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
     down_fraction = hop_status.down_loss_fraction
     levels = [_calm_below(r.config) for r in rule_sets]
     calm_below = {c: min(level[c] for level in levels) - CALM_MARGIN_MS for c in levels[0]}
+    keep = max(r.config.window_probes for r in rule_sets)
+    windows = sorted({r.config.window_probes for r in rule_sets})
 
     def new_stats() -> Dict[str, _Target]:
         prober = NetworkProber(status_thresholds=hop_status)
@@ -354,13 +364,15 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
             prober.register_target(target)
         for probe in dns_probes:
             prober.register_dns_target(probe)
-        return {tid: _Target(stat, calm_below.get(stat.category, float('inf'))) for tid, stat in prober.stats.items()}
+        return {tid: _Target(stat, calm_below.get(stat.category, float('inf')), keep)
+                for tid, stat in prober.stats.items()}
 
     for rule_set in rule_sets:
         rule_set.reset()
     keys = {row[0]: row[1] for row in conn.execute("SELECT id, key FROM targets")}
 
-    state = {"rounds": 0, "prev_ts": None, "last_ts": start, "stats": new_stats(), "flagged": False}
+    # flagged: per window, whether a target was found ignoring ping in the last round that looked
+    state = {"rounds": 0, "prev_ts": None, "last_ts": start, "stats": new_stats(), "flagged": set()}
     gaps: List[Dict[str, float]] = []
 
     async def run_round(samples: List[_Sample]) -> None:
@@ -371,26 +383,32 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
             for rule_set in rule_sets:
                 rule_set.close_open()
                 rule_set.reset()
-            state["stats"], state["flagged"] = new_stats(), False
+            state["stats"], state["flagged"] = new_stats(), set()
         state["prev_ts"] = state["last_ts"] = ts
         state["rounds"] += 1
         stats = state["stats"]
         for sample in samples:
             target = stats.get(sample.target_id)
             if target is not None:
-                target.add(sample.latency_ms if sample.success else None, down_fraction)
-        # A target is hot while one of its last ten probes was lost or slow. With none hot, a round cannot be a fault
+                target.add(sample.latency_ms if sample.success else None)
+        # A target is hot while one of its last `keep` probes was lost or slow. With none hot, a round cannot be a fault
         # (_calm_below), nobody is down, and `observe` of a healthy round changes nothing in a tracker that has no
         # incident open and no failures counted, which is then the whole step.
         hot = any(t.hot for t in stats.values())
         calm = SKIP_CALM_ROUNDS and not hot
-        # the flags (NetworkProber.update_path_flags) only change while a target is down or one is flagged
-        if hot or state["flagged"]:
-            quiet = ignoring_ping(stats.values())
-            for tid, target in stats.items():
-                target.ignores_ping = tid in quiet
-            state["flagged"] = bool(quiet)
-        metrics = None
+        # the flags (NetworkProber.update_path_flags), per window: they only change while a target is down (hot) or one
+        # is flagged
+        quiet: Dict[int, set] = {}
+        for window in windows:
+            quiet[window] = set()
+            if hot or window in state["flagged"]:
+                for target in stats.values():
+                    target.judge(window, down_fraction)
+                quiet[window] = ignoring_ping(stats.values())
+                state["flagged"].discard(window)
+                if quiet[window]:
+                    state["flagged"].add(window)
+        metrics: Dict[int, Any] = {}  # by window
         for rule_set in rule_sets:
             reading = rule_set.load.current(ts)
             if reading is None:
@@ -401,9 +419,12 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
                         and not tracker.loss_failure_counter and not tracker.latency_failure_counter):
                     rule_set.in_busy = False
                     continue
-            if metrics is None:
-                metrics = round_metrics(stats, samples)
-            result = await rule_set.core.step(metrics, ts, reading)
+            window = rule_set.config.window_probes
+            if window not in metrics:
+                for tid, target in stats.items():
+                    target.ignores_ping = tid in quiet[window]
+                metrics[window] = round_metrics(stats, samples, window)
+            result = await rule_set.core.step(metrics[window], ts, reading)
             if result.verdict.status == "busy":
                 if not rule_set.in_busy:
                     rule_set.busy_runs += 1

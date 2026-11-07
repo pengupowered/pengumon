@@ -22,12 +22,14 @@ export const steps = [
 
   ["a hop that ignores ping is listed as such in Every hop, not with the availability of its unanswered pings", async ({ eq, page, until }) => {
     await until(() => /^Last \d+ days:/.test(document.getElementById("reportOutput").dataset.summary ?? ""));
+    await page.evaluate(() => { document.querySelector("#reportOutput .rep-hops-box").open = true; });
     await page.evaluate(() => {
       window.__smokeMutate = (d) => d.targets.forEach((t) => {
         if (t.target_id === "local_router") Object.assign(t, { status: "down", last_ms: null, recent_latencies: Array(30).fill(null), loss_pct: 100, loss_recent_pct: 100, ignores_ping: true });
       });
     });
     await until(() => [...document.querySelectorAll("#reportOutput .rep-hops tbody tr")].some((r) => /Ignores ping/.test(r.textContent)));
+    eq("the open table stays open when its rows change", await page.$eval("#reportOutput .rep-hops-box", (d) => d.open), true);
     const rows = await page.$$eval("#reportOutput .rep-hops tbody tr", (rs) => rs.map((r) => [...r.cells].map((c) => c.textContent.trim()).join("|")));
     eq("the router's row", rows.filter((r) => /Ignores ping/.test(r)).join(), "Router|Ignores ping|–");
     await page.evaluate(() => { window.__smokeMutate = null; });

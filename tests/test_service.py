@@ -553,6 +553,7 @@ def _install_on_every_connection(as_linux, monkeypatch, tmp_path, capsys, drop_i
     (tmp_path / "pengumon").write_text("#!/bin/sh\n")
     monkeypatch.setattr(service.sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(service, "SYSTEM_UNIT_PATH", tmp_path / "pengumon.service")
+    monkeypatch.setattr(service, "SYSTEM_DATA_DIR", str(tmp_path / "data"))  # the service's secrets.json is there
     if drop_in:
         (tmp_path / "pengumon.service.d").mkdir()
         (tmp_path / "pengumon.service.d" / "override.conf").write_text(drop_in)
@@ -567,10 +568,25 @@ def test_install_on_every_connection_names_the_address_other_devices_use(as_linu
     out = _install_on_every_connection(as_linux, monkeypatch, tmp_path, capsys)
     assert "open http://127.0.0.1:8123/" in out  # this computer
     assert "http://mybox:8123/" in out and "http://192.0.2.7:8123/" in out  # the others
-    assert "Set an access token first" in out
+    assert "Set a password first" in out
 
 
 def test_install_on_every_connection_does_not_ask_for_a_token_that_is_set(as_linux, monkeypatch, tmp_path, capsys):
     out = _install_on_every_connection(as_linux, monkeypatch, tmp_path, capsys,
                                        drop_in="[Service]\nEnvironment=PENGUMON_ACCESS_TOKEN=x\n")
-    assert "http://mybox:8123/" in out and "Set an access token first" not in out
+    assert "http://mybox:8123/" in out and "Set a password first" not in out
+
+
+@pytest.mark.parametrize("secrets, protected", [
+    ('{"access_token": "made-up-password"}', True),  # set on the page (Settings > Sign-in)
+    ('{"devices": {"router": {"password": "x"}}}', False),  # a device's password only
+    ('{"access_token": ', False),  # damaged: unknown, so the advice stays
+])
+def test_install_on_every_connection_knows_a_password_set_on_the_page(as_linux, monkeypatch, tmp_path, capsys,
+                                                                       secrets, protected):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "secrets.json").write_text(secrets, encoding="utf-8")
+    out = _install_on_every_connection(as_linux, monkeypatch, tmp_path, capsys)
+    assert ("Set a password first" not in out) is protected
+    assert ("The password you set protects it." in out) is protected
+    assert (tmp_path / "data" / "secrets.json").read_text(encoding="utf-8") == secrets  # read, never rewritten

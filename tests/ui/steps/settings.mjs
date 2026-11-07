@@ -9,7 +9,7 @@ import { loopback } from "../lib.mjs";
 export const subject = "dialog:settings";
 export const variants = ["full"];
 
-const SECTIONS = ["outage", "alerts", "line", "devices", "probing", "retention", "privacy", "discovery", "display", "advanced", "about"];
+const SECTIONS = ["outage", "alerts", "line", "devices", "probing", "retention", "access", "privacy", "discovery", "display", "advanced", "about"];
 const LOSS = "classifier.consecutive_failures_for_incident";
 const SECRET_URL = "https://hooks.example.test/T000/very-secret-path-4471";
 
@@ -263,6 +263,7 @@ export const steps = [
 
   ["a DNS lookup is added and saved; it appears in Path health's matrix", async (ctx) => {
     const { eq, ok, page, until, waitCount } = ctx;
+    await ctx.showCard("matrix"); // not drawn while it is off screen
     await settingsOpen(ctx);
     await ctx.click("#settingsRail [data-arg=probing]");
     const before = await ctx.count("#hopMatrixBody tr");
@@ -576,6 +577,59 @@ export const steps = [
     await ctx.click("#btnSettingsCancel");
     await page.evaluate(() => localStorage.clear());
   }],
+
+  ["Display: the theme every browser starts with, and your own themes: duplicate one, change a colour, Save", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    await settingsOpen(ctx);
+    await ctx.click("#settingsRail [data-arg=display]");
+    await until(() => document.querySelector("[data-list=themes] .th-row"));
+    ok("the built-in themes are listed, Pengumon first", (await ctx.count("[data-list=themes] .th-row")) >= 3 && /^Pengumon/.test(await ctx.text("[data-list=themes] .th-row b")));
+    await ctx.click("[data-list=themes] [data-ta=duplicate-builtin][data-arg=nord]");
+    await until(() => document.querySelector("[data-list=themes] .th-card"));
+    eq("a draft theme", await ctx.text("[data-list=themes] .th-card .set-card-t"), "Nord copy");
+    await page.$eval('[data-list=themes] .th-card input[data-tc="dark --bg"]', (e) => { e.value = "#101820"; e.dispatchEvent(new Event("change", { bubbles: true })); });
+    await until(() => [...document.querySelectorAll(`#settingsSections .set-row[data-key="display.theme"] option`)].some((o) => o.value === "custom-nord-copy"));
+    ok("Theme offers the new one at once", true);
+    await page.select(`${settingsRow("display.theme")} select`, "custom-nord-copy");
+    eq("two changes", await settingsSaveLabel(page), "Save 2 changes");
+    await settingsSave(ctx);
+    const api = await page.evaluate(async () => (await fetch("/api/themes")).json());
+    eq("the default for every browser", api.default, "custom-nord-copy");
+    eq("the colour is saved", api.themes.find((t) => t.id === "custom-nord-copy").theme.tokens.dark["--bg"], "#101820");
+    await page.reload({ waitUntil: "load" });
+    await ctx.layoutMounted();
+    eq("a browser with no choice of its own starts with it", await page.evaluate(() => document.documentElement.dataset.look), "custom-nord-copy");
+    await ctx.pickMode("dark");
+    eq("in its colours", await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()), "#101820");
+    // the standard again for the steps after this one
+    const status = await page.evaluate(async () => {
+      const { revision } = await (await fetch("/api/settings", { cache: "no-store" })).json();
+      const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: revision, values: { "display.theme": null }, lists: { themes: null } }) });
+      return res.status;
+    });
+    eq("put back", status, 200);
+    await page.evaluate(() => localStorage.clear());
+  }, { variants: ["bare"] }], // the full variant's steps save 18 times a minute; Save allows 20 (api/settings.py)
+
+  ["Themes: Export gives any theme as a file; Import reads one as a draft and says what it filled in and left out", async (ctx) => {
+    const { eq, fs, ok, outDir, page, path, until } = ctx;
+    await settingsOpen(ctx);
+    await ctx.click("#settingsRail [data-arg=display]");
+    await until(() => document.querySelector("[data-list=themes] .th-row"));
+    await ctx.click("[data-list=themes] [data-ta=export-builtin][data-arg=digital-rain]");
+    await until(() => document.getElementById("themeExportText"));
+    const exported = JSON.parse(await page.$eval("#themeExportText", (t) => t.value));
+    ok("the file is the theme: every colour, no effect, no fonts", exported.id === "digital-rain" && !("effect" in exported) && exported.tokens.dark["--bg"] && !exported.tokens.dark["--font"]);
+    const file = path.join(outDir, "imported.theme.json");
+    fs.writeFileSync(file, JSON.stringify({ id: "paper", name: "Paper", modes: ["light"], tokens: { light: { "--bg": "#fbf8f1", "--font": "Georgia, serif" } } }));
+    await (await page.$("#themeImportFile")).uploadFile(file);
+    await until(() => [...document.querySelectorAll("[data-list=themes] .th-card .set-card-t")].some((t) => t.textContent === "Paper"));
+    const note = await ctx.text("[data-list=themes] .result");
+    ok(`the note says what came from where (${note})`, /missing colours come from the standard theme/.test(note) && /left out/.test(note));
+    eq("light only", await ctx.text("[data-list=themes] .th-card .set-card-s"), "light only");
+    eq("one change, nothing saved", await settingsSaveLabel(page), "Save 1 change");
+    await settingsDiscard(ctx);
+  }, { chromiumOnly: "uploadFile is CDP only" }],
 
   ["at 390 px: one column, a jump list, no sideways scroll, with a list card expanded; both themes look right", async (ctx) => {
     const { eq, ok, page, phone, setTheme } = ctx;

@@ -23,7 +23,7 @@ function result(level, html) {
 
 export function openDeviceSetup(id) {
   device = state.devices.find((d) => d.id === id) || null;
-  if (!device) return;
+  if (!device || device.needs_sign_in === false) return;
   const [kind, ...rest] = String(device.label || '').split(' · '); // "<what it is> · <its name>"
   const given = rest.join(' · ');
   const name = /^[a-z]+$/.test(given) ? `the ${given}` : (given || deviceName(device)); // "modem" reads "the modem"; a model name stands alone

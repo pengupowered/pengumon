@@ -169,7 +169,7 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=networkModal]");
   }],
 
-  ["Local network dialog: keyboard on the topology, band filter chips, sort state, signal words, empty-state element", async ({ ROUTER, click, eq, ok, outDir, page, path, until, waitCount }) => {
+  ["Local network dialog: keyboard on the topology, band filter chips, sort state, signal words, empty-state element", async ({ ROUTER, click, eq, flipMode, ok, outDir, page, path, until, waitCount }) => {
     await click(`${ROUTER} [data-f=lan]`);
     await until(() => document.getElementById("networkModal").classList.contains("active"));
     await waitCount("#clientsBody tr", 3);
@@ -205,16 +205,16 @@ export const steps = [
     await page.screenshot({ path: path.join(outDir, "network-phone.png") });
     await page.evaluate(() => document.getElementById("networkModal").querySelector(".modal-b").scrollTo(0, 700));
     await page.screenshot({ path: path.join(outDir, "network-phone-clients.png") });
-    await click("#btnTheme"); // dark
+    await flipMode(); // dark
     await page.screenshot({ path: path.join(outDir, "network-phone-dark.png") });
     await page.setViewport({ width: 1400, height: 1000 });
     await page.evaluate(() => document.getElementById("networkModal").querySelector(".modal-b").scrollTo(0, 0));
     await page.screenshot({ path: path.join(outDir, "network-dark.png") });
-    await click("#btnTheme"); // and back to light
+    await flipMode(); // and back to light
     await click("[data-action=closeModal][data-arg=networkModal]");
   }],
 
-  ["Router history dialog: one crosshair across all charts, readouts, keyboard, per-device sections", async ({ ROUTER, click, eq, ok, outDir, page, path, text, until }) => {
+  ["Router history dialog: one crosshair across all charts, readouts, keyboard, per-device sections", async ({ ROUTER, click, eq, flipMode, ok, outDir, page, path, text, until }) => {
     await click(`${ROUTER} [data-action=openRouterHistory]`);
     await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
     const reads = () => page.$$eval(".rh-read", (els) => els.map((e) => e.textContent));
@@ -245,12 +245,12 @@ export const steps = [
     await page.screenshot({ path: path.join(outDir, "router-history-light.png") });
     await page.setViewport({ width: 390, height: 844 }); // no isMobile: puppeteer would reload the page and close the dialog
     await page.screenshot({ path: path.join(outDir, "router-history-phone.png") });
-    await click("#btnTheme"); // dark
+    await flipMode(); // dark
     await page.screenshot({ path: path.join(outDir, "router-history-phone-dark.png") });
     await page.setViewport({ width: 1400, height: 1000 });
     await page.mouse.move(box.x + box.width * 0.6, box.y + box.height / 2);
     await page.screenshot({ path: path.join(outDir, "router-history-dark.png") });
-    await click("#btnTheme"); // and back to light
+    await flipMode(); // and back to light
     await click("[data-action=closeModal][data-arg=routerHistModal]");
   }],
 ];

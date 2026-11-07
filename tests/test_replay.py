@@ -200,6 +200,35 @@ async def test_load_makes_the_replay_call_a_slow_line_busy_and_counts_it(tmp_pat
     assert [c["in"] for c in result["changes"]] == ["draft"]
 
 
+async def test_a_draft_window_is_judged_over_its_own_probes(tmp_path):
+    # 8 slow rounds: more than half of the last 10 probes for 7 rounds (an incident after 3), never of the last 20
+    rows = [(T0 + k, t, 300.0 if t == "pub" and 20 <= k < 28 else 1.0) for k in range(60)
+            for t in ("local", "gw", "isp", "pub", "dns")]
+    db = tmp_path / "w.db"
+    await make_db(db, rows)
+    targets = [("local", "local", "Local", "192.0.2.1", True), ("gw", "gateway", "Gateway", "192.0.2.2", True),
+               ("isp", "isp", "Hub", "198.51.100.1", True), ("pub", "public", "Public", "203.0.113.1", True)]
+    spec = spec_for(targets, T0, T0 + 60, draft={"consecutive_failures_for_latency_incident": 3, "window_probes": 20})
+    spec["rules"]["current"]["classifier"]["consecutive_failures_for_latency_incident"] = 3
+    result = await run_replay(spec, sqlite3.connect(db))
+    assert result["current"]["incidents"] == 1 and result["draft"]["incidents"] == 0
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+async def test_a_draft_window_judges_hop_status_as_if_it_were_live(tmp_path, seed):
+    """Which hops ignore ping depends on their status over the window: a draft with another window_probes gives the
+    incidents those rules give when they are the current ones."""
+    db = tmp_path / "s.db"
+    await make_db(db, _random_rows(seed))
+    draft = {"window_probes": 30, "consecutive_failures_for_incident": 2}
+    as_draft = await replay(spec_for(TARGETS5, T0, T0 + 3000, draft=draft), sqlite3.connect(db))
+    live = spec_for(TARGETS5, T0, T0 + 3000, draft=draft)
+    live["rules"]["current"] = live["rules"]["draft"]
+    as_current = await replay(live, sqlite3.connect(db))
+    assert as_draft[0]["draft"] == as_current[0]["current"]
+    assert _document(*as_draft)[1][1] == _document(*as_current)[1][0] and _document(*as_current)[1][0]
+
+
 async def test_notes_name_a_path_change_and_missing_load(tmp_path):
     rows = [(T0 + k, "local", 1.0) for k in range(20)]
     db = tmp_path / "n.db"
@@ -402,7 +431,8 @@ TARGETS5 = [("local", "local", "Local", "192.0.2.1", True), ("gw", "gateway", "G
 RANDOM_DRAFTS = [{}, {"consecutive_failures_for_incident": 2, "degraded_loss_pct": 8},
                  {"public_latency_spike_threshold_ms": 25, "consecutive_failures_for_latency_incident": 3},
                  {"local_jitter_spike_threshold_ms": 1.5, "gateway_latency_spike_threshold_ms": 9,
-                  "isp_latency_spike_threshold_ms": 20}]
+                  "isp_latency_spike_threshold_ms": 20},
+                 {"window_probes": 30, "consecutive_failures_for_incident": 2}]  # a status per window
 
 
 def _document(result, rule_sets):
@@ -439,7 +469,8 @@ def test_the_replays_target_keeps_what_the_prober_keeps_that_a_verdict_reads(see
         lat = None if rng.random() < (0.5 if (k // 100) % 3 == 0 else 0.03) else rng.random() * 120
         prober._update_target_stats(ProbeSample(target_id="t", timestamp=float(k), success=lat is not None,
                                                 latency_ms=lat, packet_loss_pct=0.0 if lat is not None else 100.0))
-        target.add(lat, prober.status_thresholds.down_loss_fraction)
+        target.add(lat)
+        target.judge(10, prober.status_thresholds.down_loss_fraction)
         assert target.recent_latencies == prober.stats["t"].recent_latencies[-10:]
         assert (target.status == "down") == (prober.stats["t"].status == "down")
         window = target.recent_latencies

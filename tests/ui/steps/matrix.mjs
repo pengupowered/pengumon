@@ -5,7 +5,8 @@ export const subject = "panel:matrix";
 export const variants = ["full"];
 
 export const steps = [
-  ["hop details has one row per target (3 ICMP + the 2 default DNS probes) and updates live", async ({ text, until, waitCount, waitText }) => {
+  ["hop details has one row per target (3 ICMP + the 2 default DNS probes) and updates live", async ({ showCard, text, until, waitCount, waitText }) => {
+    await showCard("matrix"); // not drawn while it is off screen; the next steps keep it in view
     await waitCount("#hopMatrixBody tr", 5);
     await waitText("#hopMatrixBody tr:first-child td:first-child [data-f=name]", /Local Router/);
     await waitText("#hopMatrixBody tr:first-child [data-f=last]", /^\d+(\.\d+)? ms$/);
@@ -44,10 +45,14 @@ export const steps = [
     ok(`red loss ticks drawn (${red} red pixels)`, red > 10);
   }, { variants: ALL_VARIANTS }],
 
-  ["sparkline update cost per message stays small", async ({ report, moduleUrl, ok, page }) => {
-    await page.waitForFunction(() => (window.__pengumonPerf?.matrixMs.length ?? 0) >= 10, { timeout: 40000 }); // about one message a second; 7 left after the first three, enough for a mean
+  ["sparkline update cost per message stays small", async ({ report, moduleUrl, ok, page, showCard }) => {
+    // the card draws only while it is on screen, and the cost is recorded only for the messages it drew: in view, then the
+    // next ten drawn messages (about one a second; the rows were built by the steps before)
+    await showCard("matrix");
+    const from = await page.evaluate(() => window.__pengumonPerf?.drawn ?? 0);
+    await page.waitForFunction((n) => (window.__pengumonPerf?.drawn ?? 0) >= n + 10, { timeout: 40000 }, from);
     const perf = await page.evaluate(() => window.__pengumonPerf);
-    const sorted = perf.matrixMs.slice(3).sort((a, b) => a - b); // the first messages build the rows
+    const sorted = perf.matrixMs.slice(-10).sort((a, b) => a - b);
     const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length;
     // the drawing alone: 5 sparklines of 60 changing samples, 300 rounds
     const draw = await page.evaluate(async (src) => {
@@ -92,7 +97,7 @@ export const steps = [
     eq("the card header's copies are hidden on a wide card", await page.$eval(".matrix-panel .narrow-help", (e) => getComputedStyle(e).display), "none");
   }],
 
-  ["columns hold still when a figure changes width (LOST, a large jitter), and a name that says its address does not repeat it", async ({ eq, ok, page, until }) => {
+  ["columns hold still when a figure changes width (LOST, a large jitter), and a name that says its address does not repeat it", async ({ eq, moduleUrl, ok, page, until }) => {
     await until(() => /ms$/.test(document.querySelector("#hopMatrixBody tr:first-child [data-f=rangeText]")?.textContent ?? ""));
     const edges = () => page.$$eval(".hops thead th", (els) => els.map((e) => Math.round(e.getBoundingClientRect().left)).join(","));
     const before = await edges();
@@ -104,12 +109,17 @@ export const steps = [
     eq("column edges unchanged", during, before);
     const rows = await page.$$eval("#hopMatrixBody tr", (trs) => trs.map((tr) => ({ name: tr.querySelector("[data-f=name]").textContent, addr: tr.querySelector("[data-f=addr]").textContent, hidden: tr.querySelector("[data-f=addrWrap]").hidden })));
     for (const r of rows) eq(`${r.name}: address ${r.hidden ? "hidden" : "shown"}`, r.hidden, r.name.includes(r.addr.split(/[\s@]/)[0]));
-    const says = await page.evaluate(async () => {
-      const main = [...document.scripts].find((s) => s.type === "module").src;
-      const { nameSaysAddress } = await import(main.replace(/js\/main\.js$/, "panels/matrix/panel.js"));
-      return [["Public: Cloudflare Anycast (1.1.1.1)", "1.1.1.1"], ["DNS Lookup (google.com - System DNS)", "google.com @system"],
-        ["Hop 1: Example Router (LAN)", "192.168.1.1"], ["DNS Lookup (example.org via 9.9.9.9)", "example.net @9.9.9.9"]].map(([n, a]) => nameSaysAddress(n, a)).join(",");
-    });
+    // made-up names and addresses through the model (the targets topic), then the real ones again
+    const says = await page.evaluate(async (u) => {
+      const { bus } = await import(u);
+      const real = bus.last("targets");
+      const named = [["Public: Cloudflare Anycast (1.1.1.1)", "1.1.1.1"], ["DNS Lookup (google.com - System DNS)", "google.com @system"],
+        ["Hop 1: Example Router (LAN)", "192.168.1.1"], ["DNS Lookup (example.org via 9.9.9.9)", "example.net @9.9.9.9"]];
+      bus.publish("targets", real.map((t, i) => (i < named.length ? { ...t, name: named[i][0], address: named[i][1] } : t)));
+      const out = real.slice(0, named.length).map((t) => document.querySelector(`#hopMatrixBody tr[data-item="${CSS.escape(t.target_id)}"] [data-f=addrWrap]`).hidden).join(",");
+      bus.publish("targets", real);
+      return out;
+    }, await moduleUrl("bus.js"));
     eq("names that carry the address or the domain", says, "true,true,false,false");
   }],
 ];

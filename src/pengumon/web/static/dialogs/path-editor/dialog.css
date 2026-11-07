@@ -46,7 +46,7 @@
 @keyframes pe-flash { from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); } to { box-shadow: 0 0 0 3px transparent; } }
 @media (prefers-reduced-motion: reduce) { .pe-hop.flash { animation: none; outline: 2px solid var(--accent); } }
 .pe-hop-h { display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; }
-.pe-n {
+.pe-hop-h .pe-n { /* the hop number (the diagnosis card has a .pe-n of its own: these files are both on the page) */
   flex: none; width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center;
   background: var(--surface-3); color: var(--ink-2); font-size: var(--fs-xs); font-weight: var(--fw-semi);
 }

@@ -13,6 +13,7 @@ SETTING_ENV: Dict[str, str] = {
     "server.log_level": "PENGUMON_LOG_LEVEL",
     "server.log_levels": "PENGUMON_LOG_LEVELS",
     "display.grafana_url": "PENGUMON_GRAFANA_URL",
+    "access.allow_viewers": "PENGUMON_VIEW_WITHOUT_TOKEN",
 }
 
 # Secret slot -> the variable that overrides it (a save that writes the slot is refused while it is set).

@@ -1,11 +1,15 @@
 // A tiny shared sparkline: one small <canvas> per use, drawn with the 2D API (no Chart.js instance), so redrawing a
 // row of the hop matrix every second costs a few microseconds. Losses (null samples) are small red ticks at the
-// bottom, gaps in the line. A redraw is skipped when the samples have not changed.
+// bottom, gaps in the line. A redraw is skipped when the samples have not changed. A theme's chart style can ask for
+// bars instead (theme.json "chart": {"spark": "bars"}, docs/themes.md "Chart style"): a bar per probe as tall as its
+// round trip, a lost probe a full-height red bar; both sparklines here follow it.
 
 const WIDTH = 80;
 const HEIGHT = 22;
 const SLOTS = 60; // x positions: the probe history window (the newest sample is at the right edge)
-import { token } from './chart-theme.js';
+import { chartStyle, token } from './chart-theme.js';
+
+const barsWanted = () => chartStyle()?.spark === 'bars';
 
 let lossColor = ''; // the --crit token, read once per theme
 document.addEventListener('themechange', () => { lossColor = ''; });
@@ -25,7 +29,8 @@ export function createSparkline(label) {
 // Draws `values` (milliseconds, null for a loss) in `color`. Returns true when it drew.
 export function drawSparkline(canvas, values, color) {
   if (!lossColor) lossColor = token('--crit') || 'red';
-  const signature = `${color}|${lossColor}|${values.join(',')}`;
+  const bars = barsWanted();
+  const signature = `${bars ? 'bars|' : ''}${color}|${lossColor}|${values.join(',')}`;
   if (canvas.dataset.sig === signature) return false;
   canvas.dataset.sig = signature;
   const ctx = canvas.getContext('2d');
@@ -37,6 +42,16 @@ export function drawSparkline(canvas, values, color) {
   const x = (i) => ((i + offset) / (n - 1)) * (WIDTH - 2) + 1;
   let max = 1;
   for (const v of values) if (v !== null && v !== undefined && v > max) max = v;
+  if (bars) {
+    const slot = (WIDTH - 2) / n;
+    values.forEach((v, i) => {
+      const lost = v === null || v === undefined;
+      const h = lost ? HEIGHT : Math.max(2, (v / max) * (HEIGHT - 2));
+      ctx.fillStyle = lost ? lossColor : color;
+      ctx.fillRect(1 + (i + offset) * slot, HEIGHT - h, Math.max(1, slot * 0.7), h);
+    });
+    return true;
+  }
   const top = TICK; // room for the loss ticks below the line
   const y = (v) => HEIGHT - 2 - (v / max) * (HEIGHT - top - 3);
 
@@ -75,6 +90,16 @@ export function sparkSvg(vals, level = 'good', { h = 30, w = 120, id: series = l
   if (!vals || !vals.some(has)) {
     const lost = vals && vals.length ? vals.map((_, i) => `<rect x="${(i * (w / vals.length)).toFixed(1)}" y="${h - 6}" width="1.4" height="6" fill="var(--crit)"/>`).join('') : '';
     return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="${w}" y1="${h / 2}" y2="${h / 2}" stroke="var(--line-strong)" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>${lost}</svg>`;
+  }
+  if (barsWanted()) {
+    const top = Math.max(...vals.filter(has)) || 1;
+    const n = Math.max(30, vals.length); // at least 30 slots, the newest on the right, so a short history stays thin bars
+    const slot = w / n;
+    const bars = vals.map((v, i) => {
+      const bh = has(v) ? Math.max(2, (v / top) * (h - 2)) : h;
+      return `<rect x="${((i + n - vals.length) * slot).toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${(slot * 0.7).toFixed(2)}" height="${bh.toFixed(1)}" fill="${has(v) ? c : 'var(--crit)'}"/>`;
+    }).join('');
+    return `<svg class="spark bars" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">${bars}</svg>`;
   }
   const n = Math.max(2, vals.length);
   const mx = Math.max(...vals.filter(has)) * 1.15 || 1;

@@ -57,10 +57,10 @@ You are helping someone who is not a network expert find out why their home inte
   - Latency that rises with line load is a busy line ("bufferbloat"), not a fault. Incidents during heavy load, and loss that stays at the provider's routers, are marked "expected".
   - An incident's "Lasted" is how long Pengumon saw a problem; "Lost for" is how long probes were actually lost (0 s: it was about latency). One-minute averages hide short spikes: the close-ups give the peaks.
   - Loss already at the Router points inside the home (Wi-Fi, the router, or the monitoring computer's own link).
-  - For loss starting at the Gateway or at ISP hop 1, the gateway's own event log at that time (a restart: the gateway; timeouts or lost sync with the provider: the line), or the provider's line check, is what tells the gateway, the line and the provider apart. Pengumon cannot read either: suggest it when such loss repeats or matches the user's problem.
+  - Pengumon cannot read the gateway's event log (a restart: the gateway; timeouts or lost sync: the line). Suggest it when loss starting at the Gateway, or at ISP hop 1 with no codeword burst or signal fault then, repeats or matches the user's problem. A Gateway that answered every probe during the loss did not restart: do not ask about one.
   - Do not ask the user to repeat what Pengumon already measures over time (pinging the router, the gateway or internet servers); suggest only tests it cannot do.
   - "No data" means Pengumon was not measuring, not that the network was down.
-- Verdicts: *gateway* = loss starts at the Gateway while the Router answers: the gateway itself or the link to it, not the line; *line* = loss starts at ISP hop 1 while the Gateway answers: the line or the provider's first router (codeword bursts or a signal out of range at the same time point to the line itself); *isp* = the provider's network beyond its first router.
+- Verdicts: *gateway* = loss starts at the Gateway while the Router answers: the gateway or the link to it (a modem restart then: the unit), not the line; *line* = loss starts at ISP hop 1 while the Gateway answers: the line or the provider's first router (codeword bursts or a signal out of range at the same time point to the line itself); *isp* = the provider's network beyond its first router.
 - The verdicts and confidences are Pengumon's own rule-based reading of the data, not proof. For loss: *high*: 1-second data, loss starts where the verdict says, and a device reading at the same time supports it; *medium*: the same without such a reading; *low*: minute data only, an expected incident, loss at one hop only, or loss starting elsewhere. Latency only (no probe lost): *low* if under a minute, no hop clearly slower, one provider hop only, or rising elsewhere; else as for loss. The reason is in brackets.
 
 ## Questions
@@ -99,6 +99,7 @@ APPS_NOTE = "Their outages are apps on the monitoring computer, not network even
 CHANGE_WORDS = ("\"Path\": the hops Pengumon pings were changed in Settings; \"route\": Pengumon's daily route check "
                 "found the traffic taking a different way.")
 # titles that claim no more than the evidence: a gateway that stopped answering may be the gateway or the cable to it
+TABLE_ROWS_KEPT = 3                # a module table's first rows outlast its extra bullets (Renderer.module)
 KIND_TITLE = {"gateway_down": "Gateway or its link not answering"}
 CLOCK_CHANGE_NEAR_SECONDS = 600.0   # an incident starting this close to a daylight-saving change says so
 COUNTED_NEAR_SECONDS = 3 * 3600.0   # a reading interval with no incident names the nearest one this close to it
@@ -278,7 +279,7 @@ _SHAPE = {"carried": "{}, carried on", "one_hop": "{} only"}
 _REASON = {"minute_data": "minute data only", "expected": "expected", "one_hop": "one hop only",
            "place": "starts elsewhere", "no_hop": "no hop isolated", "corroborated": "a device reading agrees",
            "brief": "latency only, under a minute", "no_rise": "no hop clearly slower"}
-_TIME_TOKEN = re.compile(r"\{(when|counted):(-?[0-9.]+)(?::(-?[0-9.]+))?\}")
+_TIME_TOKEN = re.compile(r"\{(when|minute|counted):(-?[0-9.]+)(?::(-?[0-9.]+))?\}")
 
 
 def _and(words: Sequence[str]) -> str:
@@ -321,6 +322,8 @@ class _Render:
         ts = float(m.group(2))
         if m.group(1) == "when":
             return self.rx.when(ts, "dayclock" if self.span > 86400 else "clock")
+        if m.group(1) == "minute":       # to the minute: a client list read once a minute has no seconds to give
+            return self.rx.when(ts, "dayminute" if self.span > 86400 else "clock")
         return self.counted(ts, float(m.group(3) or ts))
 
     def stamp(self, ts: float) -> str:
@@ -529,7 +532,7 @@ class _Render:
         f = self.f
         if not f.days and not f.time_table:
             return ""
-        out = ["## A normal week"]
+        out = ["## This week by time of day and by day"]
         if f.time_table:
             out.append(_table([self.t(h) for h in f.time_table[0]], [[self.t(c) for c in r] for r in f.time_table[1]]))
         if f.days:
@@ -543,41 +546,78 @@ class _Render:
         return "\n\n".join(out) + "\n\n"
 
     def module(self, m: ModuleInput, tables: bool = True) -> Tuple[str, str]:
-        """(text, trimmed note) of one contribution, cut to its budget: table rows first, then bullets past the
-        second; the prompt context is never cut."""
+        """(text, trimmed note) of one contribution, cut to its budget. First a bullet with shorter versions (the
+        section's `shorter`: a timed list down to its largest few) takes them in turn, so nothing is left out while a
+        list can still shrink. A table is often the evidence (the channels outside typical levels), so its first
+        TABLE_ROWS_KEPT rows outlast every bullet past the second: rows past those go next, then those bullets, then
+        the last rows. The table's lead-in bullet stays with it and says when rows were left out, so it never
+        introduces nothing. The prompt context is never cut."""
         sec = m.section
         own = list(getattr(sec, "findings", None) or [])
-        bullets = own[:2] + list(m.core_findings) + own[2:]   # a table's lead-in bullet stays last
+        shorter = dict(getattr(sec, "shorter", None) or {})
+        versions = [[text] + list(shorter.get(k, ())) for k, text in enumerate(own)]   # each bullet, longest first
         table = getattr(sec, "table", None) if tables else None
         rows = list(table[1]) if table else []
+        # a table's lead-in is its section's last finding, ending in ":" ("1 channel outside typical levels ...:")
+        lead = versions.pop()[0] if table and own and own[-1].rstrip().endswith(":") else None
+        # the section's first finding, then what coincided with the incidents (the core's bullets: the strongest
+        # evidence), then the rest: the trimmer cuts from the end, and the detail it cuts first is in the headline
+        items = versions[:1] + [[c] for c in m.core_findings] + versions[1:]
+        pick = [0] * len(items)       # the version of each bullet in use
         note = ""
         if m.driver_note:
             full, anon = m.driver_note
             note = full if self.rx.level != ANONYMIZED else (anon or "")
 
-        def build(nb: int, nr: int) -> str:
+        def lead_in(nr: int) -> Optional[str]:
+            if lead is None:
+                return None
+            head = lead.rstrip().rstrip(":")
+            if nr == len(rows):
+                return lead
+            if nr == 0:
+                return f"{head} (the list is left out for length)."
+            return f"{head} (the first {nr} of {len(rows)}):"
+
+        def build(nb: int, nr: int, with_lead: bool = True) -> str:
             parts = [f"### {m.title}", self.t(m.prompt_context)]
-            if bullets[:nb]:
-                parts.append("\n".join(f"- {self.t(b)}" for b in bullets[:nb]))
+            bullets = [v[p] for v, p in zip(items, pick)]
+            shown = bullets[:nb] + ([lead_in(nr)] if lead is not None and with_lead else [])
+            if shown:
+                parts.append("\n".join(f"- {self.t(b)}" for b in shown))
             if table and nr:
                 parts.append(_table([self.t(h) for h in table[0]], [[self.t(c, table=True) for c in r] for r in rows[:nr]]))
             if note:
                 parts.append(self.t(note))
             return "\n\n".join(parts) + "\n\n"
 
-        nb, nr = len(bullets), len(rows)
+        nb, nr = len(items), len(rows)
         text = build(nb, nr)
-        cut = []
-        while len(text) > m.budget_chars and nr > 0:
+        while len(text) > m.budget_chars:      # the last such bullet first, as the trimmer cuts from the end
+            k = next((k for k in reversed(range(len(items))) if pick[k] < len(items[k]) - 1), None)
+            if k is None:
+                break
+            pick[k] += 1
+            text = build(nb, nr)
+        keep = min(TABLE_ROWS_KEPT, len(rows))
+        while len(text) > m.budget_chars and nr > keep:
             nr -= 1
             text = build(nb, nr)
-        if nr < len(rows):
-            cut.append(f"table rows {nr} of {len(rows)}")
         while len(text) > m.budget_chars and nb > 2:
             nb -= 1
             text = build(nb, nr)
-        if nb < len(bullets):
-            cut.append(f"bullets {nb} of {len(bullets)}")
+        while len(text) > m.budget_chars and nr > 0:
+            nr -= 1
+            text = build(nb, nr)
+        if len(text) > m.budget_chars and lead is not None:   # no rows left: its lead-in goes too, as before
+            text = build(nb, nr, with_lead=False)
+        cut = []
+        if any(pick):
+            cut.append(f"bullets shortened {sum(1 for p in pick if p)}")
+        if nr < len(rows):
+            cut.append(f"table rows {nr} of {len(rows)}")
+        if nb < len(items):
+            cut.append(f"bullets {nb} of {len(items)}")
         if len(text) > m.budget_chars:
             cut.append("over budget by the prompt context")
         return text, "; ".join(cut)
@@ -884,12 +924,19 @@ def _latency_starts(f) -> str:
 
 
 def module_findings(f, codes: Sequence[str]) -> List[str]:
-    """The core's bullets for one module's section: how its events fell against the incidents, and the Internet's
-    latency while the line was busy (an event that supports "load"). `codes`: the module's event codes."""
+    """The core's bullets for one module's section: how its events fell against the incidents (with no incident in
+    the window, how the events of a kind marked by_time_of_day fell over the day), and the Internet's latency while
+    the line was busy (an event that supports "load"). `codes`: the module's event codes."""
     out = []
     for code in codes:
         es = (getattr(f, "event_summaries", None) or {}).get(code)
         if es is None:
+            continue
+        blocks = sorted((b for b in getattr(es, "blocks", None) or () if b[2]), key=lambda b: (-b[2], b[0]))
+        if blocks and not getattr(f, "incidents", None):
+            out.append(f"{es.label[:1].upper()}{es.label[1:]}: " + ", ".join(
+                (f"{n} of {es.count}" if k == 0 else str(n)) + f" between {a:02d}:00 and {b % 24:02d}:00"
+                for k, (a, b, n) in enumerate(blocks)) + ".")
             continue
         where = "; ".join(("loss starting at {hop:%s} in %d" % (t, n)) if t else f"no hop isolated in {n}"
                           for t, n in es.starts)

@@ -216,6 +216,7 @@ async def test_a_upnp_gateway_with_a_public_address_is_the_edge_of_the_home():
     router = by_address(result)["192.168.1.1"]
     upnp = [e["text"] for e in router["evidence"] if e["kind"] == "upnp"]
     assert upnp and "public: it is the edge of your network" in upnp[0] and "line type Cable" in upnp[0]
+    assert router["suggested_driver"] == "upnp_igd"  # no vendor page matched: the generic driver
     assert "203.0.113.200" not in str(result.hops) + str(result.notes)  # the external address is never shown
 
 

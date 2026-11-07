@@ -100,7 +100,7 @@ def registrable_domain(name: Optional[str]) -> Optional[str]:
     if not name:
         return None
     labels = name.strip().rstrip(".").lower().split(".")
-    if len(labels) < 2 or not all(_LABEL.match(label) for label in labels) or labels[-1].isdigit():
+    if len(labels) < 2 or not all(_LABEL.fullmatch(label) for label in labels) or labels[-1].isdigit():
         return None
     if labels[-1] == "arpa":
         return None  # an unanswered PTR comes back as the in-addr.arpa name itself in some resolvers

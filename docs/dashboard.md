@@ -15,7 +15,7 @@ Left to right:
 - **Live indicator**: "Live · 1 s" while the socket is open, "Reconnecting" when it is not.
 - **LAN address chip** (when the server knows its LAN URL) with a copy button.
 - **Tools**: Trace (route trace), Dossier (ISP outage dossier), **Ask AI** (an icon: the troubleshooting pack, below), Alerts (browser notifications on or off), Target (add a
-  probe target), **Settings** (every setting of Pengumon), **Layout** (panel arrangement), theme toggle, and a **Grafana** menu with links to the dashboards
+  probe target), **Settings** (every setting of Pengumon), **Layout** (panel arrangement and card colours), the **theme menu** (theme, light or dark, animated effects; docs/themes.md), and a **Grafana** menu with links to the dashboards
   when `PENGUMON_GRAFANA_URL` is set (partial `templates/features/grafana.html`; without it the button is not rendered).
   On a phone the tools collapse into a "more" menu that copies them.
 
@@ -118,7 +118,9 @@ per pinged target (ISP hops included, DNS lookups not: they time a lookup, not a
 uses (a target's configured `color`, else the next of eight validated series colours in path order, then the first one no other target of its category has, so the members of one group always differ; grey past eight in one category); the choice is kept per browser. Under the chart a thin loss lane shows the worst target's loss and names it in
 the tooltip. The chart takes the height its row gives the card.
 
-**Hop details**: every figure covers the last 60 probes except "Lost since start". Click a row for the target's
+**Hop details**: every figure covers the last 60 probes except "Lost since start". Jitter is the median change from one
+answered probe to the next, so one slow probe does not lift it. A hop's dot judges its loss over the probes the
+outage rules judge (Settings, Outage rules, "Judge each hop by its last"; 10 by default). Click a row for the target's
 history. Sparklines are drawn by `static/js/sparkline.js` (SVG, not Chart.js); a lost probe is a red tick and a gap.
 
 **When it breaks** (loss by day and hour) and **Uptime** (a strip per target) are ways into the incident log: every hour
@@ -156,8 +158,8 @@ Cards fill a 12-column grid (`data-size` 4, 8 or 12); the last card of a row tha
 ## Settings
 
 The **Settings** button (or `#settings` at the end of the address) opens one full-height dialog (`dialogs/settings/`)
-with the sections in this order: Outage rules, Alerts, Your line, Devices and services, Probing, Retention, Privacy,
-Discovery, Display, a collapsed Advanced area ("Change these only if you know why") and "About this install". A rail
+with the sections in this order: Outage rules, Alerts, Your line, Devices and services, Probing, Retention, Sign-in,
+Privacy, Discovery, Display, a collapsed Advanced area ("Change these only if you know why") and "About this install". A rail
 on the left jumps between them; at 720 px and below it is a "Jump to section" list and the dialog is full screen.
 
 - **A row** is the label and input (numbers in their own unit: seconds, milliseconds, minutes, percent, "per
@@ -192,8 +194,14 @@ on the left jumps between them; at 720 px and below it is a "Jump to section" li
   draft. **Layout for new browsers** is one row for `dashboard.order` and `dashboard.hidden`: the layout in words (the
   panels' titles), "Use this browser's layout", which writes this browser's panel order and hidden panels into the
   draft, and Reset to standard. A browser's own Layout choice wins over it (the Layout dialog links to the row).
-- **View only.** Without the access token (when `PENGUMON_VIEW_WITHOUT_TOKEN` allows viewing) the page shows a "View
-  only" bar, every input is disabled and every changing control carries `data-needs-edit`; signing in turns them on.
+- **View only.** Without the password (when Sign-in's "Others may look, but not change anything" allows viewing) the
+  page shows a "View only" bar, every input is disabled and every changing control carries `data-needs-edit`; signing
+  in turns them on.
+- **Sign-in.** Who can open the dashboard and the password ([security.md](security.md#who-can-open-the-dashboard)).
+  Unlike the rest of the page, Set a password, Change, Show and Remove apply at once, without Save (as a device's
+  password does); the viewers switch below them is an ordinary setting.
+- **The first-run question.** On a fresh install (no password from anywhere), the first visit opens "Who can open this
+  dashboard?" over the page (`dialogs/access-setup`), once.
 
 The help texts of the panels (hop colours, the busy level, router and DOCSIS levels) are functions of the settings values
 (`js/settings-values.js`, GET `/api/settings/values`), so they quote what the page uses now. The latency panel opens on
@@ -251,10 +259,14 @@ Status always has an icon and a word as well as a colour.
 ## Theming
 
 Dark first. `static/tokens.css` holds every colour and size as a CSS variable; light values apply under
-`prefers-color-scheme: light` and again under `[data-theme="light"]`, so the header toggle wins both ways. The choice is
-kept in `localStorage` (`pengumon.theme`); with none, the operating system's setting applies. Charts are drawn on
-canvas, so `static/js/chart-theme.js` reads the tokens and `chrome.js` redraws them on a theme change. Rule: no hex
-literal outside `tokens.css`.
+`prefers-color-scheme: light` and again under `[data-theme="light"]`, so the choice in the header's theme menu wins both
+ways. Themes (docs/themes.md) are folders under `static/themes/`; the page shows one as `<html data-look>`, and a theme
+overrides the tokens. This browser's choices are kept in `localStorage` (`pengumon.look`, `pengumon.theme`,
+`pengumon.effects`); with none, Settings > Display and the operating system's setting apply. `static/js/theme-boot.js`
+sets them before the first paint and links the one stylesheet of the theme in use (its tokens, skin and card views' styles),
+and `static/js/themes.js` runs the rest (the menu, a switch, the effect, the cards' own colours).
+Charts are drawn on canvas, so `static/js/chart-theme.js` reads the tokens and every chart is redrawn on a `themechange`.
+Rule: no hex literal outside `tokens.css` and the themes' `theme.json`.
 
 ## Where things live
 
@@ -264,7 +276,7 @@ All under `src/pengumon/web/static/`:
 - `components.css`: shared components (panel, badge, button, modal, menu, table), tokens only.
 - `page.css`, `style.css`: page layout (header, grid, banners), and the app layer (panel groups, modal behaviour).
 - `js/`: the core and shared library: `main.js` (entry), `live.js` (the socket; one bus topic per key of each
-  message), `bus.js`, `layout.js`, `tabs.js`, `chrome.js` (theme and menus), `dispatch.js` (delegated actions),
+  message), `bus.js`, `layout.js`, `tabs.js`, `chrome.js` (menus), `themes.js` and `theme-boot.js` (themes), `dispatch.js` (delegated actions),
   `devices.js` and `device-feed.js` (devices and features), `device-panel.js`, `help.js`, `settings-values.js` (the live
   settings values for help texts), `util.js`, `state.js`,
   `grades.js`, `path.js`, `path-api.js` (the path and discovery API calls), `session.js` (sends a page whose sign-in ended to the
