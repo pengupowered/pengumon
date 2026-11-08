@@ -7,7 +7,7 @@ The limits, all constructor arguments so that tests run them in fractions of a s
 
 * one replay at a time for the whole app (`PreviewBusy`, the API answers 429 with Retry-After 30);
 * 60 s of wall-clock time (a week takes about 15 s), then the process is killed and the job fails with "took too long";
-* a job nobody polled for 60 s is cancelled (the page closed, or moved on), its process killed;
+* a job nobody polled for 60 s is canceled (the page closed, or moved on), its process killed;
 * a finished job is kept for 10 minutes;
 * two identical requests (same rules, same days, the window end rounded to the minute) share one job.
 
@@ -90,7 +90,7 @@ class PreviewChange(_PreviewModel):
 class PreviewJob(_PreviewModel):
     """POST /api/settings/preview answers {"id": ...}; GET /api/settings/preview/{id} answers this."""
     id: Optional[str] = None
-    state: Literal["running", "done", "failed", "cancelled"]
+    state: Literal["running", "done", "failed", "canceled"]
     progress: float = 0.0
     elapsed_s: float = 0.0
     error: Optional[str] = None  # "took too long"
@@ -195,13 +195,13 @@ class PreviewJobs:
         if job is None:
             return None
         if job.state == "running":
-            await self._end(job, "cancelled")
+            await self._end(job, "canceled")
         self._drop(job)
         return job
 
     async def aclose(self) -> None:
         for job in [j for j in self._jobs.values() if j.state == "running"]:
-            await self._end(job, "cancelled")
+            await self._end(job, "canceled")
         for job in list(self._jobs.values()):
             if job.task is not None:
                 await asyncio.gather(job.task, return_exceptions=True)
@@ -236,8 +236,8 @@ class PreviewJobs:
     def _record(self, job: Job, spec: Dict[str, Any], span) -> None:
         if job.state == "done":
             outcome = "done"
-        elif job.state == "cancelled":
-            outcome = "cancelled"
+        elif job.state == "canceled":
+            outcome = "canceled"
         else:
             outcome = "cap" if job.error == CAP_ERROR else "failed"
         seconds = max(0.0, (job.finished if job.finished is not None else self.clock()) - job.started)
@@ -257,7 +257,7 @@ class PreviewJobs:
                 *self.command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE, limit=READ_LIMIT)
             job.process = proc
-            if job.state != "running":  # cancelled while it started
+            if job.state != "running":  # canceled while it started
                 await self._kill(job)
                 return
             reader = asyncio.create_task(self._read(job, proc))
@@ -277,7 +277,7 @@ class PreviewJobs:
                     if now - job.started > self.cap_seconds:
                         await self._end(job, "failed", CAP_ERROR)
                     elif now - job.last_polled > self.poll_timeout:
-                        await self._end(job, "cancelled")
+                        await self._end(job, "canceled")
             finally:
                 if job.state != "running":
                     await self._kill(job)
@@ -296,7 +296,7 @@ class PreviewJobs:
                 _log.warning(f"settings preview: the replay ended with code {code}: "
                              f"{bytes(stderr_tail).decode(errors='replace')[-500:]}")
         except asyncio.CancelledError:
-            await self._end(job, "cancelled")
+            await self._end(job, "canceled")
             raise
         except Exception as e:
             _log.error(f"settings preview: {e}", exc_info=True)

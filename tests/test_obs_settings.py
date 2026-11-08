@@ -12,7 +12,7 @@ from pengumon.settings import preview as preview_module
 from pengumon.settings.hub import Change, SettingsHub
 from pengumon.settings.manager import SecretsWriteFailed, SettingsInvalid
 
-# Fixtures of the neighbouring suites: a settings manager on a temporary database, the preview's stand-in processes.
+# Fixtures of the neighboring suites: a settings manager on a temporary database, the preview's stand-in processes.
 from settings_helpers import make_manager
 from test_settings_preview import CRASH, HANG, OK, SPEC, jobs, settle
 
@@ -133,7 +133,7 @@ async def test_a_finished_preview_is_counted_timed_and_has_its_rounds_and_a_span
 
 
 async def test_the_time_cap_a_crash_and_a_cancel_are_three_different_outcomes(spans):
-    cap, failed, cancelled = _previews("cap"), _previews("failed"), _previews("cancelled")
+    cap, failed, canceled = _previews("cap"), _previews("failed"), _previews("canceled")
     rounds = obs_helpers.histogram_sum("pengumon.preview.rounds")
     stores = [jobs(HANG, cap_seconds=0.2), jobs(CRASH), jobs(HANG)]
     try:
@@ -150,9 +150,9 @@ async def test_the_time_cap_a_crash_and_a_cancel_are_three_different_outcomes(sp
     finally:
         for store in stores:
             await store.aclose()
-    assert (_previews("cap"), _previews("failed"), _previews("cancelled")) == (cap + 1, failed + 1, cancelled + 1)
+    assert (_previews("cap"), _previews("failed"), _previews("canceled")) == (cap + 1, failed + 1, canceled + 1)
     assert sorted(s.attributes["preview.outcome"] for s in spans.named("settings.preview")) == [
-        "cancelled", "cap", "failed"]
+        "canceled", "cap", "failed"]
     assert obs_helpers.histogram_sum("pengumon.preview.rounds") == rounds  # none of the three replayed a round
 
 

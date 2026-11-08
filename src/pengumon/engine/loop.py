@@ -98,7 +98,7 @@ async def probe_background_worker(config, prober, classifier, repository, ws=ws_
                 probe_round_work.record(time.perf_counter() - classified, _PUBLISH)
 
         except asyncio.CancelledError:
-            _log.info("Probe background loop cancelled.")
+            _log.info("Probe background loop canceled.")
             break
         except Exception as e:
             _log.error(f"Error during probe round: {e}", exc_info=True)

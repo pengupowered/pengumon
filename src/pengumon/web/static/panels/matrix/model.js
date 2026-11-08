@@ -13,7 +13,7 @@ import standard from './view.js';
 
 let card = null;
 
-// The loss chip's colour: red when the server calls the target down, amber for any recent loss, else plain. The limits
+// The loss chip's color: red when the server calls the target down, amber for any recent loss, else plain. The limits
 // that make a target down or degraded are the server's (help hop.loss quotes them).
 const lossLevel = (t, pct) => (t.status === 'down' ? 'crit' : pct > 0 ? 'warn' : 'good');
 
@@ -74,7 +74,7 @@ export function present(targets, labels, quiet) {
         subTitle: sayAddr ? `${t.name} · ${t.address}` : t.name,
         loss: {
           level,
-          chip: recentLoss > 0 || level !== 'good', // a plain loss figure is not a coloured chip
+          chip: recentLoss > 0 || level !== 'good', // a plain loss figure is not a colored chip
           icon: STATUS[level].icon,
           text: unprobed ? 'no IPv6' : ignores ? 'no ping' : `${recentLoss}%`,
           title: unprobed ? quiet.get(t.target_id).why

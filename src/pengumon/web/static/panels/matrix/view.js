@@ -59,7 +59,7 @@ function patch(tr, r) {
   setText(p.jitter, r.jitter);
   setText(p.total, r.total);
   if (p.spark.getAttribute('aria-label') !== r.spark.label) p.spark.setAttribute('aria-label', r.spark.label);
-  drawSparkline(p.spark, r.spark.values, getTargetInfo(r.spark.id).color); // the colour is read here: it follows the theme
+  drawSparkline(p.spark, r.spark.values, getTargetInfo(r.spark.id).color); // the color is read here: it follows the theme
 }
 
 // The rows of the table body (a part: another view can draw them into a table of its own).

@@ -5,7 +5,7 @@
 // The headline is the internet as seen through the public targets (the median of their availability; the last hop
 // when there is no public target); days are bars of what that figure lost (a clean day has no bar, so a bad day stands
 // out; bars of 99.9x % all looked full), causes the share of downtime per cause, and a table gives every hop. Nothing is
-// coloured by a threshold here: bars are neutral, the numbers say it.
+// colored by a threshold here: bars are neutral, the numbers say it.
 
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';

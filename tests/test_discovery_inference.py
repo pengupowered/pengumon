@@ -92,7 +92,7 @@ async def test_a_provider_without_names_is_told_apart_by_where_the_paths_part():
     assert not any("cymru" in q for q, _ in result.dns.asked)
 
 
-async def test_silent_hops_are_left_out_and_unanswered_evidence_comes_from_the_neighbours():
+async def test_silent_hops_are_left_out_and_unanswered_evidence_comes_from_the_neighbors():
     """Hops 2 and 4 never answer (left out: they cannot be probed). Only one trace answers, so no divergence; the
     hop with no evidence of its own between two provider hops is the provider's, the one between the provider and
     another network is unknown."""
@@ -105,7 +105,7 @@ async def test_silent_hops_are_left_out_and_unanswered_evidence_comes_from_the_n
                              ("203.0.113.2", "isp", "likely"), ("203.0.113.3", "isp", "likely"),
                              ("203.0.113.4", "isp", "unknown"), ("198.51.100.5", "public", "likely")]
     hops = by_address(result)
-    assert kinds(hops["203.0.113.2"]) >= {"neighbours"}
+    assert kinds(hops["203.0.113.2"]) >= {"neighbors"}
     assert any("do not agree" in e["text"] for e in hops["203.0.113.4"]["evidence"])
     assert any("2 hops on the path did not answer" in n for n in result.notes)
     assert any("Only one trace answered" in n for n in result.notes)

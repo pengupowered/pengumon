@@ -1,7 +1,7 @@
 {
   "id": "starship",
   "name": "Starship console",
-  "description": "A far-future ship's console: one flowing frame on a black ground, a coloured rail sweeping through rounded corners into each panel's header bar, flat orange, lilac and blue blocks, upper-case labels.",
+  "description": "A far-future ship's console: one flowing frame on a black ground, a colored rail sweeping through rounded corners into each panel's header bar, flat orange, lilac and blue blocks, upper-case labels.",
   "modes": ["dark"],
   "tokens": {
     "dark": {

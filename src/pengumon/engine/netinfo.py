@@ -23,7 +23,7 @@ HOSTNAME_LOOKUP_SECONDS = 1.0
 
 def _hostname_ips(timeout: float = HOSTNAME_LOOKUP_SECONDS) -> List[str]:
     """The IPv4 addresses this host's name resolves to, given up after `timeout` seconds. On macOS a host name with
-    no DNS entry is looked up over mDNS, which can block for a minute; the lookup cannot be cancelled, so it runs in
+    no DNS entry is looked up over mDNS, which can block for a minute; the lookup cannot be canceled, so it runs in
     a daemon thread that is left to finish on its own."""
     found: List[List[str]] = []
 

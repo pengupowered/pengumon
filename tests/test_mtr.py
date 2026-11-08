@@ -1,4 +1,4 @@
-"""Traceroute through the ICMP backend: TTL 1..max_hops, where it stops, how hops are summed up and labelled."""
+"""Traceroute through the ICMP backend: TTL 1..max_hops, where it stops, how hops are summed up and labeled."""
 
 import asyncio
 import os

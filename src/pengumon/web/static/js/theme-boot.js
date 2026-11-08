@@ -20,6 +20,11 @@
     for (var i = 0; i < looks.length; i++) if (looks[i] && looks[i].id === id) return looks[i];
     return null;
   };
+  // a theme's files are ours, under /static/v/<version>/themes/ (pengumon.web.themes.page_list): anything else in the
+  // list is never linked
+  var ours = function (url) {
+    return typeof url === 'string' && /^\/static\/v\/[\w-]+\/themes\/[\w-]+\/(?:[\w-]+\/)*[\w-]+\.(?:css|js)$/.test(url);
+  };
   var look = find(read('pengumon.look')) || find(root.getAttribute('data-look-default')) || find('default');
   if (!look) return;
   root.setAttribute('data-look', look.id);
@@ -27,7 +32,7 @@
   if (look.modes && look.modes.length === 1) root.setAttribute('data-theme', look.modes[0]);
   else if (mode === 'light' || mode === 'dark') root.setAttribute('data-theme', mode);
   else root.removeAttribute('data-theme');
-  if (look.css) {
+  if (ours(look.css)) {
     // written by the parser, not appended: a parser-made stylesheet holds the first paint until it is loaded
     var link = document.createElement('link');
     link.rel = 'stylesheet';
@@ -38,7 +43,7 @@
   // the theme's own views of cards (docs/themes.md, "Drawing a card"): fetched now, so they are there when the cards mount
   var views = look.views || {};
   for (var panel in views) {
-    if (!Object.prototype.hasOwnProperty.call(views, panel)) continue;
+    if (!Object.prototype.hasOwnProperty.call(views, panel) || !ours(views[panel])) continue;
     var pre = document.createElement('link');
     pre.rel = 'modulepreload';
     pre.href = views[panel];

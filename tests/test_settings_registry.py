@@ -46,7 +46,7 @@ INVENTORY_EXPOSED = {
     "alerts.quiet_hours.start", "alerts.quiet_hours.end", "alerts.quiet_hours.critical_still",
     "discovery.daily_check_time", "display.default_latency_range",
     # themes (0.24)
-    "display.theme", "display.effects", "dashboard.colours",
+    "display.theme", "display.effects", "dashboard.colors",
     # the judging window (0.24)
     "classifier.window_probes",
 }
@@ -112,8 +112,8 @@ def test_keys_are_unique_and_sections_known_and_ordered():
     for section in SECTION_IDS:
         orders = [s.order for s in SETTINGS if s.section == section]
         assert orders == list(range(1, len(orders) + 1)), section
-    assert [s.id for s in registry.SECTIONS] == ["outage", "alerts", "line", "devices", "probing", "retention",
-                                                 "access", "privacy", "discovery", "display", "advanced"]
+    assert [s.id for s in registry.SECTIONS] == ["outage", "alerts", "line", "speedtest", "devices", "probing",
+                                                 "retention", "access", "privacy", "discovery", "display", "advanced"]
 
 
 def test_asn_lookup_is_one_value_shown_in_privacy_and_discovery():

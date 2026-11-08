@@ -22,7 +22,7 @@ export function freshId(base, taken) {
   return id;
 }
 
-// One labelled input of a card. `cfg`: {f, label, kind: text|number|bool|choice|id, choices, labels (choice -> words),
+// One labeled input of a card. `cfg`: {f, label, kind: text|number|bool|choice|id, choices, labels (choice -> words),
 // nullable, hint, placeholder}.
 export function fieldHtml(cfg, item, index, locked) {
   const id = `lf-${cfg.list}-${index}-${cfg.f}`;

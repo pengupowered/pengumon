@@ -66,7 +66,7 @@
   "",
   "## 5. Summary for a support ticket",
   "```text",
-  "Over the past 48 hours Pengumon recorded 0 incidents totalling none.",
+  "Over the past 48 hours Pengumon recorded 0 incidents totaling none.",
   "Loss is first elevated at cloudflare_dns: 3.0%.",
   "```"
  ],

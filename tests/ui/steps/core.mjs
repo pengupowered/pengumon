@@ -47,7 +47,7 @@ const clippedText = (page) => page.evaluate(() => {
 });
 
 export const steps = [
-  ["page loads grey (Connecting), then the websocket connects and the favicon is served", async ({ base, eq, outDir, page, path, waitText }) => {
+  ["page loads gray (Connecting), then the websocket connects and the favicon is served", async ({ base, eq, outDir, page, path, waitText }) => {
     await page.goto(base + "/", { waitUntil: "load" });
     await waitText("#wsText", /^Live/);
     // the run opens the app by a non-local name (lib.mjs BROWSER_HOST), as people do: no secure context, so no Clipboard API
@@ -186,7 +186,7 @@ export const steps = [
   }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
 
   ["themes: a theme picked in the menu applies at once (charts too), is kept, and is on the page before its first paint; only its stylesheet is loaded", async ({ click, eq, ok, page, pickLook, until }) => {
-    // the theme <html> carries when <body> starts, and its colours then: what the first paint shows (js/theme-boot.js
+    // the theme <html> carries when <body> starts, and its colors then: what the first paint shows (js/theme-boot.js
     // runs in <head> and links the theme's stylesheet there)
     const { identifier } = await page.evaluateOnNewDocument(() => {
       new MutationObserver((_, obs) => {
@@ -198,7 +198,7 @@ export const steps = [
     });
     const linked = () => page.$$eval("link[data-look-css]", (ls) => ls.map((l) => l.dataset.lookCss).join());
     eq("the default theme links no theme stylesheet", await linked(), "");
-    // the colours at the moment the page changes theme: the new theme's stylesheet has loaded first (no flash)
+    // the colors at the moment the page changes theme: the new theme's stylesheet has loaded first (no flash)
     await page.evaluate(() => new MutationObserver(() => {
       window.__bgAtSwitch = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
     }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-look"] }));
@@ -206,13 +206,13 @@ export const steps = [
     eq("Nord on the page", await page.evaluate(() => document.documentElement.dataset.look), "nord");
     const nordBg = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
     ok(`Nord's background (${nordBg})`, ["#242933", "#e5e9f0"].includes(nordBg));
-    eq("Nord's colours were there when the page changed to it", await page.evaluate(() => window.__bgAtSwitch), nordBg);
+    eq("Nord's colors were there when the page changed to it", await page.evaluate(() => window.__bgAtSwitch), nordBg);
     eq("only Nord's stylesheet is linked", await linked(), "nord");
     eq("the charts' grid follows", await page.evaluate(() => Chart.defaults.scale.grid.color), await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--line").trim()));
     eq("kept in this browser", await page.evaluate(() => localStorage.getItem("pengumon.look")), "nord");
     await page.reload({ waitUntil: "load" });
     eq("on <html> before the body is drawn", (await page.evaluate(() => window.__lookAtBody)).split("/")[0], "nord");
-    eq("with its colours", await page.evaluate(() => window.__bgAtBody), nordBg);
+    eq("with its colors", await page.evaluate(() => window.__bgAtBody), nordBg);
     eq("and only its stylesheet", await linked(), "nord");
     // a theme with one look forces it, and the menu says why light and dark cannot be picked
     await pickLook("digital-rain");
@@ -366,25 +366,25 @@ export const steps = [
     await until(() => document.querySelector("[data-panel=incidents] .panel-b").dataset.view === "standard");
   }],
 
-  ["themes: a Save that changes nothing about themes, and a layout change that keeps the cards' colours, redraw nothing", async ({ eq, moduleUrl, page }) => {
+  ["themes: a Save that changes nothing about themes, and a layout change that keeps the cards' colors, redraw nothing", async ({ eq, moduleUrl, page }) => {
     const redraws = await page.evaluate(async (u) => {
-      const { refreshThemes, setCardColours } = await import(u);
+      const { refreshThemes, setCardColors } = await import(u);
       let n = 0;
       const count = () => { n++; };
       document.addEventListener("themechange", count);
-      const colours = { latency: { custom: { "--accent": "#336699" } } };
-      setCardColours(colours); // new colours: the cards are painted and the charts drawn again
+      const colors = { latency: { custom: { "--accent": "#336699" } } };
+      setCardColors(colors); // new colors: the cards are painted and the charts drawn again
       const changed = n;
-      setCardColours(JSON.parse(JSON.stringify(colours))); // the same colours (layout.js calls this on every layout change)
+      setCardColors(JSON.parse(JSON.stringify(colors))); // the same colors (layout.js calls this on every layout change)
       const same = n - changed;
-      setCardColours({});
+      setCardColors({});
       n = 0;
       await refreshThemes(); // what Settings does after a Save; nothing about themes changed
       const refreshed = n;
       document.removeEventListener("themechange", count);
       return { changed, same, refreshed };
     }, await moduleUrl("themes.js"));
-    eq("redraws for new colours, the same colours, a Save without theme changes", `${redraws.changed},${redraws.same},${redraws.refreshed}`, "1,0,0");
+    eq("redraws for new colors, the same colors, a Save without theme changes", `${redraws.changed},${redraws.same},${redraws.refreshed}`, "1,0,0");
   }],
 
   ["card views: a theme switch swaps a card's view without a reload, keeping focus and the model's state; live data patches it; a restyled card (Starship) keeps the standard view and its live patching; the chart style reshapes the charts; a view that throws gives way to the standard one", async ({ ROUTER, click, eq, moduleUrl, ok, page, phone, until, waitText }) => {
@@ -433,7 +433,7 @@ export const steps = [
       const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
       return { bg: getComputedStyle(document.querySelector("[data-panel=services] .panel-h")).backgroundColor, want: [rgb(css("--accent")), rgb(css("--crit"))] };
     });
-    ok(`the header is a bar in the frame's colour (${bar.bg})`, bar.want.includes(bar.bg));
+    ok(`the header is a bar in the frame's color (${bar.bg})`, bar.want.includes(bar.bg));
     // a new reading patches the restyled router card: the changed figure is written (its tank follows), a part that did not
     // change (the hour's traffic) is kept
     await page.evaluate((r) => {
@@ -489,19 +489,19 @@ export const steps = [
     await page.reload({ waitUntil: "load" }); // the broken module is forgotten
   }],
 
-  ["loading: before any data the pill and the verdict are grey 'Connecting', the path is skeletons, nothing green", async ({ layoutMounted, PHONE, SHOTS, count, eq, ok, page, shot, text }) => {
+  ["loading: before any data the pill and the verdict are gray 'Connecting', the path is skeletons, nothing green", async ({ layoutMounted, PHONE, SHOTS, count, eq, ok, page, shot, text }) => {
     await page.evaluate(() => sessionStorage.setItem("smokeWs", "dead"));
     await reloadPhone({ page, PHONE, layoutMounted });
     await new Promise((r) => setTimeout(r, 800));
     const p = await pill(page);
-    ok(`pill grey: ${JSON.stringify(p)}`, p.cls.includes("st-unknown") && /Connecting/.test(p.text));
+    ok(`pill gray: ${JSON.stringify(p)}`, p.cls.includes("st-unknown") && /Connecting/.test(p.text));
     eq("verdict badge", (await text("#statusBadge")).trim(), "Connecting");
     ok("skeleton nodes, no live nodes", (await count("#pathChain .node.st-unknown")) >= 3 && (await count("#pathChain .node.st-good:not(:first-child)")) <= 1);
     eq("no green tab dot or page tint", await page.evaluate(() => document.body.dataset.status), "unknown");
     if (SHOTS) await shot("state-loading", { fullPage: false });
   }],
 
-  ["disconnected: the socket never opens, so a banner says the connection is lost and the pill stays grey", async ({ SHOTS, eq, ok, page, shot, text, until }) => {
+  ["disconnected: the socket never opens, so a banner says the connection is lost and the pill stays gray", async ({ SHOTS, eq, ok, page, shot, text, until }) => {
     await until(() => !document.getElementById("connBanner").hidden);
     ok("reconnecting text", /Reconnecting/.test(await text("#wsText")));
     eq("body marks it", await page.evaluate(() => document.body.dataset.conn), "lost");
@@ -510,7 +510,7 @@ export const steps = [
     await page.evaluate(() => sessionStorage.removeItem("smokeWs"));
   }],
 
-  ["connected again: the banner goes and the verdict turns from grey to a status", async ({ layoutMounted, PHONE, page, until }) => {
+  ["connected again: the banner goes and the verdict turns from gray to a status", async ({ layoutMounted, PHONE, page, until }) => {
     await reloadPhone({ page, PHONE, layoutMounted });
     await until(() => document.getElementById("connBanner").hidden && document.body.dataset.conn === "open");
     await until(() => !document.getElementById("statusPill").className.includes("st-unknown"));
@@ -611,7 +611,7 @@ export const steps = [
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["full", "longpath"] }],
 
-  ["colours: a target's colour and the design tokens are read once (not by getComputedStyle on every use) and follow both themes live", async ({ eq, ok, page, setTheme, until, waitCount }) => {
+  ["colors: a target's color and the design tokens are read once (not by getComputedStyle on every use) and follow both themes live", async ({ eq, ok, page, setTheme, until, waitCount }) => {
     await waitCount("#pathChain .node[data-node]", 3);
     const probe = () => page.evaluate(async () => {
       const find = (f) => performance.getEntriesByType("resource").map((r) => r.name).find((n) => n.endsWith(f));
@@ -621,20 +621,20 @@ export const steps = [
       const real = window.getComputedStyle;
       let calls = 0;
       window.getComputedStyle = (...a) => { calls++; return real.apply(window, a); };
-      let colour; let crit;
-      try { for (let i = 0; i < 30; i++) { colour = util.getTargetInfo(id).color; crit = theme.token("--crit"); } } finally { window.getComputedStyle = real; }
+      let color; let crit;
+      try { for (let i = 0; i < 30; i++) { color = util.getTargetInfo(id).color; crit = theme.token("--crit"); } } finally { window.getComputedStyle = real; }
       const root = real(document.documentElement);
-      return { calls, colour, crit, wantCrit: root.getPropertyValue("--crit").trim(), want: [1, 2, 3, 4, 5, 6, 7, 8].map((k) => root.getPropertyValue(`--s${k}`).trim()) };
+      return { calls, color, crit, wantCrit: root.getPropertyValue("--crit").trim(), want: [1, 2, 3, 4, 5, 6, 7, 8].map((k) => root.getPropertyValue(`--s${k}`).trim()) };
     });
     const seen = {};
     for (const theme of ["dark", "light", "dark"]) {
       await setTheme(theme);
       const p = await probe();
       ok(`${theme}: 60 reads cost at most 2 style lookups (got ${p.calls})`, p.calls <= 2);
-      ok(`${theme}: the target colour is one of the theme's series colours (${p.colour})`, p.want.includes(p.colour));
+      ok(`${theme}: the target color is one of the theme's series colors (${p.color})`, p.want.includes(p.color));
       eq(`${theme}: the crit token follows the theme`, p.crit, p.wantCrit);
-      if (seen[theme]) eq(`${theme}: the same on the way back`, p.colour + p.crit, seen[theme]);
-      seen[theme] = p.colour + p.crit;
+      if (seen[theme]) eq(`${theme}: the same on the way back`, p.color + p.crit, seen[theme]);
+      seen[theme] = p.color + p.crit;
     }
     ok("the two themes really differ", seen.dark !== seen.light);
     await setTheme(null);

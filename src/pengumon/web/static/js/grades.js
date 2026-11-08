@@ -1,4 +1,4 @@
-// Grades of the coloured metrics come from the server, never from numbers compared here: snapshots carry `grades`
+// Grades of the colored metrics come from the server, never from numbers compared here: snapshots carry `grades`
 // (metric -> good / warn / critical, also per unit of a line) and /api/devices lists each device's `ranges` (unit,
 // min, good_low, good_high, max, critical_low, critical_high) for drawing the range gauges. A metric without a grade
 // is shown neutral.

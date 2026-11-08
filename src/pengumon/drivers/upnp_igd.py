@@ -106,7 +106,7 @@ def _counter(answer: dict, name: str) -> Optional[int]:
 
 class UpnpIgdDriver:
     name = "upnp_igd"
-    label = "UPnP router"  # what the device is, in the dashboard's words (api.devices.device_label)
+    label = "UPnP router"  # what the device is, in the dashboard's words (devices.summary.device_label)
     offers = frozenset({Capability.WAN_COUNTERS})
     options_model = UpnpIgdOptions
     needs_sign_in = False  # UPnP has no password: the settings page asks for none
@@ -246,6 +246,21 @@ class UpnpIgdDriver:
             self._bits = None
         return PollResult(readings={Capability.WAN_COUNTERS: WanCounters(
             rx_bytes=rx, tx_bytes=tx, counter_bits=None if restarted else self._bits, read_at=read_at)})
+
+    async def read_wan_counters(self) -> Optional[WanCounters]:
+        """The WAN counters alone, for a running speed test (Device.read_wan_counters, about once a second): the two
+        counter actions of the poll, with the description the polls read (None before the first poll read it). No
+        uptime check: a restart in the middle of a test is left to the sampler, which drops a reading that goes back
+        further than a wrap explains. Gateways commonly read the interface statistics when asked (miniupnpd does);
+        32-bit counters wrap every 34 s at 1 Gbit/s, which one reading a second follows."""
+        layout = self._layout
+        if layout is None:
+            return None
+        rx = await self._action(layout.counters_url, layout.counters_type, RX_ACTION, RX_FIELD)
+        tx = await self._action(layout.counters_url, layout.counters_type, TX_ACTION, TX_FIELD)
+        if rx is None or tx is None:
+            return None
+        return WanCounters(rx_bytes=rx, tx_bytes=tx, counter_bits=self._bits, read_at=self._wall_clock())
 
     async def _restarted(self, layout: _Layout) -> bool:
         """Whether the router's uptime went back since the last poll (its counters started again from zero, which is

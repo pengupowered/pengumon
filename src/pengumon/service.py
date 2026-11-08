@@ -410,7 +410,7 @@ def plan_install(
     port: Optional[int] = None, account: Optional[str] = None, env: Optional[Dict[str, str]] = None,
     linger: Optional[bool] = None,
 ) -> Plan:
-    """What `service install` does for this OS and scope. `python` is the interpreter whose neighbour is the
+    """What `service install` does for this OS and scope. `python` is the interpreter whose neighbor is the
     console script (default: the running one); `linger` is whether the user's services survive logout (Linux user
     unit; None = unknown)."""
     home = home or Path.home()

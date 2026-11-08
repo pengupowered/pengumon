@@ -297,3 +297,21 @@ def test_parsers():
     assert arp_online(ARP) == {MAC_B.upper(): True, MAC_C.upper(): False}
     assert wifi_interfaces(WIRELESS) == {"phy0-ap0": BAND_2G, "phy1-ap0": BAND_5G}
     assert [band_of(f) for f in (2437, 5180, 5955, None)] == [BAND_2G, BAND_5G, BAND_6G, None]
+
+
+# --- the speed test's light counter read ------------------------------------------------------------------------------
+
+async def test_the_speed_test_reads_the_wan_counters_alone_in_one_request_on_the_polls_session():
+    ubus = FakeUbus()
+    device = build(ubus)
+    await device.driver.poll()
+    logins, posts = ubus.logins, len(ubus.posts)
+    counters = await device.driver.read_wan_counters()
+    assert (counters.rx_bytes, counters.tx_bytes, counters.read_at) == (100_000_000, 50_000_000, 1_700_000_000.0)
+    assert ubus.logins == logins and len(ubus.posts) == posts + 1      # the poll's session, one request
+    assert ubus.posts[-1] == [("network.interface", "dump"), ("luci-rpc", "getNetworkDevices")]
+
+
+async def test_a_counter_read_the_acl_refuses_is_none():
+    device = build(FakeUbus(denied={("luci-rpc", "getNetworkDevices")}))
+    assert await device.driver.read_wan_counters() is None

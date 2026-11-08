@@ -404,7 +404,7 @@ def path_shape(path: Sequence[Tuple[str, str]], hops: Mapping[str, Tuple[int, in
     least `material` points above every hop before it).
       none     no hop isolated;
       one_hop  the public hops' median loss is under `degraded_loss_pct` and under half the first hop's (the
-               intermediate-hop rule: engine/classifier/rules.py apply_hop_deprioritisation), and under
+               intermediate-hop rule: engine/classifier/rules.py apply_hop_deprioritization), and under
                `one_hop_max_end_loss_pct`: a few per cent lost at the Internet is real loss the user had, whatever
                the hop before it lost;
       carried  otherwise: it carries on to the later hops. (Without a public hop to look at, carried.)"""

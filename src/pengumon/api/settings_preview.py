@@ -4,7 +4,7 @@ cancel it. The work is done by settings/preview.py (the job store and its limits
 POST   /api/settings/preview       {values, days}  ->  {"id": ...}   422 for a key the preview can't replay or a value
                                                                       out of range, 429 (Retry-After 30) while another
                                                                       replay runs, 503 before the app is up
-GET    /api/settings/preview/{id}  ->  PreviewJob (state running | done | failed | cancelled); polling keeps the job alive
+GET    /api/settings/preview/{id}  ->  PreviewJob (state running | done | failed | canceled); polling keeps the job alive
 DELETE /api/settings/preview/{id}  ->  PreviewJob as it was left; the job's process is gone when this answers
 """
 

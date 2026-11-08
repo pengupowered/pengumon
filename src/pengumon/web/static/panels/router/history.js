@@ -288,7 +288,7 @@ export function setRouterHistoryRange(seconds) {
   load();
 }
 
-// Chart.js keeps the colours it resolved when a chart was made, so a theme change redraws the open charts from scratch.
+// Chart.js keeps the colors it resolved when a chart was made, so a theme change redraws the open charts from scratch.
 document.addEventListener('themechange', () => { if (lastBody && device) renderRouterHistory(lastBody); });
 
 // The actions this module's markup names (see dispatch.js).

@@ -18,7 +18,7 @@ from device_helpers import build_modem, build_router
 from test_api_devices import _client
 
 
-def test_a_range_grades_its_edges_towards_the_better_side():
+def test_a_range_grades_its_edges_toward_the_better_side():
     r = Range("dB", 20.0, 50.0, good_low=33.0, critical_low=30.0)
     assert [r.grade(v) for v in (33.0, 32.9, 30.0, 29.9, 50.0, None)] == [GOOD, WARN, WARN, CRITICAL, GOOD, None]
     both = Range("dBmV", 30.0, 56.0, good_low=38.0, good_high=49.0, critical_low=35.0, critical_high=51.0)

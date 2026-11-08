@@ -1,6 +1,6 @@
 /* Amber CRT's view of the Path health card (diagnosis.js): a green-screen terminal. The header is a bracketed title, the
    verdict a status line, the path a monospace table with bracketed status labels and ASCII bars. Scoped to this theme and
-   to the card while this view draws it ([data-view="amber-crt"]). Colours are the theme's tokens. */
+   to the card while this view draws it ([data-view="amber-crt"]). Colors are the theme's tokens. */
 
 /* the card's header: a bracketed title over a dashed rule */
 :root[data-look="amber-crt"] [data-panel="diagnosis"] .panel[data-view="amber-crt"] > .panel-h { border-bottom-style: dashed; }

@@ -1,9 +1,9 @@
 /* Starship console's Latency: the standard view (panels/latency/view.js) restyled: the lines as readouts (a block in
-   the line's colour, its name, what it is made of), the Path / Each target switch as two console keys, both charts
+   the line's color, its name, what it is made of), the Path / Each target switch as two console keys, both charts
    straight on black. The lines' shape is theme.json "chart". */
 
 :root[data-look="starship"] [data-panel="latency"] .lat-legend { gap: 6px; align-items: stretch; }
-/* a line: a tile with a bar in its colour */
+/* a line: a tile with a bar in its color */
 :root[data-look="starship"] [data-panel="latency"] .lat-legend .lg:has(> .key.line) {
   display: grid; grid-template-columns: 14px minmax(0, auto); grid-template-rows: auto auto; column-gap: 8px; align-items: center;
   padding-right: 10px; background: none; border-radius: 0; overflow: hidden;

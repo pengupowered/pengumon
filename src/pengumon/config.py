@@ -25,6 +25,7 @@ from pengumon.engine.load_settings import LineConfig
 from pengumon.engine.netinfo import default_dns_probes, default_targets, get_default_gateway_ip
 from pengumon.engine.prober_settings import DnsProbeConfig, ProberConfig
 from pengumon.lines.levels import LineSignalConfig
+from pengumon.mcp.settings import McpConfig
 from pengumon.models.probes import TargetConfig
 from pengumon.notify.settings import AlertsConfig, NotificationsConfig
 from pengumon.observability import get_logger
@@ -33,6 +34,7 @@ from pengumon.reports.settings import ReportsConfig, UptimeConfig
 from pengumon.services.settings import ServiceChecksConfig
 from pengumon.settings import lenient
 from pengumon.settings.general import GeneralConfig
+from pengumon.speedtest.settings import SpeedtestConfig
 from pengumon.web.settings import DashboardConfig, DisplayConfig
 
 _log = get_logger("pengumon.config")
@@ -96,6 +98,7 @@ class AppConfig(BaseModel):
     line: LineConfig = Field(default_factory=LineConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     access: AccessConfig = Field(default_factory=AccessConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
     service_checks: ServiceChecksConfig = Field(default_factory=ServiceChecksConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
@@ -107,6 +110,7 @@ class AppConfig(BaseModel):
     router_levels: RouterLevelsConfig = Field(default_factory=RouterLevelsConfig)
     uptime: UptimeConfig = Field(default_factory=UptimeConfig)
     reports: ReportsConfig = Field(default_factory=ReportsConfig)
+    speedtest: SpeedtestConfig = Field(default_factory=SpeedtestConfig)
     _targets_are_defaults: bool = PrivateAttr(default=False)  # load_config filled in default_targets()
 
     @property

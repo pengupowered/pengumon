@@ -17,7 +17,7 @@ import { refreshThemes } from '../../js/themes.js';
 import { canEdit, closeModal, confirmReplaceDraft, copyExport, escapeHtml, exportToggle, icon, keepKeyboard, openModal, showExport } from '../../js/util.js';
 import { LIST_EDITORS } from './lists/index.js';
 import { accessHtml, loadAccess } from './access.js';
-import { edit, choose, isLayoutKey, layoutRowHtml, refreshRows, resetLayout, rowHtml, useZone } from './fields.js';
+import { edit, choose, isLayoutKey, layoutRowHtml, refreshRows, resetLayout, rowHtml, speedEstimateRowHtml, speedMlabRowHtml, useZone } from './fields.js';
 import { cancelPreview, defaultDays, hasRules, afterPreviewChange, previewHtml, runPreview, shown as previewShown, stopPreview } from './preview.js';
 import { applySearch, clearSearch, initSearch } from './search.js';
 import { rememberSlot, refreshSlots, resetEditing, slotHtml } from './secrets.js';
@@ -114,6 +114,8 @@ function groupHtml(section, group) {
   let extra = '';
   if (section.id === 'alerts' && group.name === 'Channels') extra = secretsHtml('alerts') + listHtml('webhooks');
   if (section.id === 'devices' && group.name === 'Host app checks') extra = listHtml('services');
+  if (section.id === 'speedtest' && !group.name) extra = speedMlabRowHtml();
+  if (section.id === 'speedtest' && group.name === 'Data use') extra = speedEstimateRowHtml();
   return `<div class="set-group">${group.name ? `<h4 class="set-group-t">${escapeHtml(group.name)}</h4>` : ''}${rows}${extra}</div>`;
 }
 
@@ -502,7 +504,7 @@ function useBrowserLayout() {
   const mine = browserLayout();
   setValue('dashboard.order', mine.order);
   setValue('dashboard.hidden', mine.hidden);
-  setValue('dashboard.colours', mine.colours);
+  setValue('dashboard.colors', mine.colors);
   refreshRows();
   toast('This browser\'s layout is in the draft. Save to make new browsers start with it.');
 }

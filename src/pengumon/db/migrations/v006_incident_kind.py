@@ -15,8 +15,11 @@ _FIXED_TITLES = {
     "DNS Query Packet Drops": "dns_loss",
     "Slow DNS Queries": "dns_slow",
     "All Network Hops Operational": "nominal",
-    "ISP Hop Deprioritises Ping": "hop_deprioritised",
+    # the titles as they were stored (British spelling) and as they are since v16 (US): the kind is the current one
+    "ISP Hop Deprioritises Ping": "hop_deprioritized",
+    "ISP Hop Deprioritizes Ping": "hop_deprioritized",
     "Line Busy: ISP Hops Deprioritise Ping": "busy_isp_hops",
+    "Line Busy: ISP Hops Deprioritize Ping": "busy_isp_hops",
 }
 
 

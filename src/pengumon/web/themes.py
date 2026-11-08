@@ -1,4 +1,4 @@
-"""Themes: the page's colours, fonts and shapes, discovered from their folders at start (docs/themes.md).
+"""Themes: the page's colors, fonts and shapes, discovered from their folders at start (docs/themes.md).
 
 Every theme lives in its own folder, web/static/themes/<id>/, with
   theme.json  {"id", "name", "description", "modes": ["dark"] | ["light"] | ["dark", "light"],
@@ -10,7 +10,7 @@ Every theme lives in its own folder, web/static/themes/<id>/, with
   panels/<panel id>.css alone      optional: the theme's restyling of that card's standard view
 so adding a theme is adding a folder. The tokens are the custom properties of tokens.css; the theme `default` is
 tokens.css itself (its theme.json carries no tokens). Custom themes (Settings > Display, `display.themes`) are
-checked by the same rules, narrowed: colours and a few sizes only, no skin, no effect, no views and no chart style.
+checked by the same rules, narrowed: colors and a few sizes only, no skin, no effect, no views and no chart style.
 
 The page applies a theme as <html data-look="<id>">, next to data-theme (light or dark). A built-in theme's token
 blocks, skin and card views' stylesheets are one generated stylesheet (`look_css`, served under the tree hash at
@@ -40,14 +40,14 @@ ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 CUSTOM_PREFIX = "custom-"
 MAX_CUSTOM = 30
 
-# ---------- colours ----------
+# ---------- colors ----------
 
 _HEX = re.compile(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
 HEX6 = re.compile(r"#[0-9a-fA-F]{6}")
 _RGB = re.compile(r"rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(0|1|0?\.\d+|1\.0+)\s*)?\)")
 
 
-def parse_colour(text: str) -> Optional[Tuple[float, float, float, float]]:
+def parse_color(text: str) -> Optional[Tuple[float, float, float, float]]:
     """(r, g, b, alpha) with r, g, b in 0..255 and alpha in 0..1, for #rgb, #rrggbb, #rrggbbaa, rgb() and rgba();
     None for anything else."""
     text = text.strip()
@@ -114,10 +114,10 @@ def base_tokens() -> Dict[str, Dict[str, str]]:
 
 
 @lru_cache(maxsize=1)
-def colour_tokens() -> Tuple[str, ...]:
-    """The tokens every theme must give in each of its modes: those whose value in tokens.css is a colour
+def color_tokens() -> Tuple[str, ...]:
+    """The tokens every theme must give in each of its modes: those whose value in tokens.css is a color
     (backgrounds, ink, lines, accent, focus, status and their -bg, the heat scale --q0..--q4, series --s1..--s8)."""
-    return tuple(n for n, v in base_tokens()["dark"].items() if parse_colour(v))
+    return tuple(n for n, v in base_tokens()["dark"].items() if parse_color(v))
 
 
 def hex_only(name: str) -> bool:
@@ -126,7 +126,7 @@ def hex_only(name: str) -> bool:
 
 
 # The other tokens a theme may set, by kind: (pattern, (min, max) for the number, or None). Custom themes may set
-# the colours and the `CUSTOM_SIZES` only.
+# the colors and the `CUSTOM_SIZES` only.
 _PX = re.compile(r"(\d{1,4}(?:\.\d{1,2})?)px")
 _MS = re.compile(r"(\d{1,4})ms")
 _INT = re.compile(r"(\d{3})")
@@ -157,13 +157,13 @@ def token_problem(name: str, value: Any, custom: bool) -> Optional[str]:
     if not isinstance(value, str):
         return f"{name}: the value must be text"
     value = value.strip()
-    if name in colour_tokens():
+    if name in color_tokens():
         if hex_only(name):
-            return None if HEX6.fullmatch(value) else f"{name}: must be a colour like #1a2b3c"
-        return None if parse_colour(value) else f"{name}: must be a colour (#1a2b3c, #1a2b3c80 or rgba(26, 43, 60, .5))"
+            return None if HEX6.fullmatch(value) else f"{name}: must be a color like #1a2b3c"
+        return None if parse_color(value) else f"{name}: must be a color (#1a2b3c, #1a2b3c80 or rgba(26, 43, 60, .5))"
     if custom and name not in CUSTOM_SIZES:
         known = name in base_tokens()["dark"]
-        return f"{name}: a custom theme may set colours and text sizes and corner radii only" if known else f"{name}: not a theme token"
+        return f"{name}: a custom theme may set colors and text sizes and corner radii only" if known else f"{name}: not a theme token"
     rule = _RULES.get(name)
     if rule is None:
         return f"{name}: not a theme token" if name not in base_tokens()["dark"] else f"{name}: a theme cannot change it"
@@ -208,14 +208,14 @@ class Theme:
         return {**base_tokens()[mode], **self.tokens.get(mode, {})}
 
     def exported(self) -> Dict[str, Any]:
-        """The theme as a theme.json a custom theme can be made from: its colours (all of them, so it stands alone)
+        """The theme as a theme.json a custom theme can be made from: its colors (all of them, so it stands alone)
         and the text sizes and radii it changes; fonts, shadows, skin, effect and chart style stay behind. With a
         "custom-" id it is a valid ThemeItem as it is (only the fields a custom theme has)."""
         tokens = {}
         for mode in self.modes:
             mine = self.resolved(mode)
             own = self.tokens.get(mode, {})
-            tokens[mode] = {**{n: mine[n] for n in colour_tokens()}, **{n: own[n] for n in CUSTOM_SIZES if n in own}}
+            tokens[mode] = {**{n: mine[n] for n in color_tokens()}, **{n: own[n] for n in CUSTOM_SIZES if n in own}}
         return {"id": self.id, "name": self.name, "description": self.description, "modes": list(self.modes),
                 "tokens": tokens, "tags": list(self.tags)}
 
@@ -227,7 +227,7 @@ CHART_STYLE: Dict[str, Any] = {
     "curve": ("smooth", "straight", "stepped"),  # smooth: the chart's own tension; straight: none; stepped: steps
     "grid": bool,  # false: no grid lines in the plot area
     "points": (0, 6),  # a dot of this radius on every reading (0: none, the charts' own)
-    "fill": bool,  # true: the area under a series line is washed with its colour
+    "fill": bool,  # true: the area under a series line is washed with its color
     "spark": ("line", "bars"),  # the sparklines (the last probes of a path node, a hop): a line, or a bar per probe
 }
 
@@ -303,9 +303,9 @@ def check_theme(raw: Any, *, custom: bool, folder: Optional[Path] = None) -> Tup
                 why = token_problem(n, v, custom)
                 if why:
                     problems.append(f"tokens.{mode}: {why}")
-            missing = [n for n in colour_tokens() if n not in given]
+            missing = [n for n in color_tokens() if n not in given]
             if missing:
-                problems.append(f"tokens.{mode}: missing colours {', '.join(missing)}")
+                problems.append(f"tokens.{mode}: missing colors {', '.join(missing)}")
     effect = raw.get("effect")
     if effect is not None:
         if custom:
@@ -505,7 +505,7 @@ def look_stylesheets() -> Dict[str, str]:
 
 def custom_css(every: List[Theme]) -> str:
     """The custom themes' token blocks (of `every`, all_themes' list), written into the page's <style> as they are:
-    their ids and values passed check_theme (an id, colours and sizes), which leaves no way to end the element or the
+    their ids and values passed check_theme (an id, colors and sizes), which leaves no way to end the element or the
     rule."""
     css = "".join(theme_css(t) for t in every if not t.builtin)
     return "" if "<" in css else css  # cannot happen (checked values); a belt for the <style>
@@ -534,7 +534,7 @@ def page_list(themes: List[Theme], version: str) -> List[Dict[str, Any]]:
 
 def api_entry(theme: Theme, version: str) -> Dict[str, Any]:
     """One theme for GET /api/themes: the page list's fields, the description and tags, and the theme as an
-    importable theme.json (`theme`: its colours per mode, for Export, Duplicate and a card's colours)."""
+    importable theme.json (`theme`: its colors per mode, for Export, Duplicate and a card's colors)."""
     entry = page_list([theme], version)[0]
     return {**entry, "description": theme.description, "tags": list(theme.tags), "skin": bool(theme.skin),
             "theme": theme.exported()}

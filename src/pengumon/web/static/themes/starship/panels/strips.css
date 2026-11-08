@@ -17,7 +17,7 @@
   letter-spacing: .06em; font-weight: var(--fw-bold);
 }
 :root[data-look="starship"] [data-panel="strips"] .s-name small { color: var(--bg); }
-/* the blocks: a bank of segments in their state's colour */
+/* the blocks: a bank of segments in their state's color */
 :root[data-look="starship"] [data-panel="strips"] .strips .strip { gap: 1px; }
 :root[data-look="starship"] [data-panel="strips"] .strip > * { border-radius: 1px; opacity: 1; padding: 0; border: 0; cursor: pointer; }
 :root[data-look="starship"] [data-panel="strips"] .strip > .w { background: var(--warn); }

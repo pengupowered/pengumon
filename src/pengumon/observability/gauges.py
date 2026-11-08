@@ -216,3 +216,7 @@ GAUGES: List[Gauge] = [
 from pengumon.observability.module_gauges import MODULE_GAUGES  # noqa: E402  (it needs Gauge, defined above)
 
 GAUGES += MODULE_GAUGES
+
+from pengumon.speedtest.gauges import SPEED_GAUGES  # noqa: E402  (likewise)
+
+GAUGES += SPEED_GAUGES

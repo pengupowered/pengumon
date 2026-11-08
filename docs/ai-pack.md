@@ -45,6 +45,7 @@ A summary, not raw data: Pengumon's findings with the numbers behind them, sized
 | Incidents | the significant incidents in time order (20, or 40 with more examples), each with where it starts, Pengumon's verdict (*gateway*, *line* or *isp*), a confidence and what happened at the same time |
 | Close-ups | the 3 (or 6) most significant incidents minute by minute, 10-second rows for an incident pack |
 | This week by time of day and by day | latency by time of day and, per day, incidents and lost minutes, plus the line's own columns where a module adds them |
+| Speed tests | only when the window has speed tests ([speedtest.md](speedtest.md)): a summary of all of them (counts, median and lowest download and upload against your plan speed, how they were measured, tests under half of it, the bufferbloat grade) and the newest 12 (or 30) that ran as a table with idle and loaded latency and a *By* column (the speeds are the line's rate the router measured during the test, `router`, else the test's own, `test`); fewer rows (5) are kept if the pack must be cut for length. A LibreSpeed server of yours is named "own LibreSpeed server", never by its address; a Cloudflare location or an M-Lab machine name may appear |
 | Your devices | one subsection per device module (below), or a short "What Pengumon cannot see here" without any |
 | Host apps, changes, environment | host app checks, path and route changes, the ping backend, IPv6, gaps in the data |
 | What went wrong for you? | your one line |
@@ -154,7 +155,7 @@ Facts refer to devices by role keys (`line_device`, `router_device`, `mesh_node:
 each key into the level's text.
 
 A driver may add `pack_notes`, a `DriverNotes` with a `full` text and an `anonymized` one (or none). Notes state only
-what the driver's own code establishes (its read intervals, its data source, firmware behaviour it works around),
+what the driver's own code establishes (its read intervals, its data source, firmware behavior it works around),
 never general advice about the vendor; placeholders such as `{poll}` are filled in from the device's configuration.
 
 `tests/test_contributions.py` checks every registered contribution and driver note against this contract (budgets,

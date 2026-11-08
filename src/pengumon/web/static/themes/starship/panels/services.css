@@ -1,5 +1,5 @@
 /* Starship console's Host services: the standard view (panels/services/view.js) restyled, each service a console block
-   straight on black: its status a flat block in its colour (icon and word), the name, the figures as readouts under
+   straight on black: its status a flat block in its color (icon and word), the name, the figures as readouts under
    labels, the actions as pill buttons with a word. The row's parts are laid out on one grid (its inner boxes are display: contents). The pill
    labels and the buttons' words are this theme's (CSS text); every button keeps its own accessible name. */
 
@@ -11,7 +11,7 @@
 }
 :root[data-look="starship"] [data-panel="services"] .svc li .svc-id,
 :root[data-look="starship"] [data-panel="services"] .svc li .svc-more { display: contents; }
-/* the status tab: a flat block in the status colour, its icon and word dark on it */
+/* the status tab: a flat block in the status color, its icon and word dark on it */
 :root[data-look="starship"] [data-panel="services"] .svc-st {
   grid-area: tab; align-self: stretch; flex-direction: column; justify-content: center; gap: 4px; padding: var(--sp-2) 6px;
   background: var(--st); color: var(--bg); border-radius: 0;

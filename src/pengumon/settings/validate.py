@@ -49,6 +49,16 @@ class Validation:
 
 # --- the version line of a change ---------------------------------------------------------------------------------
 
+def hours_text(hours: int) -> str:
+    """A number of hours in the largest unit it is a whole number of, as Settings shows it: "1 week", "3 days", "36
+    hours" (model.js hoursText)."""
+    for size, one, many in ((168, "week", "weeks"), (24, "day", "days"), (1, "hour", "hours")):
+        if hours % size == 0:
+            count = hours // size
+            return f"1 {one}" if count == 1 else f"{count:,} {many}"
+    return str(hours)
+
+
 def _shown(setting: registry.Setting, value: Any, round_seconds: float) -> str:
     """A value as the page shows it, for the version line."""
     if value is None:
@@ -57,6 +67,8 @@ def _shown(setting: registry.Setting, value: Any, round_seconds: float) -> str:
         return setting.choice_labels.get(value, value)
     if isinstance(value, bool):
         return "on" if value else "off"
+    if setting.unit == "h" and isinstance(value, int) and value > 0:
+        return hours_text(value)
     if isinstance(value, (int, float)):
         number = value * round_seconds if setting.rounds else value * setting.scale
         text = f"{round(number, 4):g}"
@@ -271,7 +283,7 @@ def _warnings(manager: "SettingsManager", document: SettingsDocument, out: Valid
                              "message": "With Always and no password set, anyone who can reach the page sees "
                                         "the clients' names and addresses."})
 
-def _normalise_webhooks(items: List[dict], current: List[dict]) -> List[dict]:
+def _normalize_webhooks(items: List[dict], current: List[dict]) -> List[dict]:
     """New webhooks get an id from their name (an item saved before keeps its id)."""
     taken = {list_item_id(i) for i in items if list_item_id(i)}
     out = []
@@ -312,22 +324,22 @@ async def validate(manager: "SettingsManager", values: Mapping[str, Any], lists:
             out.errors.append({"where": f"lists.{name}", "message": "must be a list of items"})
             continue
         if name == "webhooks" and items is not None:
-            items = _normalise_webhooks(items, manager.document().lists.get("webhooks") or [])
+            items = _normalize_webhooks(items, manager.document().lists.get("webhooks") or [])
         new_lists[name] = copy.deepcopy(items) if items is not None else None
     if out.errors:
         return out
-    # items as their models store them (every field, normalised); a bad item is reported by the full check
+    # items as their models store them (every field, normalized); a bad item is reported by the full check
     for name, items in list(new_lists.items()):
         if items is None or name not in lists:
             continue
         model = registry.LISTS[name].item_model
-        normalised = []
+        normalized = []
         for item in items:
             try:
-                normalised.append(model.model_validate(item).model_dump(mode="json"))
+                normalized.append(model.model_validate(item).model_dump(mode="json"))
             except ValidationError:
-                normalised.append(item)
-        new_lists[name] = normalised
+                normalized.append(item)
+        new_lists[name] = normalized
     document = SettingsDocument(values=new_values, lists={k: v for k, v in new_lists.items() if v is not None})
     _check_secrets(manager, secrets, document, out)
     pending = {slot: (v or "").strip() for slot, v in secrets.items() if isinstance(v, str)}

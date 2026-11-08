@@ -62,7 +62,7 @@ async def test_first_start_imports_config_and_custom_targets_with_their_ids_in_o
     await PathManager(config, repo).load()
 
     revision, hops = await repo.load_path()
-    assert revision == 1 and await repo.path_initialised()
+    assert revision == 1 and await repo.path_initialized()
     assert [t.id for t in hops] == ["gw", "isp_1", "pub", "nas"]
     assert hops[0] == GW and hops[3] == mine
     assert [t.id for t in config.targets] == ["gw", "isp_1", "pub", "nas"]
@@ -91,7 +91,7 @@ async def test_without_targets_in_config_yaml_the_defaults_are_probed_unstored_u
     repo = await _repo(tmp_path)
     await PathManager(config, repo).load()
     assert [t.id for t in config.targets] == ["local_router", "cloudflare_dns", "google_dns"]
-    assert await repo.path_revision() == 0 and not await repo.path_initialised()
+    assert await repo.path_revision() == 0 and not await repo.path_initialized()
     assert await repo.load_path() == (0, [])
 
 
@@ -649,5 +649,5 @@ async def test_a_fresh_start_with_the_example_config_has_no_path_and_is_at_revis
     assert not config.targets_from_file
     repo = await _repo(tmp_path)
     await PathManager(config, repo).load()
-    assert await repo.path_revision() == 0 and not await repo.path_initialised()  # first run: discovery
+    assert await repo.path_revision() == 0 and not await repo.path_initialized()  # first run: discovery
     assert [t.id for t in config.targets][0] == "local_router" and "isp_hop_1" not in {t.id for t in config.targets}

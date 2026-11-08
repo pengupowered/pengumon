@@ -1,9 +1,9 @@
 """Diagnostic classifier engine for network root-cause isolation.
 
 OutageClassifier is the orchestrator: it owns the clock, the load reading and the callbacks. Each round it computes
-metrics.round_metrics and hands them to ClassifierCore.step, which runs rules.diagnose -> rules.apply_load ->
-rules.apply_hop_deprioritisation -> tracker.IncidentTracker.observe; the side effects (path trace, log lines,
-callbacks) stay in OutageClassifier. The outage-rules preview (engine.replay) drives a ClassifierCore of its own with
+metrics.round_metrics and hands them to ClassifierCore.step, which runs rules.diagnose -> rules.apply_speedtest ->
+rules.apply_load -> rules.apply_hop_deprioritization -> tracker.IncidentTracker.observe; the side effects (path
+trace, log lines, callbacks) stay in OutageClassifier. The outage-rules preview (engine.replay) drives a ClassifierCore of its own with
 the timestamps of stored samples. The pieces:
 
 * verdict.py   Verdict, the frozen result of a round; its `kind` drives control flow, the texts are for people
@@ -27,7 +27,7 @@ from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.engine.load import LineLoad, LoadReading
 from pengumon.engine.classifier.metrics import CategoryMetrics, RoundMetrics, round_metrics
-from pengumon.engine.classifier.rules import apply_hop_deprioritisation, apply_load, diagnose
+from pengumon.engine.classifier.rules import apply_hop_deprioritization, apply_load, apply_speedtest, diagnose
 from pengumon.engine.classifier.tracker import IncidentTracker, TrackerOutcome
 from pengumon.engine.classifier.verdict import NOMINAL, Verdict
 from pengumon.lines import GENERIC, LineWording, wording
@@ -57,7 +57,7 @@ class StepResult:
 
 class ClassifierCore:
     """The verdict logic of one round, without a clock, callbacks or background tasks: diagnose, the load and
-    hop-deprioritisation adjustments, and the incident tracker. Owns the tracker and the time of the last upstream
+    hop-deprioritization adjustments, and the incident tracker. Owns the tracker and the time of the last upstream
     issue (the DNS cooldown). `config` is read at every step, so a change to it applies from the next round.
 
     The live OutageClassifier and the outage-rules replay both run their rounds through `step`, so the replay's
@@ -70,8 +70,11 @@ class ClassifierCore:
         self.tracker = IncidentTracker(config, repository)
         self.last_upstream_issue_ts: float = 0.0
 
-    async def step(self, m: RoundMetrics, ts: float, reading: Optional[LoadReading]) -> StepResult:
-        """Judges one round's metrics at time `ts`, with the line load `reading` of this round (None: unknown)."""
+    async def step(self, m: RoundMetrics, ts: float, reading: Optional[LoadReading],
+                   testing: bool = False) -> StepResult:
+        """Judges one round's metrics at time `ts`, with the line load `reading` of this round (None: unknown).
+        `testing`: a speed test is running (or its probes are still in the judged window): a fault that is not a hard
+        outage is "busy_speedtest", and the tracker holds still for that round (see below)."""
         config = self.config
         if m.upstream_issue(config):
             self.last_upstream_issue_ts = ts
@@ -82,10 +85,17 @@ class ClassifierCore:
         # Determine if degradation is packet loss / hard outage vs pure latency / jitter
         is_loss_or_outage = m.is_loss_or_outage(verdict.status, config)
 
+        if testing and verdict.is_fault:
+            verdict = apply_speedtest(verdict)
+            if verdict.kind == "busy_speedtest":
+                # A round under the test's own load says nothing about the line either way, so the tracker does not
+                # see it: it neither builds toward an incident nor counts as a recovery (an incident already open
+                # stays open across the test instead of being resolved by it and opened again after).
+                return StepResult(verdict, is_loss_or_outage, reading, TrackerOutcome())
         if verdict.is_fault and reading is not None:
             verdict = apply_load(verdict, m, reading, config, is_loss_or_outage)
         if verdict.is_fault and verdict.kind in ISP_LINE_KINDS:
-            verdict = apply_hop_deprioritisation(verdict, m, config)
+            verdict = apply_hop_deprioritization(verdict, m, config)
         outcome = await self.tracker.observe(verdict, is_loss_or_outage=is_loss_or_outage, reading=reading, ts=ts)
         return StepResult(verdict, is_loss_or_outage, reading, outcome)
 
@@ -114,6 +124,8 @@ class OutageClassifier:
         self.core = ClassifierCore(config, repository, wording(line_technology))
         self.last_diagnosis: SystemDiagnosis = SystemDiagnosis()
         self.last_verdict: Verdict = NOMINAL
+        # Whether a speed test is masking the verdicts now; set by the speedtest component (runner.is_masking)
+        self.speedtest_active: Optional[Callable[[], bool]] = None
         self._last_measured_ts: float = 0.0  # when evaluate last ran: the time probing stopped, if it does
         # Strong references to background tasks: the event loop holds tasks only weakly.
         self._background: set = set()
@@ -204,7 +216,7 @@ class OutageClassifier:
         # Each target's window (its last classifier.window_probes probes), summed up once for the round
         m = round_metrics(stats, samples, self.config.window_probes)
         reading = self.load.current(ts) if self.load else None
-        result = await self.core.step(m, ts, reading)
+        result = await self.core.step(m, ts, reading, testing=bool(self.speedtest_active and self.speedtest_active()))
         verdict, outcome = result.verdict, result.outcome
         self.last_verdict = verdict
         if outcome.started is not None:

@@ -2,7 +2,7 @@
 path's events.
 
 `path_revision` counts the applied edits (0: the path was never imported or applied, so the app probes config.yaml's
-or the default targets without storing them); `path_initialised` is set by the first import or apply and never
+or the default targets without storing them); `path_initialized` is set by the first import or apply and never
 cleared, so a path whose every hop was removed is not imported again; `path_devices_linked` says the automatic device
 links were made (engine.device_links), so an owner's "no device" is not undone at the next start. An edit is one transaction: the revision check,
 the rows, the new revision, its version (path_versions: the hops as applied and a one-line summary of the change; the
@@ -23,7 +23,7 @@ from pengumon.models.probes import TargetConfig
 logger = logging.getLogger("pengumon.db")
 
 PATH_REVISION_KEY = "path_revision"
-PATH_INITIALISED_KEY = "path_initialised"
+PATH_INITIALIZED_KEY = "path_initialized"
 # Set once the home hops were linked to their devices by address (engine.device_links): by the one-time import, by any
 # applied path, or once at the start of a path stored by an older version.
 PATH_DEVICES_LINKED_KEY = "path_devices_linked"
@@ -158,9 +158,9 @@ async def _store_version(db, revision: int, targets: Sequence[TargetConfig], sum
 
 
 class PathQueries:
-    async def path_initialised(self) -> bool:
+    async def path_initialized(self) -> bool:
         async with self._db.read() as db:
-            return await _meta(db, PATH_INITIALISED_KEY) == "1"
+            return await _meta(db, PATH_INITIALIZED_KEY) == "1"
 
     async def path_revision(self) -> int:
         async with self._db.read() as db:
@@ -225,7 +225,7 @@ class PathQueries:
         are imported as hops removed from the path (history kept, the owner can restore them). False, and nothing
         written, when the path was imported or applied before."""
         async with self._db.write() as db:
-            if await _meta(db, PATH_INITIALISED_KEY) == "1":
+            if await _meta(db, PATH_INITIALIZED_KEY) == "1":
                 return False
             await self._write_hops(db, targets)
             if removed:
@@ -235,7 +235,7 @@ class PathQueries:
                     "ON CONFLICT(id) DO NOTHING",
                     [(t.id, len(targets) + i, t.model_dump_json(), now, now) for i, t in enumerate(removed)])
             await _put_meta(db, PATH_REVISION_KEY, "1")
-            await _put_meta(db, PATH_INITIALISED_KEY, "1")
+            await _put_meta(db, PATH_INITIALIZED_KEY, "1")
             summary = f"Imported {len(targets)} hop{'s' if len(targets) != 1 else ''} (config.yaml's targets and " \
                       "the ones added in the dashboard)"
             await _store_version(db, 1, targets, summary, time.time())
@@ -255,7 +255,7 @@ class PathQueries:
             summary, moves = describe_change(await _rows(db, False), targets, await _rows(db, True))
             await self._write_hops(db, targets)
             await _put_meta(db, PATH_REVISION_KEY, str(current + 1))
-            await _put_meta(db, PATH_INITIALISED_KEY, "1")
+            await _put_meta(db, PATH_INITIALIZED_KEY, "1")
             await _store_version(db, current + 1, targets, summary, time.time(), moves)
             await _put_meta(db, PATH_DEVICES_LINKED_KEY, "1")
             async with db.execute("SELECT id FROM path_targets WHERE deleted_at IS NOT NULL") as cursor:

@@ -110,7 +110,7 @@ export async function handleAddTarget(e) {
       body: JSON.stringify({ id: value('id'), name: value('name'), address: value('address'), category: $('targetCategory').value, family: Number($('targetFamily').value), type: 'icmp', enabled: true })
     });
     if (res.ok) {
-      await initTargets(); // the new name and colour for the matrix and the charts
+      await initTargets(); // the new name and color for the matrix and the charts
       clear();
       closeModal('addTargetModal');
     } else {

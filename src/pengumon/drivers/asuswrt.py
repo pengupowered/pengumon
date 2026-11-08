@@ -131,7 +131,7 @@ def _parse_clients(text: str) -> Optional[int]:
 
 _RE_HMS = re.compile(r"^(\d+):([0-5]?\d):([0-5]?\d)$")
 # A mesh node's own MAC, then its radios'. Not the pap*: those are its parent's. Not wired_mac either: it lists the
-# node's wired neighbours (on an AiMesh main router, the satellites' own MACs), not the node.
+# node's wired neighbors (on an AiMesh main router, the satellites' own MACs), not the node.
 _MAC_NODE_FIELDS = ("mac", "ap2g", "ap5g", "ap5g1", "ap6g", "ap6g1", "ap2g_fh", "ap5g_fh", "ap5g1_fh", "ap6g_fh",
                     "ap6g1_fh", "apdwb")
 _BANDS = {"1": BAND_2G, "2": BAND_5G}  # isWL: 0 wired; 3 and anything else is BAND_OTHER (a 2nd high band, not 6 GHz)
@@ -227,17 +227,17 @@ def _parse_mesh_names(text: str) -> Dict[str, str]:
     Empty if the answer has no nodes."""
     body = _json_object(text)
     nodes = body.get("get_cfg_clientlist") if body else None
-    labelled = []
+    labeled = []
     for node in nodes if isinstance(nodes, list) else []:
         if not isinstance(node, dict):
             continue
         alias = clean_text(node.get("alias"))
         label = alias if alias and normal_mac(alias) is None else clean_text(node.get("model_name"))
         if label:
-            labelled.append((node, label))
+            labeled.append((node, label))
     names: Dict[str, str] = {}
     for field in _MAC_NODE_FIELDS:
-        for node, label in labelled:
+        for node, label in labeled:
             nid = _mac_id(node.get(field))
             if nid:
                 names.setdefault(nid, label)
@@ -262,8 +262,8 @@ _BACKHAUL_RADIOS = (("pap6g", "rssi6g", BAND_6G), ("pap5g1", "rssi5g1", BAND_OTH
                     ("pap2g", "rssi2g", BAND_2G))
 
 
-def _node_info(node: dict, wired_neighbours: set) -> _NodeInfo:
-    """One node of get_cfg_clientlist(). `wired_neighbours` holds the ids listed in any node's `wired_mac`: the main
+def _node_info(node: dict, wired_neighbors: set) -> _NodeInfo:
+    """One node of get_cfg_clientlist(). `wired_neighbors` holds the ids listed in any node's `wired_mac`: the main
     router lists the satellites it reaches by cable, so a node found there with no parent radio is on a cable.
     Whether a satellite on Wi-Fi fills pap*/rssi* was not seen on the firmware checked (every pap* was empty on a
     AiMesh network whose satellites are wired); that part follows the field names only."""
@@ -275,7 +275,7 @@ def _node_info(node: dict, wired_neighbours: set) -> _NodeInfo:
         if _mac_id(node.get(pap)):
             raw = _num(str(node.get(rssi, "")).lstrip("-"))
             return _NodeInfo(nid, label, online, "wifi", band, -int(raw) if raw else None)
-    return _NodeInfo(nid, label, online, "wired" if nid in wired_neighbours else None, None, None)
+    return _NodeInfo(nid, label, online, "wired" if nid in wired_neighbors else None, None, None)
 
 
 def _parse_mesh_nodes(text: str) -> Tuple[List[_NodeInfo], Dict[str, _NodeInfo]]:
@@ -284,11 +284,11 @@ def _parse_mesh_nodes(text: str) -> Tuple[List[_NodeInfo], Dict[str, _NodeInfo]]
     body = _json_object(text)
     nodes = body.get("get_cfg_clientlist") if body else None
     raw = [n for n in (nodes if isinstance(nodes, list) else []) if isinstance(n, dict)]
-    neighbours = set()
+    neighbors = set()
     for node in raw:
         wired = node.get("wired_mac")
-        neighbours.update(i for i in (_mac_id(m) for m in (wired if isinstance(wired, list) else [])) if i)
-    infos = [_node_info(n, neighbours) for n in raw]
+        neighbors.update(i for i in (_mac_id(m) for m in (wired if isinstance(wired, list) else [])) if i)
+    infos = [_node_info(n, neighbors) for n in raw]
     by_id: Dict[str, _NodeInfo] = {}
     for field in _MAC_NODE_FIELDS:
         for node, info in zip(raw, infos):
@@ -300,7 +300,7 @@ def _parse_mesh_nodes(text: str) -> Tuple[List[_NodeInfo], Dict[str, _NodeInfo]]
 
 def build_mesh(clients: ClientsReading, names: Dict[str, str], overrides: Dict[str, str],
                infos: Sequence[_NodeInfo] = (), info_by_id: Optional[Dict[str, _NodeInfo]] = None) -> Optional[MeshReading]:
-    """The mesh nodes the online clients are on, labelled by `overrides` (the options' mesh_node_labels), else by the
+    """The mesh nodes the online clients are on, labeled by `overrides` (the options' mesh_node_labels), else by the
     router's `names`, else "Node 1", "Node 2", ... in the order of the node ids. With the router's node list (`infos`,
     `info_by_id` from _parse_mesh_nodes) each node also carries whether it is online and its backhaul, and a node
     that carries no client (an offline one, or an idle one) is listed too, so that a node that dropped off is seen.
@@ -360,7 +360,7 @@ class AsusWrtOptions(BaseModel):
 
 class AsusWrtDriver:
     name = "asuswrt"
-    label = "ASUS router"  # what the device is, in the dashboard's words (api.devices.device_label)
+    label = "ASUS router"  # what the device is, in the dashboard's words (devices.summary.device_label)
     offers = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM, Capability.CLIENT_INVENTORY,
                         Capability.MESH})
     options_model = AsusWrtOptions
@@ -635,6 +635,23 @@ class AsusWrtDriver:
             readings[Capability.ROUTER_SYSTEM] = SystemReading(cpu_pct=cpu_pct, mem_pct=mem_pct,
                                                                client_count=client_count)
         return PollResult(readings=readings, missing=missing)
+
+    async def read_wan_counters(self) -> Optional[WanCounters]:
+        """The WAN counters alone, for a running speed test (Device.read_wan_counters, about once a second): one
+        appGet request with the netdev() hook, on the session the polls use (the router allows one admin session: a
+        token it refused gets the same one re-login a poll would do). The counters are the router's at the moment it
+        answers (the hook reads the interface statistics when it is asked; nothing here keeps them). None when the
+        answer has none; a refused login raises, like a poll's."""
+        if not self._token:
+            await self._login()
+        problems: List[Tuple[ErrorKind, str]] = []
+        text = await self._hook(["netdev()"], problems)
+        counters = _parse_netdev(text) if text is not None else None
+        if counters is None:
+            if problems:
+                raise DriverError(*problems[0])
+            return None
+        return WanCounters(rx_bytes=counters[0], tx_bytes=counters[1], read_at=self._wall_clock())
 
     async def _client_readings(self, text: str, readings: dict) -> None:
         """The client list and the mesh from the answer that carried get_clientlist(): no further request except the

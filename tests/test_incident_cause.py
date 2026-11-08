@@ -85,7 +85,7 @@ def test_each_classifier_kind_sits_where_the_path_health_names_it():
             assert kind.cause == "gateway", name
         elif name == "isp_loss":
             assert kind.cause == "line", name
-        elif name in ("backbone_loss", "upstream_latency", "hop_deprioritised"):
+        elif name in ("backbone_loss", "upstream_latency", "hop_deprioritized"):
             assert kind.cause == "isp", name
     assert KINDS["isp_outage"].cause is None
 

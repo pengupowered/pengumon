@@ -1,6 +1,6 @@
 // The Channels dialog's per-channel bar charts (power and SNR, one bar per channel): inline SVG, drawn from the server's
-// readings. The shaded good zone and the bar colours are the server's: the zone comes from the device's `ranges`, each
-// bar's colour from the channel's own `grades` (no limit is written here).
+// readings. The shaded good zone and the bar colors are the server's: the zone comes from the device's `ranges`, each
+// bar's color from the channel's own `grades` (no limit is written here).
 
 import { escapeHtml } from '../../js/util.js';
 

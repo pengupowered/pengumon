@@ -1,5 +1,5 @@
 /* Digital rain: shapes and texture (docs/themes.md, "Skins"). Every selector is under this theme's own data-look, so
-   nothing here touches another theme. Colours come from the tokens in theme.json; the falling characters are effect.js. */
+   nothing here touches another theme. Colors come from the tokens in theme.json; the falling characters are effect.js. */
 
 /* faint scanlines over the page background */
 :root[data-look="digital-rain"] body {
@@ -36,7 +36,7 @@
 :root[data-look="digital-rain"] .fx-rain { position: absolute; left: 0; top: 0; opacity: .6; will-change: transform; }
 
 /* cards and the header let the rain show through (only while the effect runs: the layer then has data-fx). Half the
-   card's colour is as far as text allows: --ink-3 over the brightest glyph is 4.75:1 (AA), --ink-4 3.17:1 (its 3:1) */
+   card's color is as far as text allows: --ink-3 over the brightest glyph is 4.75:1 (AA), --ink-4 3.17:1 (its 3:1) */
 :root[data-look="digital-rain"]:has(#fxLayer[data-fx="digital-rain"]) .panel { background-color: color-mix(in srgb, var(--surface-1) 50%, transparent); }
 :root[data-look="digital-rain"] .topbar::before {
   background: color-mix(in srgb, var(--bg) 62%, transparent);

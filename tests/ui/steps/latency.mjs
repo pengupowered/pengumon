@@ -4,8 +4,8 @@ export const subject = "panel:latency";
 export const variants = ["full"];
 
 export const steps = [
-  ["the theme button recolours charts that are already drawn: grid, axis and tick text follow the page", async ({ click, eq, page, setTheme, until }) => {
-    const colours = () => page.evaluate(() => {
+  ["the theme button recolors charts that are already drawn: grid, axis and tick text follow the page", async ({ click, eq, page, setTheme, until }) => {
+    const colors = () => page.evaluate(() => {
       const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
       const o = Chart.getChart(document.getElementById("latencyChart")).scales.y.options;
       const lost = Chart.getChart(document.getElementById("lossChart")).scales.y.options;
@@ -13,7 +13,7 @@ export const steps = [
     });
     for (const theme of ["light", "dark", "light"]) {
       await setTheme(theme);
-      const c = await colours();
+      const c = await colors();
       eq(`${theme}: latency grid`, c.grid, c.line);
       eq(`${theme}: loss lane grid`, c.lossGrid, c.line);
       eq(`${theme}: tick text`, c.ticks, c.ink);
@@ -33,8 +33,12 @@ export const steps = [
   ["live chart is fed by the websocket", async ({ chartLabels, eq, hasChart, ok, page, text, until }) => {
     await hasChart("latencyChart");
     await hasChart("lossChart");
-    const n = await chartLabels("latencyChart");
-    await until((i, k) => Chart.getChart(document.getElementById(i)).data.labels.length > k, "latencyChart", n);
+    // a new newest point, not a longer chart: the live view keeps at most 60 points, so once a page has been open a
+    // minute a new probe pushes the oldest out and the count stays at 60
+    const newest = () => page.evaluate((i) => String(Chart.getChart(document.getElementById(i)).data.labels.at(-1) ?? ""), "latencyChart");
+    const before = await newest();
+    ok("the live chart has points", (await chartLabels("latencyChart")) > 0);
+    await until((i, last) => { const l = Chart.getChart(document.getElementById(i)).data.labels; return l.length > 0 && String(l.at(-1)) !== last; }, "latencyChart", before);
     eq("live label", await text("#chartModeLabel"), "last 60 s · every probe");
     const sets = await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.map((d) => d.id).join());
     ok(`three path series and the WAN overlay (${sets})`, /path_router,path_line,path_internet/.test(sets));
@@ -126,7 +130,7 @@ export const steps = [
     eq("the loss tooltip names its window", tip, " Lost 20% of the last 10 probes");
   }],
 
-  ["Each target draws one line per pinged target in its own colour and the legend names them; Path brings the three back", async ({ click, eq, ok, page, text, until }) => {
+  ["Each target draws one line per pinged target in its own color and the legend names them; Path brings the three back", async ({ click, eq, ok, page, text, until }) => {
     await click('#latencyViewButtons button[data-arg="targets"]');
     await until(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.some((d) => String(d.id).startsWith("t:")));
     const ids = await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.map((d) => d.id).filter((i) => i.startsWith("t:")).join());

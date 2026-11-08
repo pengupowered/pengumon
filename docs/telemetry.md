@@ -4,6 +4,7 @@
 
 - Raw probe samples, device readings (`device_samples`, `line_samples`): Kept for `database.retention_days` (7). Pruned at startup and hourly; the log line says how many rows went, and an incremental vacuum then hands the space back to the OS Where: `cleanup_old_samples`
 - Per-minute rollups (`rollup_1m`): One row per target and minute (count, ok, latency sum/min/max, jitter), upserted on every flush. Kept for `database.rollup_retention_days` (400). They feed every history chart, the report, the dossier and the incident inspector (its hop table and charts, at minute resolution) beyond the raw window Where: `cleanup_old_samples`
+- Speed tests (`speed_tests`, off unless the speed test is on): One row per test, a few a day at most with the default interval (24 hours; one an hour at the shortest). Kept as long as the rollups (at least 32 days), so this month's data use stays whole ([speedtest.md](speedtest.md)) Where: `cleanup_old_samples`
 - Incidents: Kept (hundreds of rows, a few hundred KB). They are the outage record, including the ones classified as expected (busy line)
 - Dashboard live stream: The incident history (up to 500 entries, ~0.5 MB) is sent once per dashboard and again only when an incident changes; every other second's message is ~12 KB. With no dashboard open nothing is built or queried Where: `live/ws.py`
 - Disk writes: Probe samples (and their rollup upserts) are committed in one transaction every 10 s (`sample_flush_seconds`); reads and shutdown flush first. A crash can lose at most 10 s of samples. One idle connection stays open so SQLite does not checkpoint and delete the WAL after every write; every connection uses `synchronous=NORMAL` Where: `db/probes.py`
@@ -47,8 +48,8 @@ bounded to 5 s each.
 
 The gauges, here and in the Prometheus text at `/metrics`, come from one table, `observability/gauges.py` (`GAUGES`:
 Prometheus name, OTel name, unit, help, a function of the app state); a new metric is one entry. The device status
-gauge is labelled `device="<device id>"` in both (`pengumon_collector_status` in the text, `pengumon.device.status` over
-OTLP); older builds labelled the text `collector="docsis"` / `collector="router"`.
+gauge is labeled `device="<device id>"` in both (`pengumon_collector_status` in the text, `pengumon.device.status` over
+OTLP); older builds labeled the text `collector="docsis"` / `collector="router"`.
 
 Labels are device and target ids from the config, categories, outcomes and error kinds: never credentials, addresses,
 client names or query strings. Credential and login requests, static files, `/api/health` and `/metrics` are excluded
@@ -102,6 +103,7 @@ Already there: `pengumon_db_flush_duration_seconds`, `pengumon_db_flush_rows_tot
 | `pengumon_api_answer_capped_total` | c | `endpoint`, `cap` rows, range | Answers that reached the 50 000-row cap, or whose unbucketed range was bucketed (`history`) or cut to 48 h (`device_history`) |
 | `pengumon_api_rate_limited_total` | c | `bucket` | Requests answered 429 by a rate limit |
 | `pengumon_ai_pack_exports_total` | c | `level` full, vague, anonymized; `scope` window, incident | AI troubleshooting packs built through `GET /api/ai-pack` |
+| `pengumon_mcp_calls_total` | c | `tool` (a tool name, or `unknown`), `outcome` ok, error, refused | MCP tool calls through `POST /mcp` ([mcp.md](mcp.md)): error is a tool's own failure, refused an unknown tool or bad arguments |
 | `pengumon_ws_clients` | g | | Dashboards connected to the live stream |
 | `pengumon_ws_message_size_bytes` | h | | Bytes of one live message (once per message, not per client) |
 | `pengumon_ws_send_duration_seconds` | h | `outcome` sent, failed | Time to send one message to one dashboard |
@@ -155,7 +157,7 @@ same names.
 
 | Metric | Type | Attributes | What it tells you |
 |---|---|---|---|
-| `pengumon_discovery_runs_total` | c | `trigger` manual, daily, incident, confirm; `outcome` done, no_answer, failed, cancelled | Discovery runs (`no_answer`: no trace reached a public server) |
+| `pengumon_discovery_runs_total` | c | `trigger` manual, daily, incident, confirm; `outcome` done, no_answer, failed, canceled | Discovery runs (`no_answer`: no trace reached a public server) |
 | `pengumon_discovery_duration_seconds` | h | `trigger` | Time of a run |
 | `pengumon_drift_checks_total` | c | `reason` daily, incident; `outcome` unchanged, changed, failed | Route-change checks |
 | `pengumon_drift_route_changes_total` | c | `kind` new, gone, changed; `stage` found, confirmed | Changes the first run saw, and the ones the repeat run confirmed |
@@ -165,6 +167,18 @@ same names.
 | `pengumon_alerts_held` | g | | Alerts waiting for their time |
 | `pengumon_alert_delivery_duration_seconds` | h | `channel` | Delivery time to one channel, retries included |
 
+**Speed test** (`speedtest/runner.py`, `speedtest/gauges.py`; [speedtest.md](speedtest.md))
+
+| Metric | Type | Attributes | What it tells you |
+|---|---|---|---|
+| `pengumon_speedtest_runs_total` | c | `status` ok, partial, failed, skipped; `trigger` scheduled, manual; `provider` cloudflare, mlab, librespeed | Tests recorded, whatever came of them (a skip for the data cap or a busy line counts as `skipped`) |
+| `pengumon_speedtest_bytes_total` | c | `direction` download, upload | Bytes the tests moved: the data the feature uses (graph `increase()`; the unit is `{byte}`, so no `_bytes` is added) |
+| `pengumon_speedtest_download_mbps`, `pengumon_speedtest_upload_mbps` | g | | Speed of the last test that worked (status ok): the line's rate the router measured during it, else the test's own (the headline, [speedtest.md](speedtest.md)); no series until one has. In the Prometheus text at `/metrics` they keep these names; over OTLP they are `pengumon.speedtest.download` and `.upload` and Prometheus shows `pengumon_speedtest_download_Mbit_per_second` and `pengumon_speedtest_upload_Mbit_per_second` |
+| `pengumon_speedtest_loaded_latency_ms` | g | `phase` idle, download, upload | Median latency of the public probe targets before the last good test (idle) and during its download and upload. Over OTLP it is `pengumon.speedtest.loaded_latency` with the unit `{ms}`, so Prometheus shows `pengumon_speedtest_loaded_latency` (milliseconds) |
+
+The gauges read the last good test from memory (loaded from the database at the start), so a restart does not empty
+them. Labels are fixed words: no server name, no URL.
+
 **Settings and preview**
 
 | Metric | Type | Attributes | What it tells you |
@@ -172,7 +186,7 @@ same names.
 | `pengumon_settings_saves_total` | c | `source` save, restore, yaml_import; `outcome` saved, invalid, conflict, secrets_failed | Saves |
 | `pengumon_settings_live_failures_total` | c | `section`, `applier` | Live appliers that raised after a save (the change then applies at the next start). The ERROR log names the applier, the setting keys, list names and secret slot names, and where it was raised: never the message, a traceback or a value (the traceback is at DEBUG) |
 | `pengumon_settings_imports_total` | c | `outcome` ok, invalid | Settings files read for import |
-| `pengumon_preview_runs_total` | c | `outcome` done, cap, cancelled, failed, busy | Outage-rules previews (`cap`: stopped at the 60 s limit; `busy`: refused because one was running) |
+| `pengumon_preview_runs_total` | c | `outcome` done, cap, canceled, failed, busy | Outage-rules previews (`cap`: stopped at the 60 s limit; `busy`: refused because one was running) |
 | `pengumon_preview_duration_seconds` | h | `outcome` | Time a preview ran |
 | `pengumon_preview_rounds` | h | | Probe rounds a finished preview replayed |
 

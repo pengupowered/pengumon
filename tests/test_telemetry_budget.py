@@ -102,7 +102,7 @@ async def test_the_live_message_carries_the_incidents_version_not_the_history():
     assert a.sent[1]["diagnosis"]["status"] == "healthy"
 
 
-# --- database connection behaviour ----------------------------------------------------------------
+# --- database connection behavior ----------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_wal_survives_between_writes(repo):

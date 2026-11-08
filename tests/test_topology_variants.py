@@ -7,7 +7,7 @@ gateway or ISP hops, a monitor outside the LAN has no local targets. This module
 every round: diagnosis, verdict kind, active incident, per-segment metrics and the repository calls. The result is
 compared with tests/golden/topology_variants/<shape>.json, one file per shape.
 
-It records current behaviour. A segment with no targets reports 0 % loss and no latency, but is not *measured*
+It records current behavior. A segment with no targets reports 0 % loss and no latency, but is not *measured*
 (CategoryMetrics.measured): with no LAN target at all, failing internet targets are "Internet Unreachable" / "Internet
 Packet Loss" (cause unknown_outage), not a fault on the ISP line.
 

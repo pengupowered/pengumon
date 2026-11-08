@@ -106,7 +106,7 @@ class PathManager:
     async def load(self) -> None:
         """At start, before the prober is built: the one-time import, then the stored path into config.targets."""
         config, repository = self.config, self.repository
-        if not await repository.path_initialised():
+        if not await repository.path_initialized():
             custom = await repository.list_custom_targets()
             if config.targets_from_file or custom:
                 # what was probed until now: config.yaml's targets (or the defaults), then the custom ones

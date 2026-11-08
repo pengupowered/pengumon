@@ -51,14 +51,14 @@ export function connectWebSocket() {
   let opened = false;
   const status = document.getElementById('wsStatus');
   const statusText = document.getElementById('wsText');
-  // Grey "Connecting" until the socket is open, never a green badge before there is data.
+  // Gray "Connecting" until the socket is open, never a green badge before there is data.
   const show = (state, text) => {
     status.className = `live live-${state}`;
     statusText.textContent = text;
   };
 
-  // The page says so when the data stops arriving: body and topbar carry data-conn="lost" (CSS greys the verdict
-  // pill and dims the cards) and the banner under the header explains. "Connecting" before the first message is grey too.
+  // The page says so when the data stops arriving: body and topbar carry data-conn="lost" (CSS grays the verdict
+  // pill and dims the cards) and the banner under the header explains. "Connecting" before the first message is gray too.
   const conn = (lost) => {
     document.body.dataset.conn = lost ? 'lost' : 'open';
     document.getElementById('topbar')?.setAttribute('data-conn', lost ? 'lost' : 'open');

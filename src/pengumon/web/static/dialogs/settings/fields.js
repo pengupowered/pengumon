@@ -5,12 +5,12 @@
 
 import { escapeHtml } from '../../js/util.js';
 import { panelTitles } from '../../js/layout.js';
-import { fmt, isNumeric, parse, problem, same, toShown } from './model.js';
+import { HOUR_UNITS, choiceFor, fmt, hoursText, isNumeric, parse, problem, readHours, same, speedEstimate, splitHours, toShown } from './model.js';
 import { S, isEnv, inDraft, listItems, roundSeconds, setValue, valueOf, valueState } from './store.js';
 
 const ISP = 'classifier.isp_latency_spike_threshold_ms';
 const ZONE = 'general.timezone';
-const LAYOUT_KEYS = ['dashboard.order', 'dashboard.hidden', 'dashboard.colours'];
+const LAYOUT_KEYS = ['dashboard.order', 'dashboard.hidden', 'dashboard.colors'];
 
 const inputId = (section, key) => `set-in-${section}-${key.replace(/[^a-z0-9]+/gi, '-')}`;
 const num = (spec, stored) => (stored === null || stored === undefined ? '' : String(toShown(spec, stored, roundSeconds())));
@@ -57,7 +57,7 @@ function clockText(hhmm) {
 const choiceLabel = (spec, choice) => (spec.choice_labels && spec.choice_labels[choice]) || String(choice);
 
 // The panel layout a browser starts with, in words, by the panels' titles.
-function layoutSummary(order, hidden, colours) {
+function layoutSummary(order, hidden, colors) {
   const titles = panelTitles();
   const ids = [...titles.keys()];
   const name = (id) => titles.get(id) || id;
@@ -65,8 +65,8 @@ function layoutSummary(order, hidden, colours) {
   const merged = [...new Set([...known(order), ...ids])];
   const standardOrder = merged.every((id, i) => id === ids[i]);
   const off = known(hidden);
-  const own = colours && typeof colours === 'object' ? Object.keys(colours).filter((id) => titles.has(id)) : [];
-  const tail = own.length ? ` · Own colours: ${own.map(name).join(', ')}` : '';
+  const own = colors && typeof colors === 'object' ? Object.keys(colors).filter((id) => titles.has(id)) : [];
+  const tail = own.length ? ` · Own colors: ${own.map(name).join(', ')}` : '';
   if (standardOrder && !off.length) return `All panels, standard order${tail}`;
   const shown = merged.filter((id) => !off.includes(id)).map(name);
   return `${standardOrder ? 'Standard order' : `Order: ${shown.join(', ')}`} · ${off.length ? `Hidden: ${off.map(name).join(', ')}` : 'No panel hidden'}${tail}`;
@@ -92,6 +92,7 @@ export function shownValue(spec, v) {
   if (spec.type === 'theme') return themeName(spec, v);
   if (spec.type === 'timezone') return zoneLabel(v);
   if (spec.type === 'time') return clockText(v);
+  if (spec.type === 'hours') return hoursText(v);
   return fmt(spec, v, roundSeconds());
 }
 
@@ -151,9 +152,9 @@ function inputHtml(spec, section) {
     const choices = spec.choices || [];
     if (choices.length <= 3) {
       return `<span class="seg" role="group" aria-labelledby="${id}-l" id="${id}">${choices.map((c) =>
-        `<button type="button" data-action="settingsChoice" data-key="${escapeHtml(spec.key)}" data-arg="${escapeHtml(c)}" aria-pressed="${c === value}"${env ? ' disabled' : ''}>${escapeHtml(choiceLabel(spec, c))}</button>`).join('')}</span>`;
+        `<button type="button" data-action="settingsChoice" data-key="${escapeHtml(spec.key)}" data-arg="${escapeHtml(c)}" aria-pressed="${String(c) === String(value)}"${env ? ' disabled' : ''}>${escapeHtml(choiceLabel(spec, c))}</button>`).join('')}</span>`;
     }
-    return `<select class="input" ${common}${env ? ' disabled' : ''}>${choices.map((c) => `<option value="${escapeHtml(c)}"${c === value ? ' selected' : ''}>${escapeHtml(choiceLabel(spec, c))}</option>`).join('')}</select>`;
+    return `<select class="input" ${common}${env ? ' disabled' : ''}>${choices.map((c) => `<option value="${escapeHtml(c)}"${String(c) === String(value) ? ' selected' : ''}>${escapeHtml(choiceLabel(spec, c))}</option>`).join('')}</select>`;
   }
   if (spec.type === 'timezone') {
     return `<select class="input" ${common}${env ? ' disabled' : ''}>${zoneOptions(value)}</select>`;
@@ -163,6 +164,12 @@ function inputHtml(spec, section) {
   }
   if (spec.type === 'time') {
     return `<input class="input" type="time" ${common}${locked} value="${escapeHtml(value || '')}">`;
+  }
+  if (spec.type === 'hours') { // a whole number and its unit: "2" "weeks"; both edit the one stored number of hours
+    const { count, unit } = splitHours(value);
+    return `<span class="set-hours"><input class="input num" type="text" inputmode="numeric" autocomplete="off" ${common}${locked} value="${escapeHtml(count)}" aria-describedby="${id}-m">`
+      + `<select class="input" data-key="${escapeHtml(spec.key)}" data-unit data-change="settingsEdit" aria-label="Unit"${env ? ' disabled' : ''}>${HOUR_UNITS.map(([u]) =>
+        `<option value="${u}"${u === unit ? ' selected' : ''}>${u}</option>`).join('')}</select></span>`;
   }
   if (isNumeric(spec)) {
     return `<input class="input num" type="text" inputmode="decimal" autocomplete="off" ${common}${locked} value="${escapeHtml(num(spec, value))}" placeholder="${escapeHtml(spec.empty || 'none')}" aria-describedby="${id}-m">`;
@@ -220,7 +227,7 @@ export function metaHtml(spec) {
   return `<span class="set-effect">${escapeHtml(spec.effect)}</span><span class="set-side"><span class="set-def">${escapeHtml(standardText(spec))}</span> ${stateHtml([spec.key], reset)}${extra}</span>${warn}`;
 }
 
-// A row that relates to a setting elsewhere (a hop colour to its incident level) names it, its value, and links to it.
+// A row that relates to a setting elsewhere (a hop color to its incident level) names it, its value, and links to it.
 function relatedHtml(spec) {
   const other = spec.related && S.spec[spec.related];
   if (!other) return '';
@@ -250,14 +257,29 @@ export function rowHtml(spec, section) {
 
 // ---------- the layout row: dashboard.order and dashboard.hidden as one ----------
 
-const layoutNow = () => layoutSummary(valueOf('dashboard.order'), valueOf('dashboard.hidden'), valueOf('dashboard.colours'));
+const layoutNow = () => layoutSummary(valueOf('dashboard.order'), valueOf('dashboard.hidden'), valueOf('dashboard.colors'));
 
 function layoutMetaHtml() {
   const reset = '<button type="button" class="set-lnk" data-action="settingsResetLayout" data-needs-edit>Reset to standard</button>';
-  return `<span class="set-effect">The panel order, hidden panels and card colours a browser starts with. Once someone arranges a browser with Layout, that browser keeps its own.</span><span class="set-side"><span class="set-def">Standard: all panels, standard order</span> ${stateHtml(LAYOUT_KEYS, reset)}</span>`;
+  return `<span class="set-effect">The panel order, hidden panels and card colors a browser starts with. Once someone arranges a browser with Layout, that browser keeps its own.</span><span class="set-side"><span class="set-def">Standard: all panels, standard order</span> ${stateHtml(LAYOUT_KEYS, reset)}</span>`;
 }
 
 export const isLayoutKey = (key) => LAYOUT_KEYS.includes(key);
+
+// ---------- the speed test's extra lines: what it uses a month, and what M-Lab publishes ----------
+// Two lines that are not settings: the estimate under the data fields (it follows the draft as the fields change) and,
+// while M-Lab is the choice, its privacy note in words under the provider (the choice's label says it too, but a
+// closed box shows a cut label on a phone).
+const estimateNow = () => speedEstimate(valueOf('speedtest.interval_hours'), valueOf('speedtest.download_mb'), valueOf('speedtest.upload_mb'), valueOf('speedtest.monthly_cap_mb'), valueOf('line.down_mbps'), valueOf('line.up_mbps'));
+export const MLAB_NOTE = 'M-Lab publishes every result, with your public IP address, as open data.';
+
+export function speedEstimateRowHtml() {
+  return `<div class="set-row set-note" data-extra="speed-estimate"><p class="set-estimate" data-estimate aria-live="polite">${escapeHtml(estimateNow())}</p></div>`;
+}
+
+export function speedMlabRowHtml() {
+  return `<div class="set-row set-note" data-extra="speed-mlab"${valueOf('speedtest.provider') === 'mlab' ? '' : ' data-inactive'}><p class="set-privacy"><b>Privacy:</b> <span data-privacy>${escapeHtml(MLAB_NOTE)}</span></p></div>`;
+}
 
 export function layoutRowHtml() {
   const env = LAYOUT_KEYS.some(isEnv);
@@ -276,10 +298,15 @@ export function layoutRowHtml() {
 // The input of `el` read as a stored value: {stored} or {problem}.
 export function readInput(el, spec) {
   if (spec.type === 'boolean') return { stored: el.checked };
+  if (spec.type === 'hours') { // the number and the unit are read together, whichever of the two changed
+    const box = el.closest('.set-hours');
+    return readHours(box.querySelector('input').value, box.querySelector('select').value, spec.max);
+  }
   const text = el.value;
   const why = problem(spec, text, roundSeconds());
   if (why) return { problem: why };
-  return { stored: spec.type === 'timezone' || spec.type === 'choice' || spec.type === 'theme' ? text : parse(spec, text, roundSeconds()) };
+  if (spec.type === 'choice') return { stored: choiceFor(spec, text) };
+  return { stored: spec.type === 'timezone' || spec.type === 'theme' ? text : parse(spec, text, roundSeconds()) };
 }
 
 // An edit of a row's input (typing, switching, picking).
@@ -297,7 +324,8 @@ export function edit(el) {
 }
 
 export function choose(key, choice) {
-  if (!isEnv(key)) setValue(key, choice);
+  const spec = S.spec[key];
+  if (spec && !isEnv(key)) setValue(key, spec.type === 'choice' ? choiceFor(spec, choice) ?? choice : choice);
 }
 
 // "Use this browser's zone": the draft takes it, and focus goes to the zone's box (the link itself goes away).
@@ -347,13 +375,25 @@ export function refreshRows(root = document.getElementById('settingsModal')) {
     }
     if (!input || document.activeElement === input || bad) return;
     const value = valueOf(spec.key);
+    if (spec.type === 'hours') {
+      const unitBox = row.querySelector('select[data-unit]');
+      if (document.activeElement === unitBox) return;
+      const typed = readHours(input.value, unitBox.value, spec.max);
+      if (typed.stored === value) return; // "14 days" stays as typed when it means the stored 2 weeks
+      const { count, unit } = splitHours(value);
+      input.value = count;
+      unitBox.value = unit;
+      return;
+    }
     if (spec.type === 'boolean') input.checked = !!value;
     else if (isNumeric(spec)) { if (parse(spec, input.value, roundSeconds()) !== value) input.value = num(spec, value); }
     else if (input.value !== String(value ?? '')) input.value = value ?? '';
   });
   root.querySelectorAll('[data-action=settingsChoice]').forEach((b) => {
-    b.setAttribute('aria-pressed', String(valueOf(b.dataset.key) === b.dataset.arg));
+    b.setAttribute('aria-pressed', String(String(valueOf(b.dataset.key)) === b.dataset.arg));
   });
+  root.querySelectorAll('.set-row[data-extra=speed-estimate] [data-estimate]').forEach((p) => { p.textContent = estimateNow(); });
+  root.querySelectorAll('.set-row[data-extra=speed-mlab]').forEach((row) => { row.toggleAttribute('data-inactive', valueOf('speedtest.provider') !== 'mlab'); });
   root.querySelectorAll('.set-row[data-extra=layout]').forEach((row) => {
     row.querySelector('[data-layout]').textContent = layoutNow();
     row.classList.toggle('unsaved', LAYOUT_KEYS.some(inDraft));

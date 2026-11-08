@@ -3,7 +3,7 @@
 // "Your path changed" notice (with a discovery's draft, data-arg "discovery:<id>") and by Rediscover inside it.
 //
 // At the top, the draft as Path health draws it: one node per hop (or per merged run of hops), each with what the
-// prober measures now; a click on a node goes to its card, and Merge / Split on the links make two neighbouring hops of
+// prober measures now; a click on a node goes to its card, and Merge / Split on the links make two neighboring hops of
 // one role one node. Every card shows its live measurement from the `targets` topic (the same figures as Path health:
 // the median of the last 60 probes and the loss over them), updated while the editor is open; a hop that is not probed
 // yet says so, with Test (one probe) and Preview (30 s of probes, POST /api/path/preview) to measure it before Apply.

@@ -1,4 +1,4 @@
-/* Blueprint: a faint grid-paper background (docs/themes.md, "Skins"). Gradients only, colours from the tokens, nothing else. */
+/* Blueprint: a faint grid-paper background (docs/themes.md, "Skins"). Gradients only, colors from the tokens, nothing else. */
 :root[data-look="blueprint"] body {
   background-image:
     linear-gradient(color-mix(in srgb, var(--ink-1) 7%, transparent) 1px, transparent 1px),

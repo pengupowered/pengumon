@@ -218,7 +218,7 @@ async def test_a_same_host_redirect_is_followed_to_the_login_page():
     assert seen == ["http://192.168.1.1/", "http://192.168.1.1/Main_Login.asp"]
 
 
-async def test_an_asus_front_page_that_redirects_to_its_login_page_is_recognised_without_following():
+async def test_an_asus_front_page_that_redirects_to_its_login_page_is_recognized_without_following():
     seen = []
 
     def handler(request):

@@ -15,7 +15,7 @@ class LineWording:
     line or that router (`outage`, `loss`)."""
 
     outage: str  # the provider's first hop stopped answering ("Possible causes: {outage}.")
-    loss: str    # it loses part of the traffic ("Possible causes: {loss}, or the hop deprioritising ping replies.")
+    loss: str    # it loses part of the traffic ("Possible causes: {loss}, or the hop deprioritizing ping replies.")
     gateway: str = "the gateway (modem)"  # the box at the home end of the line, as the gateway diagnoses name it
 
 
@@ -26,7 +26,7 @@ GENERIC = LineWording(
 WORDING = {
     "docsis": LineWording(
         outage="the cable line losing signal or sync (the coax into the home or the provider's cable plant) or an "
-               "outage at the provider's first router (the CMTS, a neighbourhood outage)",
+               "outage at the provider's first router (the CMTS, a neighborhood outage)",
         loss="cable line (RF) impairment or congestion at the provider's first router (the CMTS node)",
         gateway="the cable modem (gateway)",
     ),

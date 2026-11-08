@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the test image (runtime + dev deps + tests) and runs the suite in a throwaway container. Extra args go to
-# pytest. No volumes are mounted and the image contains no data/ or backups. The network stays on: the ICMP tests
-# open real sockets.
+# pytest. No volumes are mounted and the image contains no data/ or backups. The container has no network but
+# loopback (the sandbox below): the ICMP tests ping 127.0.0.1.
 #   scripts/test.sh                      whole suite
 #   scripts/test.sh -k mtr -x            pytest arguments
 #   scripts/test.sh --command <cmd...>   run this command in the container instead of pytest
@@ -48,4 +48,13 @@ fi
 build_test_image pengumon-test "$ROOT" Dockerfile.test
 memory="${PENGUMON_TEST_MEMORY:-$((512 + 384 * (workers > 1 ? workers : 1)))m}"
 limits=(--timeout "${PENGUMON_TEST_TIMEOUT:-900}" --memory "$memory" --memory-swap "$memory" --pids-limit 1024)
-exec podman run --rm "${limits[@]}" "${mounts[@]}" "$built" "${cmd[@]}" "$@"
+# Locked down like scripts/test-ui.sh: the test image holds test-only packages (pytest, the mcp client) that never ship,
+# so they get no more than the tests need.
+#   --network none                loopback only; the ICMP tests ping 127.0.0.1. No route out, no DNS.
+#   --user 10001                  not root (the uid the app image runs as); HOME in the tmpfs.
+#   --cap-drop=ALL --cap-add=NET_RAW   only the raw ICMP socket the prober opens.
+#   --security-opt no-new-privileges   no privilege gain through setuid binaries.
+#   --read-only + --tmpfs /tmp    the image is immutable; pytest's tmp dirs and the test databases live in the tmpfs.
+sandbox=(--network none --user 10001:0 -e HOME=/tmp --cap-drop=ALL --cap-add=NET_RAW
+         --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,size=1g,nosuid,nodev)
+exec podman run --rm "${limits[@]}" "${sandbox[@]}" "${mounts[@]}" "$built" "${cmd[@]}" "$@"

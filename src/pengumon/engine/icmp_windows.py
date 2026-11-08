@@ -14,7 +14,7 @@ Design decisions:
   same offsets in the native and the 32-bit-pointer layout, so the parse does not depend on pointer width. The
   buffer is sized for the larger layout.
 - rtt: RoundTripTime is whole milliseconds, which hides every LAN hop. The call is also timed with perf_counter_ns
-  from just before the call to just after it (queueing in the pool is not counted). The smaller non-zero of the two
+  from just before the call to just after it (queuing in the pool is not counted). The smaller non-zero of the two
   is reported: the OS value is a floor on what really happened, and the stopwatch also includes thread wake-up and
   call overhead, so neither is trusted alone. `resolution_ms` stays 1.0 because that is what the OS promises; the
   float is better than that on a quiet machine but not guaranteed.
@@ -438,7 +438,7 @@ class WindowsIcmpBackend:
                 return
             self._closed = True
         # Not waiting: a call can take up to its timeout. Queued probes still run, find the backend closed and raise
-        # OSError at once (cancelling them would surface as CancelledError in the callers).
+        # OSError at once (canceling them would surface as CancelledError in the callers).
         self._pool.shutdown(wait=False)
         self._trace_pool.shutdown(wait=False)
         with self._lock:

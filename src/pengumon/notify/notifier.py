@@ -42,7 +42,7 @@ SEND_TIMEOUT_SECONDS = 5.0
 _ALL = "all"  # the channel of a decision made before any channel was asked
 # The Alert.event of what a schedule key announces
 _KEY_EVENTS = {"incident": "incident_started", "resolved": "incident_resolved", "service_down": "service_down",
-               "service_up": "service_up", "path_changed": "path_changed"}
+               "service_up": "service_up", "path_changed": "path_changed", "speed_slow": "speed_slow"}
 
 
 def _count(event: str, outcome: str, channel: str = _ALL) -> None:
@@ -347,6 +347,39 @@ class Notifier:
         self._schedule("path_changed", lambda: self.policy.quiet_time(created, "info"),
                        lambda timing: self._dispatch(alert))
 
+    def notify_speed_slow(self, down_mbps: Optional[float], up_mbps: Optional[float], plan_down: Optional[float],
+                          plan_up: Optional[float], alert_pct: float, measured_by: Optional[str] = None,
+                          note: Optional[str] = None) -> None:
+        """A speed test measured under `alert_pct` percent of the plan speed (speedtest/runner.py decides, and sends
+        this once until a test is above the line again). The speeds are the test's headline (speedtest/quality.py):
+        `measured_by` "router" when they are the line's rate the router measured during the test, "test" when they
+        are the test's own; `note` says when the household's traffic shared the line. Normal priority: nothing is
+        down, and no incident is opened. Only quiet hours apply; a newer one replaces one that is still waiting."""
+        def line(label: str, value: Optional[float], plan: Optional[float]) -> Optional[str]:
+            if value is None or not plan:
+                return None
+            share = value / plan * 100.0
+            return f"{label}: {value:.0f} of {plan:.0f} Mbps ({share:.0f} %)" + (" - under the alert level" if share < alert_pct else "")
+
+        lines = [x for x in (line("Download", down_mbps, plan_down), line("Upload", up_mbps, plan_up)) if x]
+        if measured_by == "router":
+            lines.append("Measured by your router: what the line carried during the test.")
+        elif measured_by == "test":
+            lines.append("Measured by the test alone (one server; your router gave no reading of the line).")
+        if note:
+            lines.append(note)
+        created = self._wall()
+        alert = Alert(
+            event="speed_slow", severity="info",
+            title="Pengumon: your line measured slow",
+            message="\n".join(lines) + f"\nThe alert level is {alert_pct:.0f} % of your plan speed.",
+            priority="default",
+            tags="turtle",
+            started_at=created,
+        )
+        self._schedule("speed_slow", lambda: self.policy.quiet_time(created, "info"),
+                       lambda timing: self._dispatch(alert))
+
     def pending_count(self) -> int:
         return len(self._pending)
 
@@ -462,11 +495,11 @@ def _resolve_headers(name: str, headers: Mapping[str, str], env: Mapping[str, st
     resolved = {}
     for header, value in headers.items():
         if value.startswith(SECRET_PREFIX):
-            header_secret_key = value[len(SECRET_PREFIX):]
-            secret = (secret_value(f"webhook_header.{header_secret_key}") if secret_value is not None else
-                      resolve_webhook_secret(header_secret_key, env=env, secrets_dir=secrets_dir, store=store))
+            secret_name = value[len(SECRET_PREFIX):]
+            secret = (secret_value(f"webhook_header.{secret_name}") if secret_value is not None else
+                      resolve_webhook_secret(secret_name, env=env, secrets_dir=secrets_dir, store=store))
             if secret is None:
-                logger.error(f"Webhook {name} is not used: header {header} names the secret {header_secret_key!r}, which "
+                logger.error(f"Webhook {name} is not used: header {header} names the secret {secret_name!r}, which "
                              "is not set (environment, secrets directory or data/secrets.json)")
                 return None
             value = secret

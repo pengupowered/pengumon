@@ -4,7 +4,7 @@
 - `settings_items`: the items of the four lists, one row per item (its id and position, the item as JSON).
 - `settings_versions`: the whole document after every save (revision 1 is the one-time import), the last
   MAX_VERSIONS kept.
-- meta `settings_revision` (the saves so far), `settings_initialised` ("1": the one-time import ran, never cleared),
+- meta `settings_revision` (the saves so far), `settings_initialized` ("1": the one-time import ran, never cleared),
   `settings_lists_set` (JSON list of the list names that are set, not at their default; a set list may be empty),
   `settings_import_report` (JSON: what the import left out and why, never a value), `settings_imported_at`.
 
@@ -23,7 +23,7 @@ from pengumon.settings.document import SettingsDocument
 logger = logging.getLogger("pengumon.db")
 
 SETTINGS_REVISION_KEY = "settings_revision"
-SETTINGS_INITIALISED_KEY = "settings_initialised"
+SETTINGS_INITIALIZED_KEY = "settings_initialized"
 SETTINGS_LISTS_SET_KEY = "settings_lists_set"
 SETTINGS_IMPORT_REPORT_KEY = "settings_import_report"
 SETTINGS_IMPORTED_AT_KEY = "settings_imported_at"
@@ -136,9 +136,9 @@ def _differs(a: SettingsDocument, b: SettingsDocument, keys: Iterable[str], list
 
 
 class SettingsQueries:
-    async def settings_initialised(self) -> bool:
+    async def settings_initialized(self) -> bool:
         async with self._db.read() as db:
-            return await _meta(db, SETTINGS_INITIALISED_KEY) == "1"
+            return await _meta(db, SETTINGS_INITIALIZED_KEY) == "1"
 
     async def settings_revision(self) -> int:
         async with self._db.read() as db:
@@ -160,18 +160,18 @@ class SettingsQueries:
             imported_at = None
         return {"report": [r for r in report if isinstance(r, dict)], "imported_at": imported_at}
 
-    async def initialise_settings(self, document: SettingsDocument, summary: str,
+    async def initialize_settings(self, document: SettingsDocument, summary: str,
                                   report: List[Dict[str, str]]) -> bool:
         """The one-time import: `document` as revision 1 (source "import"). False, and nothing written, when the
-        store was initialised before."""
+        store was initialized before."""
         now = time.time()
         async with self._db.write() as db:
-            if await _meta(db, SETTINGS_INITIALISED_KEY) == "1":
+            if await _meta(db, SETTINGS_INITIALIZED_KEY) == "1":
                 return False
             await _write(db, document.values, {n: v for n, v in document.lists.items() if v is not None}, now)
             await _put_meta(db, SETTINGS_REVISION_KEY, "1")
             await _store_version(db, 1, "import", summary, await _document(db), now)
-            await _put_meta(db, SETTINGS_INITIALISED_KEY, "1")
+            await _put_meta(db, SETTINGS_INITIALIZED_KEY, "1")
             await _put_meta(db, SETTINGS_IMPORT_REPORT_KEY, _dumps(report))
             await _put_meta(db, SETTINGS_IMPORTED_AT_KEY, repr(now))
         return True
@@ -210,7 +210,7 @@ class SettingsQueries:
             new = await _document(db)
             summary = describe(old, new)
             await _put_meta(db, SETTINGS_REVISION_KEY, str(current + 1))
-            await _put_meta(db, SETTINGS_INITIALISED_KEY, "1")
+            await _put_meta(db, SETTINGS_INITIALIZED_KEY, "1")
             await _store_version(db, current + 1, source, summary, new, now)
         return current + 1, old, new, summary
 

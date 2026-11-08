@@ -142,7 +142,7 @@ async def get_clients_history(
 ):
     """Client counts over time (default: the last 24 hours), bucketed on the server to at most 300 points: each point
     is the mean of the readings in its bucket. Counts only, no client. `nodes` lists the mesh nodes seen in the range
-    (labelled as the device names them now) and each point has `by_node` counts."""
+    (labeled as the device names them now) and each point has `by_node` counts."""
     device = _require_inventory(state, device_id)
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")

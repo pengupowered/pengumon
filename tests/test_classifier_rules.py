@@ -5,7 +5,7 @@ import pytest
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.classifier.metrics import CATEGORIES, CategoryMetrics, RoundMetrics
 from pengumon.lines import wording
-from pengumon.engine.classifier.rules import apply_hop_deprioritisation, apply_load, diagnose
+from pengumon.engine.classifier.rules import apply_hop_deprioritization, apply_load, diagnose
 from pengumon.engine.classifier.verdict import NOMINAL
 from pengumon.engine.load import LoadReading
 from pengumon.incidents.taxonomy import ISP_LINE_KINDS
@@ -79,7 +79,7 @@ def test_diagnose_kinds(spec, kind, status, severity, cause, title):
         assert v.affected == ("x",)
 
 
-def test_busy_and_deprioritised_kinds_come_from_the_adjustments():
+def test_busy_and_deprioritized_kinds_come_from_the_adjustments():
     base = verdict_for(public=(0.0, 90.0, None))
     busy = apply_load(base, rm(public=(0.0, 90.0, None)), reading(70.0), CONFIG, False)
     assert (busy.kind, busy.status, busy.severity, busy.cause) == ("busy_latency", "busy", "info", "load_induced_latency")
@@ -90,16 +90,16 @@ def test_busy_and_deprioritised_kinds_come_from_the_adjustments():
     isp = diagnose(m, CONFIG, TS, LONG_AGO)
     assert isp.kind == "isp_loss"
     busy_isp = apply_load(isp, m, reading(70.0), CONFIG, m.is_loss_or_outage(isp.status, CONFIG))
-    assert (busy_isp.kind, busy_isp.status, busy_isp.title) == ("busy_isp_hops", "busy", "Line Busy: ISP Hops Deprioritise Ping")
+    assert (busy_isp.kind, busy_isp.status, busy_isp.title) == ("busy_isp_hops", "busy", "Line Busy: ISP Hops Deprioritize Ping")
 
-    hop = apply_hop_deprioritisation(isp, m, CONFIG)
+    hop = apply_hop_deprioritization(isp, m, CONFIG)
     assert (hop.kind, hop.status, hop.severity, hop.cause, hop.title) == (
-        "hop_deprioritised", "healthy", "info", "nominal", "ISP Hop Deprioritises Ping")
+        "hop_deprioritized", "healthy", "info", "nominal", "ISP Hop Deprioritizes Ping")
 
 
-def test_the_seventeen_kinds_are_all_covered():
-    kinds = {case[1] for case in CASES} | {"busy_latency", "busy_isp_hops", "hop_deprioritised"}
-    assert len(kinds) == 17
+def test_the_eighteen_kinds_are_all_covered():
+    kinds = {case[1] for case in CASES} | {"busy_latency", "busy_isp_hops", "hop_deprioritized", "busy_speedtest"}
+    assert len(kinds) == 18
 
 
 @pytest.mark.parametrize("category,loss,kind", [
@@ -138,13 +138,13 @@ def test_line_faults_are_worded_for_the_line_technology():
         "first router.")
     assert verdict_for(isp=40.0, line=wording("docsis")).description.endswith(
         "Possible causes: the cable line losing signal or sync (the coax into the home or the provider's cable plant) "
-        "or an outage at the provider's first router (the CMTS, a neighbourhood outage).")
+        "or an outage at the provider's first router (the CMTS, a neighborhood outage).")
     assert verdict_for(isp=15.0, line=wording("docsis")).description.endswith(
         "Possible causes: cable line (RF) impairment or congestion at the provider's first router (the CMTS node), or "
-        "the hop deprioritising ping replies.")
+        "the hop deprioritizing ping replies.")
     assert verdict_for(isp=15.0, line=wording("fiber-not-known")).description.endswith(
         "Possible causes: an impaired line to the provider or congestion at the provider's first router, or the hop "
-        "deprioritising ping replies.")
+        "deprioritizing ping replies.")
 
 
 @pytest.mark.parametrize("gateway", [40.0, 15.0])
@@ -283,7 +283,7 @@ def test_other_loss_while_busy_stays_a_fault_with_a_suffix():
     assert apply_load(base, m, reading(70.0), CONFIG, True).kind == "isp_loss"
 
 
-# --- apply_hop_deprioritisation -----------------------------------------------------------------------------
+# --- apply_hop_deprioritization -----------------------------------------------------------------------------
 
 def isp_verdict(m):
     v = diagnose(m, CONFIG, TS, LONG_AGO)
@@ -293,20 +293,20 @@ def isp_verdict(m):
 
 def test_hop_rule_boundaries():
     m = rm(isp=40.0, public=15.0)
-    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "isp_outage"      # public loss 15.0: kept
+    assert apply_hop_deprioritization(isp_verdict(m), m, CONFIG).kind == "isp_outage"      # public loss 15.0: kept
     m = rm(isp=20.0, public=10.0)
-    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "isp_loss"        # exactly isp / 2: kept
+    assert apply_hop_deprioritization(isp_verdict(m), m, CONFIG).kind == "isp_loss"        # exactly isp / 2: kept
     m = rm(isp=20.0, public=9.9)
-    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "hop_deprioritised"
+    assert apply_hop_deprioritization(isp_verdict(m), m, CONFIG).kind == "hop_deprioritized"
     m = rm(isp=20.0, dns=25.0)
-    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "isp_loss"        # dns loss 25.0: kept
+    assert apply_hop_deprioritization(isp_verdict(m), m, CONFIG).kind == "isp_loss"        # dns loss 25.0: kept
     m = rm(isp=20.0, dns=24.9)
-    assert apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).kind == "hop_deprioritised"
+    assert apply_hop_deprioritization(isp_verdict(m), m, CONFIG).kind == "hop_deprioritized"
 
 
 def test_hop_rule_result_is_healthy_with_no_affected_targets():
     m = rm(isp=20.0)
-    out = apply_hop_deprioritisation(isp_verdict(m), m, CONFIG)
+    out = apply_hop_deprioritization(isp_verdict(m), m, CONFIG)
     assert (out.status, out.cause, out.severity, out.affected) == ("healthy", "nominal", "info", ())
     assert "20.0% of recent probes to the ISP hops were lost, against 0.0% to the public targets" in out.description
 
@@ -322,23 +322,23 @@ def _two_isp_hops(first_window, second_window):
 
 def test_hop_rule_names_the_hop_that_lost_the_most():
     m = _two_isp_hops([1.0, None, 1.0], [None, None, 1.0])
-    out = apply_hop_deprioritisation(isp_verdict(m), m, CONFIG)
+    out = apply_hop_deprioritization(isp_verdict(m), m, CONFIG)
     assert "Hub2 drops some ping replies" in out.description
 
 
 def test_hop_rule_ties_go_to_the_first_hop_in_stats_order():
     m = _two_isp_hops([None, 1.0], [None, 1.0])
-    assert "Hub drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).description
+    assert "Hub drops some ping replies" in apply_hop_deprioritization(isp_verdict(m), m, CONFIG).description
 
 
 def test_hop_rule_only_counts_the_last_ten_probes_when_naming_the_hop():
     m = _two_isp_hops([None] * 5 + [1.0] * 10, [None, 1.0, 1.0] + [1.0] * 7)
-    assert "Hub2 drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).description
+    assert "Hub2 drops some ping replies" in apply_hop_deprioritization(isp_verdict(m), m, CONFIG).description
 
 
 def test_hop_rule_falls_back_to_a_generic_name_when_no_hop_lost():
     m = _two_isp_hops([1.0, 1.0], [1.0])
-    assert "An ISP hop drops some ping replies" in apply_hop_deprioritisation(isp_verdict(m), m, CONFIG).description
+    assert "An ISP hop drops some ping replies" in apply_hop_deprioritization(isp_verdict(m), m, CONFIG).description
 
 
 # --- the levels come from the config ---------------------------------------------------------------------------
@@ -363,7 +363,7 @@ def custom_verdict(ts=TS, last_upstream=LONG_AGO, absent=(), **spec):
     # the cross-role guards: local loss under the degraded level lets the gateway and the ISP be judged
     ({"local": 19.9, "gateway": 50.0}, "gateway_down"),
     ({"local": 19.9, "isp": 50.0}, "isp_outage"),
-    # no LAN target: loss towards the internet is placed nowhere, at the configured levels
+    # no LAN target: loss toward the internet is placed nowhere, at the configured levels
     ({"absent": ("local", "gateway"), "public": 19.9}, "nominal"),
     ({"absent": ("local", "gateway"), "public": 20.0}, "internet_loss"),
     ({"absent": ("local", "gateway"), "isp": 49.9}, "internet_loss"),
@@ -403,16 +403,16 @@ def test_the_metric_predicates_read_the_levels():
     assert not rm(isp=19.9).isp_loss_only(CUSTOM)
 
 
-def test_hop_deprioritisation_reads_the_levels():
+def test_hop_deprioritization_reads_the_levels():
     def isp_loss(**spec):
         m = rm(**spec)
         v = diagnose(m, CUSTOM, TS, LONG_AGO)
         assert v.kind == "isp_loss"
-        return apply_hop_deprioritisation(v, m, CUSTOM).kind
+        return apply_hop_deprioritization(v, m, CUSTOM).kind
 
-    assert isp_loss(isp=45.0, public=19.9) == "hop_deprioritised"   # default (15 %) would keep it
+    assert isp_loss(isp=45.0, public=19.9) == "hop_deprioritized"   # default (15 %) would keep it
     assert isp_loss(isp=45.0, public=20.0) == "isp_loss"
-    assert isp_loss(isp=45.0, public=5.0, dns=34.9) == "hop_deprioritised"  # DNS under its level (default 25 %)
+    assert isp_loss(isp=45.0, public=5.0, dns=34.9) == "hop_deprioritized"  # DNS under its level (default 25 %)
     assert isp_loss(isp=45.0, public=5.0, dns=35.0) == "isp_loss"
 
 

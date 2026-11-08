@@ -13,12 +13,16 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from pengumon.reports.redact import ANONYMIZED, FULL, LEVELS, VAGUE, WHAT_IT_IS, Redactor
+from pengumon.reports.speed import (SpeedSummary, counts_text, direction_text, latency_text, method_text, summarize,
+                                    under_text)
+from pengumon.speedtest.grade import bufferbloat_grade
+from pengumon.speedtest.quality import headline
 from pengumon.timeofday import clock_changes
 
 HARD_CAP_CHARS = 32_000
 HEADLINE_CHARS = 200
-CAPS = {"compact": {"incidents": 20, "closeups": 3}, "detailed": {"incidents": 40, "closeups": 6}}
-MIN_INCIDENTS, MIN_CLOSEUPS = 10, 1
+CAPS = {"compact": {"incidents": 20, "closeups": 3, "speed": 12}, "detailed": {"incidents": 40, "closeups": 6, "speed": 30}}
+MIN_INCIDENTS, MIN_CLOSEUPS, MIN_SPEED = 10, 1, 5
 NO_MODULE_TEXT = (
     "What Pengumon cannot see here: no modem or router is set up in Pengumon, so there are no line signal, line load or\n"
     "Wi-Fi readings, only the pings. If the problem starts at Router or Gateway, ask the user for what their internet box\n"
@@ -98,6 +102,14 @@ IPV6_NOTE = "This matters only for a problem limited to IPv6 services."
 APPS_NOTE = "Their outages are apps on the monitoring computer, not network events, and do not matter here."
 CHANGE_WORDS = ("\"Path\": the hops Pengumon pings were changed in Settings; \"route\": Pengumon's daily route check "
                 "found the traffic taking a different way.")
+SPEED_PROVIDERS = {"cloudflare": "Cloudflare", "mlab": "M-Lab", "librespeed": "own LibreSpeed server"}
+SPEED_NOTE = ("Pengumon runs a speed test on a schedule (it moves a capped amount of data each way, to one speed test "
+              "server) and times the delay of its pings while the line is full: *Idle ms* is the median before the test, "
+              "*Loaded* during the download and the upload, *Bufferbloat* the grade of the delay the load added (A+ best, "
+              "F worst). The speeds are the line's rate the router measured during the test (*By* router: the test and "
+              "the household's traffic, what the line carried while full) when the router reports it, else the test's "
+              "own (*By* test: one server, which may not fill the line). A slow result is not a fault by itself, "
+              "repeated slow ones are. Delay during a test is the test's own and is not an incident.")
 # titles that claim no more than the evidence: a gateway that stopped answering may be the gateway or the cable to it
 TABLE_ROWS_KEPT = 3                # a module table's first rows outlast its extra bullets (Renderer.module)
 KIND_TITLE = {"gateway_down": "Gateway or its link not answering"}
@@ -212,6 +224,28 @@ class ModuleInput:
 
 
 @dataclass(frozen=True)
+class SpeedTestFact:
+    """One speed test that ran (a skipped one is only counted in the summary)."""
+    ts: float
+    status: str                     # ok | partial | failed
+    provider: str                   # cloudflare | mlab | librespeed
+    server: str = ""                # a colo or machine name; never rendered for librespeed (the host of the user's server)
+    down_mbps: Optional[float] = None
+    up_mbps: Optional[float] = None
+    idle_ms: Optional[float] = None
+    loaded_down_ms: Optional[float] = None
+    loaded_up_ms: Optional[float] = None
+    reason: str = ""                # why it failed or was partial (the server's host, for librespeed, is left out)
+    measured_by: str = ""           # router | test (the speeds are the headline's: speedtest/quality.headline)
+
+
+@dataclass(frozen=True)
+class SpeedFact:
+    summary: SpeedSummary           # over every test of the window
+    tests: Tuple[SpeedTestFact, ...] = ()   # the tests that ran, time order
+
+
+@dataclass(frozen=True)
 class PackView:
     scope: PackScope
     version: str
@@ -231,6 +265,7 @@ class PackView:
     known_hops: Tuple[HopFact, ...] = ()           # not shown, only swept: targets switched off, earlier path versions
     last_incident_end: Optional[float] = None      # the end of the window's last incident (listed or not); None: from
     #                                                the listed ones
+    speed: Optional[SpeedFact] = None              # the window's speed tests (None: there were none)
 
 
 @dataclass
@@ -622,6 +657,36 @@ class _Render:
             cut.append("over budget by the prompt context")
         return text, "; ".join(cut)
 
+    def speed(self, cap: int) -> Tuple[str, int]:
+        """The speed tests: the summary of all of the window's, then the newest `cap` that ran as a table."""
+        sp = self.f.speed
+        if sp is None:
+            return "", 0
+        sm = sp.summary
+        bullets = [counts_text(sm).capitalize()]
+        bullets += [t for t in (direction_text("Download", sm.down_median, sm.down_low, sm.plan_down),
+                                direction_text("Upload", sm.up_median, sm.up_low, sm.plan_up), method_text(sm),
+                                under_text(sm), latency_text(sm)) if t]
+        if not (sm.plan_down or sm.plan_up):
+            bullets.append("No plan speed is set in Pengumon, so the speeds are not compared with one")
+        kept = list(sp.tests[-cap:]) if cap < len(sp.tests) else list(sp.tests)
+        rows = []
+        for t in kept:
+            own = t.provider != "librespeed"      # the user's own server is named by its host: never shown
+            reason = t.reason if own or not t.server else t.reason.replace(t.server, "the server")
+            grade = bufferbloat_grade(t.idle_ms, t.loaded_down_ms, t.loaded_up_ms)
+            rows.append([self.stamp(t.ts), t.status, SPEED_PROVIDERS.get(t.provider, t.provider),
+                         self.t(t.server) if own and t.server else "-", _num(t.down_mbps), _num(t.up_mbps),
+                         t.measured_by or "-", _num(t.idle_ms), _num(t.loaded_down_ms), _num(t.loaded_up_ms),
+                         grade or "-", self.t(reason[:80]) if reason else "-"])
+        head = ["Start", "Result", "Provider", "Server", "Down Mbps", "Up Mbps", "By", "Idle ms", "Loaded down ms",
+                "Loaded up ms", "Bufferbloat", "Note"]
+        what = ("" if len(kept) == len(sp.tests) else f" (the {len(kept)} newest of {len(sp.tests)} that ran)")
+        out = ["## Speed tests", SPEED_NOTE, "\n".join(f"- {b}" for b in bullets)]
+        if rows:
+            out.append(f"Tests{what}:\n" + _table(head, rows))
+        return "\n\n".join(out) + "\n\n", len(kept)
+
     def devices(self, tables: bool) -> Tuple[str, List[Dict[str, Any]]]:
         mods = sorted(self.f.modules, key=lambda m: 0 if m.layer == "technology" else 1)
         if not mods:
@@ -721,7 +786,7 @@ def render_pack(facts: PackView, level: str = FULL, detail: str = "compact") -> 
     if level not in LEVELS:
         raise ValueError(f"unknown detail level {level!r}")
     caps = CAPS[detail]
-    inc_cap, up_cap, tables = caps["incidents"], caps["closeups"], True
+    inc_cap, up_cap, speed_cap, tables = caps["incidents"], caps["closeups"], caps["speed"], True
     trimmed: List[str] = []
 
     def render(tokens: int):
@@ -730,7 +795,7 @@ def render_pack(facts: PackView, level: str = FULL, detail: str = "compact") -> 
         inc_text, shown = r.incidents(inc_cap)
         dev_text, info = r.devices(tables)
         body = (r.header(tokens) + FIXED_TEXT + "\n\n" + r.hops() + r.findings() + inc_text + r.closeups(up_cap) + r.week()
-                + dev_text + r.tail() + "\n" + SYMPTOM_TEXT)
+                + r.speed(speed_cap)[0] + dev_text + r.tail() + "\n" + SYMPTOM_TEXT)
         for h in facts.hops:       # register every role for the key, used or not
             rx.hop(h.id)
         body = rx.scan(body)
@@ -746,6 +811,9 @@ def render_pack(facts: PackView, level: str = FULL, detail: str = "compact") -> 
         elif up_cap > MIN_CLOSEUPS and len(facts.closeups) > MIN_CLOSEUPS:
             up_cap = MIN_CLOSEUPS
             trimmed.append(f"close-ups cut to {MIN_CLOSEUPS}")
+        elif speed_cap > MIN_SPEED and facts.speed is not None and len(facts.speed.tests) > MIN_SPEED:
+            speed_cap = MIN_SPEED
+            trimmed.append(f"speed test rows cut to {MIN_SPEED}")
         elif tables and any(getattr(m.section, "table", None) for m in facts.modules):
             tables = False
             trimmed.append("module tables dropped")
@@ -896,7 +964,7 @@ def _findings(f) -> List[str]:
         later = f" and later at {', '.join('{hop:%s}' % t for t in f.later_lossy)}" if f.later_lossy else ""
         out.append(f"**First hop with elevated loss in the window.** {{hop:{f.primary_hop}}}{later}.")
     if f.no_data:
-        out.append(f"**No data.** {_count(len(f.no_data), 'gap', 'gaps')} totalling "
+        out.append(f"**No data.** {_count(len(f.no_data), 'gap', 'gaps')} totaling "
                    f"{_dur(sum(b - a for a, b in f.no_data))}: Pengumon was not measuring then (times at the end).")
     return out
 
@@ -972,7 +1040,8 @@ def _phrases(events) -> Tuple[str, ...]:
 
 def view_of(f, hops_identity: Mapping[str, Any], modules: Sequence[ModuleInput], provider: str, tz: tzinfo,
             label: str, version: str, *, apps: Sequence[AppFact] = (), environment: Sequence[str] = (),
-            provider_source: str = "", zone: str = "", zone_kind: str = "") -> PackView:
+            provider_source: str = "", zone: str = "", zone_kind: str = "",
+            speed: Optional[SpeedFact] = None) -> PackView:
     """reports.ai_findings.PackFacts -> PackView. `hops_identity`: target id -> object with name, address, rdns.
     `apps` and `environment` (sentences, tokens allowed) are what the caller knows beyond the stored facts."""
     by_id = {i.id: i for i in f.incidents}
@@ -1030,7 +1099,22 @@ def view_of(f, hops_identity: Mapping[str, Any], modules: Sequence[ModuleInput],
         days=tuple(DayFact(d["day"], d["incidents"], d["lost_minutes"]) for d in f.per_day), apps=tuple(apps),
         changes=tuple(ChangeFact(c["at"], kinds.get(c["kind"], c["kind"]), c["kind"]) for c in f.changes),
         environment=tuple(environment), modules=tuple(modules), incident_total=len(f.incidents),
-        provider_source=provider_source, last_incident_end=max((i.end for i in f.incidents), default=None))
+        provider_source=provider_source, last_incident_end=max((i.end for i in f.incidents), default=None),
+        speed=speed)
+
+
+def speed_fact(rows: Sequence[Mapping[str, Any]], plan_down: Optional[float], plan_up: Optional[float]) -> Optional[SpeedFact]:
+    """The stored speed tests of a window (any order) -> what the pack shows; None without any."""
+    summary = summarize(rows, plan_down, plan_up)
+    if summary is None:
+        return None
+    ran = sorted((r for r in rows if r["status"] != "skipped"), key=lambda r: r["ts"])
+    best = [(r, headline(r)) for r in ran]
+    return SpeedFact(summary, tuple(
+        SpeedTestFact(r["ts"], r["status"], r["provider"], r.get("server") or "", h["down_mbps"], h["up_mbps"],
+                      r.get("idle_ms"), r.get("loaded_down_ms"), r.get("loaded_up_ms"), r.get("reason") or "",
+                      h["measured_by"] or "")
+        for r, h in best))
 
 
 def _dns_name(rdns: str) -> bool:

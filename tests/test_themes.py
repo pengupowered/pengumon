@@ -39,7 +39,7 @@ def _custom(**over) -> dict:
 @pytest.mark.parametrize("folder", FOLDERS, ids=[f.name for f in FOLDERS])
 def test_every_theme_folder(folder):
     """The folder's theme.json, skin and effect follow the contract, and every mode passes the checks: text contrast,
-    status colours apart, the series colours apart (also under deuteranopia and protanopia)."""
+    status colors apart, the series colors apart (also under deuteranopia and protanopia)."""
     theme, problems = themes.check_theme(json.loads((folder / "theme.json").read_text(encoding="utf-8")), custom=False,
                                          folder=folder)
     assert problems == []
@@ -70,16 +70,16 @@ def test_the_checks_catch_each_rule():
         "on accent": {"--on-accent": tokens["--accent"]},
         "status": {"--warn": tokens["--good"]},
         "series": {"--s2": tokens["--s1"]},
-        # red and green that only colour-blind eyes confuse: apart for normal vision, together under deuteranopia
-        "colour blind": {"--s1": "#c8553d", "--s2": "#6f9a3b"},
+        # red and green that only color-blind eyes confuse: apart for normal vision, together under deuteranopia
+        "color blind": {"--s1": "#c8553d", "--s2": "#6f9a3b"},
     }
     found = {k: theme_checks.mode_problems({**tokens, **v}) for k, v in broken.items()}
     assert any("--ink-3 on" in p for p in found["text"])
     assert any("--on-accent on --accent" in p for p in found["on accent"])
     assert any("--good and --warn" in p for p in found["status"])
     assert any("--s1 and --s2 are" in p and "under" not in p for p in found["series"])
-    assert any("under deuteranopia" in p for p in found["colour blind"])
-    assert not any("--s1 and --s2 are" in p and "under" not in p for p in found["colour blind"])
+    assert any("under deuteranopia" in p for p in found["color blind"])
+    assert not any("--s1 and --s2 are" in p and "under" not in p for p in found["color blind"])
 
 
 # ---------- custom themes (Settings > Display) ----------
@@ -90,17 +90,17 @@ def test_a_duplicated_theme_is_a_valid_custom_theme():
 
 
 @pytest.mark.parametrize("change, words", [
-    ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--bg": "red; } body { display: none"}, "light": _nord().exported()["tokens"]["light"]}}, "--bg: must be a colour"),
-    ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--accent-bg": "url(https://example.com/x)"}, "light": _nord().exported()["tokens"]["light"]}}, "--accent-bg: must be a colour"),
-    ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--font": "Georgia"}, "light": _nord().exported()["tokens"]["light"]}}, "colours and text sizes and corner radii only"),
+    ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--bg": "red; } body { display: none"}, "light": _nord().exported()["tokens"]["light"]}}, "--bg: must be a color"),
+    ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--accent-bg": "url(https://example.com/x)"}, "light": _nord().exported()["tokens"]["light"]}}, "--accent-bg: must be a color"),
+    ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--font": "Georgia"}, "light": _nord().exported()["tokens"]["light"]}}, "colors and text sizes and corner radii only"),
     ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--made-up": "#000000"}, "light": _nord().exported()["tokens"]["light"]}}, "--made-up: not a theme token"),
     ({"tokens": {"dark": {**_nord().exported()["tokens"]["dark"], "--fs-md": "90px"}, "light": _nord().exported()["tokens"]["light"]}}, "--fs-md: must be between"),
-    ({"tokens": {"dark": {"--bg": "#000000"}, "light": _nord().exported()["tokens"]["light"]}}, "missing colours"),
+    ({"tokens": {"dark": {"--bg": "#000000"}, "light": _nord().exported()["tokens"]["light"]}}, "missing colors"),
     ({"id": "nord"}, "starts with 'custom-'"),
     ({"id": 'custom-x"]{}'}, "id: lower-case letters"),
 ])
-def test_a_custom_theme_takes_known_colours_and_sizes_only(change, words):
-    """Its values go into the page's <style> as they are: anything but a checked colour or size is refused."""
+def test_a_custom_theme_takes_known_colors_and_sizes_only(change, words):
+    """Its values go into the page's <style> as they are: anything but a checked color or size is refused."""
     with pytest.raises(ValidationError) as e:
         ThemeItem.model_validate(_custom(**change))
     assert words in str(e.value)
@@ -121,15 +121,15 @@ def test_a_theme_id_with_a_line_break_is_refused():
                                                              custom=False)[1])
 
 
-def test_a_theme_or_card_colour_with_a_line_break_is_refused():
-    from pengumon.web.settings import CardColours
+def test_a_theme_or_card_color_with_a_line_break_is_refused():
+    from pengumon.web.settings import CardColors
     with pytest.raises(ValidationError, match="a theme id"):
         DisplayConfig(theme="nord\n")
     with pytest.raises(ValidationError, match="a theme id"):
-        CardColours(theme="nord\n")
-    with pytest.raises(ValidationError, match="a colour like"):
-        CardColours(custom={"--accent": "#112233\n"})
-    assert CardColours(theme="nord", custom={"--accent": "#112233"}).custom == {"--accent": "#112233"}
+        CardColors(theme="nord\n")
+    with pytest.raises(ValidationError, match="a color like"):
+        CardColors(custom={"--accent": "#112233\n"})
+    assert CardColors(theme="nord", custom={"--accent": "#112233"}).custom == {"--accent": "#112233"}
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ def test_chart_style_takes_known_fields_in_range_and_never_from_a_custom_theme()
                         "chart.grid: true or false", "chart: unknown field 'glow'"]
     _, problems = themes.check_theme({**_custom(), "chart": {"line_width": 3}}, custom=True)
     assert problems == ["chart: a custom theme has no chart style"]
-    assert "chart" not in next(t for t in themes.builtin_themes() if t.id == "starship").exported()  # Export: colours only
+    assert "chart" not in next(t for t in themes.builtin_themes() if t.id == "starship").exported()  # Export: colors only
 
 
 # ---------- the page ----------
@@ -283,6 +283,21 @@ async def test_the_page_starts_with_the_default_theme_from_settings_before_its_f
     assert api["looks"] == looks  # js/themes.js replaces its list with this one: the same function builds both
     entry = next(t for t in api["themes"] if t["id"] == "custom-test")
     assert entry["custom"] is True and entry["theme"]["tokens"]["dark"]["--bg"] == "#242933"
+
+
+def test_theme_boot_links_every_theme_file_the_list_names_and_nothing_else():
+    # js/theme-boot.js links a stylesheet and preloads views only from our own theme folders: every URL the list holds
+    # must pass its check (or that theme would quietly lose its looks), and a URL from anywhere else must not
+    source = (themes.THEMES_DIR.parent / "js" / "theme-boot.js").read_text()
+    ours = re.compile(re.search(r"var ours = function \(url\) \{\s*return typeof url === 'string' && /(.+)/\.test\(url\);",
+                                source).group(1).replace(r"\/", "/"))
+    urls = [u for t in themes.page_list(themes.all_themes(), ASSET_VERSION)
+            for u in [t.get("css"), *t.get("views", {}).values()] if u]
+    assert len(urls) > 3 and all(ours.fullmatch(u) for u in urls)
+    for foreign in ("https://example.com/themes/x/theme.css", "//example.com/static/v/1/themes/x/theme.css",
+                    "javascript:alert(1)//.js", f"/static/v/{ASSET_VERSION}/themes/x/../../js/main.js",
+                    f"/static/v/{ASSET_VERSION}/js/main.js", f'/static/v/{ASSET_VERSION}/themes/x/"><b>.css'):
+        assert not ours.fullmatch(foreign), foreign
 
 
 @pytest.mark.asyncio

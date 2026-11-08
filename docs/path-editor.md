@@ -12,7 +12,7 @@ Nothing you do in the editor changes anything until you press **Apply**. **Cance
 At the top, the draft is drawn the way Path health draws it: this host, then one node per hop, nearest first, each
 with what Pengumon measures there now. Click a node to jump to its card below.
 
-Two neighbouring hops of the same role can be shown as one node on Path health (the three public DNS servers are, by
+Two neighboring hops of the same role can be shown as one node on Path health (the three public DNS servers are, by
 default): press **Merge** on the link between them. A merged node has a **Split** button between its hops to undo it.
 
 ## The hops
@@ -22,13 +22,13 @@ Each hop is a card, nearest first.
 **The top line** is the name and what the prober measures now, from the same live data as Path health, updated while
 the editor is open:
 
-- "11.2 ms · 0% loss (last minute)": the median round trip and the loss over the last 60 probes, coloured like Path
-  health (grey, amber, red).
+- "11.2 ms · 0% loss (last minute)": the median round trip and the loss over the last 60 probes, colored like Path
+  health (gray, amber, red).
 - "Not answering": no reply, and nothing after it answers either. That is a real outage (red).
 - "No reply · ignores ping (not counted as an outage)": no reply, but the hops after it answer, so traffic passes
   through it. Many provider routers do this. Pengumon works it out by itself ([diagnosis.md](diagnosis.md)); there is
   nothing to set.
-- "IPv6 unavailable on this host": an IPv6 hop while this computer has no IPv6 (grey, not an error).
+- "IPv6 unavailable on this host": an IPv6 hop while this computer has no IPv6 (gray, not an error).
 - "Not probed yet · Test": a hop you added, or one whose address you changed. **Test** sends one probe now;
   **Preview** (next to Apply) probes every such hop once a second for 30 seconds, without recording anything, and
   shows the median and loss here before you apply.
@@ -47,8 +47,8 @@ Likely, IPv6, ...).
   blamed for an outage.
 - **Probe the name's IPv4 / IPv6 address**: only for a host name. An IP address is probed as it is.
 - **More > Warn above [ ] ms**: an optional latency level for this hop alone, for a far-away server that is always slow.
-  Empty by default (the placeholder shows the role's level, "role level: 60 ms", read from Settings). The hop's colour
-  turns amber above it; incidents still use the role's level, so this changes nothing but that hop's colour.
+  Empty by default (the placeholder shows the role's level, "role level: 60 ms", read from Settings). The hop's color
+  turns amber above it; incidents still use the role's level, so this changes nothing but that hop's color.
 - Up and down arrows move the hop; **Remove** takes it out.
 
 **Change address** replaces the address of a hop in place, for a router your provider renumbered. The hop keeps its

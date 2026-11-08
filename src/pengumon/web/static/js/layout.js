@@ -1,8 +1,8 @@
 // Which panels the page shows, and in what order. The registry (panels/index.js) lists the panels in their usual order;
 // the server's default (`dashboard:` in config.yaml, on <body data-layout>) and this browser's own choice (localStorage,
 // edited in the Layout dialog or a panel's own menu) are applied over it:
-//   layout = { order: [panel id...], hidden: [panel id...], colours: {panel id: {theme} | {custom: {token: '#rrggbb'}}} }
-// `colours` are a card's own colours (themes.js paints them): another theme's accent and series colours, or custom ones.
+//   layout = { order: [panel id...], hidden: [panel id...], colors: {panel id: {theme} | {custom: {token: '#rrggbb'}}} }
+// `colors` are a card's own colors (themes.js paints them): another theme's accent and series colors, or custom ones.
 // Unknown ids are ignored and a panel that a layout does not mention keeps its place and is shown, so a stored layout
 // never hides a panel added later. A panel that is not available on this installation (no such device, feature off)
 // is never mounted and cannot be shown; the dialog lists it apart, with the reason.
@@ -17,14 +17,14 @@ import { applyTabs } from './tabs.js';
 import { registerActions } from './dispatch.js';
 import { icon, keepKeyboard, openModal } from './util.js';
 import { showMenu, closeMenus, toast } from './chrome.js';
-import { CARD_TOKENS, setCardColours, themeList } from './themes.js';
+import { CARD_TOKENS, setCardColors, themeList } from './themes.js';
 import { token } from './chart-theme.js';
 
 const STORAGE_KEY = 'pengumon.layout.v1';
 
 let entries = []; // { panel, section, available, reason, count } for every panel whose section is on the page
-let defaults = { order: [], hidden: [], colours: {} }; // registry order with the server's default applied
-let layout = { order: [], hidden: [], colours: {} }; // what is applied now
+let defaults = { order: [], hidden: [], colors: {} }; // registry order with the server's default applied
+let layout = { order: [], hidden: [], colors: {} }; // what is applied now
 
 // `pref` ids first (known ones, once), then the rest of `base` in its order.
 function mergeOrder(base, pref) {
@@ -71,11 +71,11 @@ function clearStored() {
 }
 
 const HEX = /^#[0-9a-f]{6}$/i;
-// The colours of known cards, each {theme: id} or {custom: {token: '#rrggbb'}}; anything else is left out.
-function knownColours(ids, colours) {
+// The colors of known cards, each {theme: id} or {custom: {token: '#rrggbb'}}; anything else is left out.
+function knownColors(ids, colors) {
   const out = {};
-  if (!colours || typeof colours !== 'object') return out;
-  Object.entries(colours).forEach(([id, c]) => {
+  if (!colors || typeof colors !== 'object') return out;
+  Object.entries(colors).forEach(([id, c]) => {
     if (!ids.includes(id) || !c || typeof c !== 'object') return;
     if (typeof c.theme === 'string' && c.theme) out[id] = { theme: c.theme };
     else if (c.custom && typeof c.custom === 'object') {
@@ -88,10 +88,11 @@ function knownColours(ids, colours) {
 
 function combine(ids, server, stored) {
   const known = (list) => idList(list).filter((id) => ids.includes(id));
-  const base = { order: mergeOrder(ids, server && server.order), hidden: known(server && server.hidden), colours: knownColours(ids, server && server.colours) };
+  const base = { order: mergeOrder(ids, server && server.order), hidden: known(server && server.hidden), colors: knownColors(ids, server && server.colors) };
   if (!stored) return base;
-  // a layout stored before cards had colours keeps the server's
-  return { order: mergeOrder(base.order, stored.order), hidden: known(stored.hidden), colours: 'colours' in stored ? knownColours(ids, stored.colours) : base.colours };
+  // a layout stored before cards had colors keeps the server's (0.24.0 saved them under `colours`)
+  const own = 'colors' in stored ? stored.colors : stored.colours;
+  return { order: mergeOrder(base.order, stored.order), hidden: known(stored.hidden), colors: own !== undefined ? knownColors(ids, own) : base.colors };
 }
 
 const byId = () => new Map(entries.map((e) => [e.panel.id, e]));
@@ -135,7 +136,7 @@ function apply() {
   entries.forEach((e) => { e.section.dataset.layoutHidden = layout.hidden.includes(e.panel.id) ? '1' : '0'; });
   applyTabs();
   pack();
-  setCardColours(layout.colours);
+  setCardColors(layout.colors);
 }
 
 function save() {
@@ -144,10 +145,10 @@ function save() {
   renderList();
 }
 
-// The order, hidden panels and card colours this browser shows now (a copy), for Settings > Display's "Use this
-// browser's layout", which writes them into dashboard.order, .hidden and .colours (the layout new browsers start with).
+// The order, hidden panels and card colors this browser shows now (a copy), for Settings > Display's "Use this
+// browser's layout", which writes them into dashboard.order, .hidden and .colors (the layout new browsers start with).
 export function browserLayout() {
-  return { order: [...layout.order], hidden: [...layout.hidden], colours: JSON.parse(JSON.stringify(layout.colours)) };
+  return { order: [...layout.order], hidden: [...layout.hidden], colors: JSON.parse(JSON.stringify(layout.colors)) };
 }
 
 // Panel id -> title, in the panels' standard order (Settings > Display's "Layout for new browsers" names them).
@@ -197,23 +198,23 @@ function rowFor(e, at, usable) {
     b.setAttribute('aria-label', `Move ${e.panel.title} ${dir}`);
     move.append(b);
   });
-  row.append(label, move, coloursFor(e));
+  row.append(label, move, colorsFor(e));
   return row;
 }
 
 const SWATCH_NAMES = { '--accent': 'Accent' };
 const CUSTOM = 'custom';
 
-// "Colours: Page theme / <a theme> / Custom": a card's own colours; Custom shows the accent and the eight series colours.
-function coloursFor(e) {
+// "Colors: Page theme / <a theme> / Custom": a card's own colors; Custom shows the accent and the eight series colors.
+function colorsFor(e) {
   const id = e.panel.id;
-  const spec = layout.colours[id];
+  const spec = layout.colors[id];
   const now = spec ? (spec.theme || CUSTOM) : '';
   const box = document.createElement('div');
-  box.className = 'lay-colours';
+  box.className = 'lay-colors';
   const select = document.createElement('select');
   select.className = 'input';
-  select.id = `layColours-${id}`;
+  select.id = `layColors-${id}`;
   select.dataset.change = 'setCardTheme';
   select.dataset.arg = id;
   const opt = (value, text) => Object.assign(document.createElement('option'), { value, textContent: text, selected: value === now });
@@ -221,7 +222,7 @@ function coloursFor(e) {
   if (now && now !== CUSTOM && !themeList().some((t) => t.id === now)) select.append(opt(now, 'A theme that is gone (page theme)'));
   const label = document.createElement('label');
   label.htmlFor = select.id;
-  label.textContent = 'Colours';
+  label.textContent = 'Colors';
   box.append(label, select);
   if (now === CUSTOM) {
     const swatches = document.createElement('span');
@@ -230,10 +231,10 @@ function coloursFor(e) {
       const input = document.createElement('input');
       input.type = 'color';
       input.value = spec.custom[n] || '#000000';
-      input.dataset.change = 'setCardColour';
+      input.dataset.change = 'setCardColor';
       input.dataset.arg = id;
       input.dataset.arg2 = n;
-      const name = SWATCH_NAMES[n] || `Series colour ${i}`;
+      const name = SWATCH_NAMES[n] || `Series color ${i}`;
       input.setAttribute('aria-label', `${e.panel.title}: ${name}`);
       input.title = name;
       swatches.append(input);
@@ -243,24 +244,24 @@ function coloursFor(e) {
   return box;
 }
 
-// The page theme's colours now, as the start of a card's custom ones (a token that is not #rrggbb starts as grey).
-function pageColours() {
+// The page theme's colors now, as the start of a card's custom ones (a token that is not #rrggbb starts as gray).
+function pageColors() {
   return Object.fromEntries(CARD_TOKENS.map((n) => [n, HEX.test(token(n)) ? token(n).toLowerCase() : '#7d8a9b']));
 }
 
 function setCardTheme(id, value) {
-  const colours = { ...layout.colours };
-  if (!value) delete colours[id];
-  else if (value === CUSTOM) colours[id] = { custom: colours[id] && colours[id].custom ? colours[id].custom : pageColours() };
-  else colours[id] = { theme: value };
-  layout = { ...layout, colours };
+  const colors = { ...layout.colors };
+  if (!value) delete colors[id];
+  else if (value === CUSTOM) colors[id] = { custom: colors[id] && colors[id].custom ? colors[id].custom : pageColors() };
+  else colors[id] = { theme: value };
+  layout = { ...layout, colors };
   save();
 }
 
-function setCardColour(id, name, value) {
-  const now = layout.colours[id];
+function setCardColor(id, name, value) {
+  const now = layout.colors[id];
   if (!now || !now.custom || !HEX.test(value)) return;
-  layout = { ...layout, colours: { ...layout.colours, [id]: { custom: { ...now.custom, [name]: value.toLowerCase() } } } };
+  layout = { ...layout, colors: { ...layout.colors, [id]: { custom: { ...now.custom, [name]: value.toLowerCase() } } } };
   save();
 }
 
@@ -297,7 +298,7 @@ function movePanel(id, dir) {
   const from = usable.indexOf(id);
   const to = dir === 'up' ? from - 1 : from + 1;
   if (from < 0 || to < 0 || to >= usable.length) return;
-  // swap the two neighbours among the available panels; unavailable ones keep their slots
+  // swap the two neighbors among the available panels; unavailable ones keep their slots
   const slots = layout.order.map((i, at) => [i, at]).filter(([i]) => usable.includes(i)).map(([, at]) => at);
   const order = layout.order.slice();
   order[slots[from]] = usable[to];
@@ -318,7 +319,7 @@ function togglePanel(id, shown) {
 
 function resetLayout() {
   clearStored();
-  layout = { order: defaults.order.slice(), hidden: defaults.hidden.slice(), colours: { ...defaults.colours } };
+  layout = { order: defaults.order.slice(), hidden: defaults.hidden.slice(), colors: { ...defaults.colors } };
   apply();
   renderList();
 }
@@ -345,7 +346,7 @@ function panelMenu(button) {
   showMenu(menu, button);
 }
 
-// Moves a panel past its next shown neighbour (the menu moves among what is on the page).
+// Moves a panel past its next shown neighbor (the menu moves among what is on the page).
 function menuMove(id, dir) {
   const shown = usableOrder().filter((i) => !layout.hidden.includes(i));
   const at = shown.indexOf(id);
@@ -389,7 +390,7 @@ registerActions('click', {
 registerActions('change', {
   togglePanel: (el) => togglePanel(el.dataset.arg, el.checked),
   setCardTheme: (el) => setCardTheme(el.dataset.arg, el.value),
-  setCardColour: (el) => setCardColour(el.dataset.arg, el.dataset.arg2, el.value)
+  setCardColor: (el) => setCardColor(el.dataset.arg, el.dataset.arg2, el.value)
 });
 
 // Decides which of `panels` this installation has, mounts those, and applies the layout. `ctx` is what a panel gets.

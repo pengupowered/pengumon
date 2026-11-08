@@ -63,7 +63,7 @@ def test_dashboard_layout_defaults_and_validation():
     config = AppConfig(dashboard={"order": ["matrix", "line"], "hidden": ["report"]})
     assert config.dashboard.order == ["matrix", "line"] and config.dashboard.hidden == ["report"]
     assert set(panel_ids()) >= {"diagnosis", "line", "router", "latency", "matrix", "services", "incidents", "report"}
-    for bad in ({"order": ["nope"]}, {"hidden": ["line", "line"]}, {"hidden": ["Report"]}, {"colour": "red"}):
+    for bad in ({"order": ["nope"]}, {"hidden": ["line", "line"]}, {"hidden": ["Report"]}, {"color": "red"}):
         with pytest.raises(ValidationError):
             AppConfig(dashboard=bad)
 
@@ -84,9 +84,9 @@ def test_dns_probes_left_out_are_the_defaults_and_an_empty_list_is_none(tmp_path
     assert load_config(str(empty)).dns_probes == []
 
 
-def test_a_line_break_never_rides_along_in_an_id_or_a_colour():
+def test_a_line_break_never_rides_along_in_an_id_or_a_color():
     """A pattern ending in $ also matches before a final line break. Ids are trimmed before they are checked (a device id
-    becomes an environment variable's name and a secret's file name); a chart colour is checked as a whole string."""
+    becomes an environment variable's name and a secret's file name); a chart color is checked as a whole string."""
     import pytest
     from pydantic import ValidationError
     from pengumon.devices.settings import DeviceConfig

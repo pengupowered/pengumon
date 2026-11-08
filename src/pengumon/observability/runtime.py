@@ -82,7 +82,7 @@ class LoopMonitor:
                                 late_samples=self._late)
 
     async def run(self) -> None:
-        """Samples until cancelled. The sleep is awaited as it is: an error in it ends the task (and the done-callback
+        """Samples until canceled. The sleep is awaited as it is: an error in it ends the task (and the done-callback
         logs it), never a busy loop."""
         while True:
             before = self._clock()

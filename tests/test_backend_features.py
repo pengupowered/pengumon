@@ -115,6 +115,26 @@ async def test_dossier_names_hop_and_rf_only_with_evidence(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dossier_reports_the_windows_speed_tests_against_the_plan(tmp_path):
+    repo = await _repo(tmp_path, minutes=5)
+    now = time.time()
+    for k, mbps in enumerate((250.0, 90.0, 260.0)):                       # the middle one is under half of 300
+        await repo.insert_speed_test({"ts": now - 600 * (k + 1), "trigger": "scheduled", "provider": "cloudflare",
+                                      "status": "ok", "down_mbps": mbps, "up_mbps": 19.0, "idle_ms": 10.0,
+                                      "loaded_down_ms": 20.0, "loaded_up_ms": 15.0})
+    await repo.insert_speed_test({"ts": now - 90000, "trigger": "scheduled", "provider": "cloudflare",   # before the window
+                                  "status": "ok", "down_mbps": 1.0, "up_mbps": 1.0})
+    config = _cfg()
+    config.line = SimpleNamespace(down_mbps=300.0, up_mbps=20.0)
+    md = (await build_dossier(repo, config, 24))["formatted_markdown"]
+    assert "- **Tests in the window:** 3 tests (3 ok)" in md
+    assert "- Download: median 250 of 300 Mbps (83 %), lowest 90 Mbps" in md
+    assert "- 1 of 3 tests under 50 % of the plan speed" in md and "bufferbloat grade A" in md
+    hour = (await build_dossier(repo, config, 1))["formatted_markdown"]          # an hour: the same three are inside
+    assert "3 tests" in hour
+
+
+@pytest.mark.asyncio
 async def test_dossier_excludes_expected_incidents(tmp_path):
     repo = await _repo(tmp_path, minutes=5)
     now = time.time()

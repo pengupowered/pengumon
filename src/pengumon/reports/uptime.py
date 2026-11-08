@@ -41,7 +41,7 @@ async def build_uptime(repository, config, window: str = "24h", now: Optional[fl
     """Availability strips for every target: `cells` has one status per block, oldest first, ending with the block that
     contains now ("24h": 96 blocks of 15 min; "7d" and "30d": calendar days on the clock in `tz`, 23 or 25 hours long
     on a day the clocks change). A cell is ok, degraded, outage, no_data, or busy: a degraded or outage block whose
-    only incidents were explained by heavy line load (expected), so the strip can hatch it instead of colouring it as a
+    only incidents were explained by heavy line load (expected), so the strip can hatch it instead of coloring it as a
     fault. availability_pct is probes answered / sent over the whole window (null without probes). Block i runs from
     bounds[i] to bounds[i + 1] (epoch seconds, blocks + 1 of them); zone names the clock the days are cut on and the
     times are meant to be read in (timeofday.zone_name), tz_offset_minutes its offset now."""

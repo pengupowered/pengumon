@@ -1,9 +1,9 @@
-// Helpers every module uses: the target name/colour table, DOM text and class setters, modals, HTML escaping.
+// Helpers every module uses: the target name/color table, DOM text and class setters, modals, HTML escaping.
 
 import { registerActions } from './dispatch.js';
 import { token } from './chart-theme.js';
 
-// Target order, names and colours come from /api/targets (the probe path, then the DNS probes; `color` per target).
+// Target order, names and colors come from /api/targets (the probe path, then the DNS probes; `color` per target).
 // Both are filled by initTargets() before the first render and mutated in place, so importers keep their reference.
 export const canonicalTargetOrder = [];
 
@@ -22,8 +22,8 @@ export function getTargetInfo(tid) {
   return { name: tid, color: '#58a6ff' };
 }
 
-// The colour of a target without a configured one: the next categorical slot (tokens --s1..--s8) in path order, so the
-// first eight such targets all differ (one colour per category made three public servers three identical lines). Past
+// The color of a target without a configured one: the next categorical slot (tokens --s1..--s8) in path order, so the
+// first eight such targets all differ (one color per category made three public servers three identical lines). Past
 // the eighth a target takes the first slot no other target of its category has yet, so the members of one group (the
 // public servers of the Internet node, a run of ISP hops, the DNS lookups) still differ from each other; a category
 // with more than eight is drawn in the neutral ink from the ninth on and told apart by its name. Read from the tokens
@@ -75,7 +75,7 @@ export function iconEl(name, cls = '') {
   return svg;
 }
 
-// One status vocabulary: a level's icon and word (status is always icon + word + colour, never colour alone).
+// One status vocabulary: a level's icon and word (status is always icon + word + color, never color alone).
 export const STATUS = {
   good: { icon: 'ok', word: 'Healthy' },
   warn: { icon: 'warn', word: 'Degraded' },

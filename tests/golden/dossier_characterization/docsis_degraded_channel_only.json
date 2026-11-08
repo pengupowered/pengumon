@@ -71,7 +71,7 @@
   "",
   "## 5. Summary for a support ticket",
   "```text",
-  "Over the past 24 hours Pengumon recorded 0 incidents totalling none.",
+  "Over the past 24 hours Pengumon recorded 0 incidents totaling none.",
   "Loss to Local Router and Modem Gateway: at most 0.0%.",
   "No single failing hop could be isolated from the probe data.",
   "Modem: downstream channel 2 at 600.0 MHz is outside typical levels (1 channel(s) in total).",

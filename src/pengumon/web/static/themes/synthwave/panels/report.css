@@ -1,5 +1,5 @@
 /* Synthwave's view of the Reliability card (report.js): a neon dashboard. Scoped to this theme and to the card while this
-   view draws it ([data-view="synthwave"]). Colours are the theme's tokens. */
+   view draws it ([data-view="synthwave"]). Colors are the theme's tokens. */
 
 :root[data-look="synthwave"] [data-panel="report"] .panel[data-view="synthwave"] > .panel-h { border-bottom-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 

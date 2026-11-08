@@ -1,4 +1,4 @@
-"""The dashboard's config sections: `dashboard:` (the default layout and card colours) and `display:` (the Grafana links,
+"""The dashboard's config sections: `dashboard:` (the default layout and card colors) and `display:` (the Grafana links,
 the latency chart's first range, the theme and the custom themes). The card ids are the panel folders that
 pengumon.web.ui discovers and the theme ids the folders of pengumon.web.themes, so a new panel or theme needs no change
 here."""
@@ -11,12 +11,12 @@ from pengumon.observability.grafana import check_url
 from pengumon.web import themes as theme_rules
 from pengumon.web.ui import panel_ids
 
-# The tokens a card's own colours set (Layout > a card's Colours): the accent and the eight series colours.
+# The tokens a card's own colors set (Layout > a card's Colors): the accent and the eight series colors.
 CARD_TOKENS = ("--accent", *(f"--s{i}" for i in range(1, 9)))
 
 
-class CardColours(BaseModel):
-    """A card's colours: another theme's accent and series colours (`theme`), or its own (`custom`, token -> #rrggbb,
+class CardColors(BaseModel):
+    """A card's colors: another theme's accent and series colors (`theme`), or its own (`custom`, token -> #rrggbb,
     of CARD_TOKENS). Neither: the page theme's."""
     model_config = ConfigDict(extra="forbid")
     theme: Optional[str] = None
@@ -31,12 +31,12 @@ class CardColours(BaseModel):
 
     @field_validator("custom")
     @classmethod
-    def _colours(cls, value: Dict[str, str]) -> Dict[str, str]:
-        for name, colour in value.items():
+    def _colors(cls, value: Dict[str, str]) -> Dict[str, str]:
+        for name, color in value.items():
             if name not in CARD_TOKENS:
-                raise ValueError(f"{name!r} is not a card colour; they are {', '.join(CARD_TOKENS)}")
-            if not isinstance(colour, str) or not theme_rules.HEX6.fullmatch(colour):
-                raise ValueError(f"{name}: a colour like #1a2b3c")
+                raise ValueError(f"{name!r} is not a card color; they are {', '.join(CARD_TOKENS)}")
+            if not isinstance(color, str) or not theme_rules.HEX6.fullmatch(color):
+                raise ValueError(f"{name}: a color like #1a2b3c")
         return value
 
 
@@ -46,11 +46,11 @@ class DashboardConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     order: List[str] = Field(default_factory=list, json_schema_extra={"ui_type": "layout"})
     hidden: List[str] = Field(default_factory=list, json_schema_extra={"ui_type": "layout"})
-    colours: Dict[str, CardColours] = Field(default_factory=dict, json_schema_extra={"ui_type": "layout"})
+    colors: Dict[str, CardColors] = Field(default_factory=dict, json_schema_extra={"ui_type": "layout"})
 
-    @field_validator("colours")
+    @field_validator("colors")
     @classmethod
-    def _known_cards(cls, value: Dict[str, CardColours]) -> Dict[str, CardColours]:
+    def _known_cards(cls, value: Dict[str, CardColors]) -> Dict[str, CardColors]:
         known = panel_ids()
         unknown = [i for i in value if i not in known]
         if unknown:
@@ -71,7 +71,7 @@ class DashboardConfig(BaseModel):
 
 class ThemeItem(BaseModel):
     """A custom theme (Settings > Display): a theme.json without skin or effect, checked by pengumon.web.themes'
-    rules for custom themes (an id starting with "custom-", colours for every colour token of each mode, text sizes
+    rules for custom themes (an id starting with "custom-", colors for every color token of each mode, text sizes
     and corner radii in their ranges, nothing else)."""
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 

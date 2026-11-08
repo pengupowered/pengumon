@@ -336,3 +336,36 @@ CREATE TABLE IF NOT EXISTS settings_versions (
     document TEXT NOT NULL
 );
 """
+
+# --- schema v17: the speed tests (pengumon.speedtest, db/speedtests.py) ------------------------------------------------
+#
+# One row per test, scheduled or manual, whatever came of it. `ts` is when it started; `status` ok | partial (one direction
+# worked) | skipped (not run: `reason` says why) | failed. The speeds are application-level goodput in Mbps; the
+# latencies are the medians of the public probe targets before the test and during each direction; the bytes are what
+# was moved (the monthly data cap counts them); wan_*_mbps are the peak router WAN rates seen in each phase (a
+# cross-check of the speed). Every measured column is nullable: a skipped test has none.
+CREATE_SPEED_TESTS_TABLE = """
+CREATE TABLE IF NOT EXISTS speed_tests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    duration_s REAL,
+    trigger TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    server TEXT,
+    status TEXT NOT NULL,
+    reason TEXT,
+    down_mbps REAL,
+    up_mbps REAL,
+    idle_ms REAL,
+    loaded_down_ms REAL,
+    loaded_up_ms REAL,
+    bytes_down INTEGER,
+    bytes_up INTEGER,
+    wan_down_mbps REAL,
+    wan_up_mbps REAL
+);
+"""
+
+CREATE_SPEED_TESTS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_speed_tests_ts ON speed_tests(ts);
+"""

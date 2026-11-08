@@ -9,12 +9,12 @@ const panelShown = (page, id) => page.$eval(`[data-panel=${id}]`, (e) => !e.hidd
 const storedLayout = (page) => page.evaluate(() => localStorage.getItem("pengumon.layout.v1"));
 
 export const steps = [
-  ["layout dialog: cards without a device are greyed; a moved and a hidden card survive a reload; Reset restores", async ({ USUAL_PANELS, bare, click, count, dialogKeys, eq, layoutMounted, ok, openLayout, outDir, page, panelOrder, path, waitCount }) => {
+  ["layout dialog: cards without a device are grayed; a moved and a hidden card survive a reload; Reset restores", async ({ USUAL_PANELS, bare, click, count, dialogKeys, eq, layoutMounted, ok, openLayout, outDir, page, panelOrder, path, waitCount }) => {
     await layoutMounted();
     await dialogKeys("#headerTools [data-action=openLayoutDialog]", "layoutModal");
     eq("usual order", (await panelOrder()).join(), USUAL_PANELS.join());
     await openLayout();
-    eq("one row per available panel", await count("#layoutList .lay-row"), bare ? 8 : 10);
+    eq("one row per available panel", await count("#layoutList .lay-row"), bare ? 9 : 11);
     eq("panels without a device are listed apart", await count("#layoutUnavailable .lay-row"), bare ? 2 : 0);
     if (bare) {
       for (const id of ["line", "router"]) eq(`${id} is not shown`, await panelShown(page, id), false);
@@ -23,7 +23,7 @@ export const steps = [
     }
     await click("#layoutList [data-action=movePanel][data-arg=report][data-arg2=up]");
     await click("#layoutList [data-change=togglePanel][data-arg=services]");
-    const moved = [...USUAL_PANELS.slice(0, 7), "report", "incidents", "matrix"].join();
+    const moved = [...USUAL_PANELS.slice(0, 8), "report", "incidents", "matrix"].join();
     eq("report moved above the incident log", (await panelOrder()).join(), moved);
     eq("host services hidden", await panelShown(page, "services"), false);
     ok("the choice is stored", /"hidden":\["services"\]/.test(await storedLayout(page)));
@@ -83,37 +83,47 @@ export const steps = [
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["full", "bare"] }],
 
-  ["card colours: a card takes another theme's colours or its own, its chart follows, and the browser keeps them", async ({ click, eq, layoutMounted, ok, openLayout, outDir, page, path, until }) => {
+  ["card colors: a card takes another theme's colors or its own, its chart follows, and the browser keeps them", async ({ click, eq, layoutMounted, ok, openLayout, outDir, page, path, until }) => {
     const prop = (name) => page.$eval("[data-panel=latency]", (e, n) => getComputedStyle(e).getPropertyValue(n).trim(), name);
-    const lineColours = () => page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.filter((d) => d.pathLabel).map((d) => d.borderColor));
+    const lineColors = () => page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.filter((d) => d.pathLabel).map((d) => d.borderColor));
     await layoutMounted();
     const page1 = await prop("--s1");
     await openLayout();
-    await page.select("#layColours-latency", "nord");
-    await until(() => document.querySelector("[data-panel=latency]").dataset.colours === "nord");
+    await page.select("#layColors-latency", "nord");
+    await until(() => document.querySelector("[data-panel=latency]").dataset.colors === "nord");
     const nord = await page.evaluate(async () => (await (await fetch("/api/themes")).json()).themes.find((t) => t.id === "nord").theme.tokens);
     const mode = await page.evaluate(() => (document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")));
-    eq("the card has Nord's first series colour", await prop("--s1"), nord[mode]["--s1"]);
+    eq("the card has Nord's first series color", await prop("--s1"), nord[mode]["--s1"]);
     ok("the rest of the page keeps its own", await page.$eval("[data-panel=matrix]", (e) => getComputedStyle(e).getPropertyValue("--s1").trim()) === page1);
     await until(() => document.getElementById("latencyChart") && Chart.getChart(document.getElementById("latencyChart")));
-    const lines = await lineColours();
-    ok(`the latency chart draws in the card's colours (${lines.join(" ")})`, lines.length > 0 && lines.every((c) => Object.values(nord[mode]).includes(c)));
-    // custom: the accent and eight series colours, as colour pickers
-    await page.select("#layColours-latency", "custom");
+    const lines = await lineColors();
+    ok(`the latency chart draws in the card's colors (${lines.join(" ")})`, lines.length > 0 && lines.every((c) => Object.values(nord[mode]).includes(c)));
+    // custom: the accent and eight series colors, as color pickers
+    await page.select("#layColors-latency", "custom");
     await until(() => document.querySelectorAll('#layoutList input[type=color][data-arg="latency"]').length === 9);
     await page.$eval('#layoutList input[type=color][data-arg="latency"][data-arg2="--s1"]', (e) => { e.value = "#c03aa0"; e.dispatchEvent(new Event("change", { bubbles: true })); });
     await until(() => getComputedStyle(document.querySelector("[data-panel=latency]")).getPropertyValue("--s1").trim() === "#c03aa0");
-    await page.screenshot({ path: path.join(outDir, "layout-colours.png") });
+    await page.screenshot({ path: path.join(outDir, "layout-colors.png") });
     await click("[data-action=closeModal][data-arg=layoutModal]");
     await page.reload({ waitUntil: "load" });
     await layoutMounted();
     await until(() => getComputedStyle(document.querySelector("[data-panel=latency]")).getPropertyValue("--s1").trim() === "#c03aa0");
     ok("kept after a reload", true);
     await until(() => Chart.getChart(document.getElementById("latencyChart"))?.data.datasets.some((d) => d.borderColor === "#c03aa0"));
-    ok("and the chart's first line is that colour", true);
+    ok("and the chart's first line is that color", true);
+    // 0.24.0 saved a browser's card colors under `colours`: such a layout keeps them
+    await page.evaluate(() => {
+      const saved = JSON.parse(localStorage.getItem("pengumon.layout.v1"));
+      saved.colours = saved.colors; delete saved.colors;
+      localStorage.setItem("pengumon.layout.v1", JSON.stringify(saved));
+    });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await until(() => getComputedStyle(document.querySelector("[data-panel=latency]")).getPropertyValue("--s1").trim() === "#c03aa0");
+    ok("a layout saved by 0.24.0 keeps its card colors", true);
     await openLayout();
-    await page.select("#layColours-latency", "");
-    await until(() => !document.querySelector("[data-panel=latency]").dataset.colours);
+    await page.select("#layColors-latency", "");
+    await until(() => !document.querySelector("[data-panel=latency]").dataset.colors);
     eq("page theme again", await prop("--s1"), page1);
     await click("[data-action=closeModal][data-arg=layoutModal]");
   }],

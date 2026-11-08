@@ -24,7 +24,7 @@ What comes back, per socket kind (IPv4):
 IPv6 (`family=6`, RFC 4443) is the same with ICMPv6 numbers: echo request 128 and reply 129, Time Exceeded 3,
 Destination Unreachable 1, Packet Too Big 2 (counted as unreachable: our 104-byte probes fit every IPv6 link, so a
 router that says so cannot pass them). An IPv6 socket never returns the IP header; a raw one gets every ICMPv6 message
-(neighbour discovery too), so an ICMP6_FILTER lets through only those four types, and an error quotes the 40-byte
+(neighbor discovery too), so an ICMP6_FILTER lets through only those four types, and an error quotes the 40-byte
 IPv6 header of our request plus the echo header. The kernel computes the ICMPv6 checksum. The hop limit is
 IPV6_UNICAST_HOPS; the ping socket's errors come from IPV6_RECVERR (SOL_IPV6), ee_origin SO_EE_ORIGIN_ICMP6 and a
 sockaddr_in6 offender (ipv6(7); the kernel's net/ipv6/datagram.c, ipv6_icmp_error and ipv6_recv_error).
@@ -274,7 +274,7 @@ class LinuxIcmpBackend:
             # ICMP errors about our requests (Time Exceeded, Unreachable) go to the error queue
             self._sock.setsockopt(*self._fam.recverr, 1)
         elif family == 6:
-            # A raw ICMPv6 socket gets every ICMPv6 message the host receives (neighbour and router discovery,
+            # A raw ICMPv6 socket gets every ICMPv6 message the host receives (neighbor and router discovery,
             # multicast listener reports): only replies and the errors that can be about our requests get through.
             # Only fewer wakeups: the parser ignores the rest anyway.
             try:

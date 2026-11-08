@@ -9,14 +9,14 @@ import { S, valueOf } from './store.js';
 
 const RULE_KEYS = /^(classifier\.|alerts\.|line\.(down|up)_mbps$)/;
 
-const P = { id: null, job: null, error: '', sent: null, timer: 0, days: null, running: false, seq: 0, cancelled: false };
+const P = { id: null, job: null, error: '', sent: null, timer: 0, days: null, running: false, seq: 0, canceled: false };
 
 // The draft's rule keys (a reset one is null).
 export function ruleValues() {
   return Object.fromEntries(Object.entries(S.draft.values).filter(([key]) => RULE_KEYS.test(key)));
 }
 export const hasRules = () => Object.keys(ruleValues()).length > 0;
-export const shown = () => hasRules() || !!P.job || !!P.error || P.running || P.cancelled;
+export const shown = () => hasRules() || !!P.job || !!P.error || P.running || P.canceled;
 const stale = () => !!P.job && P.sent !== canon(ruleValues());
 
 const retention = () => Number(valueOf('database.retention_days')) || 7;
@@ -77,14 +77,14 @@ export function previewHtml() {
   else if (P.running || (job && job.state === 'running')) {
     const p = Math.round(((job && job.progress) || 0) * 100);
     body = `<div class="set-progress" id="settingsPreviewResult"><progress max="100" value="${p}" aria-label="Preview progress"></progress><span class="num">${p}%</span></div>`;
-  } else if (P.cancelled) {
-    body = '<p class="fine top" id="settingsPreviewResult" role="status">Preview cancelled. Nothing was changed.</p>';
+  } else if (P.canceled) {
+    body = '<p class="fine top" id="settingsPreviewResult" role="status">Preview canceled. Nothing was changed.</p>';
   } else if (job && job.state === 'done' && job.draft && job.current) {
     body = `<div class="result st-${stale() ? 'unknown' : 'good'}${stale() ? ' stale' : ''}" id="settingsPreviewResult" role="status"><span>With these rules the last ${escapeHtml(days)} day${days === 1 ? '' : 's'} would have had ${counts(job)}.
       ${stale() ? '<b>Out of date: the draft changed since. Run the preview again.</b>' : ''}</span></div>
       ${recordedNote(job)}${(job.notes || []).map((n) => `<p class="fine">${escapeHtml(n)}</p>`).join('')}${changeList(job)}`;
-  } else if (job && (job.state === 'failed' || job.state === 'cancelled')) {
-    body = `<div class="result st-crit" id="settingsPreviewResult" role="status"><span>The preview ${job.state === 'failed' ? `failed${job.error ? `: ${escapeHtml(job.error)}` : ''}` : 'was cancelled'}.</span></div>`;
+  } else if (job && (job.state === 'failed' || job.state === 'canceled')) {
+    body = `<div class="result st-crit" id="settingsPreviewResult" role="status"><span>The preview ${job.state === 'failed' ? `failed${job.error ? `: ${escapeHtml(job.error)}` : ''}` : 'was canceled'}.</span></div>`;
   } else {
     body = '<p class="fine top">Replays the stored samples through the classifier with the draft rules. Nothing is changed and nothing is sent.</p>';
   }
@@ -118,7 +118,7 @@ export async function runPreview(daysText) {
   const days = Number(daysText);
   const max = retention();
   P.error = '';
-  P.cancelled = false;
+  P.canceled = false;
   if (!Number.isInteger(days) || days < 1 || days > max) {
     P.days = daysText;
     P.error = `Enter a whole number of days from 1 to ${max}.`;
@@ -160,7 +160,7 @@ export function stopPreview() {
   P.running = false;
   P.sent = null;
   P.days = null;
-  P.cancelled = false;
+  P.canceled = false;
   if (id) fetch(`/api/settings/preview/${id}`, { method: 'DELETE' }).catch(() => {});
 }
 
@@ -169,6 +169,6 @@ export function cancelPreview() {
   const days = P.days;
   stopPreview();
   P.days = days;
-  P.cancelled = true;
+  P.canceled = true;
   render();
 }

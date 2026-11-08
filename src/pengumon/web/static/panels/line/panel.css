@@ -14,7 +14,7 @@
 .gauge-skel { display: flex; flex-direction: column; gap: 22px; }
 .row-actions { display: inline-flex; gap: var(--sp-2); }
 .gauge .g-name .info { margin-left: 0; }
-/* the status (icon and word) follows the name and its help, as a small tag in the status colour */
+/* the status (icon and word) follows the name and its help, as a small tag in the status color */
 .gauge .g-name [data-f="ic"] { order: 3; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--st, var(--good)); white-space: nowrap; }
 .gauge.fec.st-unknown .g-name [data-f="ic"] { color: var(--ink-3); }
 .gauge.fec .g-val { font-size: var(--fs-md); color: var(--ink-2); font-weight: var(--fw-semi); }

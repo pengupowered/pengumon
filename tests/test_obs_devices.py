@@ -187,7 +187,7 @@ async def test_a_task_that_dies_of_an_exception_is_counted_by_its_kind_not_its_n
     assert next(r for r in caplog.records if "stopped" in r.getMessage()).pengumon_context["kind"] == kind
 
 
-async def test_a_cancelled_task_and_one_that_returns_are_not_exits():
+async def test_a_canceled_task_and_one_that_returns_are_not_exits():
     async def forever():
         await asyncio.sleep(3600)
 

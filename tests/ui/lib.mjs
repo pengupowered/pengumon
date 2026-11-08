@@ -9,7 +9,7 @@ import path from "node:path";
 
 export const LINE = "[data-panel=line] .panel[data-device=modem]";
 export const ROUTER = "[data-panel=router] .panel[data-device=router]";
-export const USUAL_PANELS = ["diagnosis", "latency", "line", "router", "services", "strips", "heat", "incidents", "report", "matrix"];
+export const USUAL_PANELS = ["diagnosis", "latency", "line", "speed", "router", "services", "strips", "heat", "incidents", "report", "matrix"];
 export const PHONE = { width: 390, height: 844, isMobile: true, hasTouch: true };
 export const DESKTOP = { width: 1400, height: 1000 };
 export const ALL_VARIANTS = ["full", "bare", "tworouters", "unknownline"];
@@ -105,8 +105,8 @@ export async function createContext({ base, outDir, variant }) {
   const expectStatus = (...codes) => { statusExpected = codes; };
   const refusal = (text) => (refusalsExpected && /status of 401/.test(text)) || statusExpected.some((c) => text.includes(`status of ${c}`));
   // Firefox reports, as errors the page did not make: the socket the states steps refuse on purpose (the page's own refusal is
-  // /ws-dead), a module import that a reload cancelled mid-load (a module that is really missing is an HTTP 404 as well,
-  // which is still a problem), and a fetch a reload cancelled: the page's .catch logs the error, which Firefox's console
+  // /ws-dead), a module import that a reload canceled mid-load (a module that is really missing is an HTTP 404 as well,
+  // which is still a problem), and a fetch a reload canceled: the page's .catch logs the error, which Firefox's console
   // gives as "undefined" (a request that really failed is a requestfailed or an HTTP status, still a problem).
   const FIREFOX_NOISE = [/ws-dead/, /error loading dynamically imported module/, /^undefined$/];
   const noise = (text) => firefox && FIREFOX_NOISE.some((re) => re.test(text));
@@ -118,7 +118,7 @@ export async function createContext({ base, outDir, variant }) {
     if (/^JSHandle@/.test(text)) text = (await Promise.all(m.args().map((a) => a.evaluate((v) => (v instanceof Error ? v.message : String(v))).catch(() => "")))).join(" ");
     if (!KNOWN_CONSOLE_ERRORS.some((re) => re.test(text)) && !refusal(text) && !noise(text)) problems.push(`console.error: ${text}`);
   });
-  // Firefox also reports a request that a reload or navigation cancelled (NS_BINDING_ABORTED), and the socket the states
+  // Firefox also reports a request that a reload or navigation canceled (NS_BINDING_ABORTED), and the socket the states
   // steps refuse on purpose; Chromium reports neither here.
   page.on("requestfailed", (r) => {
     const why = r.failure()?.errorText;

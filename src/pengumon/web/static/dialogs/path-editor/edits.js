@@ -28,7 +28,7 @@ export function edit(el) {
     h.warn_latency_ms = text === '' ? null : bad ? text : n; // a bad text is sent as typed and the server refuses it
     el.setAttribute('aria-invalid', String(bad));
     const fx = $(`peWarn-${h.id}`);
-    if (fx) fx.textContent = bad ? 'Enter a number above 0 and up to 10000.' : 'Only this hop\'s colour. Incidents still use the role\'s level.';
+    if (fx) fx.textContent = bad ? 'Enter a number above 0 and up to 10000.' : 'Only this hop\'s color. Incidents still use the role\'s level.';
     return;
   }
   if (field === 'category') {

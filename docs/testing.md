@@ -17,6 +17,14 @@ every push to a `ci/<name>` branch, not on `main`. A release commit is pushed to
 then fast-forwarded to `main` and tagged; `release.yml` does not test again but finds that CI run and publishes the files
 it built (`docs/releasing.md`). The artifacts `dist` and `release-assets` are kept for 30 days for that.
 
+## The unit-test sandbox
+
+The test image holds packages that never ship (pytest, the `mcp` client of the MCP end-to-end test), so
+`scripts/test.sh` runs it locked down like the browser tests: no network (loopback only; the ICMP tests ping
+127.0.0.1), uid 10001 instead of root, every capability dropped but `NET_RAW` (the raw ICMP socket, so those tests run
+instead of being skipped), no privilege gain, and a read-only image with `/tmp` as the one writable place. A test that
+writes to the working directory fails there: give it `tmp_path` (`monkeypatch.chdir(tmp_path)`).
+
 ## Limits
 
 A test that hangs or leaks must not take the machine with it. A test once looped for hours and grew to 21 GB:
@@ -135,7 +143,7 @@ final 2.5 s wait for late errors, and the waits before screenshots.
   Chromium slices: only `core.mjs` and `settings.mjs` (`FIREFOX_FILES` in `smoke.mjs`), which cover the page, the layout, the
   live data and the dialog with the most forms. Firefox has no CDP, so a step that needs `page.emulateMediaFeatures` (dark and light
   from the OS, reduced motion) is marked `{ chromiumOnly: "<reason>" }` and skipped there, with the reason in the run's
-  `skipped` list; Firefox also does not report cancelled requests (`NS_BINDING_ABORTED`) as problems.
+  `skipped` list; Firefox also does not report canceled requests (`NS_BINDING_ABORTED`) as problems.
   Firefox's own sandbox cannot start in the locked-down container, so the image sets `MOZ_DISABLE_*_SANDBOX` (as
   Chromium gets `--no-sandbox`); the container is the sandbox.
 - `tests/test_ui_steps.py` runs the guards on the step files (below); it needs node only.

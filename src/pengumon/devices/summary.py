@@ -24,6 +24,15 @@ _ROUTER_FIELDS = ("wan_rx_rate_mbps", "wan_tx_rate_mbps", "wan_rx_load_pct", "wa
                   "client_count", "model_name")
 
 
+def device_label(device: Any) -> str:
+    """The device as a person names it: what it is (the driver's `label`, e.g. "ASUS router") and its model from
+    config.yaml, or its id when no model is set ("Xfinity gateway · modem"); never only an address. GET /api/devices
+    and the MCP `devices` tool show it."""
+    kind = getattr(device.driver, "label", None) or device.driver.name
+    model = getattr(device.config, "model", None)
+    return f"{kind} · {str(model).replace('_', ' ') if model else device.id}"
+
+
 def summarize_snapshot(snapshot: Any) -> Dict[str, Any]:
     """The summary of one snapshot: `kind` ("line" or "router"), its status and error, timestamp, grades and
     the headline figures of its kind."""

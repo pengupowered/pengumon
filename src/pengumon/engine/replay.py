@@ -19,6 +19,8 @@ classifier on the characterization scenario):
   of probes);
 * `ClassifierCore.step` once per round per rule set, each with its own tracker and DNS-cooldown state and no repository;
 * the load constants of engine/load.py, applied to the stored WAN rates of the router;
+* the speed tests stored in the window (`speed_tests`): a round inside a test, or in the tail the judged window still
+  holds of it, is judged with `testing=True`, as the live classifier is (`SpeedMask`, pengumon.speedtest.mask);
 * the notifier's `AlertPolicy` (notify/policy.py) to count the alerts each rule set's incidents would have sent.
 
 How the samples become rounds: they are read in ts order, one hour at a time (`samples` is `(ts, target)` WITHOUT
@@ -58,6 +60,7 @@ from pengumon.engine.path_rules import ignoring_ping
 from pengumon.models.probes import TargetConfig
 from pengumon.notify.policy import AlertPolicy
 from pengumon.notify.settings import AlertsConfig
+from pengumon.speedtest.mask import SpeedMask, mask_tail_seconds
 from pengumon.timeofday import zone
 
 GAP_SECONDS = 30.0  # more than this between two rounds: the app was not running
@@ -170,6 +173,7 @@ class _RuleSet:
     busy_runs: int = 0
     in_busy: bool = False
     rounds_without_load: int = 0
+    speed_mask: SpeedMask = field(default_factory=SpeedMask)  # the stored speed tests, masked as the live classifier does
 
     def reset(self) -> None:
         from pengumon.engine.classifier import ClassifierCore
@@ -313,6 +317,16 @@ def _read_rates(conn: sqlite3.Connection, device_id: Optional[str], start: float
         return []
 
 
+def _read_speed_tests(conn: sqlite3.Connection, start: float, end: float) -> List[Tuple[float, float]]:
+    """(start, end) of the speed tests that ran in the window (any that moved data: a skipped one has no duration)."""
+    try:
+        return [(r[0], r[0] + r[1]) for r in conn.execute(
+            "SELECT ts, duration_s FROM speed_tests WHERE duration_s IS NOT NULL AND ts <= ? AND ts + duration_s >= ? "
+            "ORDER BY ts", (end, start - 3600.0))]
+    except sqlite3.Error:
+        return []
+
+
 def _line_load(spec: Dict[str, Any], rules: Dict[str, Any]) -> LineLoad:
     line = rules.get("line") or {}
     learned = spec.get("learned") or {}
@@ -350,6 +364,10 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
                  AlertsConfig.model_validate(spec["rules"][name].get("alerts") or {}))
         for name in RULE_SETS
     ]
+    speed_tests = _read_speed_tests(conn, start, end)
+    for rule_set in rule_sets:
+        rule_set.speed_mask = SpeedMask(speed_tests, mask_tail_seconds(rule_set.config.window_probes,
+                                                                       float(spec.get("round_seconds", 1.0))))
     capacity_known = any(r.load._line.down_mbps and r.load._line.up_mbps for r in rule_sets)
 
     down_fraction = hop_status.down_loss_fraction
@@ -424,7 +442,7 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
                 for tid, target in stats.items():
                     target.ignores_ping = tid in quiet[window]
                 metrics[window] = round_metrics(stats, samples, window)
-            result = await rule_set.core.step(metrics[window], ts, reading)
+            result = await rule_set.core.step(metrics[window], ts, reading, testing=rule_set.speed_mask.covers(ts))
             if result.verdict.status == "busy":
                 if not rule_set.in_busy:
                     rule_set.busy_runs += 1
@@ -473,7 +491,7 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
     elif rounds and max(r.rounds_without_load for r in rule_sets) > rounds * MISSING_LOAD_NOTE_FRACTION:
         share = round(100 * max(r.rounds_without_load for r in rule_sets) / rounds)
         notes.append(f"No router load reading was stored for {share}% of the window, so a busy line could not be "
-                     f"recognised there.")
+                     f"recognized there.")
     if not rounds:
         notes.append("No probe samples are stored for this window.")
     return {

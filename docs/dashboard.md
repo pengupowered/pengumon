@@ -2,7 +2,7 @@
 
 The dashboard is a single page served by the FastAPI app: plain ES modules (no build step), a strict CSP
 (`script-src 'self'`, no inline script or handlers) and one live WebSocket. This page describes what a person sees and
-how the code is organised. Tests that guard it: `scripts/test.sh` (`tests/test_frontend.py`) and `scripts/test-ui.sh`
+how the code is organized. Tests that guard it: `scripts/test.sh` (`tests/test_frontend.py`) and `scripts/test-ui.sh`
 (a headless-browser smoke test and ESLint).
 
 ## The header
@@ -11,11 +11,11 @@ Left to right:
 
 - **Status pill**: the classifier's verdict in a word ("Healthy", "Degraded", "Down", "Busy"), a status dot and, when
   there is something to say, the worst loss on the path and the latency to the internet. The page tint and the tab
-  title follow it. Until the first message it is grey and says "Connecting"; the page never shows green before data.
+  title follow it. Until the first message it is gray and says "Connecting"; the page never shows green before data.
 - **Live indicator**: "Live · 1 s" while the socket is open, "Reconnecting" when it is not.
 - **LAN address chip** (when the server knows its LAN URL) with a copy button.
 - **Tools**: Trace (route trace), Dossier (ISP outage dossier), **Ask AI** (an icon: the troubleshooting pack, below), Alerts (browser notifications on or off), Target (add a
-  probe target), **Settings** (every setting of Pengumon), **Layout** (panel arrangement and card colours), the **theme menu** (theme, light or dark, animated effects; docs/themes.md), and a **Grafana** menu with links to the dashboards
+  probe target), **Settings** (every setting of Pengumon), **Layout** (panel arrangement and card colors), the **theme menu** (theme, light or dark, animated effects; docs/themes.md), and a **Grafana** menu with links to the dashboards
   when `PENGUMON_GRAFANA_URL` is set (partial `templates/features/grafana.html`; without it the button is not rendered).
   On a phone the tools collapse into a "more" menu that copies them.
 
@@ -43,6 +43,10 @@ One card group per panel, each in its own folder. What a panel needs, and what i
   - Tab: Line
   - Needs: a device offering `access_line`
   - Without it: no card, no Line tab, listed in the Layout dialog with the reason; the path chain goes router to ISP hops
+- Speed (`speed`)
+  - Tab: Network
+  - Needs: nothing (the speed test itself is off until it is turned on in Settings > Speed test)
+  - Without it: always shown; while the test is off it says so, with a link to the setting
 - Router (`router`)
   - Tab: Network
   - Needs: a device offering `wan_counters` or `router_system` (one card per such device); the client and mesh blocks need the `clients` / `mesh` features
@@ -68,13 +72,27 @@ Availability is decided by each panel's `available(ctx)` (or `instances(ctx)`), 
 A panel that is not available is never mounted. The page with no devices at all still works (the smoke test's `bare`
 variant).
 
+**Speed** is the scheduled speed test ([speedtest.md](speedtest.md)): the last result as two large figures (download and
+upload, each with its share of your plan under it when Settings > Your line is set; the line's rate your router measured
+during the test, with the test's own figure small under it, or the test's own when no router gave one, as the line under
+the figures says: "Line, measured by your router" or "Test only"), when it ran (the full time on hover) and
+against which server, the delay under load with its grade (A+ to F), a 7 or 30 day history chart with the plan as dashed
+lines, and the tests that failed or were skipped as marks on the axis (a cross and a hollow circle). A result that is not
+whole says why: *Partial* with the reason, or *Failed* / *Skipped* above the last good figures. Under the chart: when the next
+test is due, or "Speed test is off" with a link that opens Settings at the section, and this month's data use against the
+monthly limit. **Run now** asks first ("Uses up to 25 MB down and 10 MB up of data.") and is off, with the reason as its
+tooltip, while the test is off, one is running, or the monthly limit is reached; a viewer without the password sees it
+marked view only. The card polls once a minute, and every 3 seconds while a test runs. Run now's progress is "Testing
+download, then upload...": the server does not report which direction it is in. The card's status is good while the newest
+test worked and unknown otherwise: a test that failed raises no warning dot on the Network tab.
+
 **Path health** is the hero. It shows the verdict, then the chain this host, router, line, every ISP hop, internet,
 built from the configured targets' categories (DNS probes stand in when there is no public target). Each node has a
 short label (Router, Gateway, ISP hop 1, Internet) with the configured target name as a second line (whole in the tooltip),
 the median of the last probes, loss, jitter and a sparkline; each link shows the latency the segment adds. A node opens
 that target's history. The Internet node (several public servers) and a folded run of ISP hops open the history of all
 their targets together, titled as the node is ("Internet · median of 3 public servers", "ISP · 9 hops"): **All** draws a
-line per member in its own colour and the node's figure as a bold line (the median, or the last hop that answers), loss
+line per member in its own color and the node's figure as a bold line (the median, or the last hop that answers), loss
 per member, a strip per member, and figures by the node's rules; a switcher shows one member as its own history. A
 node opens its history on the Live range (its own figure is of the last minute), shows that figure as it is now ("On
 the path now: 10.9 ms, the median of the servers' last 60 probes", from the same `path.js` `pathNodes` that paints the
@@ -91,7 +109,7 @@ targets) the card starts discovery by itself and shows a banner, "Pengumon found
 opens the editor with discovery's draft. After Apply the page reloads, so every panel draws the new path.
 
 A hop that never answers ping while a later hop does is up (the probes pass through it; many provider routers ignore
-ping): it reads "Ignores ping" in grey, its loss counts nowhere, and the next link measures from the last hop that
+ping): it reads "Ignores ping" in gray, its loss counts nowhere, and the next link measures from the last hop that
 answered. The server decides it, once (`engine/path_rules.py`, from every target's status after each probe round), and
 flags the target with `ignores_ping` in the live message and `/api/targets`; the page only reads the flag
 (`static/js/path.js` `ignoringPing`, `quietTargets`). Every view follows it: Hop details says "no ping", Uptime and the target history give
@@ -114,8 +132,8 @@ configured name is the secondary text.
 **Latency** draws three path series by default: Router (worst local target), Gateway (worst gateway target) and Internet
 (median of the public servers of the IPv4 group; DNS lookups stand in when there is none). When discovery or the path editor put IPv6 servers in their own group (`internet_v6`), they are a fourth line, "Internet (IPv6)", as Path health shows them as their own node. The legend names each series' targets, the
 tooltip gives every member's own value, and a note says what the view leaves out. **Each target** draws one thin line
-per pinged target (ISP hops included, DNS lookups not: they time a lookup, not a round trip) in the colours Hop details
-uses (a target's configured `color`, else the next of eight validated series colours in path order, then the first one no other target of its category has, so the members of one group always differ; grey past eight in one category); the choice is kept per browser. Under the chart a thin loss lane shows the worst target's loss and names it in
+per pinged target (ISP hops included, DNS lookups not: they time a lookup, not a round trip) in the colors Hop details
+uses (a target's configured `color`, else the next of eight validated series colors in path order, then the first one no other target of its category has, so the members of one group always differ; gray past eight in one category); the choice is kept per browser. Under the chart a thin loss lane shows the worst target's loss and names it in
 the tooltip. The chart takes the height its row gives the card.
 
 **Hop details**: every figure covers the last 60 probes except "Lost since start". Jitter is the median change from one
@@ -158,7 +176,7 @@ Cards fill a 12-column grid (`data-size` 4, 8 or 12); the last card of a row tha
 ## Settings
 
 The **Settings** button (or `#settings` at the end of the address) opens one full-height dialog (`dialogs/settings/`)
-with the sections in this order: Outage rules, Alerts, Your line, Devices and services, Probing, Retention, Sign-in,
+with the sections in this order: Outage rules, Alerts, Your line, Speed test, Devices and services, Probing, Retention, Sign-in,
 Privacy, Discovery, Display, a collapsed Advanced area ("Change these only if you know why") and "About this install". A rail
 on the left jumps between them; at 720 px and below it is a "Jump to section" list and the dialog is full screen.
 
@@ -167,7 +185,7 @@ on the left jumps between them; at 720 px and below it is a "Jump to section" li
   input, the standard value in one form ("Standard: 15 %", "Standard: none", or what an empty box means), the badges
   and **Reset to standard**. Badges: *Changed* (stored, not the standard value), *Unsaved* (in the draft), *From
   environment · NAME* (the input is read-only and there is no Reset), *Applies after a restart*. Every control sits in
-  one column of the same width. A hop-colour row names the incident level it relates to and its value, with "Go to that
+  one column of the same width. A hop-color row names the incident level it relates to and its value, with "Go to that
   setting".
 - **Nothing applies until Save.** The Save button counts the changes ("Save 3 changes"); Cancel, the close button and
   Escape ask before throwing a draft away. Every number is checked against its range in the browser (the message
@@ -203,7 +221,7 @@ on the left jumps between them; at 720 px and below it is a "Jump to section" li
 - **The first-run question.** On a fresh install (no password from anywhere), the first visit opens "Who can open this
   dashboard?" over the page (`dialogs/access-setup`), once.
 
-The help texts of the panels (hop colours, the busy level, router and DOCSIS levels) are functions of the settings values
+The help texts of the panels (hop colors, the busy level, router and DOCSIS levels) are functions of the settings values
 (`js/settings-values.js`, GET `/api/settings/values`), so they quote what the page uses now. The latency panel opens on
 `display.default_latency_range`.
 
@@ -242,8 +260,8 @@ topic meanwhile passes `{ every: true }` to `bus.subscribe` (the alerts, the dev
 
 ## States
 
-- **Connecting**: grey pill, "Connecting" indicator, skeleton nodes in the chain.
-- **Disconnected**: when the socket closes, `body` and the header get `data-conn="lost"`: the pill goes grey, cards dim
+- **Connecting**: gray pill, "Connecting" indicator, skeleton nodes in the chain.
+- **Disconnected**: when the socket closes, `body` and the header get `data-conn="lost"`: the pill goes gray, cards dim
   and a banner under the header says whether data was ever received ("Connection lost. Showing the last data" or
   "Cannot reach pengumon"). The socket retries every 2 s.
 - **Stale**: device cards (`static/js/device-panel.js`) show a "reading N min old" chip and dim when the last reading is
@@ -254,17 +272,17 @@ topic meanwhile passes `{ every: true }` to `bus.subscribe` (the alerts, the dev
   browser never grades a number itself).
 - **Busy**: a line load that explains the latency is "Busy" (purple, expected), not a fault.
 
-Status always has an icon and a word as well as a colour.
+Status always has an icon and a word as well as a color.
 
 ## Theming
 
-Dark first. `static/tokens.css` holds every colour and size as a CSS variable; light values apply under
+Dark first. `static/tokens.css` holds every color and size as a CSS variable; light values apply under
 `prefers-color-scheme: light` and again under `[data-theme="light"]`, so the choice in the header's theme menu wins both
 ways. Themes (docs/themes.md) are folders under `static/themes/`; the page shows one as `<html data-look>`, and a theme
 overrides the tokens. This browser's choices are kept in `localStorage` (`pengumon.look`, `pengumon.theme`,
 `pengumon.effects`); with none, Settings > Display and the operating system's setting apply. `static/js/theme-boot.js`
 sets them before the first paint and links the one stylesheet of the theme in use (its tokens, skin and card views' styles),
-and `static/js/themes.js` runs the rest (the menu, a switch, the effect, the cards' own colours).
+and `static/js/themes.js` runs the rest (the menu, a switch, the effect, the cards' own colors).
 Charts are drawn on canvas, so `static/js/chart-theme.js` reads the tokens and every chart is redrawn on a `themechange`.
 Rule: no hex literal outside `tokens.css` and the themes' `theme.json`.
 
@@ -272,9 +290,9 @@ Rule: no hex literal outside `tokens.css` and the themes' `theme.json`.
 
 All under `src/pengumon/web/static/`:
 
-- `tokens.css`: design tokens (colours, type scale `--fs-*`, spacing `--sp-*`, radii, motion).
+- `tokens.css`: design tokens (colors, type scale `--fs-*`, spacing `--sp-*`, radii, motion).
 - `components.css`: shared components (panel, badge, button, modal, menu, table), tokens only.
-- `page.css`, `style.css`: page layout (header, grid, banners), and the app layer (panel groups, modal behaviour).
+- `page.css`, `style.css`: page layout (header, grid, banners), and the app layer (panel groups, modal behavior).
 - `js/`: the core and shared library: `main.js` (entry), `live.js` (the socket; one bus topic per key of each
   message), `bus.js`, `layout.js`, `tabs.js`, `chrome.js` (menus), `themes.js` and `theme-boot.js` (themes), `dispatch.js` (delegated actions),
   `devices.js` and `device-feed.js` (devices and features), `device-panel.js`, `help.js`, `settings-values.js` (the live

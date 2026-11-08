@@ -1,6 +1,6 @@
 // Digital rain's view of the Latency card (docs/themes.md, "Drawing a card"): a terminal pane. The legend is a process
 // list down the left (one line per series with its newest reading and, under it, what it is made of), the Path / Each
-// target switch is a pair of command-line options, and the standard charts (Chart.js, in the theme's colours and chart
+// target switch is a pair of command-line options, and the standard charts (Chart.js, in the theme's colors and chart
 // style) fill the pane beside it. It draws from the card's view model (panels/latency/charts.js) with the standard parts
 // (the switch, the charts, the legend's entries): only the layout is this file's. The look is latency.css.
 

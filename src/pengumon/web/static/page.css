@@ -83,7 +83,7 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 @media (max-width: 1000px) { .status-pill .sp-metrics > :nth-child(n+3) { display: none; } }
 
 
-/* Status fills (bars, timeline): the warning colour of a fill is a step lighter */
+/* Status fills (bars, timeline): the warning color of a fill is a step lighter */
 .st-warn { --st-fill: var(--warn-fill); }
 
 /* ---------- Dialog views ---------- */
@@ -139,7 +139,7 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .setup-hint svg.i { color: var(--ink-3); flex: none; }
 .setup-hint > span { flex: 1 1 240px; }
 @media (max-width: 720px) { .setup-hint { margin-inline: 12px; width: auto; } }
-/* the verdict is not known while the data is not arriving: the pill turns grey and the cards dim */
+/* the verdict is not known while the data is not arriving: the pill turns gray and the cards dim */
 .topbar[data-conn="lost"] .status-pill.status-pill { --st: var(--unknown); --st-bg: var(--unknown-bg); }
 .topbar[data-conn="lost"] .status-pill .dot::after { animation: none; }
 body[data-conn="lost"] .page .panel-b { opacity: .55; filter: saturate(.5); transition: opacity var(--t-med); }

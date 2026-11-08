@@ -66,7 +66,7 @@
   "",
   "## 5. Summary for a support ticket",
   "```text",
-  "Over the past 24 hours Pengumon recorded 0 incidents totalling none.",
+  "Over the past 24 hours Pengumon recorded 0 incidents totaling none.",
   "Loss to Local Router and Modem Gateway: at most 0.2%.",
   "Loss is first elevated at ISP Hub (198.51.100.5): 3.0%. That is the provider's first router; the gateway answered, so the loss starts on the line or at that router.",
   "```"

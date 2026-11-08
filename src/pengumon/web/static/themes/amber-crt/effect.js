@@ -1,5 +1,5 @@
 // Amber CRT: a faint refresh band rolls slowly down the screen, now and then, as on an old tube (docs/themes.md,
-// "Effects"). The band is one element styled by skin.css (its colours are the tokens), on a layer of its own; a frame
+// "Effects"). The band is one element styled by skin.css (its colors are the tokens), on a layer of its own; a frame
 // only moves it (a transform) and nudges its opacity, so nothing is repainted. 3 frames a second, in the theme
 // engine's frame loop (paused while the tab is hidden): each frame costs the page a style and compositing pass
 // (about 6 ms of main thread in the test browser), and the soft band hides the steps.

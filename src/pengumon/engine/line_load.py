@@ -12,7 +12,7 @@ from typing import Optional
 
 from pengumon.capabilities import Capability
 from pengumon.components import Component, Context, LivePart
-from pengumon.engine.load import LineLoad, backfill_incident_load, backfill_ping_deprioritisation
+from pengumon.engine.load import LineLoad, backfill_incident_load, backfill_ping_deprioritization
 from pengumon.observability import get_logger
 
 _log = get_logger("pengumon")  # the app's lifecycle lines keep the logger name they have always had
@@ -66,9 +66,9 @@ async def register(ctx: Context) -> Component:
     except Exception as e:
         _log.error(f"Line load setup failed: {e}", exc_info=True)
     try:
-        await backfill_ping_deprioritisation(repository, config.targets, config.classifier.degraded_loss_pct)
+        await backfill_ping_deprioritization(repository, config.targets, config.classifier.degraded_loss_pct)
     except Exception as e:
-        _log.error(f"Ping deprioritisation backfill failed: {e}", exc_info=True)
+        _log.error(f"Ping deprioritization backfill failed: {e}", exc_info=True)
     ctx.line_load = line_load
 
     async def start() -> None:

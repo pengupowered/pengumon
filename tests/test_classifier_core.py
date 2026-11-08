@@ -29,9 +29,9 @@ async def test_a_separate_core_fed_only_metrics_time_and_load_matches_the_live_c
         twin = ClassifierCore(classifier.config, None, classifier.line)
         live_step = classifier.core.step
 
-        async def step(m, ts, reading):
-            live = await live_step(m, ts, reading)
-            other = await twin.step(m, ts, reading)
+        async def step(m, ts, reading, testing=False):
+            live = await live_step(m, ts, reading, testing)
+            other = await twin.step(m, ts, reading, testing)
             assert isinstance(live, StepResult) and live.reading is reading
             assert other.verdict == live.verdict
             assert other.is_loss_or_outage == live.is_loss_or_outage

@@ -44,9 +44,10 @@ its own rows. The services gauges stay in the table so that the order of `/metri
   settings; a route of an unconfigured feature answers as it always has (`[]`, 400 or 503). `/metrics` and the page
   are mounted by `main.py` itself.
 - **The `api` package is the top layer.** Route modules import the feature packages; nothing outside `api/` but
-  `main.py` imports `api`. What the routes and the lower layers share lives below it: the app state in `state.py`
-  (`AppState`, `get_state`), the live stream's broadcaster in `live/ws.py`, the preview job's answer in
-  `settings/preview.py`. `api/__init__.py` holds only its docstring, so importing one route module loads only what that
+  `main.py` imports `api` (tests/test_module_layout.py). What the routes and the lower layers share lives below it: the
+  app state in `state.py` (`AppState`, `get_state`), the live stream's broadcaster in `live/ws.py`, the preview job's
+  answer in `settings/preview.py`, and what the MCP tools share with the routes in the feature packages
+  (`devices/summary.py`, `services/summary.py`, the AI pack lock in `reports/common.py`). `api/__init__.py` holds only its docstring, so importing one route module loads only what that
   module needs.
 - **Cards (the page).** A card is a folder, `web/static/panels/<id>/` (`web/ui.py` finds it). A card drawn by views
   splits into its model (`model.js`, or `charts.js` for latency: fetching, state, actions, the view model with every
@@ -67,12 +68,13 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 - **6. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
 - **7. notify** (`notify/component.py`). The notifier: ntfy and webhooks (`notify/notifier.py`, `notify/webhook.py`), for the classifier and the service checks.
 - **8. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
-- **9. settings_preview** (`settings/preview_component.py`). The job store for the outage-rules preview; its `stop` kills a replay still running.
-- **10. services** (`services/component.py`). Optional: host service checks.
-- **11. clients** (`clients/component.py`). Optional: the client list.
-- **12. live** (`live/component.py`). The broadcaster task that feeds the `/ws` route (`api/live.py`).
-- **13. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Its `stop` (a run still going is cancelled) runs early, because it comes late in the list.
-- **14. runtime** (`observability/component.py`). The event-loop monitor (lag and task count for the telemetry). Last in the list; it has nothing to stop.
+- **9. speedtest** (`speedtest/component.py`). Optional: the scheduled speed test. Needs the line load, the notifier and the classifier (it masks the classifier's verdicts while a test runs). It always registers; the scheduler reads `speedtest:` at every tick, so the setting needs no restart. Its `stop` ends a test still running, which records itself as interrupted.
+- **10. settings_preview** (`settings/preview_component.py`). The job store for the outage-rules preview; its `stop` kills a replay still running.
+- **11. services** (`services/component.py`). Optional: host service checks.
+- **12. clients** (`clients/component.py`). Optional: the client list.
+- **13. live** (`live/component.py`). The broadcaster task that feeds the `/ws` route (`api/live.py`).
+- **14. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Its `stop` (a run still going is canceled) runs early, because it comes late in the list.
+- **15. runtime** (`observability/component.py`). The event-loop monitor (lag and task count for the telemetry). Last in the list; it has nothing to stop.
 
 The repository object exists before any component. The lifespan builds it from `config.database`
 (`storage.repository_for`, the bootstrap `db_path`); building it opens nothing.
@@ -94,7 +96,7 @@ everything that runs, in the order it runs.
 
 `podman stop` sends SIGTERM and kills the container 10 s later. Uvicorn then runs the lifespan's shutdown:
 
-1. Every task the components spawned is cancelled, and the frame waits for all of them. No component's stop runs
+1. Every task the components spawned is canceled, and the frame waits for all of them. No component's stop runs
    while a probe round, a device poll or a service check is still running.
 2. Each component's `stop` runs in reverse list order. A stop that fails is logged and the others still run.
    - discovery cancels a run still going (it writes nothing).

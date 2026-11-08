@@ -69,7 +69,7 @@ function mark(node, key, level) {
   return node;
 }
 
-// A status as icon + word in `node` (a status is never colour alone): data-st="<level>", then the level's icon (or
+// A status as icon + word in `node` (a status is never color alone): data-st="<level>", then the level's icon (or
 // `icon`, with the icon class `iconClass`) and `word` (the level's word when none; in a span of class `wordClass` when
 // given). Written only when it changed (it is patched on every message); returns `node`.
 function status(node, level, word, { icon: name, iconClass = '', wordClass = '' } = {}) {

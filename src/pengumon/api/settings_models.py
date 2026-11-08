@@ -50,7 +50,7 @@ class SectionSpec(_Model):
     order: int
 
 
-FieldType = Literal["number", "integer", "boolean", "text", "choice", "time", "timezone", "layout", "theme", "list",
+FieldType = Literal["number", "integer", "boolean", "text", "choice", "time", "timezone", "layout", "theme", "hours", "list",
                     "object", "map"]
 
 

@@ -9,7 +9,7 @@ import { errorPart } from '../../js/device-view.js';
 const { el, escapeHtml, html, icon, list, mark, text } = kit;
 const has = (v) => v !== null && v !== undefined;
 
-const COLOURS = { warn: 'var(--warn)', crit: 'var(--crit)' };
+const COLORS = { warn: 'var(--warn)', crit: 'var(--crit)' };
 const info = (key, label) => `<button type="button" class="info" data-action="toggleHelp" data-help="${key}" aria-label="${label}">${icon('info')}</button>`;
 
 // A block's title is h3.rb-t, its name in span.rb-n (a theme can style the name alone).
@@ -30,7 +30,7 @@ function meter(box) {
       mark(track, `${m.key}Load`);
       text(v, m.value);
       text(unit, ` ${m.unit}`);
-      box.style.setProperty('--mc', COLOURS[m.level] || 'var(--accent)');
+      box.style.setProperty('--mc', COLORS[m.level] || 'var(--accent)');
       box.style.setProperty('--v', `${m.pct ?? 0}%`); // the fill's share (components.css), for a theme to draw it its way
       track.setAttribute('aria-label', m.aria);
     },
@@ -38,7 +38,7 @@ function meter(box) {
   };
 }
 
-// The last hour's download as an area chart (SVG, token colours), from the chart data of the view model.
+// The last hour's download as an area chart (SVG, token colors), from the chart data of the view model.
 function chartSvg(c) {
   const W = 320;
   const H = 70;
@@ -120,9 +120,9 @@ function clients(box) {
   return {
     update(c) {
       text(count, c.count);
-      html(bands, c.bands.map((b) => `<i style="flex:${b.n};--c:var(${b.colour})" title="${escapeHtml(b.title)}"></i>`).join(''));
+      html(bands, c.bands.map((b) => `<i style="flex:${b.n};--c:var(${b.color})" title="${escapeHtml(b.title)}"></i>`).join(''));
       bands.setAttribute('aria-label', c.aria);
-      html(legend, c.bands.map((b) => `<span><i class="key" style="--c:var(${b.colour})"></i>${escapeHtml(b.name)} <b class="num">${b.n}</b></span>`).join(''));
+      html(legend, c.bands.map((b) => `<span><i class="key" style="--c:var(${b.color})"></i>${escapeHtml(b.name)} <b class="num">${b.n}</b></span>`).join(''));
     },
     unmount() {}
   };

@@ -4,7 +4,7 @@
 // page template stays small); fetched on open and on a range change, and every few seconds in the Live range.
 //
 // A path node of several targets (the Internet node, the median of the public servers; a folded run of ISP hops) opens
-// the dialog on the group: a switcher shows All or one member. All draws a line per member in its own colour and the
+// the dialog on the group: a switcher shows All or one member. All draws a line per member in its own color and the
 // node's figure as a bold neutral line, and the figures follow the node's rules (path.js, panels/diagnosis): the median
 // of the members, or the last hop that answers; down only when every member is down, or as soon as any hop is.
 //
@@ -128,7 +128,7 @@ function ensureModal() {
 
 const clock = (ms) => (rangeSeconds === LIVE ? formatClock(ms, false, true) : formatClock(ms, rangeSeconds > 86400));
 
-// The address changes of the target shown (chart.pgMarks: [{x: ms, text}]): a dashed line each, labelled on the latency
+// The address changes of the target shown (chart.pgMarks: [{x: ms, text}]): a dashed line each, labeled on the latency
 // chart (chart.pgMarkLabels).
 const MARKS = {
   id: 'tgtMarks',
@@ -390,7 +390,7 @@ function groupState(rule, cells) {
   return worst;
 }
 
-// All members of a group: a line per member in its own colour, the node's figure as a bold neutral line on top (the
+// All members of a group: a line per member in its own color, the node's figure as a bold neutral line on top (the
 // median per bucket, or the latency of the last hop that answers), loss per member, a strip per member, and the
 // figures by the node's rules. Hops that ignore ping (path.js) stay out of the figures, as on the node.
 async function showGroup(mine, rows, c, { end, bucket, uptime }) {

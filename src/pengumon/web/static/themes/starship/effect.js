@@ -1,5 +1,5 @@
 // Starship console: now and then a faint light sweeps across the header, left to right (docs/themes.md, "Effects").
-// The light is one element styled by skin.css (the accent's colour), on a layer of its own; a frame only moves it (a
+// The light is one element styled by skin.css (the accent's color), on a layer of its own; a frame only moves it (a
 // transform), so nothing is repainted, and between two sweeps no frame changes anything. 2 frames a second, in the
 // theme engine's frame loop (paused while the tab is hidden): a console's readout steps, it does not glide.
 

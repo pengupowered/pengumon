@@ -39,11 +39,17 @@ provider a report instead of a hunch.
 - **Ask an AI.** One Markdown document of Pengumon's own findings (where problems start, what is normal, what coincided,
   what it cannot see) with instructions, to paste into any chat model; nothing is sent anywhere by Pengumon. Full,
   Vague or Anonymized, from the dashboard (or `GET /api/ai-pack`): [the guide](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md).
+- **Let an AI assistant ask.** An optional, read-only [MCP](https://github.com/pengupowered/pengumon/blob/main/docs/mcp.md) endpoint
+  (`/mcp`, off by default, the same sign-in as the API) answers "is the internet OK?" for Claude Code and other MCP clients.
+- **Is the line as fast as you pay for?** An optional scheduled speed test (off by default, with hard limits on the data it
+  uses) against Cloudflare, M-Lab or your own LibreSpeed server; with a router that reports WAN counters, the line's own
+  rate during the test, read from the router. Latency under load (bufferbloat), a card, the reports and an alert when a
+  test comes in slow: [the guide](https://github.com/pengupowered/pengumon/blob/main/docs/speedtest.md).
 - **Your modem and router.** DOCSIS channel levels and codeword errors; router CPU, memory, WAN traffic, connected
   clients and mesh nodes. Drivers are pluggable: [add your own device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md).
 - **Your own apps too.** HTTP health checks for self-hosted services, with incidents and alerts by [ntfy](https://ntfy.sh) or webhook.
 - **Small and private.** One process (installed natively or in a container) and one SQLite file. Nothing leaves your network unless you turn on
-  notifications or the optional OpenTelemetry export. Works on a phone.
+  notifications, the optional OpenTelemetry export or the optional speed test. Works on a phone.
 
 ## Install
 
@@ -206,13 +212,13 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
 ## Themes
 
 Twelve built in, picked per browser from the header's palette button (Settings > Display sets the one every browser starts
-with). Some only change the colours; some restyle or redraw the cards, and four have a slow animated effect that stops in
+with). Some only change the colors; some restyle or redraw the cards, and four have a slow animated effect that stops in
 a hidden tab and when the system asks for reduced motion. Every theme keeps every value, button and help link, and is
-tested for readable contrast and chart colours that stay apart, also for colour-blind eyes. Make your own by duplicating
-one and changing its colours, or add one as a folder: [docs/themes.md](https://github.com/pengupowered/pengumon/blob/main/docs/themes.md).
+tested for readable contrast and chart colors that stay apart, also for color-blind eyes. Make your own by duplicating
+one and changing its colors, or add one as a folder: [docs/themes.md](https://github.com/pengupowered/pengumon/blob/main/docs/themes.md).
 
 <table>
-<tr><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-starship.png" width="260" alt="Starship console: the cards in one flowing console frame, a coloured rail sweeping into each card's header bar"><br><sub>Starship console</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-mission-control.png" width="260" alt="Mission control: a wall display with a verdict banner in the status colour and large figures"><br><sub>Mission control</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-amber-crt.png" width="260" alt="Amber CRT: path health as terminal lines with text bars, amber on near-black"><br><sub>Amber CRT</sub></td></tr>
+<tr><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-starship.png" width="260" alt="Starship console: the cards in one flowing console frame, a colored rail sweeping into each card's header bar"><br><sub>Starship console</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-mission-control.png" width="260" alt="Mission control: a wall display with a verdict banner in the status color and large figures"><br><sub>Mission control</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-amber-crt.png" width="260" alt="Amber CRT: path health as terminal lines with text bars, amber on near-black"><br><sub>Amber CRT</sub></td></tr>
 <tr><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-digital-rain.png" width="260" alt="Digital rain: path health as a route trace, green on black, with characters falling behind the cards"><br><sub>Digital rain</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-synthwave.png" width="260" alt="Synthwave: neon hop tiles on a grid floor, pink and cyan on deep purple"><br><sub>Synthwave</sub></td><td align="center"><img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/theme-e-ink.png" width="260" alt="E-ink: near-monochrome paper white and ink black"><br><sub>E-ink</sub></td></tr>
 </table>
 
@@ -227,7 +233,10 @@ one and changing its colours, or add one as a folder: [docs/themes.md](https://g
 - [Adding a device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md): Teach Pengumon to read your own modem or router: the driver, tests from redacted recordings, the pack, the pull request checklist
 - [Diagnosis](https://github.com/pengupowered/pengumon/blob/main/docs/diagnosis.md): How outages are classified: load-aware rules, incident kinds and causes
 - [Dashboard](https://github.com/pengupowered/pengumon/blob/main/docs/dashboard.md): The panels, the path chain, layout, themes, the phone view
+- [Speed test](https://github.com/pengupowered/pengumon/blob/main/docs/speedtest.md): The scheduled download and upload test: what it measures and how, what is sent where, data use, the schedule, the slow-line alert
+- [Themes](https://github.com/pengupowered/pengumon/blob/main/docs/themes.md): Adding a theme: the folder, tokens, skins, effects, restyling or drawing a card, the checks every theme passes
 - [Ask AI](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md): The troubleshooting pack for a chat assistant: what it holds, the three detail levels, device modules
+- [MCP](https://github.com/pengupowered/pengumon/blob/main/docs/mcp.md): The read-only endpoint for AI assistants: how to turn it on, the tools, sign-in, security notes
 - [Clients](https://github.com/pengupowered/pengumon/blob/main/docs/clients.md): Connected clients and mesh nodes, privacy settings, what is stored
 - [Services](https://github.com/pengupowered/pengumon/blob/main/docs/services.md): Health checks for your own apps and their notifications
 - [Webhooks](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md): Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets

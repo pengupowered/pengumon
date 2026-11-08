@@ -17,7 +17,7 @@ _SUBJECT = (  # a message that starts with a field name of a list item
     (re.compile(r"^grafana_url\b"), "The Grafana address"),
     (re.compile(r"^url\b"), "The address"),
     (re.compile(r"^nameserver\b"), "The name server"),
-    (re.compile(r"^color\b"), "The colour"),
+    (re.compile(r"^color\b"), "The color"),
 )
 _NAME = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
 _labels: Optional[Dict[str, str]] = None

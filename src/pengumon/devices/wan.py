@@ -2,11 +2,19 @@
 
 import time
 from collections import deque
-from typing import Callable, Deque, List, Optional, Tuple
+from typing import Callable, Deque, List, NamedTuple, Optional, Tuple
 
 from pengumon.capabilities import WanCounters
 
 Rate = Tuple[float, float, float]  # (ts, rx_mbps, tx_mbps)
+
+
+class WanReading(NamedTuple):
+    """One light read of the WAN counters (Device.read_wan_counters): when it was taken (monotonic seconds, the middle
+    of the request) and the counters."""
+
+    at: float
+    counters: WanCounters
 
 # How much rate history recent_rates() keeps; the load-aware classifier looks a few seconds around an incident.
 RATE_HISTORY_SECONDS = 600.0

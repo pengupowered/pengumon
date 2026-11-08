@@ -85,7 +85,7 @@ async def test_the_counters_are_recorded_and_the_gauges_read_the_monitors():
     assert got["pengumon.mesh.nodes"][(("device", "trtr"), ("state", "offline"))] == 1
     assert got["pengumon.mesh.node.clients"][(("device", "trtr"), ("stat", "max"))] == 3
     assert got["pengumon.mesh.backhaul.signal"] == {(("device", "trtr"), ("stat", "min")): -54}
-    for gauge in MODULE_GAUGES:  # every module gauge has samples here, labelled by ids and small enums only
+    for gauge in MODULE_GAUGES:  # every module gauge has samples here, labeled by ids and small enums only
         assert gauge.collect(state), gauge.otel
         for labels, value in gauge.collect(state):
             assert set(labels) <= ALLOWED_LABELS

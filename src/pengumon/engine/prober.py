@@ -69,7 +69,7 @@ class NetworkProber:
         self.dns_timeout = dns_timeout  # a lookup is lost after this; None: ping_timeout (prober.dns_timeout_seconds)
         self.status_thresholds = status_thresholds or HopStatusConfig()
         self.history_window = history_window
-        self.window = window  # the probes a hop's loss colour is judged over (classifier.window_probes)
+        self.window = window  # the probes a hop's loss color is judged over (classifier.window_probes)
         self.stagger_seconds = stagger_seconds
         self.stats: Dict[str, TargetStats] = {}
         self.last_samples: Dict[str, ProbeSample] = {}
@@ -79,7 +79,7 @@ class NetworkProber:
         self._families: Dict[str, int] = {}  # each ICMP target's family, to tell an edited hop from the same one
         self._warn_latency: Dict[str, float] = {}  # a hop's own "warn above" level (TargetConfig.warn_latency_ms)
         self._dns_lookups: Dict[str, tuple] = {}  # what each DNS probe's stats measure (domain, nameserver, type)
-        # Lookups through the system resolver run in a thread that cannot be cancelled: one that outlives its timeout
+        # Lookups through the system resolver run in a thread that cannot be canceled: one that outlives its timeout
         # keeps running (and holds one of the default executor's threads) until the resolver gives up.
         self._stuck_lock = threading.Lock()
         self.lookups_stuck = 0  # such lookups running now
@@ -134,7 +134,7 @@ class NetworkProber:
     def set_targets(self, targets: List[TargetConfig], dns_ids: Iterable[str] = ()):
         """Makes `targets` (in path order) the ICMP targets, without a restart (an applied path edit): a new one
         starts with empty statistics, a removed one is forgotten, one whose address or family changed starts over, the others
-        keep their statistics and take the new name, role, colour and group. The DNS probes (`dns_ids`) stay, after
+        keep their statistics and take the new name, role, color and group. The DNS probes (`dns_ids`) stay, after
         the ICMP targets. The probe loop sends to the new list from its next round."""
         old = self.stats
         keep_dns = {i: old[i] for i in dns_ids if i in old}
@@ -162,7 +162,7 @@ class NetworkProber:
     def set_dns_targets(self, dns_probes: List[DnsProbeConfig]) -> None:
         """Makes `dns_probes` the DNS probes, without a restart (a saved DNS lookups list): a new one starts with
         empty statistics, a removed one is forgotten, one whose domain, nameserver or record type changed starts
-        over, the others keep their statistics and take the new name, enabled flag and colour. The ICMP targets keep
+        over, the others keep their statistics and take the new name, enabled flag and color. The ICMP targets keep
         theirs and stay first, the DNS probes follow in list order. The probe loop reads the list (config.dns_probes)
         each round, so it probes the new ones from its next round."""
         dns_ids = set(self._dns_lookups)

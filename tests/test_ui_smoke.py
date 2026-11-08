@@ -102,7 +102,7 @@ async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
                 "Line or ISP Hub Packet Loss", now - 1800 + i * 60, 20.0, kind="isp_loss", cause_code="access_line_drop",
                 description="ISP Hub (198.51.100.1) lost 40.0% of recent probes while the local router and the gateway "
                             "answer normally. Possible causes: cable line (RF) impairment or congestion at the provider's "
-                            "first router (the CMTS node), or the hop deprioritising ping replies."))
+                            "first router (the CMTS node), or the hop deprioritizing ping replies."))
             continue
         await repo.create_incident(incident(f"Seeded blip {i + 1}", now - 1800 + i * 60, 20.0))
     await repo.create_incident(Incident(
@@ -135,8 +135,41 @@ async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
                 (Client(key="w", connection="wired"),) * 2 + (Client(key="f", connection="wifi", band=BAND_5G),) * (k // 60 % 4 + 1))))
         await repo.insert_mesh_counts([MeshCount("router", ts + 1, "0000a1", 2), MeshCount("router", ts + 1, "0000a2", k // 60 % 4 + 1)])
     await repo.flush_samples()
+    await seed_speed_tests(repo, now)
     await repo.close()
     assert long_id and short_id
+
+
+async def seed_speed_tests(repo: DatabaseRepository, now: float) -> None:
+    """Made-up speed tests for the Speed card (steps/speed.mjs, which sets the 300/20 Mbps plan they are compared with while it
+    runs): the newest 3 h ago, good, with a bufferbloat grade B (49 ms added); a failed one, a good one the router measured
+    (the line's rate beside the test's own), a partial one and a skipped one before it; two older good ones for the 30 day
+    range. The install's schedule offset is set so that the next
+    daily test is 12 h away: nothing starts by itself."""
+    hour = 3600.0
+
+    def row(ago_h: float, status: str = "ok", **kw):
+        values = {"ts": now - ago_h * hour, "duration_s": 24.0, "trigger": "scheduled", "provider": "cloudflare", "server": "EXA",
+                  "status": status, "reason": None, "down_mbps": 236.4, "up_mbps": 18.7, "idle_ms": 12.0, "loaded_down_ms": 61.0,
+                  "loaded_up_ms": 33.0, "bytes_down": 25_000_000, "bytes_up": 10_000_000}
+        values.update(kw)
+        return values
+
+    gone = {"server": None, "down_mbps": None, "up_mbps": None, "idle_ms": None, "loaded_down_ms": None, "loaded_up_ms": None,
+            "bytes_down": 0, "bytes_up": 0}
+    for test in (
+        row(3),
+        row(27, "failed", reason="download: the provider refused the test (rate limit); try another provider", **gone),
+        # an 8 s test the router measured: the line carried 305.0 / 20.1 Mbps while the test got 301.2 / 19.9
+        row(51, "ok", down_mbps=301.2, up_mbps=19.9, idle_ms=11.0, loaded_down_ms=14.0, loaded_up_ms=13.0,
+            bytes_down=301_000_000, bytes_up=20_000_000, wan_down_mbps=305.0, wan_up_mbps=20.1),
+        row(75, "partial", reason="upload: timed out", up_mbps=None, loaded_up_ms=None, bytes_up=4_000_000),
+        row(99, "skipped", reason="line busy (82% load, over 20% after 3 retries)", **gone),
+        row(240, "ok", down_mbps=190.5, up_mbps=15.2, trigger="manual"),
+        row(480, "ok", down_mbps=250.0, up_mbps=18.0),
+    ):
+        await repo.insert_speed_test(test)
+    await repo.set_meta("speedtest_offset_s", str(int(now + 12 * hour) % 86400))
 
 
 def free_port() -> int:
@@ -176,7 +209,7 @@ DEVICES = {
 FULL_SHARDS = 3
 # The order matters to pytest-xdist (scripts/test-ui.sh, 4 workers, `--dist worksteal`): each worker starts on a block of
 # four runs and idle workers take the unstarted ones of the others, but never the last one. A slice of `full` every fourth
-# run keeps two of them from queueing on one worker.
+# run keeps two of them from queuing on one worker.
 RUNS = [pytest.param(*r, id="-".join([r[0]] + ([r[1].replace("/", "of")] if r[1] != "1/1" else []) + ([r[2]] if len(r) > 2 else []))) for r in (
     # one pass in Firefox (core and Settings steps only, smoke.mjs FIREFOX_FILES), in two slices like `full`; they run beside the
     # Chromium ones
@@ -206,6 +239,7 @@ def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
         f'database: {{db_path: "{db.as_posix()}"}}\n'
         "privacy: {client_details: full}\n"  # the Clients modal then shows names and addresses
         "line: {isp_name: Example ISP}\n"  # the dossier title and file name the smoke script checks
+        "speedtest: {enabled: true, monthly_cap_mb: 2000}\n"  # the card's seeded results (nothing starts: the next test is 12 h away, the container has no network)
         "service_checks:\n  interval_seconds: 2\n  failures_for_incident: 1\n  services:\n"
         f'    - {{id: svc_up, name: "Service Up", url: "http://127.0.0.1:@PORT@/api/health", description: "the app itself",'
         ' open_url: "http://services.example.test:9000/app"}\n'

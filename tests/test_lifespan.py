@@ -53,7 +53,7 @@ async def test_shutdown_cancels_the_classifier_background_tasks_before_closing_t
         assert not trace.done()
 
     assert trace.cancelled()
-    assert events == [("repo closed", True)]            # already cancelled when the repository closed
+    assert events == [("repo closed", True)]            # already canceled when the repository closed
 
 
 def _config_file(tmp_path, devices: str) -> str:

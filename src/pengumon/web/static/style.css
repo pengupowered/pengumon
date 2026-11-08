@@ -43,7 +43,7 @@
 .menu.fixed { position: fixed; }
 .live-live i { background: var(--good); }
 
-/* ---------- Ink colours ---------- */
+/* ---------- Ink colors ---------- */
 .ink-good { color: var(--good); } .ink-warn { color: var(--warn); } .ink-crit { color: var(--crit); } .ink-muted { color: var(--ink-3); }
 
 /* Segmented control: modules mark the current button with .active (kept), new markup with aria-pressed */

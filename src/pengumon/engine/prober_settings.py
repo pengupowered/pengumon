@@ -1,4 +1,4 @@
-"""The prober's config sections: `prober:` (with its `hop_status:` colours) and `dns_probes:`. Plain pydantic models
+"""The prober's config sections: `prober:` (with its `hop_status:` colors) and `dns_probes:`. Plain pydantic models
 that import nothing of the app, so pengumon.config can name them without an import cycle.
 
 `prober.interval_seconds` (the round) is a bootstrap key: it stays in config.yaml and is never on the Settings page;
@@ -11,14 +11,14 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pengumon.models.hosts import ID_PATTERN, validate_color, validate_host
 
-_MS = dict(ge=0, le=10000)  # a hop colour level, ms
+_MS = dict(ge=0, le=10000)  # a hop color level, ms
 DNS_RECORD_TYPES = ("A", "AAAA", "CNAME", "MX", "NS", "TXT")
 HISTORY_PROBES = 60  # the probes the prober keeps per target (TargetStats.recent_latencies): about the last minute
 DEFAULT_WINDOW_PROBES = 10  # the default of classifier.window_probes: the last probes loss and latency are judged over
 
 
 class HopStatusConfig(BaseModel):
-    """Per-target status colours (up / degraded / down) on the dashboard. Stricter than the classifier's spike
+    """Per-target status colors (up / degraded / down) on the dashboard. Stricter than the classifier's spike
     thresholds on purpose: one hop turns amber before the line as a whole counts as degraded. Loss is judged over
     the classifier's window (classifier.window_probes), latency and jitter over the prober's whole history."""
     down_loss_fraction: float = Field(default=0.4, ge=0, le=1)       # share of the window lost, strictly above: down
@@ -70,7 +70,7 @@ class DnsProbeConfig(BaseModel):
     nameserver: Optional[str] = None  # an IP address; None (or empty): the system resolver, which ignores record_type
     record_type: str = "A"  # one of DNS_RECORD_TYPES
     enabled: bool = True
-    color: Optional[str] = None  # chart colour #rrggbb; None = the DNS category's colour
+    color: Optional[str] = None  # chart color #rrggbb; None = the DNS category's color
 
     @field_validator("id")
     @classmethod

@@ -28,8 +28,8 @@ CURRENT = [
     ("DNS Query Packet Drops", "dns_resolver_failure", "dns_loss"),
     ("Slow DNS Queries", "dns_resolver_failure", "dns_slow"),
     ("Line Busy: Delay From Heavy Load", "load_induced_latency", "busy_latency"),
-    ("Line Busy: ISP Hops Deprioritise Ping", "load_induced_latency", "busy_isp_hops"),
-    ("ISP Hop Deprioritises Ping", "nominal", "hop_deprioritised"),
+    ("Line Busy: ISP Hops Deprioritize Ping", "load_induced_latency", "busy_isp_hops"),
+    ("ISP Hop Deprioritizes Ping", "nominal", "hop_deprioritized"),
     ("All Network Hops Operational", "nominal", "nominal"),
 ]
 # ... and every older shape found in the real backups.
@@ -48,6 +48,9 @@ OLDER = [
     ("ISP ISP Line Stabilization & Buffer Drain", ISP, "legacy_other"),
     (f"{HOP1} Packet Loss", LOCAL, "local_loss"),
     (f"{HOP2} Packet Loss", GATEWAY, "gateway_loss"),
+    # the British spelling these two had before schema v16
+    ("Line Busy: ISP Hops Deprioritise Ping", "load_induced_latency", "busy_isp_hops"),
+    ("ISP Hop Deprioritises Ping", "nominal", "hop_deprioritized"),
 ]
 
 
@@ -87,8 +90,10 @@ async def test_backfill_maps_every_known_title_shape(tmp_path, monkeypatch):
 
     assert await migrations.migrate(path) == migrations.LATEST_VERSION
     stored = _rows(path)
-    # schema v8 renames the ISP cause code; titles and kinds are untouched
-    assert [(t, c, k) for t, c, k in stored] == [(t, current_cause(c), k) for t, c, k in rows]
+    # schema v8 renames the ISP cause code and v16 spells the two British titles the US way; kinds are untouched
+    us = {"ISP Hop Deprioritises Ping": "ISP Hop Deprioritizes Ping",
+          "Line Busy: ISP Hops Deprioritise Ping": "Line Busy: ISP Hops Deprioritize Ping"}
+    assert [(t, c, k) for t, c, k in stored] == [(us.get(t, t), current_cause(c), k) for t, c, k in rows]
 
 
 @pytest.mark.asyncio

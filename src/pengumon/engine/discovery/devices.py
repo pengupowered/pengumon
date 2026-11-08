@@ -46,7 +46,7 @@ _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 @dataclass(frozen=True)
 class Fingerprint:
     driver: str
-    words: str  # what was recognised, in plain words
+    words: str  # what was recognized, in plain words
 
 
 FINGERPRINTS = (

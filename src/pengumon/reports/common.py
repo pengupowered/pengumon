@@ -1,12 +1,17 @@
 """What the reports share: the configured targets in their order, hop labels, the failing-hop rule and the
-split of incident rows into real and expected ones."""
+split of incident rows into real and expected ones; and the lock that builds one AI pack at a time."""
 
+import asyncio
 from typing import Any, Dict, Iterable, List, Optional
 
 from pengumon.incidents.taxonomy import is_service_kind
 from pengumon.reports.settings import ReportsConfig
 
 _DEFAULTS = ReportsConfig()
+
+# One AI pack at a time, whoever asks (GET /api/ai-pack, the MCP `ai_pack` tool): a build reads the whole window and
+# every module's history. A caller that finds it locked answers "busy" rather than queue.
+pack_building = asyncio.Lock()
 
 
 def material_loss_points(config) -> float:

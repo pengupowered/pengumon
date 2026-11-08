@@ -1,10 +1,10 @@
-"""One place that decides good / warn / critical for a number the dashboard colours.
+"""One place that decides good / warn / critical for a number the dashboard colors.
 
 A `Range` is the good zone of one metric plus the limits beyond which it is critical, and the scale a gauge draws it
-on. Every metric that is coloured (DOCSIS power and SNR, uncorrectables, router CPU and memory, WAN load) has its
+on. Every metric that is colored (DOCSIS power and SNR, uncorrectables, router CPU and memory, WAN load) has its
 Range defined next to the code that knows its thresholds (pengumon.lines.docsis, pengumon.devices.monitors); the Wi-Fi
 signal levels, which are not settings, are here (`SIGNAL_LEVELS`). The snapshots and answers carry the resulting
-grades, so the browser only maps a grade to a colour and never compares numbers.
+grades, so the browser only maps a grade to a color and never compares numbers.
 
 Boundaries belong to the better grade: a value exactly on the edge of the good zone is good, one exactly on a
 critical limit is warn.

@@ -1,6 +1,6 @@
 // The latency panel's standard view: the legend, the Path / Each target switch, the note, a latency chart and a thin loss
-// lane under it, drawn from charts.js's view model. Chart.js, with text and grid colours from the theme
-// (chart-theme.js) and series colours from the tokens (a card's own colours apply). docs/themes.md, "Drawing a card"; a
+// lane under it, drawn from charts.js's view model. Chart.js, with text and grid colors from the theme
+// (chart-theme.js) and series colors from the tokens (a card's own colors apply). docs/themes.md, "Drawing a card"; a
 // theme's own view of this card gets these parts as ctx.std.parts (`charts` draws both charts into two canvases).
 
 import { kit } from '../../js/cards.js';
@@ -114,12 +114,12 @@ function quietLane(vm) {
   };
 }
 
-// The datasets of the latency chart. `at`: an element of the card (its own colours, see chart-theme.js token).
+// The datasets of the latency chart. `at`: an element of the card (its own colors, see chart-theme.js token).
 function datasets(m, at) {
   const sets = [];
-  const colour = (c) => (c.token ? token(c.token, at) : c.value);
+  const resolve = (c) => (c.token ? token(c.token, at) : c.value);
   m.lines.forEach((l) => {
-    const color = colour(l.colour);
+    const color = resolve(l.color);
     if (l.kind === 'target') {
       sets.push({ id: l.id, target: l.target, label: l.label, data: l.data, borderColor: color, backgroundColor: color,
         borderWidth: 1.5, pointRadius: 0, tension: 0.25, spanGaps: false, order: 1 });
@@ -127,7 +127,7 @@ function datasets(m, at) {
     }
     if (l.id === 'path_internet' && m.band) {
       sets.push({ id: 'band_lo', label: 'p10', data: m.band.lo, borderWidth: 0, pointRadius: 0, fill: false, spanGaps: false, order: 5 });
-      sets.push({ id: 'band_hi', label: 'p10–p90', data: m.band.hi, borderWidth: 0, pointRadius: 0, backgroundColor: `${colour(m.band.colour)}26`, fill: '-1', spanGaps: false, order: 5 });
+      sets.push({ id: 'band_hi', label: 'p10–p90', data: m.band.hi, borderWidth: 0, pointRadius: 0, backgroundColor: `${resolve(m.band.color)}26`, fill: '-1', spanGaps: false, order: 5 });
     }
     sets.push({ id: l.id, label: l.label, pathLabel: l.label, data: l.data, borderColor: color, backgroundColor: color,
       borderWidth: 2, pointRadius: 0, tension: 0.25, spanGaps: false, order: 1 });
@@ -233,7 +233,7 @@ function charts(latencyCanvas, lossCanvas) {
 const KEY_STYLE = { line: '', band: ';opacity:.3', wan: ';opacity:.5', lost: ';width:3px;height:11px' };
 function legendHtml(items) {
   return items.map((it) => {
-    const key = `<i class="key${it.kind === 'line' ? ' line' : ''}" style="--c:${escapeHtml(it.colour)}${KEY_STYLE[it.kind]}"></i>`;
+    const key = `<i class="key${it.kind === 'line' ? ' line' : ''}" style="--c:${escapeHtml(it.color)}${KEY_STYLE[it.kind]}"></i>`;
     const words = it.kind === 'line'
       ? `<b data-v="label">${escapeHtml(it.label)}</b>${it.sub !== undefined ? `<span class="muted" data-v="sub">${escapeHtml(it.sub)}</span>` : ''}`
       : `<span data-v="label">${escapeHtml(it.label)}</span>`;
@@ -253,7 +253,7 @@ function legend(box, note) {
 
 // The legend laid out a theme's own way (a part): a keyed list of entries in `box`, one per legend item. Each entry's
 // parts are made here, `arrange(parts, item)` puts them in an element of the theme's and returns it: `key` (i.key, in
-// the item's colour: --c is set on the entry), `label` (b.<p>-lg-n), and for a line `now` (its newest reading,
+// the item's color: --c is set on the entry), `label` (b.<p>-lg-n), and for a line `now` (its newest reading,
 // .<p>-lg-now) and `sub` (what it is made of, .<p>-lg-s, hidden when it has none). The entry gets the item's title.
 function legendList(box, prefix, arrange) {
   const { el, mark, text } = kit;
@@ -274,7 +274,7 @@ function legendList(box, prefix, arrange) {
       m.legend.forEach((it, i) => {
         const entry = box.children[i];
         const p = refs.get(entry);
-        entry.style.setProperty('--c', it.colour);
+        entry.style.setProperty('--c', it.color);
         if (it.title !== undefined) entry.title = it.title;
         text(p.label, it.label);
         if (!p.sub) return;
@@ -335,7 +335,7 @@ export default {
       charts(root.querySelector('.lat-main canvas'), root.querySelector('.lat-loss canvas'))
     ];
     return {
-      // also after a theme change (same view model): the series colours are read again
+      // also after a theme change (same view model): the series colors are read again
       update(m) { p[1].update(m); p[2].update(m); p[0].update(m); },
       unmount() { p[2].unmount(); }
     };

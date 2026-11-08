@@ -2,7 +2,7 @@
 // host to the internet, hop by hop (the `targets` topic), turned into the view model every view of the card draws
 // (view.js is the standard one; docs/themes.md, "Drawing a card"). Also the header's status pill, the page tint and
 // the tab title, which follow the verdict, and the card's own status (its frame). Until the first message the card says
-// "Connecting" in grey and the hops are skeletons, never a green "healthy".
+// "Connecting" in gray and the hops are skeletons, never a green "healthy".
 //
 // The chain follows the targets' categories in path order: this host, the local network (router or mesh), the gateway
 // (modem / line), every ISP hop, then the internet (the public targets as one node; DNS lookups stand in when there
@@ -58,7 +58,7 @@ export function presentVerdict(diagnosis) {
 const STATE = { up: 'good', degraded: 'warn', down: 'crit' };
 
 // The latency a segment adds, as the link's pill. A later hop that answers faster than the one before it (d < 0) is not
-// a fault: routers de-prioritise replies to pings, and a target set as a later hop may be an anycast server reached by
+// a fault: routers de-prioritize replies to pings, and a target set as a later hop may be an anycast server reached by
 // another route. A small such value reads as "about 0"; a large one is shown as it is, with the same explanation.
 export const NEGATIVE_NOISE_MS = 10;
 export function deltaText(d) {

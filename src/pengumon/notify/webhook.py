@@ -42,7 +42,7 @@ def failure_words(error: Exception) -> str:
 @dataclass
 class Alert:
     """One announcement, with everything any channel shows. `event`: incident_started, incident_resolved,
-    service_down, service_up, path_changed or test. `priority` and `tags` are ntfy's. `page` is the part of the
+    service_down, service_up, path_changed, speed_slow or test. `priority` and `tags` are ntfy's. `page` is the part of the
     dashboard the link should open ("#live": Path health), added to the configured public URL."""
     event: str
     severity: str  # info, warning or critical

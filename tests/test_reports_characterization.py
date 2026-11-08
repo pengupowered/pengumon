@@ -107,6 +107,9 @@ class FakeRepository:
         self.calls.append(["get_docsis_snapshots_in_range", start_time, end_time, padding_seconds])
         return list(self.window_snaps)
 
+    async def get_speed_tests(self, start_time, end_time, limit=100):
+        return []  # none here, and not in `calls`: the recorded golden predates the speed section (test_dossier_render)
+
     # build_report's two rollup queries (pengumon.reports.queries), patched in by run_report
     async def daily_availability(self, start_time, tz, now=None):
         self.calls.append(["daily_availability", start_time, str(tz)])

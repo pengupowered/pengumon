@@ -4,7 +4,7 @@ Ids are stable for an address: a new hop's id is `hop_` and its address (`hop_20
 the dashboard's default ids (cloudflare_dns, google_dns, quad9_dns; over IPv6 cloudflare_dns_v6, google_dns_v6,
 quad9_dns_v6, in the "internet_v6" group, proposed only when this host has IPv6). A hop of the live path at the same address keeps
 its id (all history is keyed by it), and what the owner set on it: its name (unless it is one of the dashboard's
-default names), colour, device, "ignores ping" choice, enabled state, group and every other field; discovery
+default names), color, device, "ignores ping" choice, enabled state, group and every other field; discovery
 proposes only its role and its place. Its status is "same" when both are unchanged, else "changed". A hop discovery
 did not find is "new". A live hop of the path (local, gateway, isp or public) that discovery did not see is "gone",
 listed after the hop it followed, except a home hop (local, gateway) that still answers a ping: a device in the home

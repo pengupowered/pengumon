@@ -72,7 +72,7 @@ What config.yaml still does with `targets:`: a first start of a database that ha
 new install can leave it out and have the path discovered instead); after that the list is ignored and the startup log
 says so. It is an optional fixed list, used on the first start only; `config.example.yaml` has none, so a copy of it gives you discovery. A first import of more than 64 targets keeps the first 64 as the path and the extras as removed hops that you can restore in the editor. The syntax is the one in [Export and import](path-editor.md#export-and-import) (a `targets:` list, in path order, with an
 optional `dns_probes:` list: left out, two default lookups; `[]`, none).
-A target or DNS lookup may also set `color: "#rrggbb"` for its chart line (default: the next of eight series colours, then
+A target or DNS lookup may also set `color: "#rrggbb"` for its chart line (default: the next of eight series colors, then
 one no other target of its category has).
 
 Categories place a target on the path: `local` (router or mesh), `gateway` (modem or the provider's box), `isp` (the
@@ -121,6 +121,9 @@ copies of the database and secrets.json (the originals are never written) and pr
 `skipped (<reason>)`, and per list its items: names and counts only, no values. `--live` compares an already
 imported database.
 
+`mcp:` has one setting, `enabled` (default `false`): Settings > Sign-in > AI assistants (MCP) turns on the read-only
+`/mcp` endpoint ([mcp.md](mcp.md)); it applies at once.
+
 Access (the token, sign-in, view only, allowed host names) is set with environment variables, not in `config.yaml`:
 see [Security](security.md).
 
@@ -159,6 +162,34 @@ classifier:
   busy_load_pct: 60              # WAN load (% of capacity) from which latency / ISP-hop loss counts as "busy"
   window_probes: 10              # each target's last N probes (3-60): loss, median latency and jitter judged over them
 ```
+
+### The speed test (`speedtest:`)
+
+Off by default. A scheduled download and upload test against Cloudflare, M-Lab or your own LibreSpeed server, with hard
+limits on the data it may use ([docs/speedtest.md](speedtest.md): what is sent where, the schedule rules). On the Settings
+page it is the **Speed test** section, after Your line; every value applies at once, without a restart. The defaults:
+
+```yaml
+speedtest:
+  enabled: false           # on: tests run on the schedule below (and Run now works)
+  provider: cloudflare     # cloudflare | mlab (publishes your IP address with each result) | librespeed
+  librespeed_url: null     # the folder with garbage.php and empty.php; for the official Docker image http://<host>/backend
+                           # (not http://<host>, which answers 404); required for provider: librespeed
+  interval_hours: 24       # any whole number of hours, 1 to 8760 (365 days): 168 weekly, 720 every 30 days
+  window_start: null       # "HH:MM": scheduled tests run only from here ...
+  window_end: null         # ... until here, in general.timezone; both or neither; may cross midnight
+  download_mb: 25          # hard cap per test: 10, 25, 50, 100, 250, 500 or 1000 (decimal megabytes); a direction
+                           # stops after about 8 s of data in any case (1000 measures a gigabit line for those 8 s)
+  upload_mb: 10            # hard cap per test: 5, 10, 25 or 50
+  monthly_cap_mb: 0        # scheduled tests are skipped once this calendar month's tests moved this much; 0: no limit
+  busy_load_pct: 20        # a scheduled test waits (10 minutes, up to 3 times) while the line's load is at or above this
+  slow_alert_pct: 0        # 1-100: a notification when a test measures under this share of your plan speed (the line's
+                           # rate your router measured during the test, else the test's own); 0: off
+```
+
+Your plan's speed is the **Your line** setting (`line.down_mbps`, `line.up_mbps`); the speed test adds none of its own.
+`slow_alert_pct` needs it: with no plan speed set there is nothing to compare with, and no alert (see the
+[slow-line alert](speedtest.md#the-slow-line-alert)).
 
 ### Route-change checks (`discovery:`)
 

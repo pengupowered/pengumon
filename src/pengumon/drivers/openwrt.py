@@ -263,7 +263,7 @@ def build_clients(leases: Optional[dict], stations: Dict[str, Tuple[Optional[str
 
 class OpenWrtDriver:
     name = "openwrt"
-    label = "OpenWrt router"  # what the device is, in the dashboard's words (api.devices.device_label)
+    label = "OpenWrt router"  # what the device is, in the dashboard's words (devices.summary.device_label)
     offers = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM, Capability.CLIENT_INVENTORY})
     options_model = OpenWrtOptions
     default_poll_seconds = 10.0  # one HTTP request per poll; rpcd answers it from memory
@@ -440,6 +440,17 @@ class OpenWrtDriver:
             readings[Capability.ROUTER_SYSTEM] = SystemReading(cpu_pct=cpu, mem_pct=mem, client_count=self._client_count,
                                                                model=self._model)
         return PollResult(readings=readings, missing=missing)
+
+    async def read_wan_counters(self) -> Optional[WanCounters]:
+        """The WAN counters alone, for a running speed test (Device.read_wan_counters, about once a second): the two
+        calls the poll's counters come from (the interface dump, which names the WAN device, and the device
+        statistics), in one request on the poll's session. rpcd reads the kernel's interface statistics when asked.
+        None when the answer has no counters for the WAN device."""
+        calls: List[Call] = [("network.interface", "dump", {}), ("luci-rpc", "getNetworkDevices", {})]
+        answers = dict(zip((_call_name(c) for c in calls), await self._batch(calls)))
+        read_at = self._wall_clock()
+        counters, _ = self._wan(answers)
+        return WanCounters(rx_bytes=counters[0], tx_bytes=counters[1], read_at=read_at) if counters else None
 
     def _wan(self, answers: Dict[str, Answer]) -> Tuple[Optional[Tuple[int, int]], str]:
         dump, devices = answers["network.interface dump"], answers["luci-rpc getNetworkDevices"]

@@ -1,7 +1,7 @@
-"""WAN load relative to the line capacity, so the classifier can tell queueing delay from faults.
+"""WAN load relative to the line capacity, so the classifier can tell queuing delay from faults.
 
 A line running near its capacity queues packets in the modem and router (bufferbloat): ping times rise and
-intermediate ISP routers drop ICMP replies first. That is normal behaviour of a busy line, not a fault, so
+intermediate ISP routers drop ICMP replies first. That is normal behavior of a busy line, not a fault, so
 the classifier needs to know how busy the line is at the moment it judges the probes.
 """
 
@@ -225,8 +225,8 @@ async def backfill_incident_load(repository, line_load: LineLoad, busy_load_pct:
     return annotated
 
 
-PING_BACKFILL_META_KEY = "incident_ping_deprioritisation_backfill"
-PING_BACKFILL_REASON = "intermediate-hop ping deprioritisation"
+PING_BACKFILL_META_KEY = "incident_ping_deprioritization_backfill"
+PING_BACKFILL_REASON = "intermediate-hop ping deprioritization"
 PING_BACKFILL_BEFORE_SECONDS = 10.0
 PING_BACKFILL_AFTER_SECONDS = 2.0
 
@@ -235,11 +235,11 @@ def _loss_pct(rows) -> Optional[float]:
     return (sum(1 for r in rows if not r["success"]) / len(rows) * 100.0) if rows else None
 
 
-async def backfill_ping_deprioritisation(repository, targets: Iterable, degraded_loss_pct: float) -> Optional[int]:
+async def backfill_ping_deprioritization(repository, targets: Iterable, degraded_loss_pct: float) -> Optional[int]:
     """One-time reclassification of ISP-line incidents (kinds isp_loss and isp_outage) recorded before the
     intermediate-hop rule: where the raw samples around the incident show the public targets losing under
     degraded_loss_pct (the classifier's, 15 % by default) and under half of what the ISP-category hops lost, the
-    loss never reached the end targets, so the incident is marked expected (the routers only deprioritised ping
+    loss never reached the end targets, so the incident is marked expected (the routers only deprioritized ping
     replies).
 
     `targets` are the configured targets (id, category). Incidents whose window [start - 10 s, end + 2 s]
@@ -269,5 +269,5 @@ async def backfill_ping_deprioritisation(repository, targets: Iterable, degraded
         "ts": time.time(), "checked": checked, "expected": len(marked), "incident_ids": marked,
         "reason": PING_BACKFILL_REASON,
     }))
-    logger.info(f"Ping deprioritisation backfill: {checked} ISP-line incidents had samples, {len(marked)} marked expected")
+    logger.info(f"Ping deprioritization backfill: {checked} ISP-line incidents had samples, {len(marked)} marked expected")
     return len(marked)

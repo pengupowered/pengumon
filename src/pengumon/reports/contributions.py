@@ -23,7 +23,7 @@ from pengumon.engine.discovery.addresses import registrable_domain
 from pengumon.lines import docsis
 from pengumon.lines.docsis_contrib import DocsisContribution
 from pengumon.reports.ai_findings import collect_pack_facts
-from pengumon.reports.ai_pack import AppFact, HopFact, ModuleInput, module_findings, render_pack, view_of
+from pengumon.reports.ai_pack import AppFact, HopFact, ModuleInput, module_findings, render_pack, speed_fact, view_of
 from pengumon.reports.queries import path_trace_names
 from pengumon.reports.redact import LEVELS
 from pengumon.timeofday import viewer_zone
@@ -204,9 +204,12 @@ async def build_ai_pack(repository, config, *, scope: str, hours: int, incident_
     identity = {t.id: SimpleNamespace(name=t.name, address=_address(t), rdns=names.get(_address(t), ""))
                 for t in list(config.targets) + list(config.dns_probes)}
     provider, source = _provider(config, identity)
+    line = getattr(config, "line", None)
+    speed = speed_fact(await repository.get_speed_tests(start, end, limit=10_000),
+                       getattr(line, "down_mbps", None), getattr(line, "up_mbps", None))
     view = view_of(facts, identity, modules, provider, tz, _label(scope, hours, incident_id), pengumon.__version__,
                    apps=_apps(config, facts), environment=_environment(config, facts, prober, tz),
-                   provider_source=source, zone=zone_name, zone_kind=zone_kind)
+                   provider_source=source, zone=zone_name, zone_kind=zone_kind, speed=speed)
     view = dataclasses.replace(view, known_hops=await _known_hops(repository, config))
     pack = render_pack(view, level, render_detail)
     return {"markdown": pack.markdown, "modules": pack.modules, "roles": pack.roles, "level": level, "scope": scope,

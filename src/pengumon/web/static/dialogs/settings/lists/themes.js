@@ -1,6 +1,6 @@
 // Themes (display.themes holds the custom ones): the built-in themes with Duplicate and Export, the custom themes as
-// cards whose colours can be changed, Import of a theme file and Export of any theme as one (docs/themes.md, "Custom
-// themes"). A custom theme has colours only (and the text sizes and corner radii a file brings): no shapes, no effect.
+// cards whose colors can be changed, Import of a theme file and Export of any theme as one (docs/themes.md, "Custom
+// themes"). A custom theme has colors only (and the text sizes and corner radii a file brings): no shapes, no effect.
 // Like every list it is a draft until Save; the server checks each theme (pengumon.web.themes, custom rules).
 
 import { registerActions } from '../../../js/dispatch.js';
@@ -10,7 +10,7 @@ import { clone } from '../model.js';
 
 const MODES = ['dark', 'light'];
 const SIZES = ['--fs-xs', '--fs-sm', '--fs-md', '--fs-lg', '--fs-xl', '--fs-2xl', '--r-xs', '--r-sm', '--r-md', '--r-lg', '--r-pill'];
-// the colours in plain words, grouped as the editor shows them (the token name is the field's tooltip)
+// the colors in plain words, grouped as the editor shows them (the token name is the field's tooltip)
 const GROUPS = [
   ['Backgrounds', [['--bg', 'Page'], ['--surface-1', 'Cards'], ['--surface-2', 'Insets'], ['--surface-3', 'Hover and chips'],
     ['--line', 'Hairlines'], ['--line-strong', 'Borders'], ['--scrim', 'Behind dialogs']]],
@@ -24,7 +24,7 @@ const GROUPS = [
   ['Loss heat', [['--q0', 'None'], ['--q1', 'Little'], ['--q2', 'Some'], ['--q3', 'Much'], ['--q4', 'Most']]]
 ];
 const HEX6 = /^#[0-9a-f]{6}$/i;
-const COLOUR = /^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+)\s*)?\))$/i;
+const COLOR = /^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+)\s*)?\))$/i;
 const modeWords = (modes) => (modes.length === 2 ? 'dark and light' : `${modes[0]} only`);
 
 let items = [];
@@ -39,7 +39,7 @@ const open = new Set();
 const wired = new WeakSet();
 
 const defaults = () => data.themes.find((t) => t.id === 'default').theme.tokens;
-const colourNames = () => Object.keys(defaults().dark);
+const colorNames = () => Object.keys(defaults().dark);
 const takenIds = () => [...data.themes.filter((t) => !t.custom).map((t) => t.id), ...items.map((t) => t.id)];
 function newId(name) {
   const root = `custom-${String(name || 'theme').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'theme'}`.slice(0, 36);
@@ -48,7 +48,7 @@ function newId(name) {
   return id;
 }
 
-// A custom theme from any theme.json: its modes and colours (a missing colour comes from the standard theme), the text
+// A custom theme from any theme.json: its modes and colors (a missing color comes from the standard theme), the text
 // sizes and radii it sets; everything else (fonts, shapes, effects) stays behind. Says what it filled in or left out.
 function fromTheme(raw, name) {
   if (!raw || typeof raw !== 'object') throw new Error('The file is not a theme (a JSON object).');
@@ -61,12 +61,12 @@ function fromTheme(raw, name) {
   modes.forEach((m) => {
     const given = raw.tokens && typeof raw.tokens[m] === 'object' && raw.tokens[m] ? raw.tokens[m] : {};
     tokens[m] = {};
-    colourNames().forEach((n) => {
+    colorNames().forEach((n) => {
       if (typeof given[n] === 'string') tokens[m][n] = given[n].trim();
       else { tokens[m][n] = base[m][n]; filled++; }
     });
     SIZES.forEach((n) => { if (typeof given[n] === 'string') tokens[m][n] = given[n].trim(); });
-    Object.keys(given).forEach((n) => { if (!colourNames().includes(n) && !SIZES.includes(n)) dropped.add(n); });
+    Object.keys(given).forEach((n) => { if (!colorNames().includes(n) && !SIZES.includes(n)) dropped.add(n); });
   });
   const theme = { id: newId(name), name: String(name).slice(0, 40), description: typeof raw.description === 'string' ? raw.description.slice(0, 200) : '', modes, tokens, tags: [] };
   return { theme, filled, dropped: [...dropped], effect: !!raw.effect };
@@ -75,19 +75,19 @@ function fromTheme(raw, name) {
 const asFile = (t) => ({ id: t.id, name: t.name, description: t.description || '', modes: t.modes, tokens: t.tokens, tags: t.tags || [] });
 
 // ---------- drawing ----------
-function colourField(i, mode, name, label, value) {
+function colorField(i, mode, name, label, value) {
   const id = `th-${i}-${mode}-${name.slice(2)}`;
   if (HEX6.test(defaults()[mode]?.[name] || defaults().dark[name])) {
     return `<label class="th-c" for="${id}" title="${escapeHtml(name)}"><input type="color" id="${id}" data-tc="${mode} ${name}" value="${escapeHtml(HEX6.test(value) ? value : '#000000')}"><span>${escapeHtml(label)}</span></label>`;
   }
-  // a translucent colour (a tint, the dimming behind dialogs): its text, on a row of its own
+  // a translucent color (a tint, the dimming behind dialogs): its text, on a row of its own
   return `<label class="th-c th-text" for="${id}" title="${escapeHtml(name)}"><span>${escapeHtml(label)}</span><input class="input mono" type="text" id="${id}" data-tc="${mode} ${name}" value="${escapeHtml(value || '')}" spellcheck="false" autocomplete="off"></label>`;
 }
 
-function coloursHtml(item, i) {
-  return item.modes.map((mode) => `<div class="th-mode"><h6 class="th-mode-t">${mode === 'dark' ? 'Dark' : 'Light'} colours</h6>
+function colorsHtml(item, i) {
+  return item.modes.map((mode) => `<div class="th-mode"><h6 class="th-mode-t">${mode === 'dark' ? 'Dark' : 'Light'} colors</h6>
     ${GROUPS.map(([group, names]) => `<div class="th-group"><span class="th-group-t">${escapeHtml(group)}</span><div class="th-grid">
-      ${names.map(([name, label]) => colourField(i, mode, name, label, item.tokens[mode]?.[name])).join('')}</div></div>`).join('')}</div>`).join('');
+      ${names.map(([name, label]) => colorField(i, mode, name, label, item.tokens[mode]?.[name])).join('')}</div></div>`).join('')}</div>`).join('');
 }
 
 function cardHtml(item, i) {
@@ -100,7 +100,7 @@ function cardHtml(item, i) {
         <div class="set-f"><label for="th-${i}-name">Name</label><input class="input" type="text" id="th-${i}-name" data-tf="name" maxlength="40" value="${escapeHtml(item.name)}"></div>
         <div class="set-f"><label for="th-${i}-desc">Description <span class="muted">(optional)</span></label><input class="input" type="text" id="th-${i}-desc" data-tf="description" maxlength="200" value="${escapeHtml(item.description || '')}"></div>
       </div>
-      ${coloursHtml(item, i)}
+      ${colorsHtml(item, i)}
       <div class="set-card-f">
         <button type="button" class="btn sm" data-action="themesAct" data-ta="export" data-i="${i}">${icon('download')}Export</button>
         <button type="button" class="btn sm" data-action="themesAct" data-ta="duplicate" data-i="${i}" data-needs-edit>${icon('copy')}Duplicate</button>
@@ -136,7 +136,7 @@ function draw() {
   const builtins = data.themes.filter((t) => !t.custom);
   box.innerHTML = `<div class="set-list" data-list="themes">
     <div class="set-list-h"><h4 class="set-group-t">Themes</h4></div>
-    <p class="fine top">Every browser can pick any of these in the header's theme menu. To make your own, duplicate a theme and change its colours, or import a theme file. Your own themes have colours only: the shapes and animated effects stay with the built-in ones.</p>
+    <p class="fine top">Every browser can pick any of these in the header's theme menu. To make your own, duplicate a theme and change its colors, or import a theme file. Your own themes have colors only: the shapes and animated effects stay with the built-in ones.</p>
     <ul class="th-list">${builtins.map(builtinHtml).join('')}</ul>
     <h5 class="set-sub">Your themes</h5>
     ${notes.map((n) => `<div class="result st-${n.level}" role="status">${escapeHtml(n.text)}</div>`).join('')}
@@ -163,7 +163,7 @@ function add(theme, note) {
 
 function duplicate(raw, name) {
   const made = fromTheme(raw, `${name} copy`.slice(0, 40));
-  add(made.theme, { level: 'unknown', text: `${made.theme.name} is a draft: change its colours, then Save.` });
+  add(made.theme, { level: 'unknown', text: `${made.theme.name} is a draft: change its colors, then Save.` });
 }
 
 async function importFile(input) {
@@ -181,8 +181,8 @@ async function importFile(input) {
   try {
     const made = fromTheme(raw, typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : file.name.replace(/\.json$/i, ''));
     const left = [];
-    if (made.filled) left.push(`${made.filled} missing colour${made.filled === 1 ? '' : 's'} come from the standard theme`);
-    if (made.dropped.length || made.effect) left.push('its fonts, shapes and effects are left out (your themes have colours only)');
+    if (made.filled) left.push(`${made.filled} missing color${made.filled === 1 ? '' : 's'} come from the standard theme`);
+    if (made.dropped.length || made.effect) left.push('its fonts, shapes and effects are left out (your themes have colors only)');
     add(made.theme, { level: left.length ? 'warn' : 'unknown', text: `Read ${file.name} as ${made.theme.name}${left.length ? `; ${left.join('; ')}` : ''}. It is a draft: Save to keep it.` });
   } catch (e) {
     notes = [{ level: 'crit', text: `${file.name} was not imported. ${e.message}` }];
@@ -238,7 +238,7 @@ function wire() {
     } else if (el.dataset.tc) {
       const [mode, name] = el.dataset.tc.split(' ');
       const value = el.value.trim();
-      el.setAttribute('aria-invalid', String(!COLOUR.test(value)));
+      el.setAttribute('aria-invalid', String(!COLOR.test(value)));
       item.tokens[mode][name] = value;
     } else return;
     changed();
@@ -267,7 +267,7 @@ export default {
   },
   collect: () => clone(items),
   // the server's answers for this list, {"0.": "message", "0.tokens": "..."}: shown on the card, in place (a redraw would
-  // take the focus from the colour being typed)
+  // take the focus from the color being typed)
   problems(byWhere) {
     errors = {};
     Object.entries(byWhere || {}).forEach(([where, message]) => {

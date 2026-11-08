@@ -1,9 +1,9 @@
-"""What must hold in every theme (docs/themes.md, "Checks"): text contrast, status colours that stay apart, and series
-colours that can be told apart, also by people with red-green colour blindness. tests/test_themes.py runs every theme
+"""What must hold in every theme (docs/themes.md, "Checks"): text contrast, status colors that stay apart, and series
+colors that can be told apart, also by people with red-green color blindness. tests/test_themes.py runs every theme
 folder through `problems`; the numbers are the ones the default theme was designed against.
 
-Contrast is WCAG 2's (relative luminance); a translucent colour (an -bg token, the scrim) is laid over the surface it
-sits on first. Distances are OKLab's, x100 (a just noticeable difference is about 2). Colour blindness is simulated
+Contrast is WCAG 2's (relative luminance); a translucent color (an -bg token, the scrim) is laid over the surface it
+sits on first. Distances are OKLab's, x100 (a just noticeable difference is about 2). Color blindness is simulated
 with Machado, Oliveira and Fernandes (2009) at full severity, in linear RGB.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Sequence, Tuple
 
-from pengumon.web.themes import Theme, parse_colour
+from pengumon.web.themes import Theme, parse_color
 
 RGB = Tuple[float, float, float]  # 0..1, gamma-encoded sRGB
 
@@ -19,7 +19,7 @@ RGB = Tuple[float, float, float]  # 0..1, gamma-encoded sRGB
 
 TEXT = 4.5      # body text (WCAG AA)
 UI = 3.0        # large text, icons, focus rings, status dots (WCAG AA for UI components)
-SERIES_DISTANCE = 8.0       # adjacent series colours, normal vision
+SERIES_DISTANCE = 8.0       # adjacent series colors, normal vision
 SERIES_CVD_DISTANCE = 6.0   # the same under deuteranopia and protanopia
 STATUS_DISTANCE = 12.0      # good, warn, crit and busy from one another (normal vision; they also carry an icon and a word)
 
@@ -39,13 +39,13 @@ CONTRAST: Tuple[Tuple[str, Sequence[str], float], ...] = (
     ("--busy", ("--surface-1",), UI),
     ("--unknown", ("--surface-1",), UI),
 )
-# a status chip: its word in the status colour on its own -bg, over a panel
+# a status chip: its word in the status color on its own -bg, over a panel
 CHIPS = ("good", "warn", "crit", "busy")
 STATUS = ("--good", "--warn", "--crit", "--busy")
 SERIES = tuple(f"--s{i}" for i in range(1, 9))
 
 
-# ---------- colour arithmetic ----------
+# ---------- color arithmetic ----------
 
 def _lin(c: float) -> float:
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
@@ -57,10 +57,10 @@ def _enc(c: float) -> float:
 
 
 def rgb(text: str, under: RGB = (0.0, 0.0, 0.0)) -> RGB:
-    """A token's colour as 0..1 sRGB; a translucent one laid over `under`."""
-    parsed = parse_colour(text)
+    """A token's color as 0..1 sRGB; a translucent one laid over `under`."""
+    parsed = parse_color(text)
     if parsed is None:
-        raise ValueError(f"not a colour: {text!r}")
+        raise ValueError(f"not a color: {text!r}")
     r, g, b, a = parsed
     return tuple(a * c / 255 + (1 - a) * u for c, u in zip((r, g, b), under))  # type: ignore[return-value]
 

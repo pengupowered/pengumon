@@ -114,20 +114,20 @@ async def test_cancel_kills_the_process_before_it_answers_and_forgets_the_job():
     await asyncio.sleep(0.15)
     pid = job.process.pid
     left = await store.cancel(job.id)
-    assert left.state == "cancelled" and not alive(pid)
+    assert left.state == "canceled" and not alive(pid)
     assert store.get(job.id) is None
     assert await store.cancel(job.id) is None
 
 
-async def test_a_job_nobody_polls_is_cancelled_and_its_process_killed():
+async def test_a_job_nobody_polls_is_canceled_and_its_process_killed():
     store = jobs(HANG, poll_timeout=0.3)
     job = store.start("k", SPEC)
     await asyncio.sleep(0.15)
     pid = job.process.pid
-    assert await settle(job) == "cancelled"
+    assert await settle(job) == "canceled"
     await job.task
     assert not alive(pid)
-    assert store.get(job.id).state == "cancelled"  # still there to read, for the 10 minutes
+    assert store.get(job.id).state == "canceled"  # still there to read, for the 10 minutes
 
 
 async def test_polling_keeps_a_job_alive():
@@ -137,7 +137,7 @@ async def test_polling_keeps_a_job_alive():
         await asyncio.sleep(0.05)
         assert store.get(job.id).state == "running"
     await store.aclose()
-    assert job.state == "cancelled"
+    assert job.state == "canceled"
 
 
 async def test_an_identical_request_returns_the_cached_job_and_a_different_one_does_not():
@@ -151,7 +151,7 @@ async def test_an_identical_request_returns_the_cached_job_and_a_different_one_d
     await settle(other)
 
 
-async def test_a_failed_or_cancelled_job_is_not_served_from_the_cache():
+async def test_a_failed_or_canceled_job_is_not_served_from_the_cache():
     store = jobs(CRASH)
     first = store.start("k", SPEC)
     await settle(first)
@@ -271,7 +271,7 @@ async def test_a_second_preview_is_a_429_with_retry_after(app_state, tmp_path):
         second = await ac.post("/api/settings/preview", json={"values": {"classifier.down_loss_pct": 56}})
         assert first.status_code == 200 and second.status_code == 429 and second.headers["retry-after"] == "30"
         gone = await ac.delete(f"/api/settings/preview/{first.json()['id']}")
-        assert gone.status_code == 200 and gone.json()["state"] == "cancelled"
+        assert gone.status_code == 200 and gone.json()["state"] == "canceled"
         assert (await ac.get(f"/api/settings/preview/{first.json()['id']}")).status_code == 404
         assert (await ac.delete(f"/api/settings/preview/{first.json()['id']}")).status_code == 404
     await store.aclose()

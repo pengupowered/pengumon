@@ -1,7 +1,7 @@
 {
   "id": "mission-control",
   "name": "Mission control",
-  "description": "High contrast and large numbers for a wall display read from across the room: near-black, crisp white figures, saturated status colours. Dark.",
+  "description": "High contrast and large numbers for a wall display read from across the room: near-black, crisp white figures, saturated status colors. Dark.",
   "modes": [
     "dark"
   ],

@@ -314,7 +314,7 @@ class DriftChecker:
             await asyncio.wait([t for t in (woke, timer) if t is not None], return_when=asyncio.FIRST_COMPLETED)
             was_woken = woke.done()
             if timer is not None and timer.done() and not was_woken:
-                timer.result()  # a sleep that was cancelled or failed ends the loop, as awaiting it directly would
+                timer.result()  # a sleep that was canceled or failed ends the loop, as awaiting it directly would
         finally:
             for t in (woke, timer):
                 if t is not None and not t.done():
@@ -323,7 +323,7 @@ class DriftChecker:
         return was_woken
 
     async def run_daily(self) -> None:
-        """The daily loop (spawned at start; cancelled at shutdown). Switched off, it waits for a change."""
+        """The daily loop (spawned at start; canceled at shutdown). Switched off, it waits for a change."""
         while True:
             if not self.enabled:
                 await self._wait(None)

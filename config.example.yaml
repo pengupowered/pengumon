@@ -20,7 +20,7 @@ prober:
 # imported once, with its ids, on the first start of a database that has no path yet; after that it is ignored (the
 # startup log says so). A fresh install leaves it out and has the path discovered instead.
 # A target (or DNS probe) may set `color: "#rrggbb"` for its chart line. Leave it out to get the dashboard's validated
-# series colours (both themes), given so that no two targets of one category share one.
+# series colors (both themes), given so that no two targets of one category share one.
 # Only to give your own hops (a fixed list, the first start only): uncomment and edit. With no targets here a
 # fresh install discovers its path on the first visit to the dashboard.
 # targets:
@@ -99,7 +99,7 @@ classifier:
   # high only when more than half of those probes are, so one stalled probe is no spike.
   window_probes: 10
   # Latency (and loss seen only at ISP hops) while the WAN runs at or above this share of the line
-  # capacity is expected queueing delay (bufferbloat): status "busy", no incident.
+  # capacity is expected queuing delay (bufferbloat): status "busy", no incident.
   busy_load_pct: 60
 
 # Internet line capacity in Mbps, used for the load %. null = learned from the router history

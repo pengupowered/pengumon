@@ -1,8 +1,8 @@
-"""DOCSIS access lines (cable): how a set of channels is summarised and judged, for every DOCSIS modem driver.
+"""DOCSIS access lines (cable): how a set of channels is summarized and judged, for every DOCSIS modem driver.
 
 Thresholds (a LineSignalConfig, configurable on the Settings page; DEFAULT_LEVELS when none is passed) default to the commonly quoted cable-industry limits: upstream
 power above 49 dBmV (51 critical) or below 38 dBmV (35 critical), downstream SNR below 33 dB (30 critical),
-downstream power beyond ±8 dBmV. They are one set, used for the snapshot status, the grades the dashboard colours by, the channel table and the dossier's list of
+downstream power beyond ±8 dBmV. They are one set, used for the snapshot status, the grades the dashboard colors by, the channel table and the dossier's list of
 degraded channels (an older dashboard and the dossier used 48 and ±7 dBmV for some of these; the status and the
 snapshot averages always used 49 and ±8, and those won). Uncorrectable codewords count from the modem's boot, so
 health rests on the errors *between* polls, not on the total.

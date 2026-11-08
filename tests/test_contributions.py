@@ -411,7 +411,7 @@ async def test_every_instrument_exists_is_documented_records_and_carries_only_al
                 assert gauge.prom in DOC, name
                 samples = [(labels, value) for labels, value in gauge.collect(state) if value is not None]
                 assert samples, f"{name} reports nothing on the fixture state"
-                labelled = [labels for labels, _ in samples]
+                labeled = [labels for labels, _ in samples]
             else:
                 assert name in counters, f"{name} is in neither GAUGES nor telemetry.py"
                 kind = "counter"
@@ -419,8 +419,8 @@ async def test_every_instrument_exists_is_documented_records_and_carries_only_al
                 points = obs_helpers.points(name)
                 assert any(p.value > 0 for a, p in points if {a.get("device"), a.get("device.id")} & ids), \
                     f"{name} did not record"
-                labelled = [a for a, _ in points if {a.get("device"), a.get("device.id")} & ids]
-            for labels in labelled:
+                labeled = [a for a, _ in points if {a.get("device"), a.get("device.id")} & ids]
+            for labels in labeled:
                 assert set(labels) <= ALLOWED_LABELS, (name, labels)
                 for key, value in labels.items():
                     if key in ("device", "device.id"):

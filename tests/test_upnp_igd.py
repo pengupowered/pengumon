@@ -201,3 +201,17 @@ async def test_a_router_without_uptime_has_a_wrap_assumed_and_wider_counters_are
     igd.rx = 6 * 2**32  # no 32-bit counter holds this
     wide = (await gw.poll()).readings[Capability.WAN_COUNTERS]
     assert (wide.rx_bytes, wide.counter_bits) == (6 * 2**32, None)
+
+
+# --- the speed test's light counter read ------------------------------------------------------------------------------
+
+async def test_the_speed_test_reads_the_two_counters_alone_after_a_poll_found_the_description():
+    igd = FakeIgd(rx=2 ** 32 - 10, tx=500)
+    d = driver(igd)
+    assert await d.read_wan_counters() is None and igd.requests == []   # no description yet: nothing is asked
+    await d.poll()
+    before = len(igd.requests)
+    counters = await d.read_wan_counters()
+    assert igd.actions[-2:] == ["GetTotalBytesReceived", "GetTotalBytesSent"]  # and no uptime
+    assert (counters.rx_bytes, counters.tx_bytes, counters.counter_bits) == (2 ** 32 - 10, 500, 32)
+    assert len(igd.requests) == before + 2

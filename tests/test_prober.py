@@ -91,7 +91,7 @@ def test_loss_fractions_are_strict_and_stay_fractions():
     assert _probe(prober, "t", [None] * 2 + [10.0] * 8) == "degraded"
 
 
-def test_a_custom_threshold_changes_the_colour():
+def test_a_custom_threshold_changes_the_color():
     assert _probe(_prober_with("local"), "t", [6.0] * 3) == "up"
     assert _probe(_prober_with("local", local_latency_ms=5.0), "t", [6.0] * 3) == "degraded"
     assert _probe(_prober_with("gateway", gateway_jitter_ms=5.0), "t", [10.0, 20.0, 10.0, 20.0]) == "degraded"

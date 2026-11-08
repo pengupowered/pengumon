@@ -259,7 +259,7 @@ RECOVERY_KEY = "classifier.consecutive_successes_for_recovery"
 
 def _recovery_from_onset(data: dict, values: Dict[str, Any], result: ReadResult) -> None:
     """Before the settings store, recovery was confirmed after as many good rounds as a loss outage needs bad ones
-    (the onset count). A file that sets the onset and not the recovery keeps that behaviour: the recovery count is
+    (the onset count). A file that sets the onset and not the recovery keeps that behavior: the recovery count is
     stored as the onset's (when that differs from the recovery's default)."""
     if ONSET_KEY not in values or present(data, RECOVERY_KEY):
         return

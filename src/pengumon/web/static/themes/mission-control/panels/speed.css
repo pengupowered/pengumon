@@ -1,0 +1,13 @@
+/* Mission control's Speed card: the standard view (panels/speed/view.js) restyled for a wall display: the two figures large
+   (sized with container units, so a wider card shows them larger) on insets of their own, the plan's share and the captions
+   quiet, the history chart taller. A card under 440 px (a phone) keeps the standard figure size. */
+:root[data-look="mission-control"] [data-panel="speed"] .spd-fig { background: var(--surface-2); border-radius: var(--r-md); padding: var(--sp-3); }
+:root[data-look="mission-control"] [data-panel="speed"] .spd-big { font-size: clamp(var(--fs-2xl), 14cqw, 52px); letter-spacing: -.02em; }
+:root[data-look="mission-control"] [data-panel="speed"] .spd-big small { font-size: var(--fs-sm); letter-spacing: 0; }
+:root[data-look="mission-control"] [data-panel="speed"] .spd-plan { color: var(--ink-3); }
+:root[data-look="mission-control"] [data-panel="speed"] .spd-meta { color: var(--ink-3); }
+:root[data-look="mission-control"] [data-panel="speed"] .spd-chart-box { --h: 200px; }
+:root[data-look="mission-control"] [data-panel="speed"] .spd-run-btn { font-weight: var(--fw-bold); }
+@container (max-width: 440px) {
+  :root[data-look="mission-control"] [data-panel="speed"] .spd-big { font-size: var(--fs-2xl); }
+}

@@ -4,7 +4,7 @@
 //     server sends it, each series named at its line end. The legend says which targets each series is made of, and
 //     the tooltip gives every member's own value.
 //   each target: one thin line per pinged target (ISP hops included, DNS lookups left out: they time a lookup, not a
-//     round trip), in the targets' own colours (the ones Hop details uses).
+//     round trip), in the targets' own colors (the ones Hop details uses).
 // Both get the WAN download as a faint background on the right axis and the incident windows shaded.
 //
 // The data: `view` = { times, series: {id: [ms]}, byTarget: {targetId: [ms]}, lo, hi, loss, lossBy, wan }. The live
@@ -48,23 +48,23 @@ export function resetView() {
 
 const fmtMs = (v) => formatMs(v, { unit: true, empty: 'no reply', tenths: true });
 
-// The lines to draw: the path series (with the internet's band) or one per pinged target. A colour is a token (the
-// card's own colours apply) or a target's own colour.
+// The lines to draw: the path series (with the internet's band) or one per pinged target. A color is a token (the
+// card's own colors apply) or a target's own color.
 function lines(data, mode, all) {
   const out = [];
   if (mode === 'targets') {
     const labels = shortLabels(all);
     pingTargets(all).forEach((t) => {
       if (!data.byTarget[t.id]) return;
-      out.push({ id: `t:${t.id}`, kind: 'target', target: t.id, label: labels[t.id] || t.name, colour: { value: t.color }, data: data.byTarget[t.id] });
+      out.push({ id: `t:${t.id}`, kind: 'target', target: t.id, label: labels[t.id] || t.name, color: { value: t.color }, data: data.byTarget[t.id] });
     });
     return { lines: out, band: null };
   }
   let band = null;
   SERIES.forEach((s) => {
     if (!data.series[s.id]) return;
-    if (s.id === 'path_internet' && data.lo.some(has)) band = { lo: data.lo, hi: data.hi, colour: { token: s.color } };
-    out.push({ id: s.id, kind: 'path', label: s.name, colour: { token: s.color }, data: data.series[s.id] });
+    if (s.id === 'path_internet' && data.lo.some(has)) band = { lo: data.lo, hi: data.hi, color: { token: s.color } };
+    out.push({ id: s.id, kind: 'path', label: s.name, color: { token: s.color }, data: data.series[s.id] });
   });
   return { lines: out, band };
 }
@@ -102,14 +102,14 @@ function newest(values) {
 
 // What each line is, in words: the series' short name (the path health chain's), then the configured names of the
 // targets it is made of (muted, whole text in the tooltip). The note under it says what the chart leaves out.
-// Items: { key, kind: line | band | wan | lost, colour (CSS), label, sub, title }.
+// Items: { key, kind: line | band | wan | lost, color (CSS), label, sub, title }.
 function legend(data, mode, all, quiet) {
   const labels = shortLabels(all);
   const items = [];
   let note = '';
   if (mode === 'targets') {
     pingTargets(all).filter((t) => data.byTarget[t.id]).forEach((t) => {
-      items.push({ key: `t:${t.id}`, kind: 'line', colour: t.color, label: labels[t.id] || t.name, title: t.name, now: newest(data.byTarget[t.id]) });
+      items.push({ key: `t:${t.id}`, kind: 'line', color: t.color, label: labels[t.id] || t.name, title: t.name, now: newest(data.byTarget[t.id]) });
     });
     note = 'One line per pinged target, in path order. DNS lookups time a name lookup, not a round trip: see Hop details.';
   } else {
@@ -126,9 +126,9 @@ function legend(data, mode, all, quiet) {
       else if (ids.length > 1) sub = `worst of ${ids.length}`;
       else sub = names[0] || '';
       const title = ids.length > 1 ? `${s.name}: ${s.combine === 'median' ? 'median' : 'worst'} of ${names.join(', ')}` : `${s.name}: ${sub}`;
-      items.push({ key: s.id, kind: 'line', colour: `var(${s.color})`, label: s.name, sub, title, now: newest(data.series[s.id]) });
+      items.push({ key: s.id, kind: 'line', color: `var(${s.color})`, label: s.name, sub, title, now: newest(data.series[s.id]) });
     });
-    if (data.lo.some(has)) items.push({ key: 'band', kind: 'band', colour: 'var(--s2)', label: 'p10–p90 band' });
+    if (data.lo.some(has)) items.push({ key: 'band', kind: 'band', color: 'var(--s2)', label: 'p10–p90 band' });
     const isp = all.filter((t) => t.enabled !== false && t.category === 'isp').length;
     const usesDns = (members.path_internet || []).some((id) => (byId(id) || getTargetInfo(id)).category === 'dns');
     const other = all.filter((t) => t.enabled !== false && t.category === 'custom').length;
@@ -141,13 +141,13 @@ function legend(data, mode, all, quiet) {
   // (while this host cannot send pings nothing is probed: that is not an outage, and the note must not suggest one)
   if (data.times.length && !replies) note = quiet ? 'Not probing: pings are not allowed on this computer, so there is no line to draw.'
     : 'No replies in this time: every probe was lost or timed out, so there is no line to draw. The lane below marks the lost probes.';
-  if (data.wan.some(has)) items.push({ key: 'wan', kind: 'wan', colour: 'var(--ink-4)', label: `WAN download${wanAxisShown(data) ? ' (right axis)' : ''}` });
-  items.push({ key: 'lost', kind: 'lost', colour: 'var(--crit)', label: 'Lost probes (lane below)' });
+  if (data.wan.some(has)) items.push({ key: 'wan', kind: 'wan', color: 'var(--ink-4)', label: `WAN download${wanAxisShown(data) ? ' (right axis)' : ''}` });
+  items.push({ key: 'lost', kind: 'lost', color: 'var(--crit)', label: 'Lost probes (lane below)' });
   return { items, note };
 }
 
 // The view model of the card: { labels, lines, band, wan, loss, incidents, legend, note, modes, memberLines(id, i),
-// lossLabel(i, pct) }, from the data, the line mode and the targets (all of them, in path order, with their colours).
+// lossLabel(i, pct) }, from the data, the line mode and the targets (all of them, in path order, with their colors).
 // `live` given (a fixture) is fixed; otherwise the tooltip reads the range when it shows, as the card does not redraw
 // between a click on Live and the first live message.
 export function present({ data = view, mode = lineMode, all = targetList(), live, quiet = noPings, windows = incidents } = {}) {

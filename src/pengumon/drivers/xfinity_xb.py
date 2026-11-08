@@ -45,7 +45,7 @@ class XfinityXbOptions(BaseModel):
 
 class XfinityXbDriver:
     name = "xfinity_xb"
-    label = "Xfinity gateway"  # what the device is, in the dashboard's words (api.devices.device_label)
+    label = "Xfinity gateway"  # what the device is, in the dashboard's words (devices.summary.device_label)
     offers = frozenset({Capability.ACCESS_LINE})
     line_technology = "docsis"
     options_model = XfinityXbOptions
@@ -132,7 +132,7 @@ class XfinityXbDriver:
         if not channels:
             if any(m in res.text for m in _LOGGED_OUT_MARKERS[:3]):
                 # Still the login page after logging in: the gateway refused the login without saying so in a way
-                # _login recognises (a firmware with other wording).
+                # _login recognizes (a firmware with other wording).
                 raise DriverError("auth", f"The gateway ({self.host}) still shows its login page after logging in. "
                                           "Please verify password.")
             raise DriverError("protocol", "the gateway's status page had no DOCSIS channel table")

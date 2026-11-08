@@ -249,7 +249,7 @@ export const steps = [
     await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length > 0);
     const first = await page.evaluate(() => performance.getEntriesByType("resource").map((r) => r.name).filter((n) => /\/api\/incidents\?/.test(n)).map((n) => n.replace(/^.*\/api/, "/api")));
     eq("the first fetch is a page of 50, not 500", first.join(" "), "/api/incidents?limit=50");
-    // a server with 130 incidents, one every 2 h (84 of them in the 7 days), newest first, honouring limit and offset
+    // a server with 130 incidents, one every 2 h (84 of them in the 7 days), newest first, honoring limit and offset
     await page.evaluate(() => {
       const now = Date.now() / 1000;
       const all = Array.from({ length: 130 }, (_, i) => ({ id: 9000 + i, kind: "gateway_down", title: i === 120 ? "Old needle" : `Synthetic ${i}`, description: "", severity: "warning", cause_code: "unknown_outage", cause: "isp",

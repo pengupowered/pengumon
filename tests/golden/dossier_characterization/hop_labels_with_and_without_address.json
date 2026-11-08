@@ -60,7 +60,7 @@
   "",
   "## 5. Summary for a support ticket",
   "```text",
-  "Over the past 24 hours Pengumon recorded 0 incidents totalling none.",
+  "Over the past 24 hours Pengumon recorded 0 incidents totaling none.",
   "Loss to Local Router and Gateway 192.168.100.1: at most 1.9%.",
   "Loss is first elevated at Local Router: 0.9%.",
   "```"

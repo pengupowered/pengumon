@@ -74,7 +74,7 @@ async def main():
     try:
         for target, want in paths.items():
             label = f"{backend.name} {'IPv6' if ':' in target else 'IPv4'}"
-            # the routers' neighbour caches start empty: an IPv6 router resolving its next hop can hold the first
+            # the routers' neighbor caches start empty: an IPv6 router resolving its next hop can hold the first
             # packet about a second (seen with the raw socket), so one echo first
             await backend.probe(target, timeout=3.0)
             for ttl, (kind_want, responder_want) in enumerate(want, start=1):

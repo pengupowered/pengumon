@@ -34,6 +34,7 @@ from pengumon.security import (SESSIONS_PATH, FileSessionStore, SecurityConfig, 
 from pengumon.services import component as services
 from pengumon.settings import component as settings
 from pengumon.settings import preview_component as settings_preview
+from pengumon.speedtest import component as speedtest
 from pengumon.web import assets, pages
 
 # Logging is set up by main() (observability.setup_logging), not at import, so importing the app in tests or tools
@@ -51,6 +52,7 @@ COMPONENTS = [
     line_load,      # line capacity, the load backfills, the monitors' load and probe-loss hooks
     notify,         # ntfy, for the classifier and the service checks
     classifier,     # needs the line load and the notifier; its path traces end before the database closes
+    speedtest,      # optional: the scheduled speed test; needs the line load and the classifier (it masks its verdicts)
     settings_preview,  # the outage-rules preview jobs; a running replay is killed at shutdown
     services,       # optional: host service checks
     clients,        # optional: the client list

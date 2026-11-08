@@ -1,4 +1,4 @@
-"""Validation of the values that name things: hosts, ids and chart colours."""
+"""Validation of the values that name things: hosts, ids and chart colors."""
 
 import ipaddress
 import re
@@ -43,7 +43,7 @@ COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def validate_color(v: Optional[str]) -> Optional[str]:
-    """An optional chart colour: #rrggbb (lower-cased), or None for the category's colour."""
+    """An optional chart color: #rrggbb (lower-cased), or None for the category's color."""
     if v is None:
         return None
     if not COLOR_PATTERN.fullmatch(v):

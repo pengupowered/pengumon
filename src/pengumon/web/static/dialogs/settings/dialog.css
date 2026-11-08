@@ -59,6 +59,9 @@
 .set-input > .input { flex: 1 1 auto; width: 100%; min-width: 0; }
 .set-input > .input.num, .set-input > .input[type=time] { flex: 0 0 11em; width: 11em; }
 .set-input > .input.num { text-align: right; }
+.set-hours { display: flex; gap: var(--sp-2); flex: 0 0 11em; width: 11em; }
+.set-hours .input.num { flex: 1 1 4em; min-width: 0; text-align: right; }
+.set-hours select { flex: 1 1 6em; min-width: 0; }
 .set-input .seg { flex: none; max-width: 100%; flex-wrap: wrap; }
 .set-unit { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); color: var(--ink-3); }
 .set-input-layout { flex-direction: column; align-items: flex-start; }
@@ -170,3 +173,12 @@
 
 /* The export's YAML: rows=12 collapsed to a line or two in the flex body; give it a height of its own */
 #settingsExportView .export-text { height: 16em; min-height: 8em; flex: none; }
+
+/* The speed test: its data estimate and the M-Lab privacy note are lines of their own, not settings */
+.set-note { padding: var(--sp-2) 0; }
+.set-note[data-inactive] { display: none; } /* not `hidden`: the search box sets that on every row */
+.set-estimate, .set-privacy { margin: 0; font-size: var(--fs-sm); color: var(--ink-2); overflow-wrap: anywhere; }
+.set-privacy b { color: var(--warn); }
+/* the three providers are buttons whose labels are sentences (M-Lab's says what it publishes): they stack and wrap */
+.set-row[data-key="speedtest.provider"] .set-input .seg { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+.set-row[data-key="speedtest.provider"] .set-input .seg button { white-space: normal; text-align: left; }

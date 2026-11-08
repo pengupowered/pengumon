@@ -87,8 +87,8 @@ export const steps = [
     eq("a line per member, then the median", sets.map((d) => d.label).join(", "), `${node}, Median`);
     ok("the median is drawn distinctly", sets[3].id === "group" && sets[3].width > sets[0].width);
     const keys = await page.$$eval("#targetHistSwitch button .key", (ks) => ks.map((k) => k.style.getPropertyValue("--c")));
-    eq("each member in its own colour, the switcher's key the same", keys.join(), sets.slice(0, 3).map((d) => d.color).join());
-    ok("three distinct colours", new Set(keys).size === 3);
+    eq("each member in its own color, the switcher's key the same", keys.join(), sets.slice(0, 3).map((d) => d.color).join());
+    ok("three distinct colors", new Set(keys).size === 3);
     eq("loss per member", await page.evaluate(() => Chart.getChart(document.getElementById("targetHistLoss")).data.datasets.length), 3);
     await until(() => document.querySelectorAll("#targetHistStrip .tgt-strips .strip").length === 3 || document.querySelectorAll("#targetHistStrip .tgt-strips > .tgt-sn").length === 3);
     ok("the figures say the group's rules", /\(median\)/.test(await text("#targetHistStats")));
@@ -112,21 +112,21 @@ export const steps = [
     await until(() => document.getElementById("targetHistTitle").textContent === "Internet · median of 3 public servers");
     await page.keyboard.press("Escape");
     await until(() => !document.getElementById("targetHistModal").classList.contains("active"));
-    // ten targets and eight series colours: the two DNS lookups (ninth and tenth) still differ from each other, not grey
-    const colours = [];
+    // ten targets and eight series colors: the two DNS lookups (ninth and tenth) still differ from each other, not gray
+    const colors = [];
     for (const row of [9, 10]) {
       const name = await page.$eval(`#hopMatrixBody tr:nth-child(${row}) [data-f=name]`, (e) => e.textContent);
       ok(`row ${row} is a DNS lookup (${name})`, /DNS/i.test(name));
       await click(`#hopMatrixBody tr:nth-child(${row})`);
       await until((n) => document.getElementById("targetHistModal")?.classList.contains("active") && document.getElementById("targetHistTitle").textContent === n, name);
-      // the colour the dialog draws this target in is the one the page gives it (util.js getTargetInfo)
+      // the color the dialog draws this target in is the one the page gives it (util.js getTargetInfo)
       await until(() => /points|No samples/.test(document.getElementById("targetHistStatus").textContent));
-      colours.push(await page.evaluate(() => Chart.getChart(document.getElementById("targetHistLatency")).data.datasets[0].borderColor));
+      colors.push(await page.evaluate(() => Chart.getChart(document.getElementById("targetHistLatency")).data.datasets[0].borderColor));
       await click("[data-action=closeModal][data-arg=targetHistModal]");
       await until(() => !document.getElementById("targetHistModal").classList.contains("active"));
     }
-    const grey = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--ink-3").trim());
-    ok(`the DNS lookups have distinct series colours (${colours}, grey ${grey})`, colours[0] !== colours[1] && !colours.includes(grey));
+    const gray = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--ink-3").trim());
+    ok(`the DNS lookups have distinct series colors (${colors}, gray ${gray})`, colors[0] !== colors[1] && !colors.includes(gray));
   }, { variants: ["longpath"] }],
 
   ["a folded run of ISP hops opens its hops together; a single public server still opens alone", async ({ click, eq, ok, page, text, until }) => {

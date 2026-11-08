@@ -114,6 +114,14 @@ used until then; the answer names that source in `overridden_by` and the log war
 `PENGUMON_DEVICE_MODEM_*` and `PENGUMON_DEVICE_ROUTER_*` from `.env` (empty when unset); for another device id, or a
 `/run/secrets` file, add an `environment:` entry or a `secrets:` entry named `pengumon_<id>_password` there.
 
+**During a speed test** the router whose WAN counters the line load reads (the first enabled device that reports
+them) is also read about once a second for the WAN counters alone, while each direction of the test runs (about 8 s
+each): `asuswrt` one `appGet.cgi` request with `netdev()`, `openwrt` one ubus batch (the interface dump and the device
+statistics), `snmp` one GET of the uptime and the WAN octet counters, `upnp_igd` the two counter actions. These reads use
+the same driver and session as the polls and never run during one (they wait for it); a refused login stops them like
+the polls. A device with a minimum interval between reads (the cable modem) is never read this way. Why:
+[speedtest.md](speedtest.md#why-the-routers-view).
+
 ## Changing devices without a restart
 
 Devices are edited on the Settings page (Devices and services). A save applies live:

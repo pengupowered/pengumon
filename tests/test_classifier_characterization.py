@@ -326,8 +326,8 @@ EXPECTED_TITLES = {
     "DNS Query Packet Drops",
     "Slow DNS Queries",
     "Line Busy: Delay From Heavy Load",
-    "Line Busy: ISP Hops Deprioritise Ping",
-    "ISP Hop Deprioritises Ping",
+    "Line Busy: ISP Hops Deprioritize Ping",
+    "ISP Hop Deprioritizes Ping",
     "All Network Hops Operational",
 }
 
@@ -496,7 +496,7 @@ MATRIX_PATTERNS = (
 
 
 def status_matrix():
-    """The per-target colour (up / degraded / down) for each category, at and around the boundaries."""
+    """The per-target color (up / degraded / down) for each category, at and around the boundaries."""
     rows = []
     for category in ("local", "gateway", "isp", "public", "dns", "custom"):
         for name, values in MATRIX_PATTERNS:
@@ -574,7 +574,7 @@ def _old_title(title):
 NON_LEGACY_KINDS = {
     "nominal", "local_down", "local_loss", "local_latency", "gateway_down", "gateway_loss", "gateway_latency",
     "isp_outage", "isp_loss", "backbone_loss", "upstream_latency", "dns_outage", "dns_loss", "dns_slow",
-    "busy_latency", "busy_isp_hops", "hop_deprioritised",
+    "busy_latency", "busy_isp_hops", "hop_deprioritized",
 }
 
 

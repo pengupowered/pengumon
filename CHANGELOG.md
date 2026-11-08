@@ -5,23 +5,74 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-11-07
+### Changed
+- **The speed test runs as often as you like**: Settings > Speed test > Run every takes any whole number of hours, days
+  or weeks, from 1 hour to 365 days (a week for weekly, 30 days for about monthly), instead of 1, 3, 6, 12 or 24 hours.
+  Installs that test every few days or weeks spread over the days. `speedtest.interval_hours` stays the key (1 to 8760).
+
+## [0.25.1] - 2026-11-07
+### Changed
+- **The speed test measures the line.** While a direction runs, Pengumon reads the router's WAN counters about once a
+  second (through the same session its polls use) and records the line's best 3-second rate: the test and the
+  household's traffic, what the line carried while it was full. That is the headline speed when the router gives one
+  ("measured by your router"), else the test's own ("test only"); the card, reports, MCP, AI pack and slow-line alert
+  judge the headline, and say when the test itself got far less because of other traffic on the network.
+  `measured_by` in `GET /api/speedtests` and the `speed_tests` tool.
+- Each direction runs for about 8 seconds of data or its data limit, whichever comes first, on 8 streams, through a
+  leaner HTTP client (about half the CPU per MB: one core no longer caps the test near 800 Mbps). Data per test (down)
+  gains 500 MB and 1000 MB.
+### Fixed
+- A speed test that cannot connect while a proxy is set for Pengumon says that the test connects directly (a test
+  through a proxy would measure the proxy, not the line).
+
+## [0.25.0] - 2026-11-07
+### Added
+- **Scheduled speed test** (off by default; Settings > Speed test). Measures download and upload on a schedule (every 1
+  to 24 hours, at a random minute of your own, optionally only inside a time window) and the delay a full line adds
+  (bufferbloat grade A+ to F, from the probes' latency before and during the test). Three providers: Cloudflare (the
+  default), M-Lab NDT7 (publishes your IP address with each result, as M-Lab does for every test) and your own LibreSpeed
+  server. Light on metered lines: hard limits on the data per test (10 to 250 MB down, 5 to 50 MB up), an optional monthly
+  limit, a live estimate of the data a month in Settings, and a test waits while the line is busy. A test too short to
+  measure a fast line says so and how much data would do, and is left out of the reports' figures. A **Speed** card
+  (last result against your plan speed, history, Run now), a speed section in the ISP dossier and the AI pack, an optional
+  alert when a test measures under a share of your plan (off by default; event `speed_slow`), metrics and a Grafana row.
+  While a test runs, its own delay is not an incident ("Speed Test Running") and an open incident is held, not resolved.
+  `GET /api/speedtests`, `POST /api/speedtests/run`. Schema v17 (`speed_tests`). docs/speedtest.md.
+- **Read-only MCP endpoint** (off by default; Settings > Sign-in > "Allow AI assistants to read"): an AI assistant such as
+  Claude Code can ask Pengumon about the line at `/mcp`: `status`, `incidents`, `incident`, `report`, `devices`,
+  `services`, `speed_tests` and `ai_pack`. Same sign-in and guards as the API; no tool changes anything; no secret, device
+  address or client identity in any answer. Pengumon's own small server: no new runtime dependency. docs/mcp.md.
+### Changed
+- The unit tests run sandboxed like the browser tests: no network, not root, only the raw ICMP capability, a read-only
+  image (docs/testing.md).
+- **US spelling throughout**: the page, the docs, the code and the names Pengumon stores or sends (color, behavior,
+  neighbor, canceled, gray, deprioritize, ...). A database is updated on start (schema v16): the incident kind
+  `hop_deprioritised` becomes `hop_deprioritized` (with its titles), and the dashboard setting `dashboard.colours` becomes
+  `dashboard.colors`, saved versions included; a browser's card colors saved by 0.24.0 are kept. Anything reading the
+  API or the webhooks by these names sees the new ones: that kind, a settings preview's state and outcome `canceled`,
+  a path discovery run's outcome `canceled` (a metric label too), the hop evidence source `neighbors`.
+
+### Security
+- The boot script links a theme's stylesheet and card views only from Pengumon's own theme folders (CodeQL).
+
 ## [0.24.0] - 2026-11-06
 ### Added
 - **Themes.** The header's palette button picks this browser's theme, light or dark, and whether animated effects run;
   Settings > Display sets the theme every browser starts with. Twelve built in: Pengumon (the standard look); the
   palettes Blueprint, E-ink, High contrast, Nord, Dracula and Solarized; **Mission control**, a wall display (a verdict
-  banner in the status colour, large figures, a status band on every card); and four with their own shapes and a slow
-  animated effect. **Starship console** restyles every card into one flowing console frame (a coloured rail sweeping into
+  banner in the status color, large figures, a status band on every card); and four with their own shapes and a slow
+  animated effect. **Starship console** restyles every card into one flowing console frame (a colored rail sweeping into
   each card's header bar, flat blocks, segmented gauges, tank meters); **Amber CRT** (a terminal: bracketed readouts,
   text bars, the incidents as a log) and **Synthwave** (neon readouts on a horizon grid) redraw path health, latency and
   one more card each; **Digital rain** redraws path health and latency as a terminal trace, with rain falling over the
-  whole page. A theme may redraw a card, restyle it, or leave it to the standard look in its colours and frame; every
+  whole page. A theme may redraw a card, restyle it, or leave it to the standard look in its colors and frame; every
   value, button and help link a card has stays in every theme (a test checks it). Themes can also change the charts'
   lines (width, straight or stepped, grid). Effects stop while the tab is hidden and when the system asks for reduced
-  motion, and can be turned off per browser. Your own themes: duplicate one and change its colours, or import a theme
-  file; any theme exports as one. In Layout, each card can take another theme's colours or its own. A theme is a folder
-  (docs/themes.md), and every theme is tested for text contrast and for chart colours that stay apart, also for
-  colour-blind eyes. Each page loads only the theme in use.
+  motion, and can be turned off per browser. Your own themes: duplicate one and change its colors, or import a theme
+  file; any theme exports as one. In Layout, each card can take another theme's colors or its own. A theme is a folder
+  (docs/themes.md), and every theme is tested for text contrast and for chart colors that stay apart, also for
+  color-blind eyes. Each page loads only the theme in use.
 ### Changed
 - **Every status shows its word next to its icon**: path health's hops and the cable modem's gauges showed an icon only
   (the word was in the tooltip). **Host services** is a warning while a service is only degraded, and an outage only
@@ -149,7 +200,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 - **Settings page** (header > Settings, or `#settings`). One page for what used to live in config.yaml: outage rules,
   alerts, your line, devices and host app checks, probing, retention, privacy, discovery and display, with an
-  Advanced area for the hop colours and the log levels. Every row shows its value, its default, what it changes and
+  Advanced area for the hop colors and the log levels. Every row shows its value, its default, what it changes and
   "Reset to default"; nothing changes until **Save**, and Cancel throws the draft away. A value set by an environment
   variable says "From environment" and can't be edited there. Every number has a range, and a value out of range is
   refused with a plain message.
@@ -163,7 +214,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - **Preview the outage rules before saving**: "With these rules the last 7 days would have had 4 incidents instead
   of 9 (and 2 alerts instead of 6)". Pengumon replays the stored 1-second samples through the real classifier in a
   separate low-priority process (a week takes about 15 seconds; it stops after a minute), and lists the incidents that
-  would open or no longer open. Old incidents are never relabelled: new rules apply from the moment you save.
+  would open or no longer open. Old incidents are never relabeled: new rules apply from the moment you save.
 - **New alert rules**: send only critical incidents (a warning that becomes critical is sent then), wait N minutes
   before alerting (an outage shorter than that sends nothing), and quiet hours, with "still send critical". What
   quiet hours held back and is still going on is sent when they end, as "Ongoing since 03:12". The repeat window
@@ -180,7 +231,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   router levels, the uptime and report levels, the daily route-check time, and the default range of the latency chart.
 - **Help texts quote the values in use**, so a changed level shows in the panel's "i" text.
 - **Path editor: "Warn above N ms"** per hop (under More), for a far-away server that is always slow. It changes
-  that hop's colour only; the incident rules are unchanged.
+  that hop's color only; the incident rules are unchanged.
 - **View only**: without the token the Settings page opens read-only.
 - **Telemetry for Pengumon's own health**, as metrics, logs and traces over OpenTelemetry (docs/telemetry.md):
   memory, CPU, threads, open files, asyncio tasks and event-loop lag; the work of each probe round by step; the
@@ -225,7 +276,7 @@ data), before this release:
 - A device that can't start (a bad address, a missing CA file) is reported on the page instead of stopping the start.
 - **Lighter dashboard.** The flowing path wires and the pulsing status dot are animated in a way the browser runs
   apart from the page (transform and opacity), which cut the open dashboard's main-thread time by about 85 %.
-  Colours and time labels are no longer recomputed for every message. A hidden tab keeps only the newest message
+  Colors and time labels are no longer recomputed for every message. A hidden tab keeps only the newest message
   and catches up when shown, so a dashboard left in a background tab costs almost nothing. Dialogs load when first
   opened, and the incident list loads 50 at a time (older ones when a view needs them): the first load is about
   20 % smaller.
@@ -423,7 +474,7 @@ data), before this release:
 
 ### Added
 - The Internet node in Path health (and a folded ISP node on narrow screens) opens a history of the whole group:
-  every member's latency in its own colour, the median the node shows, per-member loss and uptime, and a switcher to
+  every member's latency in its own color, the median the node shows, per-member loss and uptime, and a switcher to
   one member. A path node's history opens on Live and shows the node's own figure, and every figure names its window.
 - Incidents show how long probes were actually lost ("Loss 7s · incident 12s"), not only the detection span.
 - New device drivers: `openwrt` (ubus JSON-RPC) and `snmp` (SNMPv2c, any router, switch or NAS with IF-MIB and
@@ -441,7 +492,7 @@ data), before this release:
 - Hops that ignore ping are decided once, on the server, and every view treats them alike: Uptime, the target history,
   the report, When it breaks, the ISP dossier and incidents no longer count them as outages.
 - The incident inspector and the report use the same short names as the rest of the page (full names on hover).
-- Default target colours: members of one group always get distinct colours; the example config no longer pins them.
+- Default target colors: members of one group always get distinct colors; the example config no longer pins them.
 - `scripts/deploy.sh` warns and continues when depguard is not installed (`PENGUMON_REQUIRE_DEPGUARD=1` keeps it
   required).
 
@@ -475,7 +526,10 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.25.2...HEAD
+[0.25.2]: https://github.com/pengupowered/pengumon/compare/v0.25.1...v0.25.2
+[0.25.1]: https://github.com/pengupowered/pengumon/compare/v0.25.0...v0.25.1
+[0.25.0]: https://github.com/pengupowered/pengumon/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/pengupowered/pengumon/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/pengupowered/pengumon/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/pengupowered/pengumon/compare/v0.21.0...v0.22.0

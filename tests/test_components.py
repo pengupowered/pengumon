@@ -269,9 +269,9 @@ async def test_shutdown_order(tmp_path, monkeypatch):
                   'devices:\n  - {id: wifi, driver: asuswrt, url: "http://192.0.2.1", enabled: false}\n'))
     _quiet_workers(monkeypatch)
     async with main.lifespan(main.app):
-        # the wifi device, probe loop, retention, line load, service checks, broadcaster, route-change checks, the
-        # event-loop monitor
-        assert len(tasks) == 8
+        # the wifi device, probe loop, retention, line load, speed test scheduler, service checks, broadcaster,
+        # route-change checks, the event-loop monitor
+        assert len(tasks) == 9
 
     labels = [label for label, _ in events]
     assert all(done for _, done in events), events  # every task had ended
@@ -283,7 +283,7 @@ async def test_shutdown_order(tmp_path, monkeypatch):
     assert labels[-2:] == ["last log line", "telemetry flushed"]
 
 
-async def test_a_spawned_task_that_dies_is_logged_when_it_dies_and_a_cancelled_one_is_not(caplog):
+async def test_a_spawned_task_that_dies_is_logged_when_it_dies_and_a_canceled_one_is_not(caplog):
     from pengumon.components import Context
 
     async def crash():

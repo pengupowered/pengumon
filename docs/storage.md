@@ -24,6 +24,20 @@ cannot read a newer schema, and going back needs that backup.
 | v13 | The probe path in the database (`path_targets`) |
 | v14 | The applied versions of the path (`path_versions`) and its events (`path_events`) |
 | v15 | The settings store (`settings_values`, `settings_items`, `settings_versions`) |
+| v16 | Stored names take the US spelling (incident kinds and titles, meta markers, the card colors setting) |
+| v17 | The speed tests (`speed_tests`, below) |
+
+## The speed tests (schema v17)
+
+`speed_tests(id, ts, duration_s, trigger, provider, server, status, reason, down_mbps, up_mbps, idle_ms,
+loaded_down_ms, loaded_up_ms, bytes_down, bytes_up, wan_down_mbps, wan_up_mbps)`, indexed on `ts`: one row per test,
+scheduled or manual, whatever came of it (`status` is `ok`, `partial`, `skipped` or `failed`; a skipped row has a
+`reason` and no measurement). `down_mbps` / `up_mbps` are the test's own rates; `wan_down_mbps` / `wan_up_mbps` the line's
+peak rate the router's counters showed during each direction (read once a second since 0.25.1; the peak of the 10 s polls
+in 0.25.0). Which of the two a test's headline is, is worked out when read (speedtest/quality.py `headline`). One row per test: one a day with the default interval, at most one an hour. They are kept as long as the per-minute rollups
+(`database.rollup_retention_days`, 400 by default): the hourly cleanup deletes older ones. The monthly data cap sums
+`bytes_down + bytes_up` of the calendar month's rows. The install's random schedule offset is in `meta`
+(`speedtest_offset_s`).
 
 ## The 0.2.0 migration (schema v2)
 
@@ -48,7 +62,7 @@ dashboard edits (one row per hop that is or was on the path; `config` is the tar
 no migration). A hop removed in the path editor keeps its row with `deleted_at` set: it is not probed, and its samples
 and rollups stay but are left out of every per-target answer (history, report, uptime, dossier, loss grid) until
 `DELETE /api/path/history/{id}` deletes them. `meta` holds the path's `path_revision` (every applied edit adds one; an
-edit from an older revision is refused) and `path_initialised`, set by the one-time import of config.yaml's targets and
+edit from an older revision is refused) and `path_initialized`, set by the one-time import of config.yaml's targets and
 the old `custom_targets` (kept, no longer written) so that import never runs twice. The import runs at start
 (`engine/path.py`), not in the migration, because it needs the config.
 
@@ -60,7 +74,7 @@ the old `custom_targets` (kept, no longer written) so that import never runs twi
   `webhooks`, `dns_probes`), one row per item, the item as JSON (so a new field needs no migration).
 * `settings_versions(revision, applied_at, source, summary, document)` - the whole document after each save (revision
   1 is the one-time import; source `import`, `save`, `restore` or `yaml_import`); the last 50 are kept.
-* `meta`: `settings_revision`, `settings_initialised` (the import ran; never cleared), `settings_lists_set` (the lists
+* `meta`: `settings_revision`, `settings_initialized` (the import ran; never cleared), `settings_lists_set` (the lists
   that are set, not at their default; a set list may be empty), `settings_import_report` (what the import left out and
   why, never a value) and `settings_imported_at`.
 

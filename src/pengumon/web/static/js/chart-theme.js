@@ -1,20 +1,20 @@
-// Colours for canvas drawing (Chart.js, the sparklines, the channel heatmap): canvas cannot read CSS variables, so
+// Colors for canvas drawing (Chart.js, the sparklines, the channel heatmap): canvas cannot read CSS variables, so
 // these read the design tokens (tokens.css) at the moment of drawing. Chart.js's defaults are set from them at start
-// and after every theme change (chrome.js), and every chart is redrawn; a module gives its charts series colours
-// only, never text, grid or tooltip colours.
+// and after every theme change (chrome.js), and every chart is redrawn; a module gives its charts series colors
+// only, never text, grid or tooltip colors.
 
 // Reading a token resolves it through getComputedStyle (a style recalculation when anything is dirty), and the charts
 // and sparklines read the same few tokens on every message, so the values are kept until the theme changes
 // (applyChartTheme, below, empties the cache; it runs at start and after every theme change). An empty result
 // (a token that is not defined yet) is never kept.
 //
-// A card can have colours of its own (Layout, themes.js: its accent and series colours as custom properties on its
-// <section data-colours>): pass an element of the card as `el` and the token is read there, so its chart follows.
+// A card can have colors of its own (Layout, themes.js: its accent and series colors as custom properties on its
+// <section data-colors>): pass an element of the card as `el` and the token is read there, so its chart follows.
 let tokenCache = new Map();
 let cardCache = new WeakMap(); // card section -> Map
 export const clearTokenCache = () => { tokenCache = new Map(); cardCache = new WeakMap(); };
 export function token(name, el) {
-  const card = el && el.closest ? el.closest('[data-colours]') : null;
+  const card = el && el.closest ? el.closest('[data-colors]') : null;
   let cache = tokenCache;
   if (card) {
     cache = cardCache.get(card);
@@ -28,8 +28,8 @@ export function token(name, el) {
   return v;
 }
 
-// The categorical series colours in their fixed order (tokens.css --s1..--s4), for charts whose series are not targets;
-// `el`: an element of the card the chart is in (its own colours, see token).
+// The categorical series colors in their fixed order (tokens.css --s1..--s4), for charts whose series are not targets;
+// `el`: an element of the card the chart is in (its own colors, see token).
 export const series = (i, el) => token(`--s${(i % 4) + 1}`, el);
 
 // ---------- a theme's chart style (theme.json "chart", docs/themes.md "Chart style") ----------
@@ -92,7 +92,7 @@ export function applyChartTheme() {
   if (typeof Chart === 'undefined') return;
   const d = Chart.defaults;
   // Chart.js copies the scale defaults into each chart's own options when the chart is made, so a chart made in the other
-  // theme keeps the old text, grid and axis colours however the defaults change; remember what they were to swap them below.
+  // theme keeps the old text, grid and axis colors however the defaults change; remember what they were to swap them below.
   const swap = new Map();
   const remember = (was, now) => { if (typeof was === 'string' && was && was !== now && !swap.has(was)) swap.set(was, now); };
   remember(d.color, token('--ink-3'));

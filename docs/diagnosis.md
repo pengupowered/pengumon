@@ -103,7 +103,7 @@ from the next probe round and never relabels stored incidents.
 - **Internal, not settings:** DNS is judged only while every lower layer loses under 10 %; an ISP outage names the
   ISP hop from 30 % ISP-hop loss, otherwise peering; a sample over 150 ms makes its target an affected one.
 
-A hop's own "warn above" level in the path editor (`warn_latency_ms`) changes only that hop's colour on the
+A hop's own "warn above" level in the path editor (`warn_latency_ms`) changes only that hop's color on the
 dashboard; the incident rules above still judge its role's median.
 
 ## Load-aware classification
@@ -124,6 +124,22 @@ looks at the WAN load (from the Asus router's 10 s byte counters) when it judges
 * **Any other loss under load** is still an incident; it stores `load_pct` (the peak during the incident) and
   its description ends with "During heavy load (X%)".
 
+## While a speed test runs
+
+A speed test ([speedtest.md](speedtest.md)) fills the line on purpose, and the delay and loss it causes are the test's
+doing, not a fault. While a test runs, and for the judged window after it (`classifier.window_probes` rounds plus 5
+seconds, because that window still holds probes sent under load), a degraded verdict becomes `busy_speedtest`: status
+`busy`, cause `speed_test` (category `load`), severity `info`, title "Speed Test Running: Delay Expected", and the
+description says what was seen. This runs before the busy-line rule. Such a round says nothing about the line either way,
+so the incident tracker holds still for it: it neither builds toward an incident nor counts as a recovery. A fault that
+starts during a test opens no incident; an incident already open when the test starts stays open across it (it is not
+resolved by the test and opened again after). The mask cannot outlast the test's own limits: a direction still running a
+minute after it began is cut off, and a test that has run for two and a half minutes masks nothing more.
+
+A **hard outage** (status `down`: a target that loses 40 % or more) stays an outage: a test cannot take the line down, and
+an outage during one is still an outage. The outage-rules preview applies the stored tests the same way, so what it counts
+agrees with what happened.
+
 ## Intermediate-hop ping loss (the classic MTR rule)
 
 Routers answer ping from a slow path and drop those replies first, whether or not the line is busy. Loss at
@@ -132,12 +148,12 @@ that does not carry through to the end targets is therefore not packet loss. Whe
 level (15% by default) or more, but the public targets lose under it **and** under half of what the ISP hops lose,
 and the local
 router, gateway and DNS probes are healthy, the status is `healthy` ("<hop name> drops some ping replies, but later
-hops and public targets are fine: routers often deprioritise ping replies, so this is not packet loss"), no
-incident is opened and no failure counter builds up. The busy rule above runs first and keeps its behaviour for
+hops and public targets are fine: routers often deprioritize ping replies, so this is not packet loss"), no
+incident is opened and no failure counter builds up. The busy rule above runs first and keeps its behavior for
 the loaded case.
 
 On the first start of 0.2.0 a one-time backfill (recorded in `meta` as
-`incident_ping_deprioritisation_backfill`) re-checks old "ISP Line / ... Packet Loss|Outage" incidents that
+`incident_ping_deprioritization_backfill`) re-checks old "ISP Line / ... Packet Loss|Outage" incidents that
 still have raw samples (7 days): if the public targets stayed under the degraded level and under half the ISP
 loss, the incident is marked expected. Incidents without raw samples are left alone. A second, separate backfill
 (`incident_load_backfill`) annotates old incidents with the router load around them and marks latency-only and
@@ -158,7 +174,7 @@ targets fail while no local router or gateway target is configured, so the fault
 incidents recorded before it existed get
 `legacy_latency` or `legacy_other` where their title matches no current template). It is part of the incident
 JSON in `/api/incidents` and the websocket. The intermediate-hop rule and the two backfills decide by `kind`, not
-by the display title, so titles can be reworded without changing behaviour.
+by the display title, so titles can be reworded without changing behavior.
 
 **Loss span.** An incident's `start_time` and `end_time` are detection times: it opens a few probe rounds after the first
 lost probe and closes once enough rounds are clean again, so it runs a few seconds late on both ends (7 s of lost probes
@@ -177,5 +193,5 @@ technology-specific causes, e.g. coax and CMTS for a DOCSIS modem). Loss at the 
 one. Which schema versions an older build cannot read, and why a backup matters before an upgrade, is in
 [storage.md](storage.md#schema-versions).
 
-The per-target status colours on the dashboard (up / degraded / down) come from `prober.hop_status`; the defaults
+The per-target status colors on the dashboard (up / degraded / down) come from `prober.hop_status`; the defaults
 are the values the dashboard has always used.

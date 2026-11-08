@@ -3,9 +3,9 @@ the custom targets), the prober with every target and the probe loop (engine/loo
 component has registered. It owns the app's ICMP backend (engine/icmp_select.shared_backend), which traceroute and
 the incident path trace use too.
 
-Saved settings it applies without a restart (`subscribe`): the probe timeouts, the window the hop colours judge loss
+Saved settings it applies without a restart (`subscribe`): the probe timeouts, the window the hop colors judge loss
 over (classifier.window_probes) and the DNS lookups list (the prober keeps copies). Everything else the probe round
-reads (the hop colours, the outage rules, the busy level) is the live config object itself, which the settings manager
+reads (the hop colors, the outage rules, the busy level) is the live config object itself, which the settings manager
 updates in place before the appliers run; so are the line and router levels the device monitors grade by
 (devices/monitors.py watch_levels, wired by the devices component)."""
 

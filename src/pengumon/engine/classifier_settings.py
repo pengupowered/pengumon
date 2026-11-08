@@ -40,7 +40,7 @@ class ClassifierConfig(BaseModel):
     # Traced (traceroute) when an incident starts, to record the path at that moment.
     path_trace_target: str = "1.1.1.1"
     # The window: each target's last N probes (one a round), over which loss, the median latency and the jitter are
-    # judged (engine/window.py), here and for the hop colours' loss. At most what the prober keeps.
+    # judged (engine/window.py), here and for the hop colors' loss. At most what the prober keeps.
     window_probes: int = Field(DEFAULT_WINDOW_PROBES, ge=3, le=HISTORY_PROBES)
 
     @field_validator("path_trace_target")

@@ -8,7 +8,7 @@
 // Data: the nodes and the client totals are the /api/devices/{id}/clients answer that clients.js loads while the modal
 // is open (setTopologyClients); nothing rides on the websocket. A mesh node (or the lone client
 // pill of a router without mesh) filters the client table below.
-// The status colour and latency of each hop come from the live message's targets, by category:
+// The status color and latency of each hop come from the live message's targets, by category:
 //   * local -> router, gateway -> line / modem: the WORST enabled target of the category sets the status and supplies
 //     the latency shown. A hop is only as healthy as its weakest probe, and a category normally has one target, so
 //     "worst" equals "first" there; with several it is the one a person needs to look at.

@@ -138,7 +138,7 @@ def test_node_labels_come_from_the_options_first_then_the_router_then_numbers():
     assert [n.label for n in build_mesh(reading, {}, {"000002": "Loft"}).nodes] == ["Node 1", "Loft", "Node 2"]
 
 
-def test_the_main_routers_wired_neighbours_do_not_take_the_satellites_names():
+def test_the_main_routers_wired_neighbors_do_not_take_the_satellites_names():
     # As an AiMesh main router answers: its wired_mac lists the satellites' own MACs (wired backhaul), and the clients
     # of a satellite name that satellite's own MAC in amesh_papMac. It comes first, and must not label them all.
     nodes = {"get_cfg_clientlist": [

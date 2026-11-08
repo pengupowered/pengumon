@@ -249,7 +249,7 @@ async def test_unconfigured_and_disabled_devices_are_not_polled_and_log_once(tel
     assert driver.polls == 1 and driver.credentials == ("admin", "secret")
 
 
-async def test_run_polls_until_cancelled_and_survives_a_crashing_monitor(telemetry, caplog):
+async def test_run_polls_until_canceled_and_survives_a_crashing_monitor(telemetry, caplog):
     class Crashing(FakeMonitor):
         async def on_result(self, ts, result):
             self.events.append("crash")

@@ -37,8 +37,21 @@ def _reset(monkeypatch, app_state):
     monkeypatch.setattr(security_config, "allowed_origins", [])
     monkeypatch.setattr(security_config, "view_without_token", False)
     security.reset_rate_limits()
+    _clear_login_throttle()
     yield
     security.reset_rate_limits()
+    _clear_login_throttle()
+
+
+def _clear_login_throttle():
+    """The app's login throttle (5 attempts a minute per address) is one object for the process, so a test's failed
+    sign-ins would count against the next test's: found in the built middleware stack and emptied."""
+    layer = app.middleware_stack
+    while layer is not None:
+        throttle = getattr(layer, "throttle", None)
+        if isinstance(throttle, security.LoginThrottle):
+            throttle.hits.clear()
+        layer = getattr(layer, "app", None)
 
 
 def _client():

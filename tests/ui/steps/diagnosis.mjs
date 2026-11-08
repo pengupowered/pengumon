@@ -149,7 +149,7 @@ export const steps = [
         const a = l.getBoundingClientRect(); const d = l.querySelector(".delta").getBoundingClientRect(); const c = (r) => r.left + r.width / 2;
         return { dx: Math.abs(c(a) - c(d)), gap: d.top - a.bottom };
       }));
-      ok(`${w}: a pill is centred on its link (${JSON.stringify(off)})`, off.every((o) => o.dx < 1.5));
+      ok(`${w}: a pill is centered on its link (${JSON.stringify(off)})`, off.every((o) => o.dx < 1.5));
       ok(`${w}: a pill is at most 30px below its link (${JSON.stringify(off)})`, off.every((o) => o.gap < 30));
       if (w === 1024) ok("1024: a stem ties each pill to its wire", await page.$eval("#pathChain .link", (l) => getComputedStyle(l, "::after").content !== "none"));
     }

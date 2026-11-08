@@ -257,7 +257,7 @@ Points that matter when you adapt it:
   SNMP does (its "password" is the community string).
 - **Not HTTP?** The SNMP driver (`drivers/snmp.py`, with its own UDP client in `drivers/snmp_ber.py`) shows a driver
   that does not use `DeviceHttp`. The same rules apply.
-- **Discovery (optional).** If the device's login page is recognisable, add a `Fingerprint` to `FINGERPRINTS` in
+- **Discovery (optional).** If the device's login page is recognizable, add a `Fingerprint` to `FINGERPRINTS` in
   `engine/discovery/devices.py`; discovery then suggests your driver for that hop. Skip it if you cannot do this
   without being sure.
 - **Document it.** Add a section to [devices.md](devices.md) (what it reads, what it needs on the device, such as a
@@ -339,7 +339,7 @@ If you let an AI tool look at a recording, give it the **redacted** file, never 
 
 ## Tests
 
-Pengumon's tests are lean: one test that fails without the behaviour beats several that check the same thing. Read the
+Pengumon's tests are lean: one test that fails without the behavior beats several that check the same thing. Read the
 existing driver tests before writing yours; they are the best examples, and **never write fixtures, helper names or
 signatures from memory.**
 
@@ -417,8 +417,8 @@ What a good driver test covers, taking `tests/test_openwrt.py` and `tests/test_s
   the driver is in `DRIVERS` with the username and URL schemes you intended;
 - nothing the driver sends changes the device (for HTTP APIs, assert the set of paths or methods requested).
 
-For a security-relevant behaviour (credentials never in a log line or an error message), check that the test fails
-when you break the behaviour: temporarily remove the protection and watch the test fail, then restore it.
+For a security-relevant behavior (credentials never in a log line or an error message), check that the test fails
+when you break the behavior: temporarily remove the protection and watch the test fail, then restore it.
 
 ### Tests that already cover every driver
 
@@ -468,7 +468,7 @@ from pengumon.capabilities.contrib import DriverNotes
     )
 ```
 
-- State **only what your own code establishes**: how often it reads, where the data comes from, a firmware behaviour
+- State **only what your own code establishes**: how often it reads, where the data comes from, a firmware behavior
   you work around. Not advice about the vendor and not claims you cannot point to a line for (the Xfinity and AsusWRT
   drivers list, in a comment above the notes, the line that backs each statement; do the same).
 - Placeholders are filled from the device's configuration by `driver_note` (`reports/contributions.py`): `{poll}`,
@@ -524,7 +524,7 @@ and no password, token or cookie. A new metric needs an entry in [telemetry.md](
 - [ ] Tests replay **redacted** recorded answers through `httpx.MockTransport`; every value is made up (addresses from
       192.0.2.0/24, 198.51.100.0/24 or 192.168.88.0/24, MACs `02:00:00:...`, names such as "Example-Mesh"); no real address,
       MAC, serial, SSID, host name, password or cookie is in the diff. You have `grep`ped the diff for your own.
-- [ ] The tests cover a good poll, a refused login, a missing field and an unreadable answer; each behaviour has a test
+- [ ] The tests cover a good poll, a refused login, a missing field and an unreadable answer; each behavior has a test
       that fails without it.
 - [ ] `scripts/test.sh` passes (and `scripts/test-ui.sh` if you touched `src/pengumon/web/` or `tests/ui/`).
 - [ ] `pack_notes` (if any) state only what the code establishes; the anonymized text names no vendor; the contract

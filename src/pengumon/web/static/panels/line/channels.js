@@ -1,5 +1,5 @@
 // The DOCSIS line's detail view (the Channels dialog), for one line device at a time: the three range gauges, an alert
-// when the server grades the new errors as a problem, every channel with its power, SNR and errors coloured by the
+// when the server grades the new errors as a problem, every channel with its power, SNR and errors colored by the
 // server's per-channel grades, and the History tab (channel-history.js). The full reading comes from
 // GET /api/devices/{id} (the live message carries no channel detail), refreshed every 30 s while the dialog is open.
 
@@ -36,7 +36,7 @@ function row(c) {
     <td data-l="Since boot" class="r num">${(c.uncorrectables || 0).toLocaleString()}</td></tr>`;
 }
 
-// The three bar charts (downstream power and SNR, upstream power): the zone from the device's ranges, each bar's colour
+// The three bar charts (downstream power and SNR, upstream power): the zone from the device's ranges, each bar's color
 // from the channel's own grades.
 function renderCharts(snap) {
   const channels = snap.channels || [];

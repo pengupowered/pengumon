@@ -63,7 +63,7 @@ function gauge(box) {
   };
 }
 
-// The new errors per reading as small bars (SVG, token colours), the page's own history.
+// The new errors per reading as small bars (SVG, token colors), the page's own history.
 function microBars(values, level) {
   const n = Math.max(values.length, 30);
   const w = n * 5;

@@ -1,7 +1,7 @@
 // Router: one card per enabled device offering wan_counters or router_system (two routers, two cards). Each part only
 // when the device offers what it shows: WAN traffic against the line capacity (wan_counters), CPU and memory
 // (router_system), the clients by band and the mesh nodes (when the device is a provider of the `clients` / `mesh`
-// features). Colours are the server's grades; the capacity and the load are the server's too (the live `line` part and
+// features). Colors are the server's grades; the capacity and the load are the server's too (the live `line` part and
 // the snapshot's wan_*_load_pct).
 //
 // This is the card's model: it watches the device, fetches the last hour of WAN traffic, keeps the frame (title, badge,
@@ -77,7 +77,7 @@ function systemOf(snap) {
   return { cpu: m(SYSTEM[0]), mem: m(SYSTEM[1]) };
 }
 
-const BAND_COLOURS = ['--s1', '--s2', '--s3', '--s4'];
+const BAND_COLORS = ['--s1', '--s2', '--s3', '--s4'];
 
 // The clients: the online count, the split by band (wired and each Wi-Fi band) as a bar and a legend. The counts come
 // from the live summary (the server sends no client row there; the list itself is fetched only by the Local network
@@ -87,7 +87,7 @@ function clientsOf(snap) {
   const out = { count: c ? String(c.online) : has(snap && snap.client_count) ? String(snap.client_count) : '–', bands: [], aria: '' };
   if (!c) return out;
   const bands = [['Wired', c.wired], ...Object.keys(c.by_band).sort().map((b) => [b, c.by_band[b]])].filter(([, n]) => n > 0);
-  out.bands = bands.map(([name, n], k) => ({ name, n, colour: BAND_COLOURS[k % 4], title: `${name}: ${n}` }));
+  out.bands = bands.map(([name, n], k) => ({ name, n, color: BAND_COLORS[k % 4], title: `${name}: ${n}` }));
   out.aria = bands.map(([n, v]) => `${v} ${n}`).join(', ');
   return out;
 }

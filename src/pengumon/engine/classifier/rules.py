@@ -116,7 +116,7 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             affected=m.failed_targets,
         )
 
-    # 3a. No LAN target at all: loss towards the internet cannot be placed on the line, since nothing shows the
+    # 3a. No LAN target at all: loss toward the internet cannot be placed on the line, since nothing shows the
     #     local network working.
     if not m.local.measured and not m.gateway.measured and (isp_loss >= degraded or public_loss >= degraded):
         worst = max(isp_loss, public_loss)
@@ -160,7 +160,7 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
         if isp_loss >= degraded:
             kind, cause = "isp_loss", "access_line_drop"
             title = f"Line or {isp_name} Packet Loss"
-            detail = f"{isp_name} ({isp_addr}) lost {isp_loss}% of recent probes while {_lan_answers(m)} normally. Possible causes: {_past_gateway(m, line, line.loss)}, or the hop deprioritising ping replies."
+            detail = f"{isp_name} ({isp_addr}) lost {isp_loss}% of recent probes while {_lan_answers(m)} normally. Possible causes: {_past_gateway(m, line, line.loss)}, or the hop deprioritizing ping replies."
         else:
             kind, cause = "backbone_loss", "internet_backbone_transit_loss"
             title = "ISP Upstream Backbone Packet Loss"
@@ -230,6 +230,26 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
     return NOMINAL
 
 
+def apply_speedtest(verdict: Verdict) -> Verdict:
+    """Re-reads a degraded diagnosis made while a speed test runs (or its judged window still holds the test's probes):
+    the test fills the line on purpose, so the delay and the loss it causes are expected, not a fault. A hard outage
+    (status "down") stays one: a test cannot take the line down, and an outage during one is still an outage."""
+    if verdict.status == "down":
+        return verdict
+    return Verdict(
+        kind="busy_speedtest",
+        status="busy",
+        cause="speed_test",
+        title="Speed Test Running: Delay Expected",
+        description=(
+            f"{verdict.title} while a speed test runs. The test fills the line on purpose, so delay and some loss are "
+            f"expected; not counted as an incident. What was seen: {verdict.description}"
+        ),
+        severity="info",
+        affected=verdict.affected,
+    )
+
+
 def apply_load(
     verdict: Verdict,
     m: RoundMetrics,
@@ -265,7 +285,7 @@ def apply_load(
             kind="busy_isp_hops",
             status="busy",
             cause="load_induced_latency",
-            title="Line Busy: ISP Hops Deprioritise Ping",
+            title="Line Busy: ISP Hops Deprioritize Ping",
             description=(
                 f"{verdict.title} while the line is busy ({load_text}). The LAN, gateway and public internet "
                 f"answer normally; intermediate ISP routers drop ping replies first under load. Expected, "
@@ -277,7 +297,7 @@ def apply_load(
     return verdict.with_(description=f"{verdict.description} During heavy load ({reading.pct:.0f}%): {load_text}.")
 
 
-def apply_hop_deprioritisation(verdict: Verdict, m: RoundMetrics, config: ClassifierConfig) -> Verdict:
+def apply_hop_deprioritization(verdict: Verdict, m: RoundMetrics, config: ClassifierConfig) -> Verdict:
     """Loss at ISP hops that does not carry through to the end targets is not a fault (the classic MTR rule).
 
     Routers answer ping from a slow path and drop those replies first, load or not, while forwarding the
@@ -292,14 +312,14 @@ def apply_hop_deprioritisation(verdict: Verdict, m: RoundMetrics, config: Classi
     worst = max(m.isp.targets, key=lambda st: st.recent_latencies[-window:].count(None), default=None)
     hop = worst.name if worst and worst.recent_latencies[-window:].count(None) else "An ISP hop"
     return Verdict(
-        kind="hop_deprioritised",
+        kind="hop_deprioritized",
         status="healthy",
         cause="nominal",
-        title="ISP Hop Deprioritises Ping",
+        title="ISP Hop Deprioritizes Ping",
         description=(
             f"{isp_loss}% of recent probes to the ISP hops were lost, against {public_loss}% to the public targets. "
             f"{hop} drops some ping replies, but later hops and public targets are fine: routers often "
-            f"deprioritise ping replies, so this is not packet loss."
+            f"deprioritize ping replies, so this is not packet loss."
         ),
         severity="info",
         affected=(),

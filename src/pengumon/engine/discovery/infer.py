@@ -16,7 +16,7 @@ satellite one more; carrier-grade NAT may or may not be there. The rules, in the
    your connection's own way out; past the split they are out in the internet), else its address (a CGNAT or
    private address past the edge, or the first public hop, is the provider's). Once the path has left the provider
    it does not come back: a later hop that looks like the provider's is kept as internet, with lower confidence.
-3. A hop with no evidence of its own takes its neighbours' owner when the hops either side agree, else stays
+3. A hop with no evidence of its own takes its neighbors' owner when the hops either side agree, else stays
    unknown (and takes the earlier one's role).
 
 Confidence: high when two or more kinds of evidence agree and none disagrees; likely with one kind, or when some
@@ -47,7 +47,7 @@ STEP_RATIO = 1.5  # ... and so is one where the later hop is not at least this m
 
 # Which kind of evidence decides a provider-or-internet hop, strongest first.
 _PRIORITY = ("upnp", "asn", "rdns", "divergence", "address_class", "latency_step", "device_page", "off_path",
-             "neighbours")
+             "neighbors")
 
 
 @dataclass
@@ -89,7 +89,7 @@ class OffPathDevice:
 
 @dataclass
 class Facts:
-    """Everything discovery learnt, for `infer`."""
+    """Everything discovery learned, for `infer`."""
 
     path: MergedPath
     names: Dict[str, str] = field(default_factory=dict)  # address -> reverse-DNS name
@@ -324,7 +324,7 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         owner = _decide(g.evidence)
         if left_provider and owner == PROVIDER:
             owner = INTERNET
-            g.evidence.append(Evidence("neighbours", "An earlier hop is already outside the provider's network, so "
+            g.evidence.append(Evidence("neighbors", "An earlier hop is already outside the provider's network, so "
                                                      "this one is taken as outside it too.", INTERNET))
         g.owner = owner
         if owner == INTERNET:
@@ -336,7 +336,7 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         elif owner == INTERNET:
             g.operator = registrable_domain(name) or (asn.operator if asn else None)
 
-    # 3. neighbours: hops with no owner, and the silent ones
+    # 3. neighbors: hops with no owner, and the silent ones
     def owner_at(k: int) -> Optional[str]:
         return guesses[k].owner if k in guesses else None
 
@@ -354,10 +354,10 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         g = guesses[i]
         if agreed is not None:
             g.owner = agreed
-            g.evidence.append(Evidence("neighbours", "It has no evidence of its own; the hops either side are both "
+            g.evidence.append(Evidence("neighbors", "It has no evidence of its own; the hops either side are both "
                                                      f"{_owner_words(agreed)}, so it likely is too.", agreed))
         else:
-            g.evidence.append(Evidence("neighbours", "It has no evidence of its own, and the hops either side do "
+            g.evidence.append(Evidence("neighbors", "It has no evidence of its own, and the hops either side do "
                                                      "not agree: unknown."))
             g.owner = None
             g.category = OWNER_CATEGORY.get(before or PROVIDER, "local")

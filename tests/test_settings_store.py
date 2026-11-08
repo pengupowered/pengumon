@@ -144,7 +144,7 @@ async def test_an_onset_count_without_a_recovery_count_keeps_recovering_after_th
 async def test_the_store_refuses_a_second_import(tmp_path):
     manager, _ = await make_manager(tmp_path)
     again = SettingsDocument(values={"classifier.busy_load_pct": 90})
-    assert await manager.repository.initialise_settings(again, "again", []) is False
+    assert await manager.repository.initialize_settings(again, "again", []) is False
     revision, stored = await manager.repository.load_settings()
     assert revision == 1 and stored.values["classifier.busy_load_pct"] == 70
 

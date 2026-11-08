@@ -650,14 +650,14 @@ def test_parse_icmp6_error_reads_the_quoted_request(icmp_type, kind):
 
 @pytest.mark.parametrize("packet", [
     echo6(128, 1, 2),  # an echo request (ours, looped back, or someone pinging us)
-    struct.pack("!BBHI", 135, 0, 0, 0) + b"\0" * 16,  # neighbour solicitation
+    struct.pack("!BBHI", 135, 0, 0, 0) + b"\0" * 16,  # neighbor solicitation
     struct.pack("!BBHI", 134, 0, 0, 0) + b"\0" * 48,  # router advertisement
     icmp6_error(3, 1, 2, TARGET6, next_header=17),  # quotes a UDP packet (someone's traceroute)
     icmp6_error(1, 1, 2, TARGET6, next_header=0),  # quotes a packet with a hop-by-hop header: never ours
     icmp6_error(3, 1, 2, TARGET6, quoted_type=129),  # quotes a reply, not a request
     icmp6_error(4, 1, 2, TARGET6),  # parameter problem
     echo(0, 1, 2),  # an ICMPv4 echo reply on the wrong socket
-], ids=["echo request", "neighbour solicitation", "router advertisement", "quoted udp", "quoted ext header",
+], ids=["echo request", "neighbor solicitation", "router advertisement", "quoted udp", "quoted ext header",
         "quoted reply", "parameter problem", "icmpv4 reply"])
 def test_other_icmp6_is_not_an_answer(packet):
     assert parse_icmp6(packet) is None
@@ -831,7 +831,7 @@ async def test_ipv6_raw_socket_time_exceeded_and_reply(raw6):
     (ident, seq1, ns1), (_, seq2, ns2) = sent_request(fake, 0), sent_request(fake, 1)
     fake.queue += [
         (echo6(128, ident, seq2), [], 0, a6(ME6)),  # our own request, looped back
-        (struct.pack("!BBHI", 135, 0, 0, 0) + b"\0" * 16, [], 0, a6("fe80::1", 2)),  # neighbour discovery
+        (struct.pack("!BBHI", 135, 0, 0, 0) + b"\0" * 16, [], 0, a6("fe80::1", 2)),  # neighbor discovery
         (echo6(129, ident ^ 0xFF, seq1, sent_payload(fake, 0)), [ts_cmsg(ns1)], 0, a6(OTHER6)),  # another pinger
         (icmp6_error(3, ident, seq1, OTHER6), [ts_cmsg(ns1)], 0, a6(ROUTER6)),  # about another target
         (icmp6_error(3, ident, seq1, TARGET6), [ts_cmsg(ns1 + 300_000)], 0, a6(ROUTER6)),

@@ -1,4 +1,4 @@
-"""Intermediate-hop ICMP deprioritisation: loss at ISP hops that the end targets do not share is not a fault."""
+"""Intermediate-hop ICMP deprioritization: loss at ISP hops that the end targets do not share is not a fault."""
 
 import time
 
@@ -11,7 +11,7 @@ from pengumon.db.repository import DatabaseRepository
 from pengumon.engine.classifier import OutageClassifier
 from pengumon.engine.load import (
     PING_BACKFILL_META_KEY,
-    backfill_ping_deprioritisation,
+    backfill_ping_deprioritization,
 )
 from pengumon.incidents.model import Incident
 from pengumon.models.probes import ProbeSample, TargetStats
@@ -135,7 +135,7 @@ async def test_backfill_marks_incidents_whose_public_targets_stayed_fine(tmp_pat
     await probe(90, 32, isp_lost=32, public_lost=1)  # all lost at the hop, 1 at public
     await probe(190, 32, isp_lost=12, public_lost=10)  # public 31% is not below half... and over 15%
 
-    assert await backfill_ping_deprioritisation(repo, TARGETS, 15.0) == 2
+    assert await backfill_ping_deprioritization(repo, TARGETS, 15.0) == 2
     got = {i.id: i for i in await repo.get_recent_incidents(limit=20)}
     assert got[hop_only].expected and got[outage_hop_only].expected
     assert not got[real].expected
@@ -145,7 +145,7 @@ async def test_backfill_marks_incidents_whose_public_targets_stayed_fine(tmp_pat
 
     # Idempotent, and independent of the load backfill's key.
     await probe(290, 32, isp_lost=12, public_lost=0)
-    assert await backfill_ping_deprioritisation(repo, TARGETS, 15.0) is None
+    assert await backfill_ping_deprioritization(repo, TARGETS, 15.0) is None
     assert not (await repo.get_incident_by_id(no_samples)).expected
 
 
@@ -179,5 +179,5 @@ async def test_backfill_judges_the_public_loss_against_the_degraded_level(tmp_pa
         samples.append(ProbeSample(target_id="rur", timestamp=t, success=False, latency_ms=None))
         samples.append(ProbeSample(target_id="cf", timestamp=t, success=i >= 6, latency_ms=14.0))
     await repo.insert_samples(samples)
-    assert await backfill_ping_deprioritisation(repo, TARGETS, degraded_loss_pct) == int(marked)
+    assert await backfill_ping_deprioritization(repo, TARGETS, degraded_loss_pct) == int(marked)
     assert (await repo.get_incident_by_id(hop)).expected is marked

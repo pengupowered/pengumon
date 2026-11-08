@@ -53,6 +53,8 @@ def _populate(app_state):
     app_state.repository = SimpleNamespace(count_network_incidents=_count_incidents, sample_buffer_size=3,
                                            file_sizes=lambda: {"main": 4096, "wal": 0})
     app_state.notifier = SimpleNamespace(pending_count=lambda: 2)
+    app_state.speedtest = SimpleNamespace(last_ok={"down_mbps": 280.5, "up_mbps": 19.0, "idle_ms": 12.0,
+                                                   "loaded_down_ms": 50.0, "loaded_up_ms": None})
     loop_monitor.tasks = 12  # (counted by the monitor on the loop)
 
 
@@ -90,3 +92,17 @@ def test_the_table_has_unique_names_and_the_dashboard_gauges():
     assert len({g.prom for g in GAUGES}) == len(GAUGES)
     otel = [g.otel for g in GAUGES if g.otel]
     assert len(set(otel)) == len(otel) and DASHBOARD_OTEL_NAMES <= set(otel)
+
+
+async def test_the_speed_test_gauges_report_the_last_good_test_and_nothing_before_one(app_state):
+    _populate(app_state)
+    text = await render_metrics(app_state)
+    assert "pengumon_speedtest_download_mbps 280.5" in text and "pengumon_speedtest_upload_mbps 19.0" in text
+    assert 'pengumon_speedtest_loaded_latency_ms{phase="idle"} 12.0' in text
+    assert 'pengumon_speedtest_loaded_latency_ms{phase="download"} 50.0' in text
+    assert 'phase="upload"' not in text                       # no loaded upload latency in that test: no sample
+    app_state.speedtest.last_ok = None                          # no test has worked yet
+    text = await render_metrics(app_state)
+    assert "pengumon_speedtest_download_mbps" not in text and "pengumon_speedtest_loaded_latency_ms" not in text
+    app_state.speedtest = None                                  # the component did not start
+    assert "pengumon_speedtest" not in await render_metrics(app_state)

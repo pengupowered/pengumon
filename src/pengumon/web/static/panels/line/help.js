@@ -31,8 +31,8 @@ registerHelp({
     + 'frequencies they fell, over what interval, and whether the probes lost packets meanwhile.',
   'docsis.cumulative': 'The modem\'s own counter of codewords it could not repair, counting from its last power-on or '
     + 'reboot. A big number does not mean a problem now; watch the "New errors" column.',
-  'channel.heatmap': (v) => 'One row per channel (DS downstream, US upstream), one column per reading, coloured by health with '
-    + 'Pengumon\'s limits for the line (the gauges\' zones): green good, amber warning, red critical, grey '
+  'channel.heatmap': (v) => 'One row per channel (DS downstream, US upstream), one column per reading, colored by health with '
+    + 'Pengumon\'s limits for the line (the gauges\' zones): green good, amber warning, red critical, gray '
     + 'no reading. SNR: ' + n(v, 'ds_snr_warning_db', 33) + ' dB and above is good, below ' + n(v, 'ds_snr_critical_db', 30)
     + ' dB critical. Power: downstream within +-' + n(v, 'ds_power_warning_abs_dbmv', 8) + ' dBmV, upstream ' + n(v, 'us_power_low_warning_dbmv', 38)
     + ' to ' + n(v, 'us_power_warning_dbmv', 49) + ' dBmV. Click a row for that channel\'s detail. A channel that stays red while the '

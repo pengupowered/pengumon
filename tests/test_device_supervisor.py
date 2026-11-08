@@ -72,7 +72,7 @@ async def test_an_unchanged_device_keeps_its_device_and_task_and_a_changed_one_i
     assert [d.id for d in registry] == ["modem", "router"]
 
 
-async def test_a_removed_device_is_cancelled_and_its_driver_closed_and_an_added_one_starts(supervisor):
+async def test_a_removed_device_is_canceled_and_its_driver_closed_and_an_added_one_starts(supervisor):
     sup, registry = supervisor, supervisor.registry
     modem = registry.get("modem")
     task = sup._tasks["modem"]
@@ -299,7 +299,7 @@ class _GateDriver:
 
 
 class _ForgetfulMonitor:
-    """Like LineMonitor.restore after a cancelled poll: nothing stored younger than the interval."""
+    """Like LineMonitor.restore after a canceled poll: nothing stored younger than the interval."""
     latest_snapshot = None
 
     async def restore(self, oldest_ts):

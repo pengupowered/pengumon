@@ -1,7 +1,7 @@
 {
   "id": "solarized",
   "name": "Solarized",
-  "description": "The Solarized palette (MIT licence) by Ethan Schoonover: low-contrast base tones with eight accents. Dark and light.",
+  "description": "The Solarized palette (MIT license) by Ethan Schoonover: low-contrast base tones with eight accents. Dark and light.",
   "modes": [
     "dark",
     "light"

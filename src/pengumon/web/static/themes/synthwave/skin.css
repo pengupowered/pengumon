@@ -1,6 +1,6 @@
 /* Synthwave: shapes and texture (docs/themes.md, "Skins"). Every selector is under this theme's own data-look.
-   Colours come from the tokens in theme.json. A perspective grid runs from a horizon behind the header: here a still
-   one; while the effect runs (effect.js), its rows move towards you and the still rows here are hidden. The geometry
+   Colors come from the tokens in theme.json. A perspective grid runs from a horizon behind the header: here a still
+   one; while the effect runs (effect.js), its rows move toward you and the still rows here are hidden. The geometry
    is shared with effect.js: the horizon at 34 px from the top of the window, a row at 34 + 290 / depth px. */
 
 :root[data-look="synthwave"] {
@@ -10,7 +10,7 @@
 
 /* ---------- the horizon grid, behind everything (the status glow's fixed band) ---------- */
 /* the band's own background: the sky down to the horizon (it hides the rays above it), a glow on the horizon, and the
-   rays running from the vanishing point towards you */
+   rays running from the vanishing point toward you */
 :root[data-look="synthwave"] .glow {
   background:
     linear-gradient(to bottom, var(--bg) 0, color-mix(in srgb, var(--accent) 22%, var(--bg)) 34px, transparent 34px),

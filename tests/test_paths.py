@@ -76,6 +76,7 @@ def test_a_configured_relative_db_path_keeps_its_old_meaning():
 def test_repository_default_database_is_in_the_data_directory(tmp_path, monkeypatch):
     from pengumon.db.repository import DatabaseRepository
     monkeypatch.setenv("PENGUMON_DATA", str(tmp_path / "state"))
+    monkeypatch.chdir(tmp_path)  # a relative path is made under the working directory, which is read-only in the test container
     assert DatabaseRepository().db_path == str(tmp_path / "state" / "pengumon.db")
     assert DatabaseRepository(db_path="data/pengumon.db").db_path == "data/pengumon.db"
 

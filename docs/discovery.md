@@ -35,7 +35,7 @@ press Apply (a background check stores its own result, see below).
 
 ### Traces
 
-Sent to the routers on the path. Echo requests with TTL 1 to 20 towards 1.1.1.1, 8.8.8.8 and 9.9.9.9, one trace after
+Sent to the routers on the path. Echo requests with TTL 1 to 20 toward 1.1.1.1, 8.8.8.8 and 9.9.9.9, one trace after
 the other: the same in-process traceroute as the trace dialog (`engine/mtr.py`), three probes per TTL, about 1.5 s
 each. When this host has an IPv6 route to the internet (the same check as the prober's,
 `netinfo.ipv6_route_check`), one more trace, over IPv6, to 2606:4700:4700::1111.
@@ -127,7 +127,7 @@ Each hop gets evidence, each piece a plain-language reason (`evidence[].text`) o
 - `device_page`: what the hop's web page (or SNMP agent) says it is.
 - `upnp`: the hop announced itself as an internet gateway, and what its internet address says.
 - `off_path`: a common gateway address that answers but is not on the traced path.
-- `neighbours`: a hop with no evidence of its own takes the owner of the hops either side when they agree; otherwise
+- `neighbors`: a hop with no evidence of its own takes the owner of the hops either side when they agree; otherwise
   it stays unknown.
 
 The rules, in order:
@@ -141,7 +141,7 @@ The rules, in order:
    (the provider's domain is the first one past the edge, preferring a hop in the provider's AS), else the divergence
    point, else its address (CGNAT or private past the edge, or the first public hop, are the provider's). Once the path
    has left the provider it does not come back.
-3. **Neighbours** fill in the hops with no evidence.
+3. **Neighbors** fill in the hops with no evidence.
 
 Confidence is **high** when two kinds of evidence agree and none disagrees, **likely** with one kind (or when weaker
 evidence disagrees), **unknown** with none.
@@ -150,7 +150,7 @@ evidence disagrees), **unknown** with none.
 
 In the editor the badge on each card is that confidence: **Sure** (green) means two independent kinds of evidence agree,
 for example "its address is private" and "its page is a router's login"; **Likely** means one kind, so check it; **Unsure**
-(amber) means no evidence for it (a hop with nothing to go on takes the role of its neighbours when they agree). The
+(amber) means no evidence for it (a hop with nothing to go on takes the role of its neighbors when they agree). The
 list under the name gives the reasons in words, one per piece of evidence: those are the kinds listed above. A hop
 marked **New**, **Changed** or **Not found by discovery** says how it differs from the path that is live. When two hops
 are wrongly placed, change the role or the order yourself: discovery is a good first guess, not an authority. The automatic first run has no operator lookup, so more provider and internet hops read **Likely** than after a
@@ -174,7 +174,7 @@ Only what this project's drivers know of each device's web interface:
 - `asuswrt`: `Main_Login.asp`, the firmware's login page, which the front page sends the browser to (by script or
   redirect); or the `login_authorization` field of the login form, which the asuswrt driver posts to `login.cgi`.
 - `openwrt`: LuCI, that is `cgi-bin/luci` in the page or its redirect, or "LuCI" in the title.
-- `snmp`: an SNMP agent answered with the community `public` (only when SNMP is ticked) and no page was recognised.
+- `snmp`: an SNMP agent answered with the community `public` (only when SNMP is ticked) and no page was recognized.
 
 A page that matches none is still evidence that the hop is a device in your home.
 
@@ -193,7 +193,7 @@ Each draft hop has the fields of the path API (`id`, `name`, `address`, `categor
 - Ids are stable for an address: `hop_203_0_113_9`, and the dashboard's default ids for the three servers
   (`cloudflare_dns`, `google_dns`, `quad9_dns`). A live hop at the same address keeps its id, so its history stays.
 - `same`: a live hop at that address, with the same role and place. `changed`: the role or the place differs. The
-  draft keeps what you set on it (name, colour, device, enabled, group) and proposes only the role
+  draft keeps what you set on it (name, color, device, enabled, group) and proposes only the role
   and the place.
 - `new`: not in the live path. `gone`: a live path hop (local, gateway, isp or public) that discovery did not see; it
   is listed after the hop it followed. A live home hop (local, gateway) that the trace did not see gets one echo

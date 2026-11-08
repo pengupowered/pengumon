@@ -4,7 +4,6 @@ Every route that puts times in days or hours takes `tz` (the viewer's IANA zone)
 of UTC, the fallback of older pages); the zone used is the one set in Settings, else `tz`, else the offset, else UTC
 (timeofday.viewer_zone), and days and hours follow its daylight saving."""
 
-import asyncio
 from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pengumon.api.common import StateDep, json_response
 from pengumon.engine.path_rules import ignoring_ping_ids
 from pengumon.observability.telemetry import ai_pack_exports, api_rate_limited
+from pengumon.reports.common import pack_building
 from pengumon.reports.loss_grid import build_loss_grid
 from pengumon.reports.reliability import build_report
 from pengumon.reports.uptime import build_uptime
@@ -74,8 +74,6 @@ async def get_uptime(
                               tz=viewer_zone(state.config, tz, tz_offset_minutes)[0])
 
 
-_pack_building = asyncio.Lock()  # one pack at a time: a build reads the whole window and every module's history
-
 
 @router.get("/ai-pack", dependencies=[Depends(rate_limit("ai_pack", 6, 60))])
 async def get_ai_pack(
@@ -100,12 +98,12 @@ async def get_ai_pack(
         raise HTTPException(status_code=422, detail="incident_id goes with scope=incident, and only with it")
     if incident_id is not None and await state.repository.get_incident_by_id(incident_id) is None:
         raise HTTPException(status_code=404, detail="Incident not found")
-    if _pack_building.locked():
+    if pack_building.locked():
         api_rate_limited.add(1, {"bucket": "ai_pack_busy"})
         raise HTTPException(status_code=429, detail="Another pack is being built; try again in a few seconds")
     from pengumon.reports.contributions import build_ai_pack  # imported when asked: nothing loads without it
 
-    async with _pack_building:
+    async with pack_building:
         pack = await build_ai_pack(
             state.repository, state.config, scope=scope, hours=hours, incident_id=incident_id, level=level,
             detail=detail, devices=tuple(state.config.devices) if state.config else (), live=state.devices,

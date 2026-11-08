@@ -49,7 +49,7 @@ export function applyTabs() {
 
 // A dot on a tab whose cards are not fine: the worst status among the cards of that tab (data-status of each
 // .panel),. Healthy and unknown show nothing; the dot is also spelled out in the
-// button's accessible name (status is never colour alone).
+// button's accessible name (status is never color alone).
 const RANKS = { busy: 1, warn: 2, crit: 3 };
 const WORDS = { busy: 'busy, expected', warn: 'needs attention', crit: 'problem' };
 

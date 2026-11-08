@@ -1,5 +1,5 @@
 // Per-channel history of a DOCSIS line (the "History" tab of the channels modal): a heatmap of every channel over time
-// on one canvas, coloured by SNR (downstream) or power, and a line chart of the channel clicked. Data comes from
+// on one canvas, colored by SNR (downstream) or power, and a line chart of the channel clicked. Data comes from
 // GET /api/devices/{id}/channels/history, fetched when the tab opens and when the range changes.
 
 import { registerActions } from '../../js/dispatch.js';
@@ -26,8 +26,8 @@ let layout = []; // [{key, y}] of the drawn heatmap, for hit testing
 const none = () => token('--nodata');
 const GRADE_TOKEN = { good: '--good', warn: '--warn-fill', critical: '--crit' };
 
-// A cell's colour: the reading graded by the device's ranges from the server (SNR for downstream SNR, power by
-// direction); grey without a reading or a range.
+// A cell's color: the reading graded by the device's ranges from the server (SNR for downstream SNR, power by
+// direction); gray without a reading or a range.
 export function cellColor(dir, metricName, row) {
   const [, , , power, snr] = row;
   const ranges = (device && device.ranges) || {};

@@ -8,7 +8,7 @@ A device that cannot run (a CA file that is missing, say) no longer stops the st
 its reason is in `registry.errors[id]` (the Settings page shows it on the device's card) and it is logged.
 
 The DeviceSupervisor owns one polling task per device id and applies a changed devices list without a restart: a
-device whose config is unchanged keeps its Device and its task; a changed or removed one is cancelled and its driver
+device whose config is unchanged keeps its Device and its task; a changed or removed one is canceled and its driver
 closed; an added or changed one is built and starts polling. Afterwards the hub event `devices_rebuilt` tells the
 parts that hold a device (the line load, the classifier's wording), and the path hops linked to a removed device are
 unlinked in one path version.
@@ -138,7 +138,7 @@ class DeviceSupervisor:
 
     async def apply(self, configs: Sequence[DeviceConfig]) -> ApplyResult:
         """Makes the running devices match `configs`. An unchanged device (equal DeviceConfig) keeps its Device and
-        task; a changed or removed one is cancelled, awaited and its driver closed; an added or changed one is built
+        task; a changed or removed one is canceled, awaited and its driver closed; an added or changed one is built
         and started. A build that fails leaves that device out, with its reason in registry.errors."""
         async with self._lock:
             configs = list(configs)

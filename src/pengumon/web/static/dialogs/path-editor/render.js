@@ -180,7 +180,7 @@ function addressForm(h) {
     <p class="fine" id="peAddrWhy-${id}" data-f="why">${escapeHtml(ADDRESS_WHY)}</p></form>`;
 }
 
-// The role's amber level for latency (Settings > Outage rules > Advanced > Hop colours), the placeholder of "Warn above".
+// The role's amber level for latency (Settings > Outage rules > Advanced > Hop colors), the placeholder of "Warn above".
 const ROLE_LEVEL = { local: 'local_latency_ms', gateway: 'gateway_latency_ms', public: 'public_latency_ms', dns: 'dns_latency_ms' };
 function roleLevelText(h) {
   const key = ROLE_LEVEL[h.category];
@@ -188,14 +188,14 @@ function roleLevelText(h) {
   return ms === null ? 'role level: none' : `role level: ${ms} ms`;
 }
 
-// "Warn above [ ] ms": this hop turns amber above its own average latency instead of its role's. Colour only: incidents
+// "Warn above [ ] ms": this hop turns amber above its own average latency instead of its role's. Color only: incidents
 // still use the role's level.
 function moreBlock(h, n) {
   const id = escapeHtml(h.id);
   const set = h.warn_latency_ms !== null && h.warn_latency_ms !== undefined && h.warn_latency_ms !== '';
   return `<details class="pe-more" data-more="${id}"${h.moreOpen || set ? ' open' : ''}><summary>More</summary>
     <label class="field pe-warn"><span>Warn above</span><span class="pe-warn-in"><input class="input num" type="text" inputmode="decimal" autocomplete="off" value="${set ? escapeHtml(h.warn_latency_ms) : ''}" placeholder="${escapeHtml(roleLevelText(h))}" maxlength="8"${canEdit() ? '' : ' disabled'} data-input="editPathHop" data-change="editPathHop" data-field="warn_latency_ms" data-arg="${id}" aria-label="Warn above, in milliseconds, for hop ${n}" aria-describedby="peWarn-${id}"><span class="muted">ms</span></span></label>
-    <p class="fine pe-warn-fx" id="peWarn-${id}">Only this hop's colour. Incidents still use the role's level.</p></details>`;
+    <p class="fine pe-warn-fx" id="peWarn-${id}">Only this hop's color. Incidents still use the role's level.</p></details>`;
 }
 
 function card(h, i, hops) {

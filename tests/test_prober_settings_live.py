@@ -1,4 +1,4 @@
-"""The prober's settings: a hop's own "warn above" level (colour only), the DNS lookups list and the timeouts applied
+"""The prober's settings: a hop's own "warn above" level (color only), the DNS lookups list and the timeouts applied
 without a restart, and the line and router levels the probing component puts in force."""
 
 import socket
@@ -80,7 +80,7 @@ def test_the_override_follows_the_target_each_round_and_on_a_path_edit():
     assert _feed(prober, "far", [120.0]) == "degraded"
 
 
-def test_the_override_is_colour_only_the_classifier_still_judges_the_role_average():
+def test_the_override_is_color_only_the_classifier_still_judges_the_role_average():
     """The classifier reads recent_latencies, which the override does not touch (the owner's decision 1)."""
     from pengumon.engine.classifier.metrics import round_metrics
     prober = NetworkProber()
@@ -252,7 +252,7 @@ async def test_the_appliers_subscribe_to_what_they_apply():
     assert hub.subscribers(Change.of(keys=["line_signal.ds_snr_critical_db"])) == []  # the monitors read the config
 
 
-async def test_the_hop_colours_are_live_through_the_shared_config():
+async def test_the_hop_colors_are_live_through_the_shared_config():
     config = AppConfig()
     _, prober = _wired(config)
     prober.register_target(_hop("local", tid="lan"))

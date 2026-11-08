@@ -1,5 +1,5 @@
 /* Amber CRT: shapes and texture (docs/themes.md, "Skins"). Every selector is under this theme's own data-look.
-   Colours come from the tokens in theme.json. The refresh band that rolls down the screen is effect.js; the scanlines
+   Colors come from the tokens in theme.json. The refresh band that rolls down the screen is effect.js; the scanlines
    and the glow here are still. */
 
 /* the tube: faint scanlines over the page, a little brighter in the middle */
@@ -7,10 +7,10 @@
   background-image:
     repeating-linear-gradient(to bottom, transparent 0 2px, color-mix(in srgb, var(--ink-1) 4%, transparent) 2px 3px),
     radial-gradient(120% 90% at 50% 30%, color-mix(in srgb, var(--ink-1) 5%, transparent), transparent 70%);
-  /* phosphor: every glyph glows a little in its own colour */
+  /* phosphor: every glyph glows a little in its own color */
   text-shadow: 0 0 5px color-mix(in srgb, currentColor 32%, transparent);
 }
-/* the status glow behind the header stays, in the tube's colours */
+/* the status glow behind the header stays, in the tube's colors */
 :root[data-look="amber-crt"] .glow { opacity: .7; }
 
 /* cards: scanlines on the glass, a hairline and a soft inner glow (opaque: see-through cards over the moving band cost

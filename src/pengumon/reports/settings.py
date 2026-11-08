@@ -1,4 +1,4 @@
-"""The report config sections: `uptime:` (what the coloured uptime strips call an outage, reports/uptime.py) and
+"""The report config sections: `uptime:` (what the colored uptime strips call an outage, reports/uptime.py) and
 `reports:` (the failing-hop rule of the report and the dossier, reports/common.py). Plain pydantic, no import of the
 app, so pengumon.config can name them."""
 

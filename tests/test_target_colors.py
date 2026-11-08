@@ -1,4 +1,4 @@
-"""Target colours and the ISP name come from config.yaml and reach the dashboard through /api/targets and /api/info."""
+"""Target colors and the ISP name come from config.yaml and reach the dashboard through /api/targets and /api/info."""
 
 from pathlib import Path
 
@@ -13,7 +13,7 @@ from pengumon.engine.prober import NetworkProber
 from pengumon.main import app
 from pengumon.models.probes import TargetConfig
 
-# The example's targets in the order the UI had. They set no colour: the dashboard's validated series colours apply
+# The example's targets in the order the UI had. They set no color: the dashboard's validated series colors apply
 # (the fixed ones it once carried gave two public servers near-identical purples, #bc8cff and #a371f7).
 EXAMPLE_ORDER = ["local_router", "isp_gateway", "isp_hop_1", "isp_hop_2", "isp_dns", "cloudflare_dns", "google_dns",
                  "quad9_dns", "dns_system_google", "dns_direct_cloudflare"]
@@ -53,7 +53,7 @@ async def test_the_example_config_leaves_colors_to_the_dashboard(app_state):
     path = Path(__file__).resolve().parents[1] / "config.example.yaml"
     config = load_config(str(path))
     assert not config.targets_from_file  # the example's targets are documentation only (a fresh install discovers)
-    # the documented targets, uncommented, are the ones below: no colour set on any
+    # the documented targets, uncommented, are the ones below: no color set on any
     text = path.read_text(encoding="utf-8")
     block = text[text.index("# targets:"):text.index("dns_probes:")]
     documented = yaml.safe_load("\n".join(l[2:] if l.startswith("# ") else "" for l in block.split("\n")))["targets"]

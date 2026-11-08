@@ -32,7 +32,7 @@ svg.i.lg { width: 22px; height: 22px; }
 .st-busy    { --st: var(--busy);    --st-bg: var(--busy-bg); }
 .st-unknown { --st: var(--unknown); --st-bg: var(--unknown-bg); }
 
-/* Status badge: icon + WORD, never colour alone */
+/* Status badge: icon + WORD, never color alone */
 .badge {
   display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
   padding: 3px 9px 3px 7px; border-radius: var(--r-pill);
@@ -132,7 +132,7 @@ button.chip[aria-pressed="true"] { color: var(--ink-1); background: var(--accent
 .empty.st > svg.i { color: var(--st); }
 .empty .btn { margin-top: var(--sp-2); }
 
-/* Skeletons (loading): grey shimmer, never an empty chart */
+/* Skeletons (loading): gray shimmer, never an empty chart */
 .skel { position: relative; overflow: hidden; background: var(--surface-3); border-radius: var(--r-sm); }
 .skel::after {
   content: ""; position: absolute; inset: 0; transform: translateX(-100%);

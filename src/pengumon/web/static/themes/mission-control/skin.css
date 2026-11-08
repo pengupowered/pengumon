@@ -1,7 +1,7 @@
 /* Mission control: a wall display (docs/themes.md, "Skins"). Every selector is under this theme's own data-look.
-   Near-black ground, crisp white figures, saturated status colours (theme.json). The big figures lead; captions, notes,
+   Near-black ground, crisp white figures, saturated status colors (theme.json). The big figures lead; captions, notes,
    footers and help buttons are small and dim (--ink-3, --ink-4: the contrast checks still hold). A card with a status
-   carries a thick band in its colour across its top. The cards' own figures are restyled in panels/<card>.css. */
+   carries a thick band in its color across its top. The cards' own figures are restyled in panels/<card>.css. */
 
 :root[data-look="mission-control"] {
   --mc-band: 8px;     /* the status band across a card's top */
@@ -14,7 +14,7 @@
 /* the page's one ambient flourish stays, fainter: the ground is black */
 :root[data-look="mission-control"] .glow { opacity: .55; }
 
-/* ---------- the header: solid black over a rule; the pill filled with the verdict's colour ---------- */
+/* ---------- the header: solid black over a rule; the pill filled with the verdict's color ---------- */
 :root[data-look="mission-control"] .topbar::before {
   background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; border-bottom: 2px solid var(--line-strong);
 }
@@ -70,7 +70,7 @@
 :root[data-look="mission-control"] .fine,
 :root[data-look="mission-control"] .dlist .sub { color: var(--ink-3); }
 
-/* ---------- status words: a solid chip, the word dark on its colour ---------- */
+/* ---------- status words: a solid chip, the word dark on its color ---------- */
 :root[data-look="mission-control"] .badge[class*="st-"]:not(.quiet) { background: var(--st); color: var(--bg); border-color: transparent; }
 :root[data-look="mission-control"] .badge.quiet { background: transparent; border-color: color-mix(in srgb, var(--st, var(--line)) 70%, transparent); }
 

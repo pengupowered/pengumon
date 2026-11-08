@@ -75,7 +75,7 @@ def write_config(tmp_path: Path, text: str = OWNER_SHAPED, name: str = "config.y
 async def make_manager(tmp_path: Path, text: Optional[str] = OWNER_SHAPED, *, environ=None, secrets: dict = None,
                        db: str = "pengumon.db", load: bool = True, hub: Optional[SettingsHub] = None):
     """(manager, config path). The live config is load_config(lenient_rest=True) of the file, as at the app's start;
-    the repository is initialised; secrets.json is tmp_path/secrets.json (preloaded with `secrets`)."""
+    the repository is initialized; secrets.json is tmp_path/secrets.json (preloaded with `secrets`)."""
     path = write_config(tmp_path, text if text is not None else "")
     config = load_config(str(path), lenient_rest=True)
     repo = DatabaseRepository(db_path=str(tmp_path / db))

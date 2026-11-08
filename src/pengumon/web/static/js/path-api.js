@@ -44,7 +44,7 @@ export const ROLE_HINT = {
 export const ROLE_EFFECT = {
   local: 'If this stops answering, the outage is placed in your home network (router or Wi-Fi), not on your provider; the provider dossier quotes its loss to show your own network is fine.',
   gateway: 'Probed on its home-side address, so these pings never use the line: loss here while your router is fine is placed at the gateway itself (or the link to it), not on the line; loss at the router before it is yours.',
-  isp: 'Loss only here, while later hops answer, is not counted as packet loss (provider routers deprioritise ping); loss that carries on to the internet is your provider\'s.',
+  isp: 'Loss only here, while later hops answer, is not counted as packet loss (provider routers deprioritize ping); loss that carries on to the internet is your provider\'s.',
   public: 'Every stage before it fine but this failing is an internet outage; the Internet figure on Path health is the median of these servers.',
   dns: 'Failures here are reported as a DNS problem, not as loss on the path.',
   custom: 'Probed and charted, but never blamed for an outage and left out of the dossier\'s findings.'

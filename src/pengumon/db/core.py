@@ -19,6 +19,7 @@ from pengumon.observability.telemetry import db_retention_duration, db_retention
 logger = logging.getLogger("pengumon.db")
 
 DAY = 86400
+SPEED_TEST_MIN_DAYS = 32  # speed tests are kept at least this long (the monthly data cap needs the whole month)
 
 
 class RepositoryCore:
@@ -193,6 +194,11 @@ class RepositoryCore:
                 "DELETE FROM rollup_1m WHERE minute < ?", (int((now - rollup_retention_days * DAY) // 60),)
             )
             removed["rollup_1m"] = cursor.rowcount
+            # the speed tests are rows of the per-minute kind (a few a day), kept as long as the rollups, and never less
+            # than a calendar month and a day: the monthly data cap sums this month's tests
+            cursor = await db.execute("DELETE FROM speed_tests WHERE ts < ?",
+                                      (now - max(rollup_retention_days, SPEED_TEST_MIN_DAYS) * DAY,))
+            removed["speed_tests"] = cursor.rowcount
             for table in ("device_samples", "line_samples", "mesh_samples"):
                 # Every device at once: a scan of the table (a few ms for a week of 10 s polls), once an hour.
                 cursor = await db.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff_ts,))

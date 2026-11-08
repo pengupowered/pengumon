@@ -1,6 +1,6 @@
 /* Digital rain's view of the Path health card (diagnosis.js): a terminal route trace. A shell status line for the verdict,
    a tree of two-line hop entries with the latency each segment adds on the branch before it. Scoped to this theme and to
-   the card while this view draws it ([data-view="digital-rain"]). Colours are the theme's tokens. */
+   the card while this view draws it ([data-view="digital-rain"]). Colors are the theme's tokens. */
 
 :root[data-look="digital-rain"] [data-panel="diagnosis"] .panel[data-view="digital-rain"] > .panel-h .panel-t::before { content: "> "; color: var(--good); }
 

@@ -96,9 +96,9 @@ export const steps = [
     eq("chips", chips.join("|"), "3 online|1 wired|1 on 2.4 GHz|1 on 5 GHz|Hall: 2|Study: 1|Garage: 0");
     const rows = await page.$$eval("#clientsBody tr", (trs) => trs.map((tr) => tr.textContent));
     ok("names and addresses shown under privacy full", rows.some((t) => /Ann's phone/.test(t) && /192\.0\.2\.12/.test(t)));
-    ok("the phone is labelled by its device type", rows.some((t) => /Ann's phone/.test(t) && /Phone/.test(t)));
+    ok("the phone is labeled by its device type", rows.some((t) => /Ann's phone/.test(t) && /Phone/.test(t)));
     ok("link speed and signal", rows.some((t) => /866 \/ 780 Mbps/.test(t) && /-58 dBm/.test(t) && /27h 5m/.test(t)));
-    ok("link speed is labelled as not traffic", /link speed \(Wi-Fi rate\), not traffic/i.test(await text("#networkModal")));
+    ok("link speed is labeled as not traffic", /link speed \(Wi-Fi rate\), not traffic/i.test(await text("#networkModal")));
     ok("no offline device yet", !rows.some((t) => /Old laptop/.test(t)));
     await click("#clientsShowOffline");
     await waitCount("#clientsBody tr", 4);

@@ -7,7 +7,7 @@ import { kit } from '../../js/cards.js';
 const { escapeHtml } = kit;
 
 // The grid as markup: day names and hours are marked (data-item per hour, data-v="tip" is what a cell says). A cell's
-// fill is --f (an hour to come is i.later), so a theme can restyle the cells and keep their colours.
+// fill is --f (an hour to come is i.later), so a theme can restyle the cells and keep their colors.
 function gridMarkup(vm) {
   const head = `<span></span>${vm.hours.map((h) => `<span class="hd">${h}</span>`).join('')}`;
   const rows = vm.rows.map((row) => `<span data-item="day-${row.id}" data-v="day">${escapeHtml(row.name)}</span>${row.cells.map((c) => {

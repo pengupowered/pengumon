@@ -9,7 +9,7 @@ import { loopback } from "../lib.mjs";
 export const subject = "dialog:settings";
 export const variants = ["full"];
 
-const SECTIONS = ["outage", "alerts", "line", "devices", "probing", "retention", "access", "privacy", "discovery", "display", "advanced", "about"];
+const SECTIONS = ["outage", "alerts", "line", "speedtest", "devices", "probing", "retention", "access", "privacy", "discovery", "display", "advanced", "about"];
 const LOSS = "classifier.consecutive_failures_for_incident";
 const SECRET_URL = "https://hooks.example.test/T000/very-secret-path-4471";
 
@@ -26,6 +26,11 @@ const settingsType = async (page, key, text) => {
   await page.$eval(sel, (e) => e.select());
   await page.keyboard.press("Backspace");
   if (text !== "") await page.type(sel, text);
+};
+// the speed test's interval: a whole number in its box and a unit (hours, days, weeks)
+const settingsInterval = async (page, count, unit) => {
+  await settingsType(page, "speedtest.interval_hours", count);
+  await page.select(`${settingsRow("speedtest.interval_hours")} select[data-unit]`, unit);
 };
 const settingsSaveLabel = (page) => page.$eval("#btnSettingsSave", (b) => b.textContent.trim());
 // Cancel with a draft asks; Discard throws it away
@@ -193,6 +198,157 @@ export const steps = [
     await ctx.click("#btnSettingsCancel");  // the address is reset by the Export / Import step (Saves are rate limited: 20 a minute)
   }],
 
+  ["Speed test section: choices made of numbers stay numbers in the draft the server validates, and the window's two ends go together", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    const row = (name) => settingsRow(`speedtest.${name}`);
+    const set = (name, value) => page.$eval(`${row(name)} input[data-key]`, (e, v) => { e.value = v; e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })); }, value);
+    // what the page asked the server to validate, and the answer: seen from inside the page, so it is the same in every browser
+    await page.evaluate(() => {
+      window.__validations = [];
+      window.__fetch = window.fetch;
+      window.fetch = async (input, init) => {
+        const res = await window.__fetch(input, init);
+        if (String(input).endsWith("/api/settings/validate")) {
+          const body = JSON.parse(init.body);
+          res.clone().json().then((answer) => window.__validations.push({ body, answer }));
+        }
+        return res;
+      };
+    });
+    const validation = async (key) => {
+      await until((k) => window.__validations.some((v) => k in v.body.values), key);
+      return page.evaluate((k) => window.__validations.filter((v) => k in v.body.values).pop(), key);
+    };
+    await settingsOpen(ctx);
+    ok("the section follows Your line", await page.$eval("#set-sec-speedtest", (e) => e.previousElementSibling.id === "set-sec-line"));
+    ok("its title and the owner's words for the switch", /Speed test/.test(await ctx.text("#set-sec-speedtest-t")) && /Each test uses the data below\./.test(await ctx.text(`${row("enabled")} .set-effect`)));
+    eq("the interval's standard value is in words", await page.$eval(`${row("interval_hours")} .set-def`, (e) => e.textContent.trim()), "Standard: 1 day");
+    // (the seeded app has it on, for the Speed card's steps: the standard value is what says it is off for a new install)
+    eq("off by default", await page.$eval(`${row("enabled")} .set-def`, (e) => e.textContent.trim()), "Standard: off");
+    ok("M-Lab's choice says that it publishes the address", await page.$eval(`${row("provider")} button[data-arg=mlab]`, (e) => /publishes your IP address/.test(e.textContent)));
+    // the window's start alone first: the server says the two ends go together
+    await set("window_start", "22:00");
+    const lone = await validation("speedtest.window_start");
+    ok("a window with one end is refused with the reason", lone.answer.errors.length >= 1 && /go together/.test(JSON.stringify(lone.answer.errors)));
+    // the rest, then the other end; the last validation holds the whole draft
+    await settingsInterval(page, "6", "hours");
+    await page.select(`${row("download_mb")} select`, "50");
+    await ctx.click(`${row("provider")} button[data-arg=mlab]`);
+    await set("window_end", "02:00");
+    const whole = await validation("speedtest.window_end");
+    const sent = whole.body.values;
+    eq("the hours are sent as a number", sent["speedtest.interval_hours"], 6);
+    eq("the megabytes too", sent["speedtest.download_mb"], 50);
+    eq("the provider as its name", sent["speedtest.provider"], "mlab");
+    eq("the window as times", [sent["speedtest.window_start"], sent["speedtest.window_end"]].join(), "22:00,02:00");
+    eq("the server finds nothing wrong", whole.answer.errors.length, 0);
+    ok("the version line names the changes", /Run every/.test(whole.answer.summary) && /Test against/.test(whole.answer.summary));
+    eq("five changes", await settingsSaveLabel(page), "Save 5 changes");
+    eq("the interval shows as typed", await page.$eval(`${row("interval_hours")} input[data-key]`, (e) => e.value) + " " + await page.$eval(`${row("interval_hours")} select[data-unit]`, (e) => e.value), "6 hours");
+    eq("an unchanged choice has no badge", await ctx.count(`${row("upload_mb")} [data-badge=unsaved]`), 0);
+    await page.evaluate(() => { window.fetch = window.__fetch; });
+    await settingsDiscard(ctx);   // not saved: Saves are rate limited (20 a minute) and the steps around it use them
+  }],
+
+  ["Speed test section: the line under the data fields says what a month of tests uses, follows the fields, and says when the limit stops them; M-Lab's privacy note shows with it", async (ctx) => {
+    const { eq, ok, page } = ctx;
+    const row = (name) => settingsRow(`speedtest.${name}`);
+    const estimate = () => page.$eval("#set-sec-speedtest [data-extra=speed-estimate] [data-estimate]", (e) => e.textContent);
+    const note = () => page.$eval("#set-sec-speedtest [data-extra=speed-mlab]", (e) => getComputedStyle(e).display !== "none");
+    await settingsOpen(ctx);
+    eq("at the standard sizes, daily: 30 tests of 35 MB", await estimate(), "About 1.1 GB a month (daily, 25 MB down + 10 MB up).");
+    eq("the line sits under the last data field", await page.$eval("#set-sec-speedtest [data-extra=speed-estimate]", (e) => e.previousElementSibling.dataset.key), "speedtest.monthly_cap_mb");
+    await settingsInterval(page, "6", "hours");
+    eq("every 6 hours over the 2,000 MB limit set in the seeded app", await estimate(), "About 4.2 GB a month (every 6 hours, 25 MB down + 10 MB up); the 2,000 MB limit stops tests after about day 15.");
+    await page.select(`${row("download_mb")} select`, "100");
+    eq("a bigger download", await estimate(), "About 13.2 GB a month (every 6 hours, 100 MB down + 10 MB up); the 2,000 MB limit stops tests after about day 5.");
+    await settingsType(page, "speedtest.monthly_cap_mb", "0");
+    eq("no limit: no clause", await estimate(), "About 13.2 GB a month (every 6 hours, 100 MB down + 10 MB up).");
+    await settingsInterval(page, "1", "hours");
+    await page.select(`${row("download_mb")} select`, "10");
+    await page.select(`${row("upload_mb")} select`, "5");
+    eq("hourly at the smallest sizes: 720 tests of 15 MB", await estimate(), "About 10.8 GB a month (hourly, 10 MB down + 5 MB up).");
+    await settingsInterval(page, "1", "days");
+    eq("daily at the smallest sizes is in MB", await estimate(), "About 450 MB a month (daily, 10 MB down + 5 MB up).");
+    await settingsInterval(page, "1", "weeks");
+    eq("weekly", await estimate(), "About 64 MB a month (weekly, 10 MB down + 5 MB up).");
+    await settingsInterval(page, "30", "days");
+    eq("about monthly", await estimate(), "About 15 MB a month (every 30 days, 10 MB down + 5 MB up).");
+    eq("no M-Lab note while Cloudflare is the choice", await note(), false);
+    await ctx.click(`${row("provider")} button[data-arg=mlab]`);
+    eq("M-Lab: the note shows", await note(), true);
+    ok("in words", /M-Lab publishes every result, with your public IP address, as open data\./.test(await ctx.text("#set-sec-speedtest [data-extra=speed-mlab]")));
+    await ctx.click(`${row("provider")} button[data-arg=cloudflare]`);
+    eq("and goes with the choice", await note(), false);
+    await settingsDiscard(ctx);
+  }],
+
+  ["Speed test section: the interval is any whole number of hours, days or weeks, shown in the largest unit that fits, with the range in words", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    const row = settingsRow("speedtest.interval_hours");
+    const shown = async () => `${await page.$eval(`${row} input[data-key]`, (e) => e.value)} ${await page.$eval(`${row} select[data-unit]`, (e) => e.value)}`;
+    const message = () => page.$eval(`${row} [data-msg]`, (e) => e.textContent.trim());
+    await page.evaluate(() => {
+      window.__validations = [];
+      window.__fetch = window.__fetch || window.fetch;
+      window.fetch = async (input, init) => {
+        const res = await window.__fetch(input, init);
+        if (String(input).endsWith("/api/settings/validate")) {
+          const body = JSON.parse(init.body);
+          res.clone().json().then((answer) => window.__validations.push({ body, answer }));
+        }
+        return res;
+      };
+    });
+    const sent = async (hours) => {
+      await until((h) => window.__validations.some((v) => v.body.values["speedtest.interval_hours"] === h), hours);
+      return page.evaluate((h) => window.__validations.filter((v) => v.body.values["speedtest.interval_hours"] === h).pop(), hours);
+    };
+    await settingsOpen(ctx);
+    eq("24 hours shows as 1 day", await shown(), "1 days");
+    await settingsInterval(page, "2", "weeks");
+    const weeks = await sent(336);
+    eq("2 weeks is sent as 336 hours, which the server takes", weeks.answer.errors.length, 0);
+    ok("the version line says it in words", /Run every 1 day → 2 weeks/.test(weeks.answer.summary));
+    await settingsInterval(page, "14", "days");
+    await page.focus(`${settingsRow("speedtest.download_mb")} select`);
+    eq("14 days stays as typed (it is the same 2 weeks)", await shown(), "14 days");
+    await settingsInterval(page, "36", "hours");
+    await sent(36);
+    eq("36 hours is not a whole number of days", await shown(), "36 hours");
+    await settingsInterval(page, "0", "hours");
+    eq("0 is refused with the range", await message(), "Enter from 1 hour to 365 days.");
+    await settingsInterval(page, "400", "days");
+    eq("past a year too", await message(), "Enter from 1 hour to 365 days.");
+    await settingsInterval(page, "1.5", "days");
+    eq("a fraction is refused", await message(), "Enter a whole number.");
+    await settingsInterval(page, "30", "days");
+    await sent(720);
+    eq("30 days clears the message", await message(), "");
+    await page.evaluate(() => { window.fetch = window.__fetch; });
+    await settingsDiscard(ctx);
+  }],
+
+  ["Speed test section at 390 px: the provider choices fit, the M-Lab label and note are whole, nothing scrolls sideways", async (ctx) => {
+    const { eq, page, phone } = ctx;
+    await phone(async () => {
+      await settingsOpen(ctx);
+      await page.select("#settingsJump", "speedtest");
+      await ctx.click(`${settingsRow("speedtest.provider")} button[data-arg=mlab]`);
+      await ctx.until(() => document.querySelector("#set-sec-speedtest [data-extra=speed-mlab]").getBoundingClientRect().width > 0);
+      const fit = await page.evaluate(() => {
+        const b = document.querySelector("#settingsModal .modal-b");
+        const mlab = document.querySelector('#set-sec-speedtest button[data-arg=mlab]');
+        const r = mlab.getBoundingClientRect();
+        const note = document.querySelector("#set-sec-speedtest [data-extra=speed-mlab]").getBoundingClientRect();
+        return { body: b.scrollWidth <= b.clientWidth + 1, page: document.documentElement.scrollWidth <= innerWidth,
+          labelWhole: mlab.scrollWidth <= mlab.clientWidth + 1 && r.right <= innerWidth, noteInside: note.right <= innerWidth };
+      });
+      await settingsDiscard(ctx); // (before the check: a draft left open holds the reload back with its leave-the-page question)
+      eq("fits, the label and the note are whole", JSON.stringify(fit), JSON.stringify({ body: true, page: true, labelWhole: true, noteInside: true }));
+    });
+  }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
+
   ["a value kept at its default (as the import keeps what config.yaml set) shows no Changed, no Saved and no Reset", async (ctx) => {
     const { eq, page } = ctx;
     const put = (values) => page.evaluate(async (v) => {
@@ -244,11 +400,11 @@ export const steps = [
     await settingsType(page, LOSS, "130");
     await until(() => /Out of date/.test(document.getElementById("settingsPreviewResult")?.textContent ?? ""));
     await ctx.shots("settings-preview");
-    // a running preview can be cancelled: the server drops it and the panel says so
+    // a running preview can be canceled: the server drops it and the panel says so
     await ctx.click("#settingsPreview [data-action=settingsPreviewRun]");
     await until(() => !!document.querySelector("#settingsPreview [data-action=settingsPreviewCancel]"));
     await ctx.click("#settingsPreview [data-action=settingsPreviewCancel]");
-    await until(() => /Preview cancelled/.test(document.getElementById("settingsPreview").textContent));
+    await until(() => /Preview canceled/.test(document.getElementById("settingsPreview").textContent));
     ok("and can be run again", await page.$eval("#settingsPreview [data-action=settingsPreviewRun]", (b) => !b.disabled));
     // what is typed in the days box comes back as text, never as markup (CodeQL: DOM text reinterpreted as HTML)
     const typed = '7"><b id="pvInjected">x</b>';
@@ -487,7 +643,7 @@ export const steps = [
     await ctx.click("#btnSettingsCancel");
   }],
 
-  ["the help texts quote the live values: hop colours, busy level, router and DOCSIS levels", async (ctx) => {
+  ["the help texts quote the live values: hop colors, busy level, router and DOCSIS levels", async (ctx) => {
     const { eq, ok, openHelp, page, until } = ctx;
     await page.evaluate(async () => {
       const state = await (await fetch("/api/settings")).json();
@@ -499,7 +655,7 @@ export const steps = [
     // the page re-reads when told the settings changed (the live message's settings_revision); here it is asked directly
     await page.evaluate(async (url) => { await (await import(url)).refreshSettingsValues(); }, await ctx.moduleUrl("settings-values.js"));
     const hop = await openHelp("hop.latency");
-    ok(`hop colours: ${hop}`, /33 ms for local/.test(hop) && !/20 ms for local/.test(hop));
+    ok(`hop colors: ${hop}`, /33 ms for local/.test(hop) && !/20 ms for local/.test(hop));
     await page.keyboard.press("Escape");
     const load = await openHelp("line.load");
     ok(`busy level: ${load}`, /Above 71%/.test(load));
@@ -578,7 +734,7 @@ export const steps = [
     await page.evaluate(() => localStorage.clear());
   }],
 
-  ["Display: the theme every browser starts with, and your own themes: duplicate one, change a colour, Save", async (ctx) => {
+  ["Display: the theme every browser starts with, and your own themes: duplicate one, change a color, Save", async (ctx) => {
     const { eq, ok, page, until } = ctx;
     await settingsOpen(ctx);
     await ctx.click("#settingsRail [data-arg=display]");
@@ -595,12 +751,12 @@ export const steps = [
     await settingsSave(ctx);
     const api = await page.evaluate(async () => (await fetch("/api/themes")).json());
     eq("the default for every browser", api.default, "custom-nord-copy");
-    eq("the colour is saved", api.themes.find((t) => t.id === "custom-nord-copy").theme.tokens.dark["--bg"], "#101820");
+    eq("the color is saved", api.themes.find((t) => t.id === "custom-nord-copy").theme.tokens.dark["--bg"], "#101820");
     await page.reload({ waitUntil: "load" });
     await ctx.layoutMounted();
     eq("a browser with no choice of its own starts with it", await page.evaluate(() => document.documentElement.dataset.look), "custom-nord-copy");
     await ctx.pickMode("dark");
-    eq("in its colours", await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()), "#101820");
+    eq("in its colors", await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()), "#101820");
     // the standard again for the steps after this one
     const status = await page.evaluate(async () => {
       const { revision } = await (await fetch("/api/settings", { cache: "no-store" })).json();
@@ -619,13 +775,13 @@ export const steps = [
     await ctx.click("[data-list=themes] [data-ta=export-builtin][data-arg=digital-rain]");
     await until(() => document.getElementById("themeExportText"));
     const exported = JSON.parse(await page.$eval("#themeExportText", (t) => t.value));
-    ok("the file is the theme: every colour, no effect, no fonts", exported.id === "digital-rain" && !("effect" in exported) && exported.tokens.dark["--bg"] && !exported.tokens.dark["--font"]);
+    ok("the file is the theme: every color, no effect, no fonts", exported.id === "digital-rain" && !("effect" in exported) && exported.tokens.dark["--bg"] && !exported.tokens.dark["--font"]);
     const file = path.join(outDir, "imported.theme.json");
     fs.writeFileSync(file, JSON.stringify({ id: "paper", name: "Paper", modes: ["light"], tokens: { light: { "--bg": "#fbf8f1", "--font": "Georgia, serif" } } }));
     await (await page.$("#themeImportFile")).uploadFile(file);
     await until(() => [...document.querySelectorAll("[data-list=themes] .th-card .set-card-t")].some((t) => t.textContent === "Paper"));
     const note = await ctx.text("[data-list=themes] .result");
-    ok(`the note says what came from where (${note})`, /missing colours come from the standard theme/.test(note) && /left out/.test(note));
+    ok(`the note says what came from where (${note})`, /missing colors come from the standard theme/.test(note) && /left out/.test(note));
     eq("light only", await ctx.text("[data-list=themes] .th-card .set-card-s"), "light only");
     eq("one change, nothing saved", await settingsSaveLabel(page), "Save 1 change");
     await settingsDiscard(ctx);

@@ -141,7 +141,7 @@ def memory_pct(values: Dict[Oid, Value], ram: int, available: Optional[int],
 
 class SnmpDriver:
     name = "snmp"
-    label = "SNMP device"  # what the device is, in the dashboard's words (api.devices.device_label)
+    label = "SNMP device"  # what the device is, in the dashboard's words (devices.summary.device_label)
     offers = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM})
     options_model = SnmpOptions
     url_schemes = ("snmp",)
@@ -314,6 +314,24 @@ class SnmpDriver:
         else:
             readings[Capability.ROUTER_SYSTEM] = SystemReading(cpu_pct=cpu, mem_pct=mem, model=layout.model)
         return PollResult(readings=readings, missing=missing)
+
+    async def read_wan_counters(self) -> Optional[WanCounters]:
+        """The WAN counters alone, for a running speed test (Device.read_wan_counters, about once a second): one GET of
+        sysUpTime and the WAN interface's octet counters, with the layout the polls found (None before the first poll
+        found one, or without a WAN interface). The uptime only tells a restart (the counters then start a new
+        baseline, not a wrap); the polls' own restart check is left alone. Many agents refresh their interface
+        counters every few seconds rather than when asked (net-snmp caches its interface table): the sampler sees the
+        same value twice then, and measures over a longer window."""
+        layout = self._layout
+        if layout is None or layout.if_index is None:
+            return None
+        i = layout.if_index
+        values = await self._get([SYS_UPTIME] + [column + (i,) for column in
+                                                 (IF_HC_IN_OCTETS, IF_HC_OUT_OCTETS, IF_IN_OCTETS, IF_OUT_OCTETS)])
+        uptime = values[SYS_UPTIME].number(TIMETICKS)
+        restarted = uptime is not None and self._uptime is not None and uptime < self._uptime
+        counters = self._counters(layout, values, restarted, self._wall_clock())
+        return counters if isinstance(counters, WanCounters) else None
 
     def _ucd_cpu(self, values: Dict[Oid, Value], restarted: bool) -> Optional[float]:
         """CPU % between this reading of the UCD tick counters and the last (32-bit: they wrap, after weeks on a busy

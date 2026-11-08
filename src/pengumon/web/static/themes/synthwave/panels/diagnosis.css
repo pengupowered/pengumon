@@ -1,12 +1,12 @@
 /* Synthwave's view of the Path health card (diagnosis.js): a lit sign for the verdict and glowing tiles on the horizon
    grid, one per hop. Scoped to this theme and to the card while this view draws it ([data-view="synthwave"]).
-   Colours are the theme's tokens. */
+   Colors are the theme's tokens. */
 
 :root[data-look="synthwave"] [data-panel="diagnosis"] .panel[data-view="synthwave"] > .panel-h { border-bottom-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 
 :root[data-look="synthwave"] [data-panel="diagnosis"] .sw-diag { display: flex; flex-direction: column; gap: var(--sp-3); }
 
-/* the verdict: an outlined sign with a glow in the verdict's colour */
+/* the verdict: an outlined sign with a glow in the verdict's color */
 :root[data-look="synthwave"] [data-panel="diagnosis"] .sw-verdict {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); padding: var(--sp-3) var(--sp-4);
   border: 2px solid var(--st); border-radius: var(--r-md); background: linear-gradient(90deg, var(--st-bg), transparent 70%);

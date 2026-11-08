@@ -1,4 +1,4 @@
-// Synthwave: the rows of the horizon grid behind the header move slowly towards you (docs/themes.md, "Effects").
+// Synthwave: the rows of the horizon grid behind the header move slowly toward you (docs/themes.md, "Effects").
 // skin.css draws the grid's rays and, while this effect is not running, still rows; this draws the moving rows on one
 // canvas only as high as the grid, at 3 frames a second in the theme engine's frame loop (paused while the tab is
 // hidden). Near the horizon a row hardly moves, so few frames are enough. The geometry is skin.css's: the horizon at

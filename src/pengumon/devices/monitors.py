@@ -38,7 +38,7 @@ DEFAULT_BUSY_LOAD_PCT = ClassifierConfig.model_fields["busy_load_pct"].default  
 
 def router_ranges(levels: RouterLevelsConfig, busy_load_pct: float) -> Dict[str, Range]:
     """The good zone of each router metric. CPU is warn above cpu_warning_pct (as the snapshot status always was;
-    the dashboard used to colour at 50 and 80 %), and the WAN load, in % of the line capacity, is warn from the
+    the dashboard used to color at 50 and 80 %), and the WAN load, in % of the line capacity, is warn from the
     classifier's busy_load_pct (the load at which delay stops counting as a fault) and critical when saturated
     (wan_critical_pct)."""
     wan = Range("%", 0.0, 100.0, good_high=busy_load_pct, critical_high=levels.wan_critical_pct)

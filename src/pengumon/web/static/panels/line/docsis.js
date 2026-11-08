@@ -151,7 +151,7 @@ export default {
       const down = ch.filter((c) => c.direction === 'downstream');
       const up = ch.filter((c) => c.direction === 'upstream');
       const errored = down.filter((c) => (c.uncorrectables_recent || 0) > 0);
-      // a coloured cell is a channel the server grades outside its good range; say how many, so a lone amber cell
+      // a colored cell is a channel the server grades outside its good range; say how many, so a lone amber cell
       // beside "no new errors" is not a riddle
       const graded = down.filter((c) => offGrade(c).length).length;
       const summary = ch.length

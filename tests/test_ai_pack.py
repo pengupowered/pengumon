@@ -67,7 +67,7 @@ async def seed_setup_a(repo, config, end: float) -> None:
                        cause_code="internet_backbone_transit_loss")
     await add_incident(repo, config, ids, busy_at, 0, "net1", carried=False, kind="busy_latency", expected=True,
                        cause_code="load_induced_latency")
-    await repo.initialise_settings(SettingsDocument(), "import", [])
+    await repo.initialize_settings(SettingsDocument(), "import", [])
     await _at(isp_at - 1200, lambda: repo.save_settings(1, {"classifier.busy_load_pct": 60}, {}, "ui",
                                                          lambda old, new: "busy level"))
     await _at(line_at - 300, lambda: repo.save_settings(2, {"classifier.busy_load_pct": 62}, {}, "ui",

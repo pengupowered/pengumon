@@ -81,7 +81,7 @@
   "",
   "## 5. Summary for a support ticket",
   "```text",
-  "Over the past 24 hours Pengumon recorded 1 incident totalling 5 minutes.",
+  "Over the past 24 hours Pengumon recorded 1 incident totaling 5 minutes.",
   "Loss to Local Router and Modem Gateway: at most 0.0%.",
   "Loss is first elevated at ISP Hub (198.51.100.5): 5.0%. That is the provider's first router; the gateway answered, so the loss starts on the line or at that router.",
   "Modem: downstream channel 13 at 600.0 MHz is outside typical levels (8 channel(s) in total).",

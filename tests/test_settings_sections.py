@@ -156,7 +156,7 @@ def test_webhooks_get_an_id_from_their_name():
                                       {"url": "https://b.example.com/", "name": "b", "id": "x"}])
 
 
-def test_dns_probe_fields_are_normalised():
+def test_dns_probe_fields_are_normalized():
     probe = DnsProbeConfig(id="dns_a", name="A", record_type="aaaa", nameserver=" ")
     assert probe.record_type == "AAAA" and probe.nameserver is None
     assert DnsProbeConfig(id="d", name="D", nameserver="2001:db8::53").nameserver == "2001:db8::53"

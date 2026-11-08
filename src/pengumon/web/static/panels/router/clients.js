@@ -4,7 +4,7 @@
 // minute while open; nothing goes through the websocket.
 //
 // What the server hides (names, IP and MAC addresses under privacy.client_details) is simply absent from the rows. Every
-// value is shown through textContent. The Wi-Fi link rate is not traffic and is labelled so.
+// value is shown through textContent. The Wi-Fi link rate is not traffic and is labeled so.
 
 import { registerActions } from '../../js/dispatch.js';
 import { CLIENT_KINDS, keepKeyboard, openModal, deviceName, localFormat } from '../../js/util.js';
@@ -348,7 +348,7 @@ export function filterClientsBand(band) {
   renderClients();
 }
 
-// Chart.js keeps the colours it resolved when a chart was made, so a theme change draws the chart again.
+// Chart.js keeps the colors it resolved when a chart was made, so a theme change draws the chart again.
 document.addEventListener('themechange', () => {
   if (!view.chart) return;
   view.chart.destroy();

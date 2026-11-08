@@ -19,7 +19,7 @@ export default makeListEditor({
     { f: 'domain', label: 'Name to look up', kind: 'text', required: true, mono: true, placeholder: 'example.com' },
     { f: 'nameserver', label: 'Nameserver', kind: 'text', nullable: true, mono: true, placeholder: '1.1.1.1', hint: NO_SERVER, hintIf: (item) => !item.nameserver },
     { f: 'record_type', label: 'Record type', kind: 'choice', choices: TYPES, required: true },
-    { f: 'color', label: 'Line colour', kind: 'text', nullable: true, mono: true, placeholder: '#58a6ff' },
+    { f: 'color', label: 'Line color', kind: 'text', nullable: true, mono: true, placeholder: '#58a6ff' },
     { f: 'enabled', label: 'Looked up', kind: 'bool' }
   ],
   blank: (items) => ({ id: freshId('dns_lookup', items.map((i) => i.id)), name: 'DNS Lookup', domain: '', nameserver: null, record_type: 'A', enabled: true, color: null }),

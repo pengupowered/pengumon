@@ -663,7 +663,7 @@
     {
       "type": "timeseries",
       "title": "Probe loss, by target",
-      "description": "Share of probes without an answer. Loss on every hop from one point on: the fault is at that hop; loss on one middle hop only: often that hop deprioritising ping replies.",
+      "description": "Share of probes without an answer. Loss on every hop from one point on: the fault is at that hop; loss on one middle hop only: often that hop deprioritizing ping replies.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -3928,6 +3928,66 @@
       }
     },
     {
+      "type": "timeseries",
+      "title": "MCP calls, by tool",
+      "description": "Tool calls through POST /mcp (the read-only endpoint for AI assistants; off unless Settings > Sign-in allows it), by tool and outcome: ok, error (a tool's own failure, such as an unknown incident or the ai_pack limit) or refused (unknown tool, bad arguments).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (tool, outcome) (increase(pengumon_mcp_calls_total{job=\"$service\"}[$__interval]))",
+          "legendFormat": "{{tool}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m",
+      "id": 87,
+      "gridPos": {
+        "x": 0,
+        "y": 154,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
       "type": "row",
       "title": "Devices",
       "collapsed": false,
@@ -3935,7 +3995,7 @@
       "id": 52,
       "gridPos": {
         "x": 0,
-        "y": 154,
+        "y": 162,
         "w": 24,
         "h": 1
       }
@@ -3995,7 +4055,7 @@
       "id": 53,
       "gridPos": {
         "x": 0,
-        "y": 155,
+        "y": 163,
         "w": 8,
         "h": 8
       }
@@ -4081,7 +4141,7 @@
       "id": 54,
       "gridPos": {
         "x": 8,
-        "y": 155,
+        "y": 163,
         "w": 8,
         "h": 8
       }
@@ -4159,7 +4219,7 @@
       "id": 55,
       "gridPos": {
         "x": 16,
-        "y": 155,
+        "y": 163,
         "w": 8,
         "h": 8
       }
@@ -4172,7 +4232,7 @@
       "id": 56,
       "gridPos": {
         "x": 0,
-        "y": 163,
+        "y": 171,
         "w": 24,
         "h": 1
       }
@@ -4180,7 +4240,7 @@
     {
       "type": "timeseries",
       "title": "Discovery runs",
-      "description": "Runs by trigger (manual, daily, incident, confirm) and outcome (done, no_answer = no trace reached a public server, failed, cancelled).",
+      "description": "Runs by trigger (manual, daily, incident, confirm) and outcome (done, no_answer = no trace reached a public server, failed, canceled).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -4232,7 +4292,7 @@
       "id": 57,
       "gridPos": {
         "x": 0,
-        "y": 164,
+        "y": 172,
         "w": 8,
         "h": 8
       }
@@ -4301,7 +4361,7 @@
       "id": 58,
       "gridPos": {
         "x": 8,
-        "y": 164,
+        "y": 172,
         "w": 8,
         "h": 8
       }
@@ -4370,7 +4430,7 @@
       "id": 59,
       "gridPos": {
         "x": 16,
-        "y": 164,
+        "y": 172,
         "w": 8,
         "h": 8
       }
@@ -4430,7 +4490,7 @@
       "id": 60,
       "gridPos": {
         "x": 0,
-        "y": 172,
+        "y": 180,
         "w": 12,
         "h": 8
       }
@@ -4516,7 +4576,7 @@
       "id": 61,
       "gridPos": {
         "x": 12,
-        "y": 172,
+        "y": 180,
         "w": 12,
         "h": 8
       }
@@ -4529,7 +4589,7 @@
       "id": 62,
       "gridPos": {
         "x": 0,
-        "y": 180,
+        "y": 188,
         "w": 24,
         "h": 1
       }
@@ -4598,7 +4658,7 @@
       "id": 63,
       "gridPos": {
         "x": 0,
-        "y": 181,
+        "y": 189,
         "w": 8,
         "h": 8
       }
@@ -4658,7 +4718,7 @@
       "id": 64,
       "gridPos": {
         "x": 8,
-        "y": 181,
+        "y": 189,
         "w": 8,
         "h": 8
       }
@@ -4666,7 +4726,7 @@
     {
       "type": "timeseries",
       "title": "Previews",
-      "description": "Outage-rules previews by outcome (done, cap = stopped at the time limit, cancelled, failed, busy), and the p95 time and replayed rounds of the finished ones.",
+      "description": "Outage-rules previews by outcome (done, cap = stopped at the time limit, canceled, failed, busy), and the p95 time and replayed rounds of the finished ones.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -4769,10 +4829,270 @@
       "id": 65,
       "gridPos": {
         "x": 16,
-        "y": 181,
+        "y": 189,
         "w": 8,
         "h": 8
       }
+    },
+    {
+      "type": "row",
+      "title": "Speed test",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 197,
+        "w": 24,
+        "h": 1
+      },
+      "id": 88
+    },
+    {
+      "type": "timeseries",
+      "title": "Speed of the last good test",
+      "description": "Download and upload speed of the last speed test that worked (the line's rate the router measured during it, else the test's own; a point per test, as often as the interval you set). Off until the speed test is turned on in Settings.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_speedtest_download_Mbit_per_second{job=\"$service\"}",
+          "legendFormat": "download",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_speedtest_upload_Mbit_per_second{job=\"$service\"}",
+          "legendFormat": "upload",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Mbits",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 198,
+        "w": 12,
+        "h": 8
+      },
+      "id": 89
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency before and during the last good test",
+      "description": "Median latency of the public probe targets before the last good test (idle) and during its download and upload: the difference is the bufferbloat.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pengumon_speedtest_loaded_latency{job=\"$service\"}",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 198,
+        "w": 12,
+        "h": 8
+      },
+      "id": 90
+    },
+    {
+      "type": "timeseries",
+      "title": "Speed tests, by status",
+      "description": "Tests recorded per status: ok, partial (one direction failed), failed, and skipped (the monthly data cap or a busy line).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (status, trigger) (increase(pengumon_speedtest_runs_total{job=\"$service\"}[$__interval]))",
+          "legendFormat": "{{status}} ({{trigger}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1h",
+      "gridPos": {
+        "x": 0,
+        "y": 206,
+        "w": 12,
+        "h": 8
+      },
+      "id": 91
+    },
+    {
+      "type": "timeseries",
+      "title": "Data used by speed tests",
+      "description": "Bytes the speed tests moved, by direction (the data use the monthly limit counts).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (direction) (increase(pengumon_speedtest_bytes_total{job=\"$service\"}[$__interval]))",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1h",
+      "gridPos": {
+        "x": 12,
+        "y": 206,
+        "w": 12,
+        "h": 8
+      },
+      "id": 92
     },
     {
       "type": "row",
@@ -4782,7 +5102,7 @@
       "id": 28,
       "gridPos": {
         "x": 0,
-        "y": 189,
+        "y": 214,
         "w": 24,
         "h": 1
       }
@@ -4815,7 +5135,7 @@
       "id": 29,
       "gridPos": {
         "x": 0,
-        "y": 190,
+        "y": 215,
         "w": 12,
         "h": 10
       }
@@ -4848,7 +5168,7 @@
       "id": 30,
       "gridPos": {
         "x": 12,
-        "y": 190,
+        "y": 215,
         "w": 12,
         "h": 10
       }
@@ -4877,7 +5197,7 @@
       "id": 31,
       "gridPos": {
         "x": 0,
-        "y": 200,
+        "y": 225,
         "w": 12,
         "h": 10
       }
@@ -4906,7 +5226,7 @@
       "id": 32,
       "gridPos": {
         "x": 12,
-        "y": 200,
+        "y": 225,
         "w": 12,
         "h": 10
       }

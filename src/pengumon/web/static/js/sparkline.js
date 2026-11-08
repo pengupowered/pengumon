@@ -78,8 +78,8 @@ export function drawSparkline(canvas, values, color) {
   return true;
 }
 
-// The design's SVG sparkline (path health nodes, service rows): status-coloured line over a gradient wash, red ticks
-// for lost probes, a dot on the newest value; no data is a flat dashed line. Returns markup; colours are tokens.
+// The design's SVG sparkline (path health nodes, service rows): status-colored line over a gradient wash, red ticks
+// for lost probes, a dot on the newest value; no data is a flat dashed line. Returns markup; colors are tokens.
 // `id` names the series (a path node's key): its gradient id is `sg-<id>`, so the same samples give the same markup and a
 // caller can tell by comparing strings whether anything changed. Without one the id follows the level.
 const SPARK_COLOR = { good: 'var(--accent)', warn: 'var(--warn)', crit: 'var(--crit)', busy: 'var(--busy)', unknown: 'var(--unknown)' };

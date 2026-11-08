@@ -1,6 +1,7 @@
 """The dashboard ships no inline scripts or handlers, so the CSP can forbid them; assets are cache-busted ES modules."""
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,18 @@ def all_js() -> list[Path]:
 INLINE_HANDLER = re.compile(r"\son[a-z]+\s*=", re.IGNORECASE)
 # the event each delegated attribute listens for (dispatch.js)
 ACTION_KINDS = {"action": "click", "input": "input", "change": "change", "submit": "submit"}
+
+
+class _Scripts(HTMLParser):
+    """The attributes of every <script> on a page, in order."""
+
+    def __init__(self):
+        super().__init__()
+        self.found = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script":
+            self.found.append(dict(attrs))
 
 
 def js_files() -> list[str]:
@@ -114,12 +127,13 @@ async def test_dashboard_script_is_an_es_module_under_the_tree_hash():
     assert not (WEB / "static" / "app.js").exists()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         html = (await ac.get("/")).text
-        scripts = re.findall(r"<script\b[^>]*>", html)
+        scripts = _Scripts()
+        scripts.feed(html)
         # the theme first (a classic script in <head>, before the first paint: js/theme-boot.js), Chart.js stays a classic
         # script (it defines the global `Chart`), then the one module entry point
-        assert scripts == [f'<script src="/static/v/{ASSET_VERSION}/js/theme-boot.js">',
-                           f'<script src="/static/v/{ASSET_VERSION}/vendor/chart.umd.min.js">',
-                           f'<script type="module" src="/static/v/{ASSET_VERSION}/js/main.js">']
+        assert scripts.found == [{"src": f"/static/v/{ASSET_VERSION}/js/theme-boot.js"},
+                                 {"src": f"/static/v/{ASSET_VERSION}/vendor/chart.umd.min.js"},
+                                 {"type": "module", "src": f"/static/v/{ASSET_VERSION}/js/main.js"}]
         assert "app.js" not in html
         # every module's imports resolve to a shipped file, served as JavaScript (a wrong MIME type blocks a module)
         entries = [("main.js", await ac.get(f"/static/v/{ASSET_VERSION}/js/main.js"))]
@@ -427,7 +441,7 @@ async def test_the_page_carries_the_configured_default_layout_in_a_csp_safe_attr
     finally:
         delattr(app.state, STATE_ATTR)
     raw = re.search(r"<body\b[^>]*\bdata-layout='([^']*)'", html).group(1)
-    assert json.loads(unescape(raw)) == {"order": ["matrix", "diagnosis"], "hidden": ["report"], "colours": {}}
+    assert json.loads(unescape(raw)) == {"order": ["matrix", "diagnosis"], "hidden": ["report"], "colors": {}}
     assert not re.search(r"<script(?![^>]*\bsrc=)", html, re.IGNORECASE)
 
 
@@ -546,7 +560,7 @@ def test_the_line_panel_takes_its_body_from_an_adapter():
     assert not re.search(r"snr|dbmv|uncorrectable|channels?\b", "\n".join(code), re.IGNORECASE)
 
 
-def test_no_coloured_metric_is_graded_against_a_number_in_the_browser():
+def test_no_colored_metric_is_graded_against_a_number_in_the_browser():
     """Grades come from the server (snapshot `grades`, device `ranges`); the old client thresholds are gone."""
     for path in js_files():
         text = (WEB / path).read_text(encoding="utf-8")
@@ -627,17 +641,17 @@ def test_the_dispatcher_lets_the_real_handler_replace_a_lazy_stand_in():
     assert "registerLazy(" in (JS / "panels" / "index.js").read_text(encoding="utf-8")
 
 
-# ---------- colours come from the tokens (docs/themes.md, "Card colours") ----------
-# A colour written into a card's or a dialog's styles, a card's markup or a card's code would stay the same in every theme
-# and under a card's own colours (Layout > Colours). Allowed: the made-up data of a card's fixture (fixture(), its
-# variants), the fallbacks util.js and layout.js document (a token that cannot be read yet), and the colours of targets,
+# ---------- colors come from the tokens (docs/themes.md, "Card colors") ----------
+# A color written into a card's or a dialog's styles, a card's markup or a card's code would stay the same in every theme
+# and under a card's own colors (Layout > Colors). Allowed: the made-up data of a card's fixture (fixture(), its
+# variants), the fallbacks util.js and layout.js document (a token that cannot be read yet), and the colors of targets,
 # which come from the configuration at run time.
-COLOUR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(\s*[\d.]")
-CSS_NAMED_COLOUR = re.compile(r"(?<![\w-])(?:white|black|red|green|blue|yellow|orange|purple|pink|gray|grey|silver|"
+COLOR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(\s*[\d.]")
+CSS_NAMED_COLOR = re.compile(r"(?<![\w-])(?:white|black|red|green|blue|yellow|orange|purple|pink|gray|grey|silver|"
                               r"navy|teal|maroon|olive|lime|aqua|fuchsia|cyan|magenta|gold|brown)(?![\w-])", re.IGNORECASE)
 
 
-def _colour_files() -> list[Path]:
+def _color_files() -> list[Path]:
     css = [*STATIC.glob("panels/**/*.css"), *STATIC.glob("dialogs/**/*.css"), *STATIC.glob("themes/*/skin.css"),
            *STATIC.glob("themes/*/panels/*.css")]
     code = [*STATIC.glob("panels/**/*.js"), *STATIC.glob("themes/*/panels/*.js"), *STATIC.glob("panels/**/*.html")]
@@ -649,14 +663,14 @@ def _without_fixtures(text: str) -> str:
     return re.sub(r"\n(?:export )?function fixture[\s\S]*?\n\}\n", "\n", re.sub(r"\n(?:export )?const \w*[fF]ixture\w* = [\s\S]*?\n\};?\n", "\n", text))
 
 
-@pytest.mark.parametrize("path", [p.relative_to(STATIC).as_posix() for p in _colour_files()])
-def test_cards_and_dialogs_take_their_colours_from_the_tokens(path):
+@pytest.mark.parametrize("path", [p.relative_to(STATIC).as_posix() for p in _color_files()])
+def test_cards_and_dialogs_take_their_colors_from_the_tokens(path):
     text = (STATIC / path).read_text(encoding="utf-8")
     if path.endswith(".css"):
         text = re.sub(r"/\*[\s\S]*?\*/", "", text)
         values = " ".join(m.group(1) for m in re.finditer(r"[\w-]+\s*:\s*([^;{}]+)", re.sub(r"[^{}]*\{", "{", text)))
-        found = COLOUR_LITERAL.findall(values) + CSS_NAMED_COLOUR.findall(values)
+        found = COLOR_LITERAL.findall(values) + CSS_NAMED_COLOR.findall(values)
     else:
         text = re.sub(r"(?m)^\s*//.*$", "", _without_fixtures(text))
-        found = COLOUR_LITERAL.findall(text)
-    assert not found, f"{path}: colour literals {sorted(set(found))}: use a token (var(--...)), docs/themes.md 'The tokens'"
+        found = COLOR_LITERAL.findall(text)
+    assert not found, f"{path}: color literals {sorted(set(found))}: use a token (var(--...)), docs/themes.md 'The tokens'"

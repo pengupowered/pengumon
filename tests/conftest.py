@@ -29,7 +29,7 @@ def repo_options():
 
 @pytest.fixture
 async def repo(tmp_path, repo_options):
-    """An initialised DatabaseRepository on tmp_path/repo.db. A module with its own `repo` fixture uses that one."""
+    """An initialized DatabaseRepository on tmp_path/repo.db. A module with its own `repo` fixture uses that one."""
     repository = DatabaseRepository(db_path=str(tmp_path / "repo.db"), **repo_options)
     await repository.initialize()
     yield repository
@@ -62,3 +62,19 @@ def app_state(monkeypatch):
     state = AppState()
     monkeypatch.setattr(app.state, STATE_ATTR, state, raising=False)
     return state
+
+
+@pytest.fixture
+async def mcp_state(tmp_path, monkeypatch):
+    """The seeded AppState of mcp_helpers (MCP on, the sign-in token not set) installed on the app for one test."""
+    from mcp_helpers import build_state
+    from pengumon.main import app, security_config
+    from pengumon.mcp.tools import reset_pack_rate
+    from pengumon.state import STATE_ATTR
+
+    reset_pack_rate()  # the MCP pack limit is per process: each test starts with none built
+    state = await build_state(tmp_path)
+    monkeypatch.setattr(app.state, STATE_ATTR, state, raising=False)
+    monkeypatch.setattr(security_config, "access_token", "")
+    yield state
+    await state.repository.close()

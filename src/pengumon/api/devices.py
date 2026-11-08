@@ -24,6 +24,7 @@ from pengumon.devices.device import Device
 from pengumon.devices.samples import BUCKET_FIELDS, MAX_POINTS_LIMIT, RouterHistory, bucket_width, bucketed_router_history
 from pengumon.api.payloads import CredentialsRequest
 from pengumon.devices.snapshots import RouterMetricsSnapshot
+from pengumon.devices.summary import device_label
 from pengumon.observability import get_logger
 from pengumon.secrets import SECRETS_FILE_DAMAGED, SecretsFileUnusable, SecretStore, credential_updates
 from pengumon.security import rate_limit
@@ -81,14 +82,6 @@ def device_ranges(device: Device) -> Dict[str, Dict[str, Any]]:
         return {name: r.as_dict() for name, r in docsis.ranges(getattr(device.monitor, "levels", None)).items()}
     ranges = getattr(device.monitor, "ranges", None)
     return {name: r.as_dict() for name, r in ranges.items()} if ranges else {}
-
-
-def device_label(device: Device) -> str:
-    """The device as a person names it: what it is (the driver's `label`, e.g. "ASUS router") and its model from
-    config.yaml, or its id when no model is set ("Xfinity gateway · modem"); never only an address."""
-    kind = getattr(device.driver, "label", None) or device.driver.name
-    model = getattr(device.config, "model", None)
-    return f"{kind} · {str(model).replace('_', ' ') if model else device.id}"
 
 
 def device_summary(device: Device) -> Dict[str, Any]:

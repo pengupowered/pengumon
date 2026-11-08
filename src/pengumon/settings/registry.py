@@ -39,6 +39,7 @@ SECTIONS: Tuple[Section, ...] = tuple(Section(id, title, n) for n, (id, title) i
     ("outage", "Outage rules"),
     ("alerts", "Alerts"),
     ("line", "Your line"),
+    ("speedtest", "Speed test"),
     ("devices", "Devices and services"),
     ("probing", "Probing"),
     ("retention", "Retention"),
@@ -79,7 +80,8 @@ def unwrap_optional(annotation) -> Tuple[Any, bool]:
 
 def field_constraints(info: FieldInfo) -> Dict[str, Any]:
     """What the page needs to know of a field: {type, nullable, min, max, exclusive_min, exclusive_max, max_length,
-    step, choices}. type is number | integer | boolean | text | choice | time | timezone | layout | theme | list | object |
+    step, choices}. type is number | integer | boolean | text | choice | time | timezone | layout | theme | hours | list |
+    object |
     map (the last three only for list-item fields). Read from the annotation and its pydantic metadata."""
     annotation, nullable = unwrap_optional(info.annotation)
     extra = info.json_schema_extra if isinstance(info.json_schema_extra, dict) else {}
@@ -130,7 +132,7 @@ def field_default(info: FieldInfo) -> Any:
 class Setting:
     key: str              # dotted path in the settings document, = the config.yaml path ("classifier.down_loss_pct")
     section: str          # one of SECTION_IDS
-    group: Optional[str]  # sub-heading in the section ("Loss", "Latency spike levels", "Hop colours", "Quiet hours")
+    group: Optional[str]  # sub-heading in the section ("Loss", "Latency spike levels", "Hop colors", "Quiet hours")
     label: str            # "Loss counts as down from"
     effect: str           # one line: what changing it does
     unit: Optional[str] = None   # shown unit: "%", "ms", "s", "min", "days", "Mbps", "dB", "dBmV", "codewords/min"
@@ -141,7 +143,7 @@ class Setting:
     advanced: bool = False
     export: bool = True
     order: int = 0        # place within its section (set from the registry's order)
-    related: Optional[str] = None  # a key shown beside it (the incident level next to a hop colour), with a link to it
+    related: Optional[str] = None  # a key shown beside it (the incident level next to a hop color), with a link to it
     also_in: Tuple[str, ...] = ()  # other sections that render the same value (asn_lookup: privacy too)
     choice_labels: Optional[Dict[str, str]] = None  # stored choice -> the words the page shows ("critical": "Outages only")
     empty: Optional[str] = None  # what an empty (None) value means, in words ("learned from the router's traffic")
@@ -208,7 +210,7 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("classifier.window_probes", "Judge each hop by its last",
            "Loss, latency and jitter are measured over each hop's probes from this time, one a round. Latency and "
            "jitter take the middle value, so they count as high only when more than half the probes are: one stalled "
-           "probe is no spike. Hop colours judge loss over it too.", **_ROUNDS),
+           "probe is no spike. Hop colors judge loss over it too.", **_ROUNDS),
         _s("classifier.degraded_loss_pct", "Loss counts as degraded from",
            "Share of a stage's judged probes lost from which that stage is degraded (a warning).", "Loss", unit="%"),
         _s("classifier.down_loss_pct", "Loss counts as down from",
@@ -275,6 +277,45 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "From this load, latency (and loss seen only at ISP hops) counts as expected, not as a fault.",
            unit="%"),
     ])
+    + _entries("speedtest", [
+        _s("speedtest.enabled", "Run speed tests",
+           "Measures download and upload speed on a schedule. Each test uses the data below."),
+        _s("speedtest.provider", "Test against",
+           "Who the test data goes to. Cloudflare sees your address and the transfer. M-Lab publishes every result, with "
+           "your public IP address, as open data. Your own LibreSpeed server is the private choice.",
+           choice_labels={"cloudflare": "Cloudflare (speed.cloudflare.com)",
+                          "mlab": "M-Lab NDT7 (publishes your IP address with each result)",
+                          "librespeed": "Your LibreSpeed server"}),
+        _s("speedtest.librespeed_url", "LibreSpeed server",
+           "The folder that holds garbage.php and empty.php. For the official Docker image that is "
+           "http://<host>/backend, not http://<host> (the bare host answers 404). Needed when the test runs against it.",
+           empty="not set"),
+        _s("speedtest.interval_hours", "Run every",
+           "How often a scheduled test runs: any number of hours, days or weeks, up to 365 days (a week for weekly, 30 "
+           "days for about monthly). The moment is not the same for every install. A restart never adds a test.",
+           "Schedule", unit="h"),
+        _s("speedtest.window_start", "Only from",
+           "Scheduled tests run only between these times, in the time zone under Display. Leave both empty for any "
+           "time.", "Schedule", empty="any time"),
+        _s("speedtest.window_end", "Until", "End of the window; it may cross midnight.", "Schedule", empty="any time"),
+        _s("speedtest.busy_load_pct", "Wait while the line is busy from",
+           "A scheduled test waits (10 minutes, up to 3 times) while the line's load is at or above this, then is skipped. "
+           "Unknown load does not block it.", "Schedule", unit="%"),
+        _s("speedtest.download_mb", "Download at most",
+           "Hard limit per test; the download stops at this much data or after about 8 seconds of it. To measure a "
+           "line for the full 8 seconds this needs about its speed in Mbps (1000 MB for a gigabit line).", "Data use",
+           unit="MB", choice_labels={"10": "10 MB", "25": "25 MB", "50": "50 MB", "100": "100 MB", "250": "250 MB",
+                                     "500": "500 MB", "1000": "1000 MB"}),
+        _s("speedtest.upload_mb", "Upload at most",
+           "Hard limit per test; the upload stops at this much data or after about 8 seconds of it.", "Data use", unit="MB",
+           choice_labels={"5": "5 MB", "10": "10 MB", "25": "25 MB", "50": "50 MB"}),
+        _s("speedtest.monthly_cap_mb", "Monthly data limit",
+           "Scheduled tests are skipped once this calendar month's tests have moved this much. 0 means no limit.",
+           "Data use", unit="MB"),
+        _s("speedtest.slow_alert_pct", "Alert when under",
+           "Alert when a test measures under this share of your plan speed. Needs the plan speed under Your line. 0: off.",
+           "Alert", unit="%"),
+    ])
     + _entries("devices", [
         _s("service_checks.interval_seconds", "Check host apps every",
            "How often each host app's health address is fetched.", "Host app checks", unit="s"),
@@ -298,6 +339,9 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("access.allow_viewers", "Others may look, but not change anything",
            "While a password is set: people without it see the dashboard, read only. Off: they get the sign-in page. "
            "No effect without a password.", "Without the password", env="PENGUMON_VIEW_WITHOUT_TOKEN"),
+        _s("mcp.enabled", "Allow AI assistants to read (MCP)",
+           "Opens /mcp, a read-only endpoint an AI assistant can ask about the network (status, incidents, reports). "
+           "It uses the same sign-in as the dashboard and changes nothing.", "AI assistants (MCP)"),
     ])
     + _entries("privacy", [
         _s("privacy.client_details", "Show connected clients' names and addresses",
@@ -320,7 +364,7 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Quiet hours and the daily route check follow this clock. The reports count their days and hours in it "
            "too, unless it is UTC: then each browser uses its own zone."),
         _s("display.theme", "Theme",
-           "The colours and look every browser starts with. A browser's own choice in the header's theme menu wins.",
+           "The colors and look every browser starts with. A browser's own choice in the header's theme menu wins.",
            choice_labels=_theme_names()),
         _s("display.effects", "Animated effects",
            "Themes that have one show a slow animation, such as falling characters. It stops while the tab is hidden and "
@@ -333,36 +377,36 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "The panel order a browser starts with; a browser's own Layout choice wins."),
         _s("dashboard.hidden", "Hidden panels for new browsers",
            "The panels a browser starts without; a browser's own Layout choice wins."),
-        _s("dashboard.colours", "Card colours for new browsers",
-           "The colours each card starts with; a browser's own Layout choice wins."),
+        _s("dashboard.colors", "Card colors for new browsers",
+           "The colors each card starts with; a browser's own Layout choice wins."),
         _s("display.grafana_url", "Grafana address",
            "Adds Dashboard, Logs and Traces links to the page header, at once.", env="PENGUMON_GRAFANA_URL",
            empty="no links"),
     ])
     + _entries("advanced", [
         _s("prober.hop_status.down_loss_fraction", "Hop shows down above",
-           "Share of a hop's judged probes lost above which its dot turns red.", "Hop colours",
+           "Share of a hop's judged probes lost above which its dot turns red.", "Hop colors",
            related="classifier.down_loss_pct", **_PCT_OF_FRACTION),
         _s("prober.hop_status.degraded_loss_fraction", "Hop shows degraded above",
-           "Share lost above which a hop's dot turns amber.", "Hop colours",
+           "Share lost above which a hop's dot turns amber.", "Hop colors",
            related="classifier.degraded_loss_pct", **_PCT_OF_FRACTION),
         _s("prober.hop_status.local_latency_ms", "Router hop latency", "A router hop turns amber above this.",
-           "Hop colours", unit="ms", related="classifier.local_latency_spike_threshold_ms"),
+           "Hop colors", unit="ms", related="classifier.local_latency_spike_threshold_ms"),
         _s("prober.hop_status.local_jitter_ms", "Router hop jitter", "A router hop turns amber above this.",
-           "Hop colours", unit="ms", related="classifier.local_jitter_spike_threshold_ms"),
+           "Hop colors", unit="ms", related="classifier.local_jitter_spike_threshold_ms"),
         _s("prober.hop_status.gateway_latency_ms", "Modem hop latency", "A modem or gateway hop turns amber above "
-           "this.", "Hop colours", unit="ms", related="classifier.gateway_latency_spike_threshold_ms"),
+           "this.", "Hop colors", unit="ms", related="classifier.gateway_latency_spike_threshold_ms"),
         _s("prober.hop_status.gateway_jitter_ms", "Modem hop jitter", "A modem or gateway hop turns amber above "
-           "this.", "Hop colours", unit="ms", related="classifier.gateway_jitter_spike_threshold_ms"),
+           "this.", "Hop colors", unit="ms", related="classifier.gateway_jitter_spike_threshold_ms"),
         _s("prober.hop_status.public_latency_ms", "Internet target latency", "An internet target turns amber "
-           "above this (a hop's own \"warn above\" wins).", "Hop colours", unit="ms",
+           "above this (a hop's own \"warn above\" wins).", "Hop colors", unit="ms",
            related="classifier.public_latency_spike_threshold_ms"),
         _s("prober.hop_status.public_jitter_ms", "Internet target jitter", "An internet target turns amber above "
-           "this.", "Hop colours", unit="ms", related="classifier.public_jitter_spike_threshold_ms"),
+           "this.", "Hop colors", unit="ms", related="classifier.public_jitter_spike_threshold_ms"),
         _s("prober.hop_status.dns_latency_ms", "DNS lookup time", "A DNS lookup turns amber above this.",
-           "Hop colours", unit="ms", related="classifier.dns_timeout_threshold_ms"),
+           "Hop colors", unit="ms", related="classifier.dns_timeout_threshold_ms"),
         _s("prober.hop_status.dns_jitter_ms", "DNS lookup jitter", "A DNS lookup turns amber above this.",
-           "Hop colours", unit="ms"),
+           "Hop colors", unit="ms"),
         _s("classifier.dns_degraded_loss_pct", "DNS degraded from",
            "Share of DNS lookups lost from which DNS counts as degraded.", "DNS rules", unit="%"),
         _s("classifier.dns_cooldown_seconds", "DNS faults wait after line trouble",

@@ -1,6 +1,6 @@
 // Synthwave's view of the Latency card (docs/themes.md, "Drawing a card"): neon readouts over a glowing screen. Each
-// series is an outlined readout in its own colour (its name, the newest reading large, what it is made of under it), the
-// Path / Each target switch is a pair of neon toggles, and the standard charts (Chart.js, in the theme's colours and
+// series is an outlined readout in its own color (its name, the newest reading large, what it is made of under it), the
+// Path / Each target switch is a pair of neon toggles, and the standard charts (Chart.js, in the theme's colors and
 // chart style) sit in a frame lit pink to cyan. It draws from the card's view model (panels/latency/charts.js) with the
 // standard parts (the switch, the charts, the legend's entries): only the layout is this file's. The look is
 // latency.css.
@@ -12,7 +12,7 @@ export default {
     const box = root.appendChild(el('div', 'sw-lat'));
 
     const head = box.appendChild(el('div', 'sw-lat-head'));
-    // one readout, in its line's colour: the name, the newest reading, what the series is made of
+    // one readout, in its line's color: the name, the newest reading, what the series is made of
     const legend = legendList(head.appendChild(el('div', 'sw-lg-list')), 'sw', (p, it) => {
       const entry = el('div', `sw-lg${it.kind === 'line' ? '' : ' minor'}`);
       entry.appendChild(el('span', 'sw-lg-top')).append(p.key, p.label);

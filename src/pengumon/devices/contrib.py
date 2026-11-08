@@ -1,5 +1,5 @@
 """The capability contributions to the AI troubleshooting pack: line load (WAN counters), router (system readings) and
-Wi-Fi and mesh (client inventory, mesh). Each explains its readings to a model, summarises the stored history of the
+Wi-Fi and mesh (client inventory, mesh). Each explains its readings to a model, summarizes the stored history of the
 window in a few lines, emits coincidence events and declares its redaction hints. They read the stored history only
 (`device_samples`, `mesh_samples`), plus the router's monitor for what is not stored (mesh labels and backhaul), so
 they work offline. See pengumon.capabilities.contrib for the interface."""
@@ -179,7 +179,7 @@ class LineLoadContribution:
         return (
             f"How to read it: WAN rates are the traffic through the router's internet port, from its byte counters "
             f"every {poll:g} s. Load = rate / line capacity ({capacity}). From {config.classifier.busy_load_pct:g} % "
-            "the line counts as busy: latency rising then is queueing (\"bufferbloat\"), not a fault. A fault shows "
+            "the line counts as busy: latency rising then is queuing (\"bufferbloat\"), not a fault. A fault shows "
             "loss or latency while the load is low. Counters that stood still for a whole minute while the router "
             "answered mean no internet traffic at all passed the router."
         )

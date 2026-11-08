@@ -1,6 +1,6 @@
 // Amber CRT's view of the Latency card (docs/themes.md, "Drawing a card"): the chart on a terminal screen. A prompt line,
 // the legend as a bracketed list with the newest reading of each line, the Path / Each target switch as bracketed
-// choices, and the standard charts (Chart.js, drawn in the theme's colours and chart style) in a bezel with corner
+// choices, and the standard charts (Chart.js, drawn in the theme's colors and chart style) in a bezel with corner
 // marks. It draws from the card's view model (panels/latency/charts.js) with the standard parts (the switch, the charts,
 // the legend's entries): only the layout is this file's. The look is latency.css.
 

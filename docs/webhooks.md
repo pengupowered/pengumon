@@ -117,7 +117,7 @@ meaning (`version` rises if that ever has to happen).
 }
 ```
 
-- `event`: `incident_started`, `incident_resolved`, `service_down`, `service_up`, `path_changed`, `test`
+- `event`: `incident_started`, `incident_resolved`, `service_down`, `service_up`, `path_changed`, `speed_slow`, `test`
 - `severity`: `info`, `warning` or `critical` (the incident's; resolved, back and test are `info`, an app that is down `warning`)
 - `title`, `message`: The text ntfy shows
 - `incident_id`, `cause`: The incident (network incidents only; `null` otherwise). The same id is in the dashboard.
@@ -153,6 +153,15 @@ that the route differs from the applied path (your own hops, the line or your pr
 are `null`, and `message` lists the changes in plain words, one per line (at most six, then "...and N more"). `link`
 is `notifications.public_url` followed by `#live`, which opens Path health with its "Your path changed · Review"
 notice; ntfy gets the same link as its click action.
+
+### `speed_slow`
+
+Sent when a speed test measured under `speedtest.slow_alert_pct` percent of your plan speed (`line.down_mbps` /
+`line.up_mbps`), download or upload. Off by default (the setting is 0), and it needs the plan speed. `severity` is `info`,
+`incident_id`, `cause` and `service_id` are `null`, no incident is opened, and `message` gives the measured and the plan
+speed per direction, and whether the speed is the line's rate your router measured during the test or the test's own
+(and, when the test itself got far less than the line carried, that the rest was other traffic). It is sent once: the next slow test sends nothing until a test has been above the line, and then
+the next slow one sends again. Quiet hours hold it like the other `info` events. `link` is `notifications.public_url`.
 
 ## Examples
 

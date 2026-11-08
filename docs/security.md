@@ -126,6 +126,16 @@ closes the viewers' live connections at once.
 Viewers can see your network's addresses, hop names and history, the LAN address of this computer and the names of
 your alert channels. Turn it on only where that is fine for everyone who can reach the port.
 
+## The MCP endpoint
+
+`POST /mcp` ([mcp.md](mcp.md)) lets an AI assistant read the network's status, incidents, reports, device summaries, host app checks,
+speed tests and the AI pack. It is off by default (`mcp.enabled`, Settings > Sign-in) and read-only. It sits behind the same guards as the
+API: the `Host` allow-list, the `Origin` check (a foreign one is `403`; non-browser clients send none), the body limit,
+the password as `Authorization: Bearer ...` (open while no password is set), and a rate limit of 120 a minute (the `ai_pack` tool: 6 builds a minute, as for the API). Viewers (see above) cannot use
+it. No secret, client name or client address is in any answer, and no device address or login: a failed device poll is
+told in fixed words, not the driver's message. While it is off, `/mcp` is a plain `404` to every method. Over plain HTTP the bearer token
+crosses the LAN in clear: use [HTTPS](#https) if that matters.
+
 ## Signing out
 
 With a password set, a browser signed in (through `/login`, or by setting the password) shows **Sign out** in the header (in the "more" menu on a

@@ -1,7 +1,7 @@
 {
   "id": "nord",
   "name": "Nord",
-  "description": "The Nord palette: arctic blue-greys with frost and aurora accents. Dark and light.",
+  "description": "The Nord palette: arctic blue-grays with frost and aurora accents. Dark and light.",
   "modes": [
     "dark",
     "light"

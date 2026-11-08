@@ -17,7 +17,7 @@ from pengumon.engine.mtr import MtrEngine
 from pengumon.observability import export
 from pengumon.observability.gauges import GAUGES
 
-# Fixtures of the neighbouring suites: a notifier with a fake clock, a route that changes, a webhook with a mock transport.
+# Fixtures of the neighboring suites: a notifier with a fake clock, a route that changes, a webhook with a mock transport.
 from test_discovery_drift import APPLIED, DOWN, ROUTE_A, ROUTE_B, Network, checker
 from test_notify_rules import QUIET, at, incident, make
 from test_webhooks import _alert, _client, _sender

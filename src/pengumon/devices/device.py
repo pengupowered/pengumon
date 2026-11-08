@@ -19,6 +19,7 @@ import httpx
 from opentelemetry.trace import Status, StatusCode
 
 from pengumon.capabilities import Capability, Driver, DriverError, PollResult
+from pengumon.devices.wan import WanReading
 from pengumon.observability import StateLog, get_logger
 from pengumon.observability.telemetry import (
     device_gate_handovers, device_poll_duration, device_polls, device_polls_skipped, tracer,
@@ -90,7 +91,7 @@ class Device:
     def inherit_gate(self, previous: "Device") -> None:
         """Takes over when `previous` (the device this one replaces, same id and driver at the same host) last tried
         to read the device, and its failures in a row. A rebuild during a poll must not start a second one inside
-        min_interval_seconds: the cancelled poll left no stored reading for _restore to find."""
+        min_interval_seconds: the canceled poll left no stored reading for _restore to find."""
         self._last_attempt = max(self._last_attempt, previous._last_attempt)
         self._failures = previous._failures
         device_gate_handovers.add(1, {"device.id": self.id})
@@ -134,7 +135,7 @@ class Device:
         await self.driver.aclose()
 
     async def run(self) -> None:
-        """Polls every interval_seconds until cancelled (measured from the start of one poll to the next). A device
+        """Polls every interval_seconds until canceled (measured from the start of one poll to the next). A device
         read recently, before a restart, is not read again at once: the loop waits out the rest of its interval."""
         self._log.debug(f"Polling {self.id} every {self.interval_seconds:g} s")  # the startup line says it at INFO
         delay = await self._restore()
@@ -200,6 +201,30 @@ class Device:
         attempt anyway, but not within CREDENTIALS_TEST_FLOOR_SECONDS of the last one."""
         async with self._lock:
             return await self._poll(force, bypass_gate)
+
+    async def read_wan_counters(self) -> Optional[WanReading]:
+        """The WAN counters alone, read now, for a running speed test (speedtest/router.py samples them about once a
+        second): the driver's light counters read (`read_wan_counters`), on the same driver object and session as the
+        polls, behind the same lock, so it never runs during a poll (it waits for one to end). None when the device
+        cannot give one now: no such read, switched off, no password, a refused login, a device that must not be read
+        often (one with a minimum interval), or the read failed (logged at debug: the next one may work). Neither the
+        poll schedule nor the snapshot is touched."""
+        read = getattr(self.driver, "read_wan_counters", None)
+        if (read is None or not self.enabled or self._auth_stopped or self.min_interval_seconds
+                or Capability.WAN_COUNTERS not in self.driver.offers or self.driver.missing_configuration()):
+            return None
+        async with self._lock:
+            started = self._monotonic()
+            try:
+                counters = await read()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._log.debug(f"{self.id}: the WAN counters could not be read for the speed test",
+                                error=f"{type(exc).__name__}: {exc}")
+                return None
+            ended = self._monotonic()
+        return WanReading((started + ended) / 2, counters) if counters is not None else None
 
     async def current(self):
         """The snapshot to show without polling: the latest one; else, when a poll is in flight, its result; else

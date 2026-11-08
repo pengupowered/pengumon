@@ -1,0 +1,18 @@
+/* Starship console's Speed card: the standard view (panels/speed/view.js) restyled: each figure a console readout (its label
+   over it in the condensed capitals, a bar of the accent beside it), the grade and the status lines flat blocks, the question
+   before a test a square-cornered panel, Run now and the range buttons pills with a word. */
+
+:root[data-look="starship"] [data-panel="speed"] .spd-fig { border-left: 6px solid var(--accent); padding-left: var(--sp-3); }
+:root[data-look="starship"] [data-panel="speed"] .spd-lbl { color: var(--accent); font-family: var(--ss-cond); font-stretch: condensed; letter-spacing: .08em; }
+:root[data-look="starship"] [data-panel="speed"] .spd-big { font-family: var(--ss-cond); font-stretch: condensed; font-weight: var(--fw-bold); }
+:root[data-look="starship"] [data-panel="speed"] .spd-plan { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .05em; }
+:root[data-look="starship"] [data-panel="speed"] .spd-meta { color: var(--ink-2); }
+:root[data-look="starship"] [data-panel="speed"] .spd-bloat .badge { border-radius: 0; background: var(--st); color: var(--bg); border-color: var(--st); }
+:root[data-look="starship"] [data-panel="speed"] .spd-problem { border-radius: 0; border-width: 0 0 0 6px; border-color: var(--st); }
+:root[data-look="starship"] [data-panel="speed"] .spd-confirm { border-radius: 0; border: 0; border-left: 6px solid var(--accent); background: var(--surface-2); }
+:root[data-look="starship"] [data-panel="speed"] .spd-confirm b { color: var(--accent); font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; }
+:root[data-look="starship"] [data-panel="speed"] .spd-run-btn { text-transform: uppercase; letter-spacing: .06em; font-family: var(--ss-cond); font-stretch: condensed; }
+:root[data-look="starship"] [data-panel="speed"] .spd-line { font-family: var(--ss-cond); font-stretch: condensed; letter-spacing: .04em; }
+@container (max-width: 300px) {
+  :root[data-look="starship"] [data-panel="speed"] .spd-figs { grid-template-columns: minmax(0, 1fr); }
+}

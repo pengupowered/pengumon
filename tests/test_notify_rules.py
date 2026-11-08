@@ -20,10 +20,10 @@ def at(year, month, day, hour=0, minute=0, tz="UTC"):
 
 class _Timer:
     def __init__(self, due, fn):
-        self.due, self.fn, self.cancelled = due, fn, False
+        self.due, self.fn, self.canceled = due, fn, False
 
     def cancel(self):
-        self.cancelled = True
+        self.canceled = True
 
 
 class FakeTime:
@@ -46,7 +46,7 @@ class FakeTime:
     def to(self, when):
         fires = 0
         while True:
-            live = [t for t in self.timers if not t.cancelled and t.due <= when]
+            live = [t for t in self.timers if not t.canceled and t.due <= when]
             if not live:
                 break
             timer = min(live, key=lambda t: t.due)
@@ -64,7 +64,7 @@ class FakeTime:
 
     @property
     def waiting(self):
-        return [t for t in self.timers if not t.cancelled]
+        return [t for t in self.timers if not t.canceled]
 
 
 def make(now, tz="UTC", **alerts):
@@ -414,7 +414,7 @@ async def test_the_test_alert_is_never_filtered_or_held():
 
 # --- the repeat window -----------------------------------------------------------------------------------------------
 
-def test_the_repeat_window_keeps_todays_behaviour_at_300_seconds():
+def test_the_repeat_window_keeps_todays_behavior_at_300_seconds():
     n, t, sent = make(at(2026, 5, 4, 12))
     n.on_incident_started(incident(1, t.now))
     t.after(100)
@@ -496,7 +496,7 @@ async def test_aclose_cancels_what_is_waiting():
     n.on_incident_started(incident(start=start))
     assert n.pending_count() == 1
     await n.aclose()
-    assert n.pending_count() == 0 and all(x.cancelled for x in t.timers)
+    assert n.pending_count() == 0 and all(x.canceled for x in t.timers)
 
 
 def test_a_timer_that_fires_early_waits_again_instead_of_sending_early():
@@ -510,7 +510,7 @@ def test_a_timer_that_fires_early_waits_again_instead_of_sending_early():
     assert sent == [] and len(t.waiting) == 1
 
 
-def test_the_policy_defaults_are_todays_behaviour():
+def test_the_policy_defaults_are_todays_behavior():
     p = AlertPolicy()
     assert p.passes_severity("warning") and p.passes_severity("critical")
     assert p.incident_time(1000.0, "warning").at == 1000.0 and p.repeat_window_seconds == 300.0

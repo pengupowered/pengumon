@@ -46,7 +46,7 @@ def test_asus_collector_read_only_guarantee():
 
     # Must only have safe telemetry collection methods
     for name in member_names:
-        assert name in ("poll", "aclose", "set_credentials", "missing_configuration", "host", "name", "offers",
+        assert name in ("poll", "read_wan_counters", "aclose", "set_credentials", "missing_configuration", "host", "name", "offers",
                         "http", "from_config", "options_model", "default_poll_seconds", "label", "pack_notes"), f"Unexpected member: {name}"
 
     # Verify no references to apply.cgi or nvram set in code
@@ -367,7 +367,7 @@ def test_firmware_with_a_non_json_combined_answer_still_gives_every_value():
 def test_parse_clients():
     assert _parse_clients(json.dumps(CLIENTS)) == 2
     assert _parse_clients(json.dumps({"get_clientlist": {"x": {"online": "1"}}})) == 1
-    # nobody flagged online but the list is not empty: count the entries (existing behaviour)
+    # nobody flagged online but the list is not empty: count the entries (existing behavior)
     assert _parse_clients(json.dumps({"get_clientlist": {"x": {"isOnline": "0"}, "y": {}}})) == 2
     assert _parse_clients(json.dumps({"get_clientlist": {"x": {"isOnline": "0"}, "maclist": [], "v": "2"}})) == 1
     assert _parse_clients(json.dumps({"get_clientlist": {}})) == 0
@@ -376,7 +376,7 @@ def test_parse_clients():
     assert _parse_clients("<html>") is None
 
 
-# --- driver behaviour the Device tests above do not reach ------------------------------------------------------------
+# --- driver behavior the Device tests above do not reach ------------------------------------------------------------
 
 MESH_WITHOUT_COUNTERS = MESH_COMBINED.replace('"netdev": "INTERNET_rx":"0x5f5e100","INTERNET_tx":"0x2faf080"\n,', "")
 
@@ -584,3 +584,31 @@ async def test_the_configured_model_names_the_routers_snapshots_and_no_model_mea
                            client=httpx.AsyncClient(transport=httpx.MockTransport(
                                lambda r: (_ for _ in ()).throw(httpx.ConnectError("down")))))
     assert (await failing.poll(force=True)).model_name == "RT-AX88U"
+
+
+# --- the speed test's light counter read ------------------------------------------------------------------------------
+
+async def test_the_speed_test_reads_the_counters_alone_with_the_netdev_hook_on_the_polls_session():
+    router = FakeRouter()
+    driver = _driver(router, wall_clock=lambda: 7000.0)
+    counters = await driver.read_wan_counters()
+    assert router.hook_requests == ["netdev()"] and router.logins == 0 and router.other == []  # one request, no login
+    assert (counters.rx_bytes, counters.tx_bytes, counters.read_at) == (100_000_000, 50_000_000, 7000.0)
+
+
+async def test_the_speed_tests_read_logs_in_again_only_as_a_poll_would_and_keeps_the_new_token():
+    router = FakeRouter(valid_token="expired-elsewhere")
+    driver = _driver(router)
+    assert (await driver.read_wan_counters()).rx_bytes == 100_000_000
+    assert router.logins == 1 and driver._token == "fresh"           # the polls carry on with the same session
+    await driver.poll()
+    assert router.logins == 1
+
+
+async def test_a_counter_read_without_counters_is_none_and_a_refused_one_raises():
+    driver = _driver(lambda request: httpx.Response(200, json={"netdev": {}}))
+    assert await driver.read_wan_counters() is None
+    refused = _driver(lambda request: httpx.Response(200, json={"error_status": "2"}) if "appGet" in request.url.path
+                      else httpx.Response(200, json={"error_status": "3"}))
+    with pytest.raises(DriverError):
+        await refused.read_wan_counters()

@@ -17,7 +17,7 @@ PLANTED = ("Example ISP", "192.168.88.2", "path-token-abc", "inline-secret-xyz",
 
 
 async def _backup(tmp_path: Path) -> tuple:
-    """A database as the build before the settings store left it (never initialised) and a secrets.json."""
+    """A database as the build before the settings store left it (never initialized) and a secrets.json."""
     db = tmp_path / "backup" / "pengumon.db"
     db.parent.mkdir()
     repo = DatabaseRepository(db_path=str(db))
@@ -51,14 +51,14 @@ async def test_a_clean_config_comes_across_unchanged_and_the_originals_are_untou
     assert "list webhooks (set in config.yaml): 1 item(s) before, 1 after" in out
     assert "note: prober.ping_count_per_probe: does nothing; dropped" in out
     assert "secrets.json (copy): webhook_urls +1 entries, webhooks +1 entries" in out
-    assert "migration: schema v15 -> v15" in out and "import report: 0 entries" in out
+    assert "migration: schema v17 -> v17" in out and "import report: 0 entries" in out
     for value in PLANTED:
         assert value not in out, value
     assert (_digest(db), _digest(secrets), sorted(p.name for p in db.parent.iterdir())) == before
     assert set(Path(tempfile.gettempdir()).glob("pengumon-check-import-*")) == temp_before  # copies deleted
     repo = DatabaseRepository(db_path=str(db))
     await repo.initialize()
-    assert not await repo.settings_initialised()
+    assert not await repo.settings_initialized()
 
 
 async def test_a_value_out_of_the_new_ranges_is_reported_skipped_by_key(tmp_path, capsys):
@@ -69,7 +69,7 @@ async def test_a_value_out_of_the_new_ranges_is_reported_skipped_by_key(tmp_path
     assert "classifier.busy_load_pct: skipped (" in out and "import report: 1 entry" in out
 
 
-async def test_an_onset_count_copied_into_recovery_counts_as_the_same_behaviour(tmp_path, capsys):
+async def test_an_onset_count_copied_into_recovery_counts_as_the_same_behavior(tmp_path, capsys):
     db, secrets = await _backup(tmp_path)
     config = write_config(tmp_path, OWNER_SHAPED.replace("consecutive_failures_for_incident: 3",
                                                          "consecutive_failures_for_incident: 5"))

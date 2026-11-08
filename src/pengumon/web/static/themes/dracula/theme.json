@@ -1,7 +1,7 @@
 {
   "id": "dracula",
   "name": "Dracula",
-  "description": "The Dracula palette (MIT licence): purple, pink and cyan accents on a dark grey-violet ground. Dark.",
+  "description": "The Dracula palette (MIT license): purple, pink and cyan accents on a dark gray-violet ground. Dark.",
   "modes": [
     "dark"
   ],
@@ -54,6 +54,6 @@
   "effect": null,
   "tags": [
     "palette",
-    "colourful"
+    "colorful"
   ]
 }

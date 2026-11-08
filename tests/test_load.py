@@ -260,7 +260,7 @@ def test_load_explainable_kinds():
                  "legacy_latency"):
         assert is_load_explainable(kind), kind
     for kind in ("isp_outage", "backbone_loss", "gateway_loss", "gateway_down", "local_loss", "local_down",
-                 "dns_outage", "dns_loss", "dns_slow", "busy_isp_hops", "hop_deprioritised", "nominal",
+                 "dns_outage", "dns_loss", "dns_slow", "busy_isp_hops", "hop_deprioritized", "nominal",
                  "legacy_other", None):
         assert not is_load_explainable(kind), kind
 
@@ -400,14 +400,14 @@ async def test_backfill_decides_by_kind_not_by_title(tmp_path):
     # The title says latency, the stored kind says loss: loss is not something heavy load explains.
     loss = await incident(0, "Hop 1: Local Router (LAN) Latency Spike", "local_loss")
     latency = await incident(1000, "Hop 1: Local Router (LAN) Latency Spike", "local_latency")
-    unlabelled = await incident(2000, "Hop 1: Local Router (LAN) Latency Spike", None)
+    unlabeled = await incident(2000, "Hop 1: Local Router (LAN) Latency Spike", None)
     _insert_rates(path, [(base + 10, 950.0, 1.0), (base + 1010, 950.0, 1.0), (base + 2010, 950.0, 1.0)])
 
     assert await backfill_incident_load(repo, LineLoad(LINE, device_id="router"), 60.0) == 3
     got = {i.id: i for i in await repo.get_recent_incidents(limit=10)}
     assert (got[loss].load_pct, got[loss].expected) == (95.0, False)
     assert (got[latency].load_pct, got[latency].expected) == (95.0, True)
-    assert got[unlabelled].expected is False
+    assert got[unlabeled].expected is False
 
 
 # --- API -------------------------------------------------------------------------------------------

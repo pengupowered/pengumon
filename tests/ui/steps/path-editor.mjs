@@ -34,7 +34,7 @@ const answerFetch = (page, stubs) => page.evaluate((s) => {
 const realFetch = (page) => page.evaluate(() => { if (window.__realFetch) window.fetch = window.__realFetch; });
 
 export const steps = [
-  ["path editor: every card shows what the prober measures now, in Path health's words and colours, updating while open; there is no ignores-ping control", async ({ click, count, eq, ok, page, text, until, waitText }) => {
+  ["path editor: every card shows what the prober measures now, in Path health's words and colors, updating while open; there is no ignores-ping control", async ({ click, count, eq, ok, page, text, until, waitText }) => {
     await openEditor({ click, until });
     const ms = /^\d+(\.\d)? ms · 0% loss \(last minute\)$/;
     for (const id of ["local_router", "isp_gateway", "cloudflare_dns"]) {
@@ -537,7 +537,7 @@ export const steps = [
     await until(() => document.getElementById("pathBanner").hidden);
   }],
 
-  ["path editor: More > Warn above is empty with the role's level as its placeholder; a value is applied (colour only) and survives a reload", async ({ click, eq, ok, page, text, until }) => {
+  ["path editor: More > Warn above is empty with the role's level as its placeholder; a value is applied (color only) and survives a reload", async ({ click, eq, ok, page, text, until }) => {
     await openEditor({ click, until });
     const hop = await page.$eval("#pathEditorHops .pe-hop", (e) => e.dataset.hop);
     const card = `#pathEditorHops [data-hop="${hop}"]`;
@@ -546,7 +546,7 @@ export const steps = [
     await click(`${card} .pe-more summary`);
     eq("empty by default", await page.$eval(field, (i) => i.value), "");
     ok("the placeholder is the role's level", /^role level: \d+(\.\d+)? ms$/.test(await page.$eval(field, (i) => i.placeholder)));
-    ok("the fine print says colour only", /Only this hop's colour\. Incidents still use the role's level\./.test(await text(`${card} .pe-warn-fx`)));
+    ok("the fine print says color only", /Only this hop's color\. Incidents still use the role's level\./.test(await text(`${card} .pe-warn-fx`)));
     await page.type(field, "0");
     ok("a bad value is said at once", /above 0/.test(await text(`${card} .pe-warn-fx`)) && await page.$eval(field, (i) => i.getAttribute("aria-invalid") === "true"));
     await page.$eval(field, (i) => { i.select(); });

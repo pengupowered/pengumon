@@ -242,7 +242,7 @@ async def run_discovery(options: DiscoveryOptions, live_path: Callable[[], Any],
                 outcome = "no_answer"
             return result
         except asyncio.CancelledError:
-            outcome = "cancelled"
+            outcome = "canceled"
             raise
         except Exception:
             outcome = "failed"

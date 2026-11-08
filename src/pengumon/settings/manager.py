@@ -1,6 +1,6 @@
 """The settings manager: the settings store at run time (state.settings).
 
-At start (`load`): the one-time import of config.yaml when the store was never initialised, then the stored document
+At start (`load`): the one-time import of config.yaml when the store was never initialized, then the stored document
 over the model defaults, the environment overrides on top, copied into the live config (`state.config`) in place.
 After that config.yaml is only read for the bootstrap keys (pengumon.config.BOOTSTRAP_KEYS); one log line says how many
 of its settings keys differ from the store.
@@ -298,7 +298,7 @@ class SettingsManager:
             self.secrets.change(result.secret_updates)
             _log.info(f"Moved {len(secret_names(result.secret_updates))} webhook secret(s) from config.yaml to "
                       f"{self.secrets.path}")
-        if await self.repository.initialise_settings(result.document, result.summary(), result.report):
+        if await self.repository.initialize_settings(result.document, result.summary(), result.report):
             line = result.summary().replace("Imported from config.yaml", "Imported settings from config.yaml")
             if result.report:
                 line += (f"; {len(result.report)} left out (defaults kept): "
@@ -309,7 +309,7 @@ class SettingsManager:
 
     async def load(self) -> None:
         """The one-time import (first start of the store), then the stored document into the live config."""
-        if not await self.repository.settings_initialised():
+        if not await self.repository.settings_initialized():
             await self._import_once()
         revision, stored = await self.repository.load_settings()
         unknown_keys = sorted(k for k in stored.values if k not in registry.BY_KEY)

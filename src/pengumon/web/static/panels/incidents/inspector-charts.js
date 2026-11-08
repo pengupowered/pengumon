@@ -1,6 +1,6 @@
 // The inspector's synced tracks: latency and loss per hop, the line's signal, the router. All four share one category
 // axis (one label per second of the window), the same left and right gutters, the shaded band of the incident and a
-// crosshair that follows the pointer on every chart. Colours come from the design tokens (chart-theme.js).
+// crosshair that follows the pointer on every chart. Colors come from the design tokens (chart-theme.js).
 
 import { escapeHtml, localFormat, getTargetInfo, sortTargetsByCanonical, targetList } from '../../js/util.js';
 import { shortLabels } from '../../js/path.js';
@@ -159,9 +159,9 @@ export function renderTracks(data) {
     const info = getTargetInfo(tid);
     const short = labelOf[tid] || info.name;
     const reading = groups.map((g) => probeReading(g.by[tid]));
-    // a lost probe breaks the line rather than being bridged by one drawn from its neighbours
+    // a lost probe breaks the line rather than being bridged by one drawn from its neighbors
     latSets.push({ label: short, data: reading.map((r) => r.lat), readings: reading, borderColor: info.color, backgroundColor: info.color, borderWidth: 2, pointRadius: lonePoint, pointHoverRadius: 4, spanGaps: false, tension: 0.2 });
-    // bars of one round overlap; the nearest hop is drawn on top (Chart.js draws a lower `order` last), so the colour
+    // bars of one round overlap; the nearest hop is drawn on top (Chart.js draws a lower `order` last), so the color
     // shows where the loss starts and the tooltip lists the rest
     lossSets.push({ label: short, data: reading.map((r) => (r.loss > 0 ? r.loss : null)), order: lossSets.length, backgroundColor: info.color, borderColor: info.color, borderWidth: 1, barPercentage: 1, categoryPercentage: 1, minBarLength: 4 });
   });

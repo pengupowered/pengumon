@@ -1,10 +1,10 @@
 /* Starship console: one flowing frame (docs/themes.md, "Skins"; the page hooks it relies on are listed there under
-   "Page hooks a skin may rely on"). Every selector is under this theme's own data-look. The frame: a coloured rail
+   "Page hooks a skin may rely on"). Every selector is under this theme's own data-look. The frame: a colored rail
    down the left of every card, sweeping through a rounded inner corner into the card's header bar, and turning into a
    band at the foot of the page. The header stays fixed while the page scrolls, so it carries no frame of its own (a
    frame on it would slide over the cards' rails): only a thin rule along its foot. Content sits straight
-   on black; frame parts are flat colour blocks separated by one black gap (--ss-gap), in the frame's colours: the
-   accent (orange; a card's status colour while it has one), --ink-2 (lilac) and --ink-3 (blue). The sweep along the
+   on black; frame parts are flat color blocks separated by one black gap (--ss-gap), in the frame's colors: the
+   accent (orange; a card's status color while it has one), --ink-2 (lilac) and --ink-3 (blue). The sweep along the
    header's rule is effect.js. */
 
 /* labels: a condensed sans where the system has one (no font files: system stacks only) */
@@ -87,7 +87,7 @@
 :root[data-look="starship"] .input { border-radius: 0; }
 :root[data-look="starship"] :focus-visible { outline-width: 3px; }
 
-/* ---------- a card: no box. The rail down its left (::after) in three runs: the frame's colour (its status colour
+/* ---------- a card: no box. The rail down its left (::after) in three runs: the frame's color (its status color
    while it has one), lilac, a blue foot; the header bar joined to it through a rounded inner corner ---------- */
 :root[data-look="starship"] .panel {
   --ss-c: var(--accent);
@@ -97,7 +97,7 @@
 :root[data-look="starship"] .panel[data-status="serious"] { --ss-c: var(--serious); }
 :root[data-look="starship"] .panel[data-status="crit"] { --ss-c: var(--crit); }
 :root[data-look="starship"] .panel[data-status="busy"] { --ss-c: var(--busy); }
-:root[data-look="starship"] .panel::before { display: none; } /* the standard status run: the bar's colour says it here */
+:root[data-look="starship"] .panel::before { display: none; } /* the standard status run: the bar's color says it here */
 :root[data-look="starship"] .panel::after {
   content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--ss-rail); pointer-events: none;
   background: linear-gradient(to bottom,
@@ -249,7 +249,7 @@
   :root[data-look="starship"] .modal-f { padding-left: calc(var(--ss-rail) + var(--sp-3)); }
 }
 
-/* the incident inspector: its summary after a band in its status colour, straight on black like the rest */
+/* the incident inspector: its summary after a band in its status color, straight on black like the rest */
 :root[data-look="starship"] .insp-head { background: none; border: 0; border-left: 8px solid var(--st); border-radius: 0; padding: 2px 0 2px var(--sp-4); }
 :root[data-look="starship"] .evidence li { background: none; border-radius: 0; border-top: 1px solid var(--line); }
 :root[data-look="starship"] .modal,
@@ -321,7 +321,7 @@
 :root[data-look="starship"] [data-panel="incidents"] .inc-window .chip svg.i,
 :root[data-look="starship"] [data-panel="diagnosis"] .verdict-act svg.i,
 :root[data-look="starship"] [data-panel="diagnosis"] .path-banner .result .btn svg.i { color: currentColor; width: 14px; height: 14px; }
-/* a status chip: a flat block in the status colour, its icon and word dark on it */
+/* a status chip: a flat block in the status color, its icon and word dark on it */
 :root[data-look="starship"] [data-panel="incidents"] .inc-list .badge,
 :root[data-look="starship"] [data-panel="line"] .g-name [data-f="ic"],
 :root[data-look="starship"] [data-panel="router"] .n-st,
@@ -339,7 +339,7 @@
 :root[data-look="starship"] [data-panel="diagnosis"] .node-st svg.i,
 :root[data-look="starship"] [data-panel="diagnosis"] .hero-foot [data-legend]:not([data-legend="delta"]) svg.i,
 :root[data-look="starship"] [data-panel="matrix"] .hops .chip svg.i { width: 13px; height: 13px; color: var(--bg); flex: none; }
-/* an incident that is over, a quiet figure: the word in the status colour after a short block of it */
+/* an incident that is over, a quiet figure: the word in the status color after a short block of it */
 :root[data-look="starship"] [data-panel="incidents"] .inc-list .badge.quiet,
 :root[data-look="starship"] [data-panel="matrix"] .hops .chip:not(.st) { background: none; color: var(--st, var(--ink-2)); box-shadow: inset 5px 0 0 var(--st, var(--line-strong)); padding-left: 10px; }
 :root[data-look="starship"] [data-panel="incidents"] .inc-list .badge.quiet svg.i,

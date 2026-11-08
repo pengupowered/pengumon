@@ -1,8 +1,8 @@
 /* Starship console's Path health: the standard view (panels/diagnosis/view.js) restyled, straight on black: the verdict
-   as a status deck (a tall block in the status colour, the title, Inspect a pill), the notice as an alert line after a
-   block in its colour, the path as console stations joined by conduit bars (each node's kind and status chip on a flat
-   lilac cap, the big value, loss and jitter as labelled readouts, the last probes as bars: theme.json "chart":
-   {"spark": "bars"}, a band in its status colour under it), the other targets after a block in their status colour and
+   as a status deck (a tall block in the status color, the title, Inspect a pill), the notice as an alert line after a
+   block in its color, the path as console stations joined by conduit bars (each node's kind and status chip on a flat
+   lilac cap, the big value, loss and jitter as labeled readouts, the last probes as bars: theme.json "chart":
+   {"spark": "bars"}, a band in its status color under it), the other targets after a block in their status color and
    the key as status chips. */
 
 /* ---------- the status deck ---------- */
@@ -37,7 +37,7 @@
 :root[data-look="starship"] [data-panel="diagnosis"] .origin-ic { background: none; color: var(--bg); margin-bottom: 0; }
 :root[data-look="starship"] [data-panel="diagnosis"] .origin-t { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; }
 :root[data-look="starship"] [data-panel="diagnosis"] .origin-m { color: var(--bg); font-weight: var(--fw-semi); }
-/* a conduit: a segmented bar in the link's status colour (no flowing dashes), what the segment adds on it */
+/* a conduit: a segmented bar in the link's status color (no flowing dashes), what the segment adds on it */
 :root[data-look="starship"] [data-panel="diagnosis"] .link .wirebox { height: 8px; background: repeating-linear-gradient(90deg, var(--st) 0 10px, transparent 10px 13px); }
 :root[data-look="starship"] [data-panel="diagnosis"] .link.broken .wirebox { background: repeating-linear-gradient(90deg, var(--crit) 0 4px, transparent 4px 10px); }
 :root[data-look="starship"] [data-panel="diagnosis"] .link .wire,
@@ -79,7 +79,7 @@
 :root[data-look="starship"] [data-panel="diagnosis"] .node-meta b { color: var(--ink-1); }
 :root[data-look="starship"] [data-panel="diagnosis"] .node .node-meta .lbl { font-size: 10px; margin-right: 2px; }
 :root[data-look="starship"] [data-panel="diagnosis"] .node-spark svg.spark { height: 22px; border-bottom: 1px solid var(--line-strong); }
-/* ---------- the other targets: after a block in their status colour ---------- */
+/* ---------- the other targets: after a block in their status color ---------- */
 :root[data-look="starship"] [data-panel="diagnosis"] .pe { padding: 0 10px 0 0; min-height: 26px; border: 0; border-radius: 0; background: none; font-size: var(--fs-xs); }
 :root[data-look="starship"] [data-panel="diagnosis"] .pe:hover { background: var(--surface-2); }
 :root[data-look="starship"] [data-panel="diagnosis"] .pe > svg.i {

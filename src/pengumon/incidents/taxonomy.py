@@ -52,7 +52,8 @@ _ROWS = (
     Kind("dns_slow", "dns"),
     Kind("busy_latency", "load", load_explainable=True),
     Kind("busy_isp_hops", "load"),
-    Kind("hop_deprioritised", "isp"),
+    Kind("busy_speedtest", "load", load_explainable=True),  # a speed test fills the line on purpose (pengumon.speedtest)
+    Kind("hop_deprioritized", "isp"),
     Kind("legacy_latency", None, load_explainable=True),  # only from the schema v6 backfill of older incidents
     Kind("legacy_other", None),
     Kind("internet_outage", "internet"),  # public targets fail while no LAN target is configured: not attributable
@@ -75,6 +76,7 @@ CAUSE_CODES: Dict[str, str] = {
     "target_specific_outage": "internet",
     "unknown_outage": "unknown",
     "load_induced_latency": "load",
+    "speed_test": "load",  # the delay a speed test causes (rules.apply_speedtest)
     "service_unavailable": "service",  # an app on this host stopped answering its health check (services/checker.py)
 }
 # Cause codes renamed since; stored and incoming values are read as the new name (schema v8 renames stored rows).

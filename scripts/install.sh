@@ -202,7 +202,7 @@ explain_sudo() {
         say "    (A service run by the system is not subject to macOS's local-network permission prompt.)"
     fi
     say "If you would rather not, press Ctrl-C and run again with --user: it needs no sudo."
-    confirm "Continue?" || die "cancelled"
+    confirm "Continue?" || die "canceled"
 }
 
 # ---- uninstall -----------------------------------------------------------------------------------------------------
@@ -211,7 +211,7 @@ if [ "$UNINSTALL" = 1 ]; then
     if [ -x "$PENGUMON" ]; then
         if [ -n "$RUN_ROOT" ]; then
             say "Removing the system service needs administrator rights, so sudo will ask for your password."
-            confirm "Continue?" || die "cancelled"
+            confirm "Continue?" || die "canceled"
         fi
         root "$PENGUMON" service uninstall "$SCOPE_FLAG" || true
         root rm -rf "$APP"

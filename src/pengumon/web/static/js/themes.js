@@ -1,4 +1,4 @@
-// Themes: which one the page shows, light or dark, a theme's animated effect, and each card's own colours
+// Themes: which one the page shows, light or dark, a theme's animated effect, and each card's own colors
 // (docs/themes.md). A theme is a folder under static/themes/; the server lists them on <html data-looks> and in
 // GET /api/themes, and js/theme-boot.js has already put this browser's choice on <html data-look> (and data-theme)
 // before the first paint, and linked that theme's stylesheet (its tokens, skin and card views' styles). tokens.css and
@@ -10,7 +10,7 @@
 // `pengumon.theme` (light or dark; none: the system's) and `pengumon.effects` ("on" or "off"; none: Settings' choice).
 // The header's theme button opens a menu with all three (fillThemeMenu, called by chrome.js when it opens).
 //
-// Every change goes through `changed()`: the chart colours are read again (chart-theme.js), the cards' colours are
+// Every change goes through `changed()`: the chart colors are read again (chart-theme.js), the cards' colors are
 // painted, the effect is started or stopped, and a `themechange` event tells modules that draw on canvas to redraw.
 //
 // Effects: a theme's effect.js is an ES module whose default export is { start(layer, ctx) -> stop }. `layer` is
@@ -29,7 +29,7 @@ const LOOK_KEY = 'pengumon.look';
 const MODE_KEY = 'pengumon.theme';
 const FX_KEY = 'pengumon.effects';
 export const FPS = 15;
-// What a card's own colours set (Layout): the accent and the series colours; a theme's palette brings its accent fill,
+// What a card's own colors set (Layout): the accent and the series colors; a theme's palette brings its accent fill,
 // the text on it and the focus ring too.
 export const CARD_TOKENS = ['--accent', '--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7', '--s8'];
 const PALETTE_TOKENS = [...CARD_TOKENS, '--accent-bg', '--on-accent', '--focus'];
@@ -61,7 +61,7 @@ export const defaultLook = () => root.dataset.lookDefault || 'default';
 export const isDark = () => (root.dataset.theme ? root.dataset.theme === 'dark' : systemDark.matches);
 const forcedMode = (look) => (look && look.modes.length === 1 ? look.modes[0] : '');
 
-// The full list (descriptions, the colours of each theme), read once; `fresh` reads it again (after a Save).
+// The full list (descriptions, the colors of each theme), read once; `fresh` reads it again (after a Save).
 export async function loadThemes(fresh = false) {
   if (full && !fresh) return full;
   const res = await fetch('/api/themes', { cache: 'no-store' });
@@ -184,7 +184,7 @@ function block(selector, scheme, tokens) {
   const body = Object.entries(tokens || {}).filter(([n, v]) => SAFE_NAME.test(n) && SAFE_VALUE.test(String(v).trim())).map(([n, v]) => ` ${n}: ${String(v).trim()};`).join('');
   return `${selector} { color-scheme: ${scheme};${body} }\n`;
 }
-// The same blocks as the server writes (pengumon.web.themes.theme_css), for a custom theme (colours and sizes only).
+// The same blocks as the server writes (pengumon.web.themes.theme_css), for a custom theme (colors and sizes only).
 function customCss(theme) {
   if (!/^custom-[a-z0-9-]+$/.test(theme.id)) return '';
   const look = `:root[data-look="${theme.id}"]`;
@@ -194,13 +194,13 @@ function customCss(theme) {
     + block(`${look}[data-theme="light"]`, 'light', theme.tokens.light);
 }
 
-// ---------- a card's own colours (Layout) ----------
+// ---------- a card's own colors (Layout) ----------
 let cards = {}; // panel id -> { theme } | { custom: {token: '#rrggbb'} }
 let cardsJson = '{}';
 
-// The cards' own colours (Layout, on every layout change): the cards are painted and the charts redrawn only when the
-// colours changed.
-export function setCardColours(map) {
+// The cards' own colors (Layout, on every layout change): the cards are painted and the charts redrawn only when the
+// colors changed.
+export function setCardColors(map) {
   const next = map && typeof map === 'object' ? map : {};
   const json = JSON.stringify(next);
   if (json === cardsJson) return;
@@ -212,7 +212,7 @@ export function setCardColours(map) {
 }
 
 // black or white, whichever reads better on `hex`
-function onColour(hex) {
+function onColor(hex) {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
   if (!m) return '#ffffff';
   const lin = (c) => { const v = parseInt(c, 16) / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
@@ -220,7 +220,7 @@ function onColour(hex) {
   return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? '#000000' : '#ffffff';
 }
 
-// The custom properties a card gets: none for the page theme's colours.
+// The custom properties a card gets: none for the page theme's colors.
 export function cardVars(spec, data = full) {
   if (!spec) return {};
   if (spec.custom && Object.keys(spec.custom).length) {
@@ -228,7 +228,7 @@ export function cardVars(spec, data = full) {
     CARD_TOKENS.forEach((n) => { if (/^#[0-9a-f]{6}$/i.test(spec.custom[n] || '')) vars[n] = spec.custom[n]; });
     if (vars['--accent']) {
       vars['--accent-bg'] = `color-mix(in srgb, ${vars['--accent']} 14%, transparent)`;
-      vars['--on-accent'] = onColour(vars['--accent']);
+      vars['--on-accent'] = onColor(vars['--accent']);
       vars['--focus'] = vars['--accent'];
     }
     return vars;
@@ -250,19 +250,19 @@ async function paintCards() {
   let painted = false;
   document.querySelectorAll('[data-panel]').forEach((section) => {
     const vars = cardVars(cards[section.dataset.panel]);
-    (section.dataset.colourVars || '').split(' ').filter(Boolean).forEach((n) => section.style.removeProperty(n));
+    (section.dataset.colorVars || '').split(' ').filter(Boolean).forEach((n) => section.style.removeProperty(n));
     Object.entries(vars).forEach(([n, v]) => section.style.setProperty(n, v));
     const names = Object.keys(vars);
     if (names.length) {
-      section.dataset.colourVars = names.join(' ');
-      section.dataset.colours = cards[section.dataset.panel].theme || 'custom';
+      section.dataset.colorVars = names.join(' ');
+      section.dataset.colors = cards[section.dataset.panel].theme || 'custom';
       painted = true;
     } else {
-      delete section.dataset.colourVars;
-      delete section.dataset.colours;
+      delete section.dataset.colorVars;
+      delete section.dataset.colors;
     }
   });
-  if (waited && painted) { applyChartTheme(); document.dispatchEvent(new CustomEvent('themechange')); } // the charts drew before the colours came
+  if (waited && painted) { applyChartTheme(); document.dispatchEvent(new CustomEvent('themechange')); } // the charts drew before the colors came
 }
 
 // ---------- the effect ----------
@@ -319,7 +319,7 @@ function stopEffect() {
   delete el.dataset.state;
 }
 
-// Every token by name, read when asked ("--accent" -> "#4be3c3"): an effect draws in the theme's colours.
+// Every token by name, read when asked ("--accent" -> "#4be3c3"): an effect draws in the theme's colors.
 const tokenView = new Proxy({}, { get: (_, name) => (typeof name === 'string' && name.startsWith('--') ? token(name) : undefined) });
 
 async function runEffect() {

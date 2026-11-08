@@ -1,6 +1,6 @@
 # Themes
 
-A theme sets Pengumon's colours, and can also change its type, sizes and shapes and add a slow animated effect. Every
+A theme sets Pengumon's colors, and can also change its type, sizes and shapes and add a slow animated effect. Every
 browser picks one in the header's theme menu (the palette button); **Settings > Display > Theme** is the one a browser
 starts with. This page is the reference for adding a theme: a theme is one folder, and nothing else in the code names
 it.
@@ -17,7 +17,7 @@ it.
 - [Checks every theme must pass](#checks-every-theme-must-pass)
 - [How the page applies a theme](#how-the-page-applies-a-theme)
 - [Custom themes](#custom-themes)
-- [Card colours](#card-colours)
+- [Card colors](#card-colors)
 
 ## The folder
 
@@ -37,7 +37,7 @@ The id is the folder's name: lower-case letters, digits and dashes, at most 40 c
 is left out and logged, and `tests/test_themes.py` fails on it.
 
 Names are generic: describe the look ("Starship console", "Digital rain"), never a film, series, game or brand, and do not
-copy logos, fonts or trade dress. A published palette under a free licence (Nord, Dracula, Solarized; MIT) may keep its
+copy logos, fonts or trade dress. A published palette under a free license (Nord, Dracula, Solarized; MIT) may keep its
 name; say so in the description.
 
 Fonts: themes use the system's font stacks only. The page's Content-Security-Policy (`font-src 'self'`) loads no web fonts,
@@ -49,7 +49,7 @@ and no font files are added to the repository without the owner's approval.
 {
   "id": "nord",
   "name": "Nord",
-  "description": "The Nord palette: arctic blue-greys with frost and aurora accents. Dark and light.",
+  "description": "The Nord palette: arctic blue-grays with frost and aurora accents. Dark and light.",
   "modes": ["dark", "light"],
   "tokens": {
     "dark": { "--bg": "#242933", "--surface-1": "#2e3440", "...": "..." },
@@ -78,8 +78,8 @@ No other field is allowed.
 The tokens are the CSS custom properties of `static/tokens.css`; a theme gives new values for some of them. Everything on
 the page, canvas charts included, is drawn from these tokens, so a theme that sets them changes the whole page.
 
-**Required in every mode the theme has: every colour token.** These are the tokens whose value in `tokens.css` is a
-colour:
+**Required in every mode the theme has: every color token.** These are the tokens whose value in `tokens.css` is a
+color:
 
 | Group | Tokens |
 |---|---|
@@ -87,14 +87,14 @@ colour:
 | Text | `--ink-1`, `--ink-2`, `--ink-3`, `--ink-4` |
 | Accent | `--accent`, `--accent-bg`, `--on-accent`, `--focus` |
 | Status | `--good`, `--good-bg`, `--warn`, `--warn-bg`, `--warn-fill`, `--serious`, `--serious-bg`, `--crit`, `--crit-bg`, `--busy`, `--busy-bg`, `--unknown`, `--unknown-bg`, `--nodata` |
-| Chart lines (series) | `--s1` ... `--s8`, in this order (a target without a colour of its own takes the next one) |
+| Chart lines (series) | `--s1` ... `--s8`, in this order (a target without a color of its own takes the next one) |
 | Loss heat | `--q0` (none) ... `--q4` (most) |
 
-Colour values: a token whose value in `tokens.css` is `#rrggbb` must stay `#rrggbb` (canvas code adds an alpha to it:
+Color values: a token whose value in `tokens.css` is `#rrggbb` must stay `#rrggbb` (canvas code adds an alpha to it:
 `#3987e5` + `26`); the others (`--scrim`, the `-bg` tints, `--accent-bg`) may also be `#rrggbbaa` or `rgba(r, g, b, a)`.
 
-The status colours mean the same in every theme: good (healthy), warn, serious, crit (outage), busy (expected: a busy
-line, maintenance), unknown (no data yet). Never reuse a status colour for something else, and remember the page always
+The status colors mean the same in every theme: good (healthy), warn, serious, crit (outage), busy (expected: a busy
+line, maintenance), unknown (no data yet). Never reuse a status color for something else, and remember the page always
 shows a status with an icon and a word too.
 
 **Optional:**
@@ -118,7 +118,7 @@ The layers (`--z-*`) cannot be changed. The ranges are in `pengumon/web/themes.p
 - Every selector starts with `:root[data-look="<id>"]`, inside `@media`, `@supports` and `@container` too, so a skin
   never touches another theme. `@keyframes` are allowed.
 - No `@import`, no `@font-face`, no `url()` to another site.
-- Colours come from the tokens (`var(--accent)`, `color-mix(in srgb, var(--good) 40%, transparent)`), not new literals.
+- Colors come from the tokens (`var(--accent)`, `color-mix(in srgb, var(--good) 40%, transparent)`), not new literals.
 - Keep text readable and the focus ring visible (`--focus`); do not hide anything, do not move controls, and keep 390 px
   phone width without sideways scrolling.
 - Motion in a skin (an animation) stops under `@media (prefers-reduced-motion: reduce)`.
@@ -209,7 +209,7 @@ header's background blur is about a quarter of a core in software compositing.
 ## Chart style
 
 `"chart"` in theme.json changes the shape of every Chart.js chart while the theme is shown (the latency chart, the
-history dialogs, the device charts), not only its colours. Every field is optional; a theme without `chart` gets the
+history dialogs, the device charts), not only its colors. Every field is optional; a theme without `chart` gets the
 charts as their modules draw them.
 
 ```json
@@ -222,8 +222,8 @@ charts as their modules draw them.
 | `curve` | `smooth`, `straight`, `stepped` | smooth: the chart's own curve; straight: straight segments between readings; stepped: steps |
 | `grid` | true, false | false: no grid lines in the plot area |
 | `points` | 0 to 6 | a dot of this radius on every reading (0: none, the charts' own) |
-| `fill` | true, false | true: the area under each series line is washed with its colour (a band or an area a chart fills itself keeps its own) |
-| `spark` | `line`, `bars` | the sparklines (a path node's and a hop's last probes, `static/js/sparkline.js`): a line (the default), or a bar per probe as tall as its round trip, a lost probe a full-height bar in the outage colour |
+| `fill` | true, false | true: the area under each series line is washed with its color (a band or an area a chart fills itself keeps its own) |
+| `spark` | `line`, `bars` | the sparklines (a path node's and a hop's last probes, `static/js/sparkline.js`): a line (the default), or a bar per probe as tall as its round trip, a lost probe a full-height bar in the outage color |
 
 `check_theme` (`pengumon/web/themes.py`, `CHART_STYLE`) refuses an unknown field or a value out of range; a custom theme has
 no chart style. The page reads the style of the theme it shows from `<html data-looks>` (`chart`), and
@@ -237,7 +237,7 @@ its shape.
 
 ## Drawing a card
 
-A card's look can change more than its colours: a theme may draw a card its own way, as long as everything the card
+A card's look can change more than its colors: a theme may draw a card its own way, as long as everything the card
 shows and does is still there. Every card that is drawn by views is split in two:
 
 - its **model** (`panels/<id>/model.js`; the latency card's is `charts.js`): fetching, timers, state, the actions, and
@@ -245,7 +245,7 @@ shows and does is still there. Every card that is drawn by views is split in two
 - its **views**, which draw the card's body from the view model: the **standard view** (`panels/<id>/view.js`) is the
   look every theme gets, and a built-in theme may add its own, `themes/<theme id>/panels/<panel id>.js` (and `.css`).
 
-A card a theme does not draw keeps the standard view in that theme's colours and skin (and in its own shapes, where the
+A card a theme does not draw keeps the standard view in that theme's colors and skin (and in its own shapes, where the
 theme [restyles](#restyling-a-card) it). The engine is
 `static/js/cards.js`; the three reference cards are diagnosis (Path health), services (Host services) and latency.
 
@@ -257,7 +257,7 @@ What the model hands its card (`card.update(vm)`) whenever its data changed:
   raw number a view would have to format. A view may lay a value out differently (a pill label over it, upper case by
   CSS) but shows the model's text.
 - **Statuses** as `{level, word, icon}`: `level` is one of the status tokens (`good`, `warn`, `serious`, `crit`, `busy`,
-  `unknown`), `word` what the card says, `icon` the sprite's name. A status is always icon and word, never colour alone.
+  `unknown`), `word` what the card says, `icon` the sprite's name. A status is always icon and word, never color alone.
 - **Actions** as `{action, arg, arg2, label, icon, needsEdit, expanded}`: `action` is a name the card's model
   registered (`registerActions`), `label` the accessible name. **Links** as `{href, label, icon}` (already checked to be
   http or https).
@@ -270,8 +270,8 @@ The three references: services `{rows: [{id, status, name, reason, checkUrl, ms,
 copy, history, outages}], summary, status}`; diagnosis `{verdict: {level, word, title, text, inspect}, banner: {level,
 icon, title, text, progress, actions} | null, path: {hostCount, nodes, folded(), none, extras} | null, busyLegend}` (a
 node: `{key, label, name, nameTitle, level, word, statusIcon, value: {num, unit} | {word}, loss, jitter, quiet, spark,
-link: {text, title, level, broken}, target, group, aria}`); latency `{labels, times, lines: [{id, kind, label, colour:
-{token} | {value}, data}], band, wan, loss, incidents, legend: [{key, kind, colour, label, sub, title}], note, modes:
+link: {text, title, level, broken}, target, group, aria}`); latency `{labels, times, lines: [{id, kind, label, color:
+{token} | {value}, data}], band, wan, loss, incidents, legend: [{key, kind, color, label, sub, title}], note, modes:
 [{action, arg, label, title, pressed}], memberLines(id, i), lossLabel(i, pct)}`.
 
 ### A view
@@ -341,7 +341,7 @@ standard view standing in for a broken theme view keeps its own look.
 
 **What a view must keep** (the standard view's accessibility, too): headings in order under the card's `h2`, a label
 for every control, everything reachable and usable by keyboard with the focus ring visible, no sideways scroll at 390 px,
-text inserted with `textContent` or `escapeHtml` only (eslint and `tests/test_frontend.py` cover `themes/**`), colours
+text inserted with `textContent` or `escapeHtml` only (eslint and `tests/test_frontend.py` cover `themes/**`), colors
 from the tokens. A view fetches nothing, starts no timer and stores nothing (no `fetch`, `XMLHttpRequest`,
 `WebSocket`, `setInterval`, `requestAnimationFrame`, `localStorage`, `sessionStorage`, `eval`: the folder test refuses
 them); the model does that.
@@ -467,7 +467,7 @@ theme. **Starship console** restyles every card this way: its stylesheets are th
 (`themes/starship/panels/*.css`; `skin.css` holds the frame, one flowing frame over the whole page built on the
 [page hooks](#page-hooks-a-skin-may-rely-on), and the console parts the cards share: labels, pill buttons, status
 blocks). **Mission control** restyles them for a wall display: larger figures (sized with container units, so a
-wider card shows them larger), the verdict a banner in its status colour, quieter captions (`themes/mission-control/`).
+wider card shows them larger), the verdict a banner in its status color, quieter captions (`themes/mission-control/`).
 
 A restyle may rely on what each standard view documents as its **hooks** below, and on the marks (`data-v`, `data-st`,
 `data-item`, `data-action`, `data-help`), whose names are the card's contract anyway. A standard view keeps these hooks
@@ -476,16 +476,17 @@ class names of a standard view are its own and may change.
 
 | Card | Hooks |
 |---|---|
-| every card | `.panel` (the frame: `.panel-h`, `.panel-t`, `.panel-m`, `.panel-tools`, `.panel-b`, `.panel-f`); a status as `.st-<level>`, which sets `--st` (its colour) and `--st-bg` |
+| every card | `.panel` (the frame: `.panel-h`, `.panel-t`, `.panel-m`, `.panel-tools`, `.panel-b`, `.panel-f`); a status as `.st-<level>`, which sets `--st` (its color) and `--st-bg` |
 | Path health (`diagnosis`) | `.verdict` (`.badge`, `.verdict-txt` with `h3` and `p`, `.verdict-act`); `.path-banner .result` (its icon first, then the words, then `.btn`s); `.chain` (`.origin` with `.origin-ic`, `.origin-t`, `.origin-m`; per stage a `li.link` (`.wirebox`, `.cut`, `.delta`) and a `li.node-wrap` with `button.node` (`.node-top` with `.node-ic`, `.node-kind`, `.node-st`: the status icon, its word in `title`; `.node-name`, `.node-val`, `.node-meta`: each figure's name in `.lbl`; `.node-spark`); `.chain[data-dense]`); `.path-extra` (`.pe-h`, `.pe` with its icon first); `.hero-foot` (`[data-legend="good|warn|crit|busy|delta"]`, `.grow`) |
 | Latency | `.lat-legend .lg` (`.key`, `.key.line` for a line; `b`, `.muted`); `.lat-view` (a `.seg` of buttons); `.lat-note`; `.chart-box.lat-main`, `.chart-box.lat-loss` |
+| Speed | `.spd` of `.spd-state`, `.spd-problems` (`.spd-problem`), `.spd-last` (`.spd-figs` with two `.spd-fig`: `.spd-lbl`, `.spd-big` with `b` and `small`, `.spd-plan`; `.spd-meta`; `.spd-why`; `.spd-remark`; `.spd-bloat` with a `.badge`), `.spd-chart` (`.spd-chart-bar` with `.spd-legend` and a `.seg`; `.chart-box.spd-chart-box`), `.spd-lines` (`.spd-line`, `.spd-link`), `.spd-run` (`.spd-run-btn`, `.spd-confirm` with `.spd-confirm-btns`, `.spd-progress`, `.spd-notice`) |
 | Host services | `.svc li.svc-row` (`.svc-st`; `.svc-id` with `.svc-name` and `.svc-why` or `.svc-check-url`; `.svc-ms`; `.svc-actions` with `.svc-open` and the buttons; `.svc-more` with the description, `.svc-facts`, `.svc-check-url`, `.svc-history`) |
 | Incidents | `.tl` (`.tl-lane` with `.tl-l` and `.tl-track` of `.tl-bar`s, `.exp`, `.ongoing`; `.tl-axis`, `.tl-now`, `.tl-win`); `.inc-window` (its icon first, then the words, the `.chip`); `.inc-list` (a `.dlist`; `tr.incident-row`, `.expected`; `.primary`, `.badge` (`.quiet` once over), `.when`, `.dur`, `.chip` (the cause), `.go`) |
 | When it breaks (`heat`) | `.heat` (`.hd` hours, the day names, `.cell` hours with their fill in `--f`, `i.later` hours to come); `.heat-foot .scale-legend` (two `span`s around five `i`s), `.fine`; `.insight` (an icon, then the sentence) |
 | Hop details (`matrix`) | `.hops` (a `.dlist`): `td.lead` (`.primary` the short name, `.sub`), `.chip` (the loss; `.chip.st` when it has a status), `.range` (`i` the band, `b` the average), `.range-n`, `[data-f="last"]` (`.ink-crit`, `.ink-muted`), `.sparkline` |
 | Uptime (`strips`) | `.strips` (one grid: `.s-hd`, `.s-hd.r`; per target `.s-name` (`span`, `small`), `.strip` of `.cell`s (`.w`, `.c`, `.b`, `.n`) or `.strip-quiet`, `.s-pct`; then `.s-axis`); `.strip-legend` (`.key`, `.grow`) |
 | Reliability (`report`) | `.rep-grid` (`.rep-hero` with `.stat`s and `.hero-num`, `.rep-mini`; `.rep-days` with `.rb-t`, `.days` of `.day`s (`.nodata`; `i` the bar, `span` the letter), `.rep-note`; `.rep-causes` with `.rb-t`, `.causes li` (`.cbar i`, `b`)); `.rep-hops-box` (`summary`, `.rep-hops`, a `.dlist`) |
-| Router | `.rgrid` (`.n<count>`) of `.rblock`s (`.wan`, `.sys`, `.clients`, `.mesh`), each titled `h3.rb-t` with its name in `.rb-n`; `.meter` (`.lbl`, `.val` with `[data-f="v"]`, `.track` with `.fill`; the share in `--v`, the level's colour in `--mc`); `.wan-chart`; `.big-count`, `.stackbar` (`i` with `--c`), `.legend`; `.nodes li` (`.st-warn`; `.n-ic`, `.n-id`, `.n-st`, `button.n-c` with `b` and `i`); `.cap-note`; `[data-f="body"].dim` |
+| Router | `.rgrid` (`.n<count>`) of `.rblock`s (`.wan`, `.sys`, `.clients`, `.mesh`), each titled `h3.rb-t` with its name in `.rb-n`; `.meter` (`.lbl`, `.val` with `[data-f="v"]`, `.track` with `.fill`; the share in `--v`, the level's color in `--mc`); `.wan-chart`; `.big-count`, `.stackbar` (`i` with `--c`), `.legend`; `.nodes li` (`.st-warn`; `.n-ic`, `.n-id`, `.n-st`, `button.n-c` with `b` and `i`); `.cap-note`; `[data-f="body"].dim` |
 | Line | `.line-docsis` of `.gauge`s (`.st-<level>`, `.na`; `.g-name` with `[data-f="ic"]`: the status icon, its word in `data-word`; `[data-f="name"]`, the help; `.g-val`, `.g-bar` (`.g-zone.ok`, `.g-zone.mid`, `.g-spread`, `.g-mark`), `.g-scale`); `.gauge.fec` (`.serious`; `.fec-note`, `.fec-detail`, `.g-bar-free`); `.chan-sum` (`.chan-txt`, `.chan-strip`); `.cap-note`; `[data-f="body"].dim` |
 
 What a restyle may do and may not:
@@ -537,16 +538,16 @@ legend, a mode switch, the history views feeding the same model). Steps:
 `tests/test_themes.py` runs every folder through these, in each of its modes, with no new test to write
 (`pengumon/web/theme_checks.py` has the arithmetic):
 
-1. **The contract:** `theme.json` as above; every colour token present; values of the right kind; a skin's selectors
+1. **The contract:** `theme.json` as above; every color token present; values of the right kind; a skin's selectors
    scoped; an effect with a default export `{start}` and no `requestAnimationFrame` or `setInterval`; the card views
    in `panels/` as in [Drawing a card](#how-a-theme-declares-views); a chart style in range.
 2. **Text contrast (WCAG 2 AA):** `--ink-1` and `--ink-2` 4.5:1 on `--bg`, `--surface-1`, `--surface-2` and
    `--surface-3`; `--ink-3` 4.5:1 on `--bg`, `--surface-1` and `--surface-2`; `--ink-4` (small non-essential text) 3:1 on
-   the cards; `--accent` 4.5:1 on the cards (it is the link colour); `--on-accent` 4.5:1 on `--accent`; `--focus` 3:1 on
-   the backgrounds; every status colour 3:1 on `--surface-1`; good, warn, crit and busy 4.5:1 on their own `-bg` tint
-   (a status chip's word). A translucent colour is laid over the surface it sits on first.
-3. **Status colours apart:** good, warn, crit and busy at least 12 apart from one another (OKLab distance x 100).
-4. **Series colours apart:** each pair of neighbours `--s1`/`--s2` ... `--s7`/`--s8` at least 8 apart (OKLab x 100), and
+   the cards; `--accent` 4.5:1 on the cards (it is the link color); `--on-accent` 4.5:1 on `--accent`; `--focus` 3:1 on
+   the backgrounds; every status color 3:1 on `--surface-1`; good, warn, crit and busy 4.5:1 on their own `-bg` tint
+   (a status chip's word). A translucent color is laid over the surface it sits on first.
+3. **Status colors apart:** good, warn, crit and busy at least 12 apart from one another (OKLab distance x 100).
+4. **Series colors apart:** each pair of neighbors `--s1`/`--s2` ... `--s7`/`--s8` at least 8 apart (OKLab x 100), and
    at least 6 apart as people with deuteranopia and protanopia see them (simulated with Machado, Oliveira and
    Fernandes 2009, full severity).
 
@@ -573,7 +574,7 @@ To check a palette while making it, run the test for your folder:
   light block where the system asks for light (unless the person picked dark) and where the person picked light; then
   the skin and the card views' styles.
 - `static/js/themes.js` then reads the tokens and the chart style for the canvas charts (`chart-theme.js`), starts the
-  effect, paints the cards' own colours and sends a `themechange` event, on which `static/js/cards.js` shows each card's
+  effect, paints the cards' own colors and sends a `themechange` event, on which `static/js/cards.js` shows each card's
   view for the theme and modules that draw on canvas redraw.
 - **A switch** (the header menu, another tab, Settings): `themes.js` links the new theme's stylesheet next to the old one
   (`link[data-look-css="<id>"]`) and imports its card views, and changes `data-look` once both have loaded (or failed:
@@ -581,8 +582,8 @@ To check a palette while making it, run the test for your folder:
   without its styles, nor a card still in the old theme's view without them (the cards swap views before the next
   paint); then it unlinks the old one. A switch to a theme whose stylesheet and views are there, or that has none (the
   default, a custom theme, light or dark), is at once. After a Save in Settings the page is themed again only when the
-  theme it shows, the effects switch or a custom theme's colours changed; a layout change that keeps the cards' own
-  colours redraws nothing.
+  theme it shows, the effects switch or a custom theme's colors changed; a layout change that keeps the cards' own
+  colors redraws nothing.
 - `<html data-looks>` also carries, for a theme that has them, its card views (`views`: panel id to module URL) and its
   chart style (`chart`); `theme-boot.js` preloads the views of the theme the page starts with.
 - This browser's effects choice is `localStorage` `pengumon.effects` (`on` or `off`; none: the Settings one).
@@ -593,26 +594,26 @@ Settings > Display > Themes lists the built-in themes, each with **Export** (the
 **Duplicate**, and the owner's own themes. Own themes are stored in the settings (`display.themes`, a list like the
 webhooks), so every browser has them, and are made by:
 
-- **Duplicate**: a copy of any theme's colours, then edited colour by colour (a colour picker for each, or the text of a
+- **Duplicate**: a copy of any theme's colors, then edited color by color (a color picker for each, or the text of a
   translucent one);
-- **Import a theme file**: any `theme.json`; colours it lacks come from the standard theme, and what an own theme cannot
+- **Import a theme file**: any `theme.json`; colors it lacks come from the standard theme, and what an own theme cannot
   have (fonts, shapes, effects) is left out, with a note that says so.
 
-An own theme has the id `custom-<name>`, colours (and any text sizes and corner radii a file brings, within the ranges)
+An own theme has the id `custom-<name>`, colors (and any text sizes and corner radii a file brings, within the ranges)
 and nothing else: no skin, no effect, no card views, no chart style. The server checks every one on Save (`ThemeItem` in `pengumon/web/settings.py`:
-known token names, colour values, sizes in range, no CSS text) before its values are written into the page. The
+known token names, color values, sizes in range, no CSS text) before its values are written into the page. The
 contrast checks above are not enforced on own themes; that is the owner's call.
 
-## Card colours
+## Card colors
 
-The Layout dialog gives each card **Colours: Page theme / <any theme> / Custom**. A theme's colours for a card are its
-accent (with its tint, the text on it and the focus ring) and its eight series colours, in the page's current mode (or the
-theme's only mode); Custom is the accent and the eight series colours, picked one by one. They are custom properties on
+The Layout dialog gives each card **Colors: Page theme / <any theme> / Custom**. A theme's colors for a card are its
+accent (with its tint, the text on it and the focus ring) and its eight series colors, in the page's current mode (or the
+theme's only mode); Custom is the accent and the eight series colors, picked one by one. They are custom properties on
 that card's `<section data-panel>`, so the card's CSS and its canvas chart (through `token(name, element)` in
 `chart-theme.js`) follow; the rest of the card (backgrounds, text, status) keeps the page theme, and a target keeps its
-own colour everywhere. So that every card takes every theme's colours (and its own), card and dialog styles, skins,
-card views, card markup and card code write no colour literal: `tests/test_frontend.py`
-(`test_cards_and_dialogs_take_their_colours_from_the_tokens`) fails on one, the made-up data of a card's fixture, the
-fallbacks `js/util.js` and `js/layout.js` document and the targets' configured colours aside. The choice is kept in this
+own color everywhere. So that every card takes every theme's colors (and its own), card and dialog styles, skins,
+card views, card markup and card code write no color literal: `tests/test_frontend.py`
+(`test_cards_and_dialogs_take_their_colors_from_the_tokens`) fails on one, the made-up data of a card's fixture, the
+fallbacks `js/util.js` and `js/layout.js` document and the targets' configured colors aside. The choice is kept in this
 browser's layout (`pengumon.layout.v1`); Settings > Display > "Use this browser's layout" makes it the one new browsers
-start with (`dashboard.colours`).
+start with (`dashboard.colors`).

@@ -16,7 +16,7 @@ from pengumon.capabilities import Capability
 from pengumon.devices.settings import DeviceConfig, unique_device_ids  # noqa: F401  (re-exported)
 from pengumon.devices.device import Device
 from pengumon.devices.monitors import LineMonitor, RouterMonitor, UnconfiguredMessages
-from pengumon.devices.wan import WanRates
+from pengumon.devices.wan import WanRates, WanReading
 from pengumon.drivers import DRIVERS
 from pengumon.observability import get_logger
 from pengumon.secrets import CredentialSources, password_env_var, secret_file_name
@@ -176,6 +176,12 @@ class DeviceRegistry:
 
     def wan_rates_source(self) -> Callable[[], List]:
         return wan_rates_source(self._devices)
+
+    async def read_wan_counters(self) -> Optional[WanReading]:
+        """A light read of the WAN counters of the device whose rates the line load reads (wan_rates_device), for a
+        running speed test; None without one, or when it gives none now (Device.read_wan_counters)."""
+        device = self.wan_rates_device()
+        return await device.read_wan_counters() if device is not None else None
 
     async def aclose(self) -> None:
         for device in self._devices:

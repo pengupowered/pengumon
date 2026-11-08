@@ -21,7 +21,7 @@ class TargetConfig(BaseModel):
     enabled: bool = True
     record_type: Optional[str] = "A"
     nameserver: Optional[str] = None
-    color: Optional[str] = None  # chart colour #rrggbb; None = the category's colour
+    color: Optional[str] = None  # chart color #rrggbb; None = the category's color
     # A host name is probed at its address of this family (4: IPv4, 6: IPv6); an IP literal is probed as it is
     family: Literal[4, 6] = 4
     # The path editor's fields (pengumon.engine.path): hops of one role sharing a group are one node on Path health;
@@ -32,7 +32,7 @@ class TargetConfig(BaseModel):
     # The owner set "No device" on this hop: it is never linked by its address again (engine.device_links)
     device_unlinked: bool = False
     # This hop turns amber above this average latency instead of its role's level (prober.hop_status); None: the
-    # role's. Only the hop's colour: the incident rules still judge the role's average (the owner's decision).
+    # role's. Only the hop's color: the incident rules still judge the role's average (the owner's decision).
     warn_latency_ms: Optional[float] = Field(None, gt=0, le=10000)
 
     @field_validator("group", "device_id")
@@ -100,7 +100,7 @@ class TargetStats(BaseModel):
     category: CategoryType
     address: str
     enabled: bool
-    color: Optional[str] = None  # from the target's config; None = the category's colour
+    color: Optional[str] = None  # from the target's config; None = the category's color
     group: Optional[str] = None  # from the target's config: hops of one role with the same group are one node
     short_label: Optional[str] = None  # its role words (engine.path_rules.hop_roles); None while it is switched off
     sent: int = 0

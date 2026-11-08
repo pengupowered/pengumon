@@ -37,7 +37,73 @@ export function fmt(spec, stored, roundSeconds) {
   return String(stored);
 }
 
+// What the speed test uses a month at these settings, as a sentence: "About 1.1 GB a month (daily, 25 MB down + 10 MB up)."
+// (30 days of tests at the interval, each at its most: the window and a busy line only make it less). A direction stops
+// after about 8 s of data (speedtest/runner.py TARGET_SECONDS), so with the plan speed known (Your line) a cap larger
+// than 9 s of it is not reached: the estimate counts what the plan moves in 9 s instead (8 s, and the slow start) and
+// says so: "About 9.4 GB a month (daily, about 310 of the 1,000 MB down + 4.5 of the 50 MB up: a test stops after
+// about 8 s at your plan speed)." Over a monthly limit it says when the limit stops the tests: "...; the 2,000 MB limit
+// stops tests after about day 3."
+const WORDS = { 1: 'hourly', 24: 'daily', 168: 'weekly' };
+
+// A number of hours (the speed test's interval) in the largest unit it is a whole number of: 36 -> 36 hours, 48 -> 2 days,
+// 336 -> 2 weeks. `splitHours` gives the box and the unit the Settings row shows; `hoursText` the words.
+export const HOUR_UNITS = [['weeks', 168, 'week'], ['days', 24, 'day'], ['hours', 1, 'hour']];
+export function splitHours(hours) {
+  const h = Number(hours);
+  if (!(h > 0) || !Number.isInteger(h)) return { count: hours ?? '', unit: 'hours' };
+  const [unit, size] = HOUR_UNITS.find(([, s]) => h % s === 0);
+  return { count: h / size, unit };
+}
+export function hoursText(hours) {
+  const { count, unit } = splitHours(hours);
+  if (typeof count !== 'number') return String(hours ?? '');
+  const [, , one] = HOUR_UNITS.find(([u]) => u === unit);
+  return count === 1 ? `1 ${one}` : `${grouped(count)} ${unit}`;
+}
+// The hours a typed count and unit mean, or {problem} in words: a whole number, 1 hour to `max` hours.
+export function readHours(countText, unit, max) {
+  const text = String(countText ?? '').trim();
+  const size = (HOUR_UNITS.find(([u]) => u === unit) || [])[1];
+  if (text === '') return { problem: 'Enter a value.' };
+  const n = Number(text);
+  if (!Number.isFinite(n) || !size) return { problem: 'Enter a number.' };
+  if (!Number.isInteger(n)) return { problem: 'Enter a whole number.' };
+  const hours = n * size;
+  if (hours < 1 || (max && hours > max)) return { problem: `Enter from 1 hour to ${hoursText(max)}.` };
+  return { stored: hours };
+}
+const grouped = (n) => Math.round(n).toLocaleString('en-US');
+const TEST_SECONDS = 9; // what a direction that stops by time moves, in seconds of the plan speed
+const short = (n) => (n >= 10 ? grouped(n) : String(Math.round(n * 10) / 10));
+export function speedEstimate(intervalHours, downMb, upMb, capMb, planDown, planUp) {
+  const hours = Number(intervalHours);
+  if (!(hours > 0) || !Number.isFinite(Number(downMb) + Number(upMb))) return '';
+  // what one direction moves: its cap, or 9 s of the plan speed when that is less
+  const moved = (cap, plan) => {
+    const byTime = Number(plan) > 0 ? (Number(plan) * TEST_SECONDS) / 8 : Infinity;
+    return byTime < Number(cap) ? { mb: byTime, text: `about ${short(byTime)} of the ${grouped(cap)} MB` } : { mb: Number(cap), text: `${cap} MB` };
+  };
+  const down = moved(downMb, planDown);
+  const up = moved(upMb, planUp);
+  const perDay = (24 / hours) * (down.mb + up.mb);
+  const month = perDay * 30; // tests a month: 720 / hours (under one for an interval over 30 days)
+  const size = month >= 1000 ? `${Math.round(month / 100) / 10} GB` : `${short(month)} MB`;
+  const how = WORDS[hours] || `every ${hoursText(hours)}`;
+  const byTime = down.mb < Number(downMb) || up.mb < Number(upMb);
+  let text = `About ${size} a month (${how}, ${down.text} down + ${up.text} up${byTime ? ': a test stops after about 8 s at your plan speed' : ''})`;
+  const cap = Number(capMb);
+  if (cap > 0 && month > cap) text += `; the ${grouped(cap)} MB limit stops tests after about day ${Math.max(1, Math.ceil(cap / perDay))}`;
+  return `${text}.`;
+}
+
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// The choice of `spec` that `text` (an option's value, always a string) names, keeping its type: a number stays a number
+// (the speed test's hours and megabytes). undefined when it is none of them.
+export function choiceFor(spec, text) {
+  return (spec.choices || []).find((c) => String(c) === String(text));
+}
 
 // Why `text` (what is typed) is not an acceptable value for `spec`, in words, or '' when it is. A nullable field accepts
 // an empty box (that means "not set").
@@ -62,7 +128,7 @@ export function problem(spec, text, roundSeconds) {
     return '';
   }
   if (spec.type === 'time') return TIME.test(value) ? '' : 'Enter a time as HH:MM.';
-  if (spec.type === 'choice') return (spec.choices || []).includes(value) ? '' : 'Pick one of the choices.';
+  if (spec.type === 'choice') return choiceFor(spec, value) !== undefined ? '' : 'Pick one of the choices.';
   if (spec.type === 'text' && spec.max_length && value.length > spec.max_length) return `At most ${spec.max_length} characters.`;
   return '';
 }

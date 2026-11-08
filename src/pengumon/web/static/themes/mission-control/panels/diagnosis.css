@@ -1,9 +1,9 @@
 /* Mission control's Path health: the standard view (panels/diagnosis/view.js) restyled for a wall display: the verdict a
-   banner filled with its status colour (the card's own, st-<level> on the card), its title large and dark on it; each
+   banner filled with its status color (the card's own, st-<level> on the card), its title large and dark on it; each
    hop's figure as large as the card's width allows (container units: larger on a wide screen), its name a label, the
    status band on each node thicker. Loss, jitter, the key and the notes stay small. */
 
-/* ---------- the verdict: a banner in the status colour ---------- */
+/* ---------- the verdict: a banner in the status color ---------- */
 :root[data-look="mission-control"] [data-panel="diagnosis"] .verdict {
   --focus: var(--bg); /* a dark ring on the bright banner */
   align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5);

@@ -5,7 +5,7 @@ The lifespan stores one AppState on `app.state.pengumon`; request handlers recei
 dependency, never through a module global, so a test gives the app its own state by setting that attribute (or by
 overriding the dependency) and nothing leaks between tests or app instances.
 
-A part that is None is not initialised (the app is starting, or a test left it out); handlers that need it answer
+A part that is None is not initialized (the app is starting, or a test left it out); handlers that need it answer
 503, as they always have.
 """
 
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from pengumon.services.checker import ServiceChecker
     from pengumon.secrets import CredentialSources, SecretStore
     from pengumon.settings.manager import SettingsManager
+    from pengumon.speedtest.runner import SpeedTestRunner
 
 STATE_ATTR = "pengumon"
 
@@ -52,6 +53,7 @@ class AppState:
     settings: Optional["SettingsManager"] = None  # the settings store (pengumon.settings.manager)
     preview: Optional["PreviewJobs"] = None  # the outage-rules preview jobs (settings/preview.py)
     access: Optional["AccessManager"] = None  # the sign-in password and the first-run question (access/manager.py)
+    speedtest: Optional["SpeedTestRunner"] = None  # the scheduled speed test (speedtest/runner.py)
 
 
 def get_state(connection: HTTPConnection) -> AppState:

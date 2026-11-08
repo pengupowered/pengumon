@@ -3,7 +3,7 @@ PUT /api/settings on the running app (the real lifespan, the real components), a
 the running parts with no restart. A key or list without an entry fails, so a new setting can't skip the check.
 
 The observers read the part that uses the value. Where that part keeps the live config object (the classifier, the
-prober's hop colours, the reports) the in-place copy is the whole apply; the retention days, the log levels and the
+prober's hop colors, the reports) the in-place copy is the whole apply; the retention days, the log levels and the
 Grafana links have appliers (settings/component.py); the probe timeouts and the DNS lookups have the probing
 component's (engine/probing.py), observed on the prober; the line and router levels are read from the live config by
 the device monitors at each poll (devices/monitors.py watch_levels), observed on the levels a monitor would use.
@@ -42,6 +42,11 @@ def cfg(key):
 
 def classifier(name):
     return lambda st: getattr(st.classifier.config, name)
+
+
+def speed(name):
+    """The speed test section the running scheduler reads at every tick (the live config object)."""
+    return lambda st: getattr(st.speedtest.cfg, name)
 
 
 def hop(name):
@@ -128,7 +133,7 @@ VALUES = {
     "classifier.gateway_jitter_spike_threshold_ms": (22, classifier("gateway_jitter_spike_threshold_ms")),
     "classifier.public_jitter_spike_threshold_ms": (50, classifier("public_jitter_spike_threshold_ms")),
     "classifier.dns_timeout_threshold_ms": (400, classifier("dns_timeout_threshold_ms")),
-    # the classifier reads its config each round; the prober's hop colours get it through the probing.window applier
+    # the classifier reads its config each round; the prober's hop colors get it through the probing.window applier
     "classifier.window_probes": (20, lambda st: st.prober.window),
     "notifications.public_url": ("https://pengumon.example.com", lambda st: st.notifier.public_url),
     "alerts.min_severity": ("critical", policy("min_severity")),
@@ -156,7 +161,7 @@ VALUES = {
     "display.default_latency_range": ("1h", cfg("display.default_latency_range")),
     "dashboard.order": (["matrix", "line"], cfg("dashboard.order")),
     "dashboard.hidden": (["report"], cfg("dashboard.hidden")),
-    "dashboard.colours": ({"latency": {"theme": "nord", "custom": {}}}, lambda st: st.config.dashboard.model_dump()["colours"]),
+    "dashboard.colors": ({"latency": {"theme": "nord", "custom": {}}}, lambda st: st.config.dashboard.model_dump()["colors"]),
     "display.theme": ("nord", cfg("display.theme")),
     "display.effects": (False, cfg("display.effects")),
     "display.grafana_url": ("https://grafana.example.com:3000", grafana_base),
@@ -195,7 +200,21 @@ VALUES = {
     "server.log_level": ("warning", root_level),
     "server.log_levels": ("pengumon.devices=debug", devices_level),
     "access.allow_viewers": (True, lambda st: main.security_config.view_without_token),
+    "mcp.enabled": (True, cfg("mcp.enabled")),
+    "speedtest.enabled": (True, speed("enabled")),
+    "speedtest.provider": ("mlab", speed("provider")),
+    "speedtest.librespeed_url": ("http://speed.example.com", speed("librespeed_url")),
+    "speedtest.interval_hours": (6, speed("interval_hours")),
+    "speedtest.window_start": ("01:00", speed("window_start")),
+    "speedtest.window_end": ("05:30", speed("window_end")),
+    "speedtest.download_mb": (50, speed("download_mb")),
+    "speedtest.upload_mb": (25, speed("upload_mb")),
+    "speedtest.monthly_cap_mb": (5000, speed("monthly_cap_mb")),
+    "speedtest.busy_load_pct": (35, speed("busy_load_pct")),
+    "speedtest.slow_alert_pct": (40, speed("slow_alert_pct")),
 }
+# values a key can only be saved with (the window's two ends go together)
+WITH = {"speedtest.window_start": {"speedtest.window_end": "04:00"}}
 
 def _custom_theme() -> dict:
     """A custom theme made from the built-in Nord, as Settings' Duplicate makes one."""
@@ -286,7 +305,7 @@ async def test_every_setting_applies_live_without_a_restart(tmp_path, monkeypatc
             for key, (value, observe) in VALUES.items():
                 security.reset_rate_limits()
                 res = await ac.put("/api/settings", json={"base_revision": state.settings.revision,
-                                                          "values": {key: value}})
+                                                          "values": {key: value, **WITH.get(key, {})}})
                 assert res.status_code == 200, (key, res.text)
                 assert res.json()["live_failed"] == [], key
                 assert observe(state) == value, key

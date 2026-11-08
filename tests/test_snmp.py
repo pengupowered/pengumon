@@ -230,6 +230,29 @@ async def test_a_device_snapshot_takes_the_reported_model_unless_config_names_on
         await device.aclose()
 
 
+async def test_the_speed_test_reads_uptime_and_the_wan_counters_in_one_get_with_the_polls_layout():
+    agent, port = await start_agent(router_mib())
+    device = snmp_driver(port)
+    try:
+        assert await device.driver.read_wan_counters() is None and agent.requests == []   # no layout yet
+        await device.driver.poll()
+        before = len(agent.requests)
+        counters = await device.driver.read_wan_counters()
+        assert (counters.rx_bytes, counters.tx_bytes, counters.counter_bits) == (10_000_000_000, 2_000_000_000, None)
+        assert len(agent.requests) == before + 1
+        tag, oids, _ = agent.requests[-1]
+        assert tag == ber.GET_REQUEST and oids == [SYS_UPTIME, IF_HC_IN_OCTETS + (3,), IF_HC_OUT_OCTETS + (3,),
+                                                    IF_IN_OCTETS + (3,), IF_OUT_OCTETS + (3,)]
+        agent.mib[SYS_UPTIME] = (ber.TIMETICKS, 100)                  # the agent restarted: not taken as a wrap ...
+        del agent.mib[IF_HC_IN_OCTETS + (3,)]
+        agent.mib[IF_IN_OCTETS + (3,)] = (ber.COUNTER32, 7)
+        counters = await device.driver.read_wan_counters()
+        assert (counters.rx_bytes, counters.counter_bits) == (7, None)
+        assert device.driver._uptime == 500_000                        # ... and the polls' own check is left alone
+    finally:
+        await device.aclose()
+
+
 async def test_32_bit_counters_wrap_and_an_agent_restart_starts_a_new_baseline():
     mib = router_mib(hc=False, rx=2 ** 32 + 5)
     agent, port = await start_agent(mib)

@@ -8,6 +8,7 @@ import pytest
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.lines.docsis import channel_finding
 from pengumon.reports.dossier import DossierFacts, hop_note, render_dossier_markdown
+from pengumon.reports.speed import summarize
 from platform_helpers import skip_without_tzset
 
 NOW = 1_760_000_000.0  # 2025-10-09 08:53:20 UTC
@@ -62,6 +63,7 @@ def test_an_empty_dossier_says_so_everywhere():
     assert "No single failing hop could be isolated from the probe data." in text
     assert text.endswith("```")
     assert "By cause" not in text and "excluded" not in text and "event log" not in text
+    assert "Speed" not in text                                           # no speed tests in the window: no section
 
 
 def test_summary_lines_follow_the_counts():
@@ -72,7 +74,7 @@ def test_summary_lines_follow_the_counts():
     assert "- **By cause:** isp_loss: 2 (1 minute 30 seconds), dns_resolver_failure: 1 (1 minute 36 seconds)" in text
     assert "- 1 of these occurred while the line was at 70% load or more." in text
     assert "- 2 events during heavy line load were excluded (expected)." in text
-    assert "totalling 3 minutes 5 seconds (2 further events during heavy line load were excluded as expected)." in text
+    assert "totaling 3 minutes 5 seconds (2 further events during heavy line load were excluded as expected)." in text
 
 
 def test_the_primary_hop_is_named_with_its_label_and_later_loss_is_listed():
@@ -190,11 +192,11 @@ def test_the_dossier_reads_as_words_in_the_viewers_zone():
     assert "- **Cumulative duration:** none" in text
     assert "- 1 event during heavy line load was excluded (expected)." in text
     assert "| Hop 1 | Example ISP |" in text and "Hop 3" not in text
-    assert "recorded 1 incident totalling none" in text
+    assert "recorded 1 incident totaling none" in text
 
 
 def test_the_dossier_and_the_ai_pack_judge_a_channel_by_one_set_of_findings(monkeypatch):
-    """docsis.channel_findings is the one judgement: the dossier's reason is its first, the pack's text every one of
+    """docsis.channel_findings is the one judgment: the dossier's reason is its first, the pack's text every one of
     them worst first, and both follow its named thresholds."""
     from pengumon.lines import docsis
     from pengumon.lines.docsis_contrib import _finding
@@ -209,3 +211,50 @@ def test_the_dossier_and_the_ai_pack_judge_a_channel_by_one_set_of_findings(monk
     assert _finding(some, docsis.DEFAULT_LEVELS) == "High uncorrectable count since the modem started"
     monkeypatch.setattr(docsis, "UNCORRECTABLES_LISTED", 400)
     assert not docsis.is_degraded(chan(unc=150)) and channel_finding(chan(unc=150)) == "Power level out of range"
+
+
+def speed_rows(n=30, low=4, low_mbps=100.0, mbps=212.0):
+    """`n` finished tests, `low` of them at `low_mbps` (the rest at `mbps`), 19 Mbps up, 10 ms idle and 50 ms loaded."""
+    return [{"status": "ok", "down_mbps": low_mbps if k < low else mbps, "up_mbps": 19.0, "idle_ms": 10.0,
+             "loaded_down_ms": 50.0, "loaded_up_ms": 30.0} for k in range(n)]
+
+
+def test_the_speed_section_states_the_tests_against_the_plan():
+    rows = speed_rows() + [{"status": "failed", "down_mbps": None, "up_mbps": None},
+                           {"status": "skipped", "down_mbps": None, "up_mbps": None}]
+    text = render_dossier_markdown(facts(speed=summarize(rows, 300.0, 20.0)))
+    section = text.split("## Speed tests\n")[1].split("\n## ")[0]
+    assert section.splitlines() == [
+        "- **Tests in the window:** 32 tests (30 ok, 1 failed, 1 skipped)",
+        "- Download: median 212 of 300 Mbps (71 %), lowest 100 Mbps",
+        "- Upload: median 19 of 20 Mbps (95 %), lowest 19 Mbps",
+        "- Measured by the test alone (one server; no router reading of the line)",
+        "- 4 of 30 tests under 50 % of the plan speed",
+        "- Latency under load: median 40 ms added, bufferbloat grade B"]
+    assert text.index("## 3. Modem") < text.index("## Speed tests") < text.index("## 4. What the data shows")
+    assert ("Speed tests (32 tests (30 ok, 1 failed, 1 skipped)): download: median 212 of 300 Mbps (71 %); upload: "
+            "median 19 of 20 Mbps (95 %); 4 of 30 tests under 50 % of the plan speed.") in text.split("```text")[1]
+
+
+def test_the_under_count_looks_at_both_directions_and_each_test_counts_once():
+    rows = speed_rows(10, low=0) + [{"status": "ok", "down_mbps": 100.0, "up_mbps": 5.0},   # both under: one test
+                                    {"status": "ok", "down_mbps": 300.0, "up_mbps": 9.0},   # upload alone
+                                    {"status": "ok", "down_mbps": 150.0, "up_mbps": 10.0}]  # exactly 50 %: not under
+    s = summarize(rows, 300.0, 20.0)
+    assert (s.measured, s.under) == (13, 2)
+    assert summarize(speed_rows(), None, None).under == 0                      # no plan: nothing to be under
+
+
+def test_without_a_plan_speed_the_section_says_so_and_a_partial_test_still_counts():
+    rows = speed_rows(3, low=0) + [{"status": "partial", "down_mbps": 90.0, "up_mbps": None}]
+    text = render_dossier_markdown(facts(speed=summarize(rows, None, None)))
+    assert "- **Tests in the window:** 4 tests (3 ok, 1 partial)" in text
+    assert "- Download: median 212 Mbps, lowest 90 Mbps" in text and "of the plan speed" not in text
+    assert "No plan speed is set in Pengumon (Settings > Your line)" in text
+
+
+def test_tests_that_measured_nothing_say_so():
+    text = render_dossier_markdown(facts(speed=summarize([{"status": "skipped", "down_mbps": None, "up_mbps": None}],
+                                                         300.0, 20.0)))
+    assert "- **Tests in the window:** 1 test (1 skipped)" in text and "- No test measured a speed." in text
+    assert "Speed tests (" not in text.split("```text")[1]                      # nothing to put in the ticket

@@ -1,9 +1,9 @@
 // Page chrome: the header's pop-up menus (the theme menu among them), the LAN address, View only and Sign out.
 //
-// Theme: themes.js (the theme, light or dark, the effect, the cards' colours); the header's theme button opens its menu.
+// Theme: themes.js (the theme, light or dark, the effect, the cards' colors); the header's theme button opens its menu.
 // Charts are drawn on canvas and cannot read CSS variables, so Chart.js's defaults are set from the tokens
-// (chart-theme.js) and every chart is redrawn when the theme changes; modules give their charts no colours of their own
-// except series colours.
+// (chart-theme.js) and every chart is redrawn when the theme changes; modules give their charts no colors of their own
+// except series colors.
 //
 // Sign out: the header button shows only for a browser signed in with the access token (/api/info `session`).
 // View only: a viewer without the token (/api/info `can_edit` false) sees "View only · Sign in to edit" in the header,

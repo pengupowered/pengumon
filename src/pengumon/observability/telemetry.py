@@ -58,6 +58,10 @@ api_rate_limited = meter.create_counter(
 ai_pack_exports = meter.create_counter(
     "pengumon.ai_pack.exports", unit="{pack}",
     description="AI troubleshooting packs built through the API, by detail level and scope")
+mcp_calls = meter.create_counter(
+    "pengumon.mcp.calls", unit="{call}",
+    description="MCP tool calls (POST /mcp), by tool and outcome (ok; error: the tool answered with an error; "
+                "refused: an unknown tool or bad arguments)")
 ws_message_size = meter.create_histogram(
     "pengumon.ws.message.size", unit="By", description="Bytes of one live message, as sent to every dashboard",
     explicit_bucket_boundaries_advisory=[1e3, 2.5e3, 5e3, 1e4, 2.5e4, 5e4, 1e5, 2.5e5, 5e5, 1e6])
@@ -90,7 +94,7 @@ task_exits = meter.create_counter(
 discovery_runs = meter.create_counter(
     "pengumon.discovery.runs", unit="{run}",
     description="Discovery runs, by trigger (manual, daily, incident, confirm) and outcome (done, no_answer: no trace "
-                "reached a public server, failed, cancelled)")
+                "reached a public server, failed, canceled)")
 discovery_duration = meter.create_histogram(
     "pengumon.discovery.duration", unit="s", description="Time one discovery run took, by trigger",
     explicit_bucket_boundaries_advisory=[1.0, 2.5, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0])
@@ -128,7 +132,7 @@ settings_imports = meter.create_counter(
     "pengumon.settings.imports", unit="{import}", description="Settings files read for import, by outcome (ok, invalid)")
 preview_runs = meter.create_counter(
     "pengumon.preview.runs", unit="{preview}",
-    description="Outage-rules previews by outcome (done, cap: stopped at the time limit, cancelled, failed, busy: "
+    description="Outage-rules previews by outcome (done, cap: stopped at the time limit, canceled, failed, busy: "
                 "refused because one was running)")
 preview_duration = meter.create_histogram(
     "pengumon.preview.duration", unit="s", description="Time a preview ran before it ended, by outcome",
@@ -175,6 +179,13 @@ line_restarts = meter.create_counter(
 router_restarts = meter.create_counter(
     "pengumon.router.restarts", unit="{restart}",
     description="Polls that found a WAN byte counter lower than before without wrapping: the router restarted, by device")
+speedtest_runs = meter.create_counter(
+    "pengumon.speedtest.runs", unit="{run}",
+    description="Speed tests recorded, by status (ok, partial, failed, skipped), trigger (scheduled, manual) and "
+                "provider (cloudflare, mlab, librespeed)")
+speedtest_bytes = meter.create_counter(
+    "pengumon.speedtest.bytes", unit="{byte}",
+    description="Bytes the speed tests moved, by direction (download, upload): the data the feature uses")
 
 
 def record_probes(samples: Iterable[Any], categories: Mapping[str, str]) -> None:

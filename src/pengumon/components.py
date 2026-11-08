@@ -51,7 +51,7 @@ def task_kind(task: "asyncio.Task") -> str:
 
 def log_unexpected_exit(task: "asyncio.Task") -> None:
     """Done-callback for a task that should run until shutdown: logs the exception it died of, when it dies (not at
-    shutdown, when its result is collected). A cancelled task is not an unexpected exit."""
+    shutdown, when its result is collected). A canceled task is not an unexpected exit."""
     if task.cancelled():
         return
     exc = task.exception()
@@ -91,7 +91,7 @@ class Context:
     tasks: List[asyncio.Task] = field(default_factory=list)
 
     def spawn(self, coro: Coroutine) -> asyncio.Task:
-        """Starts a background task that runs until shutdown, when it is cancelled before any component stops."""
+        """Starts a background task that runs until shutdown, when it is canceled before any component stops."""
         task = asyncio.create_task(coro)
         task.add_done_callback(log_unexpected_exit)
         task.add_done_callback(self._forget)  # a finished task (a rebuilt device's old one) is not kept

@@ -1,0 +1,44 @@
+/* Panel speed: its own styles (linked because the folder exists, pengumon.web.ui). Tokens only. */
+/* ---------- Speed ---------- */
+.spd { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.spd > [hidden] { display: none; }
+.spd-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
+.spd-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.spd-lbl { font-size: var(--fs-xs); color: var(--ink-3); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .05em; }
+.spd-big { font-size: var(--fs-2xl); line-height: 1.1; color: var(--ink-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.spd-big b { font-weight: var(--fw-bold); }
+.spd-big small { font-size: var(--fs-sm); color: var(--ink-3); font-weight: var(--fw-medium); }
+.spd-plan { font-size: var(--fs-xs); color: var(--ink-2); }
+.spd-own { font-size: var(--fs-xs); color: var(--ink-3); }
+.spd-by { font-size: var(--fs-xs); color: var(--ink-3); font-weight: var(--fw-semi); margin: 0; }
+.spd-meta, .spd-line { font-size: var(--fs-sm); color: var(--ink-2); margin: 0; }
+.spd-meta { margin-top: var(--sp-2); }
+.spd-last { display: flex; flex-direction: column; gap: var(--sp-2); }
+.spd-remark { font-size: var(--fs-xs); color: var(--ink-3); margin: 0; }
+.spd-bloat { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--ink-2); margin: 0; }
+.spd-why { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--ink-2); margin: 0; }
+.spd-st { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--st); }
+.spd-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); border: 1px solid color-mix(in srgb, var(--st) 40%, transparent); background: var(--st-bg); font-size: var(--fs-sm); color: var(--ink-1); }
+.spd-problem .spd-when { color: var(--ink-3); }
+.spd-problem .spd-reason { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
+.spd-chart { display: flex; flex-direction: column; gap: var(--sp-2); }
+.spd-chart-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.spd-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-xs); color: var(--ink-2); min-width: 0; }
+.spd-key { display: inline-flex; align-items: center; gap: 5px; }
+.spd-key .key.dashed { background: none; border-top: 2px dashed var(--c, var(--ink-3)); height: 0; }
+.spd-shape { font-style: normal; color: var(--c, var(--ink-3)); font-weight: var(--fw-bold); line-height: 1; }
+.spd-chart-box { --h: 170px; }
+.spd-lines { display: flex; flex-direction: column; gap: 2px; }
+.spd-line.st { color: var(--st); font-weight: var(--fw-semi); }
+.spd-link { color: var(--accent); background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
+.spd-run { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+.spd-confirm { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); max-width: 100%; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface-2); font-size: var(--fs-sm); color: var(--ink-2); }
+.spd-confirm b { color: var(--ink-1); }
+.spd-confirm-btns { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.spd-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: var(--fs-sm); color: var(--ink-2); }
+.spd-progress b { color: var(--ink-1); }
+.spd-progress svg.i { animation: spd-spin 1.2s linear infinite; }
+.spd-notice { margin: 0; font-size: var(--fs-sm); color: var(--st); font-weight: var(--fw-semi); overflow-wrap: anywhere; }
+@keyframes spd-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spd-progress svg.i { animation: none; } }
+@container (max-width: 300px) { .spd-figs { grid-template-columns: minmax(0, 1fr); } }

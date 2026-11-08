@@ -183,7 +183,7 @@ class DocsisContribution:
             f"- Downstream power, healthy within ±{lv.ds_power_warning_abs_dbmv:g} dBmV. Far below: a weak signal "
             "(long cable, splitters, a bad connector). Far above: too strong.\n"
             f"- Downstream SNR (signal-to-noise ratio), healthy above {lv.ds_snr_warning_db:g} dB; below "
-            f"{lv.ds_snr_critical_db:g} dB errors are likely. Low on a few neighbouring channels: interference at "
+            f"{lv.ds_snr_critical_db:g} dB errors are likely. Low on a few neighboring channels: interference at "
             "those frequencies. Low on all: the cable or the provider's network.\n"
             f"- Upstream power, healthy from {lv.us_power_low_warning_dbmv:g} to {lv.us_power_warning_dbmv:g} dBmV. "
             "High means the modem must \"shout\" to be heard, often a damaged cable, a loose connector or too many "

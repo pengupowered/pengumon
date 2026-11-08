@@ -23,6 +23,8 @@ from pengumon.lines.levels import LineSignalConfig
 from pengumon.reports.common import (
     _canonical_order, _hop_label, _split_incidents, _targets, find_primary_failing_hop, material_loss_points,
 )
+from pengumon.reports.speed import (SpeedSummary, counts_text, direction_text, latency_text, method_text, summarize,
+                                    under_text)
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class DossierFacts:
     modem_unanswered: int = 0                  # ... and those where the modem could not be reached at all
     line_levels: Optional[LineSignalConfig] = None  # the config's line levels, "typical" in the text (None: defaults)
     zone: tzinfo = timezone.utc                # the clock "Generated" is shown on (timeofday.viewer_zone)
+    speed: Optional[SpeedSummary] = None       # the window's speed tests (None: there were none)
 
 
 # The incidents' cause categories (incidents.taxonomy) in the provider's terms.
@@ -168,6 +171,8 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         )
     rf_evidence = bool(degraded_channels or unc_increase > 0)
 
+    speed = await _speed_summary(repository, config, start_time, now)
+
     return DossierFacts(
         hours=hours,
         now=now,
@@ -200,7 +205,15 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         gw_name=next((t.name for t in cfg_targets if categories.get(t.id) == "gateway"), "the gateway"),
         line_levels=line_levels,
         zone=zone,
+        speed=speed,
     )
+
+
+async def _speed_summary(repository, config, start_time: float, end_time: float) -> Optional[SpeedSummary]:
+    """The speed tests that started in the window against the plan speed (Settings > Your line); None without any."""
+    rows = await repository.get_speed_tests(start_time, end_time, limit=10_000)
+    line = getattr(config, "line", None)
+    return summarize(rows, getattr(line, "down_mbps", None), getattr(line, "up_mbps", None))
 
 
 # The ticket's sentence after "Loss is first elevated at <hop>: <n>%.", by where that hop sits.
@@ -252,6 +265,28 @@ def _place_text(f: DossierFacts) -> str:
     if place == "internet":
         return ", past the provider's routers."
     return "."
+
+
+def _speed_lines(s: SpeedSummary) -> List[str]:
+    """The "Speed tests" section: what ran, the speeds against the plan, the delay under load."""
+    L = ["", "## Speed tests", f"- **Tests in the window:** {counts_text(s)}"]
+    for text in (direction_text("Download", s.down_median, s.down_low, s.plan_down),
+                 direction_text("Upload", s.up_median, s.up_low, s.plan_up), method_text(s), under_text(s),
+                 latency_text(s)):
+        if text:
+            L.append(f"- {text}")
+    if not s.measured:
+        L.append("- No test measured a speed.")
+    if not (s.plan_down or s.plan_up):
+        L.append("- No plan speed is set in Pengumon (Settings > Your line), so the speeds are not compared with one.")
+    return L
+
+
+def _speed_ticket(s: SpeedSummary) -> str:
+    """The ticket's one line about the speed tests."""
+    parts = [t for t in (direction_text("download", s.down_median, None, s.plan_down),
+                         direction_text("upload", s.up_median, None, s.plan_up), under_text(s)) if t]
+    return f"Speed tests ({counts_text(s)}): " + "; ".join(parts) + "."
 
 
 def render_dossier_markdown(f: DossierFacts) -> str:
@@ -306,7 +341,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
                       f"({', '.join(f.names.get(h['target_id'], h['target_id']) for h in f.later_lossy)}), so it continues past that point."]
         else:
             L += ["", f"Later hops show no comparable loss. Loss at a single intermediate hop can also be "
-                      f"that router rate-limiting or deprioritising ping, rather than traffic being dropped."]
+                      f"that router rate-limiting or deprioritizing ping, rather than traffic being dropped."]
 
     L += ["", "## 3. Modem (DOCSIS) telemetry"]
     if docsis_snapshot is None or docsis_snapshot.status == "unconfigured":
@@ -342,6 +377,9 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     elif snap_ok and docsis_snapshot.channels:
         L += ["", "- All bonded channels are within typical power and SNR ranges at the last poll."]
 
+    if f.speed is not None:
+        L += _speed_lines(f.speed)
+
     L += ["", "## 4. What the data shows"]
     if rf_evidence:
         bits = []
@@ -362,7 +400,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
         L.append("- The probes did not isolate a single failing hop.")
 
     L += ["", "## 5. Summary for a support ticket", "```text",
-          f"Over the past {_plural(hours, 'hour')} Pengumon recorded {_plural(f.total_incidents, 'incident')} totalling {_span(f.total_dur_sec)}"
+          f"Over the past {_plural(hours, 'hour')} Pengumon recorded {_plural(f.total_incidents, 'incident')} totaling {_span(f.total_dur_sec)}"
           + (f" ({_plural(f.excluded, 'further event')} during heavy line load {'was' if f.excluded == 1 else 'were'} excluded as expected)." if f.excluded else "."),
           ]
     if max_lan_loss is not None:
@@ -372,6 +410,8 @@ def render_dossier_markdown(f: DossierFacts) -> str:
                  + _TICKET_PLACE.get(f.primary_place, ""))
     else:
         L.append("No single failing hop could be isolated from the probe data.")
+    if f.speed is not None and f.speed.measured:
+        L.append(_speed_ticket(f.speed))
     if rf_evidence:
         if degraded_channels:
             w = degraded_channels[0]

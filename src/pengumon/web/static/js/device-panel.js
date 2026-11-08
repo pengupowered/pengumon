@@ -1,4 +1,4 @@
-// The part every device card shares, whatever the device is: status badge (icon + word), the coloured bar on top, an
+// The part every device card shares, whatever the device is: status badge (icon + word), the colored bar on top, an
 // error block with what to do, the "reading N min old" chip when the readings stop, and when it was read. Used by
 // panels/line.js and panels/router.js; nothing here knows a technology or a vendor.
 

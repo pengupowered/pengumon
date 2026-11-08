@@ -111,7 +111,7 @@ async def _run(config_path: Path, db_copy: Path, secrets_copy: Path, live: bool,
     raw = read_config_file(config_path)
     repository = DatabaseRepository(db_path=str(db_copy))
     try:
-        if live and not await repository.settings_initialised():
+        if live and not await repository.settings_initialized():
             out("the database has no imported settings yet (nothing to check with --live)")
             return 2
         secrets_before = _entries(secrets_copy)

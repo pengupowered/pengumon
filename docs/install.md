@@ -188,8 +188,8 @@ before rebuilding.
 3. Open **Settings** to set up what you want to be told about: alerts, your own apps, a router or modem, your line's
    capacity. Changes apply at once and need no restart; none of it is edited in `config.yaml` (see
    [configuration.md](configuration.md)).
-4. A week of history makes the charts and reports useful. Nothing leaves your computer unless you turn on alerts or the
-   OpenTelemetry export ([telemetry.md](telemetry.md)).
+4. A week of history makes the charts and reports useful. Nothing leaves your computer unless you turn on alerts, the
+   OpenTelemetry export ([telemetry.md](telemetry.md)) or the speed test ([speedtest.md](speedtest.md)).
 
 ## Opening the dashboard from other devices
 
