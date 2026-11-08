@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from pengumon.incidents.taxonomy import incident_cause
 from pengumon.reports.common import _canonical_order, _split_incidents, _targets
+from pengumon.reports.outages import outage_totals, outages_of
 from pengumon.reports.queries import daily_availability, hourly_loss
 from pengumon.timeofday import utc_offset
 
@@ -77,6 +78,8 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
             "minutes": round(sum(lasted(r) for r in incidents) / 60.0, 1),
             "by_cause": by_cause,
             "excluded_expected": excluded,
+            # drops joined into outages (incidents.outages; the figures above stay per incident)
+            "outages": outage_totals(outages_of(incidents, config, now)),
         },
         "loss_by_hour": hourly,
         "worst_hours": worst_hours,

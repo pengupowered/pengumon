@@ -65,8 +65,8 @@ const stylePlugin = {
       }
       const stroked = typeof o.borderWidth === 'number' && o.borderWidth > 0; // a band or an invisible helper line stays as it is
       d.borderWidth = stroked && s.line_width ? Math.round(o.borderWidth * s.line_width * 5) / 10 : o.borderWidth; // in proportion to the main lines' 2 px
-      d.tension = stroked && (s.curve === 'straight' || s.curve === 'stepped') ? 0 : o.tension;
-      d.stepped = stroked && s.curve === 'stepped' ? 'middle' : o.stepped;
+      d.tension = stroked && !d.ownCurve && (s.curve === 'straight' || s.curve === 'stepped') ? 0 : o.tension;
+      d.stepped = stroked && !d.ownCurve && s.curve === 'stepped' ? 'middle' : o.stepped;
       d.pointRadius = stroked && s.points ? s.points : o.pointRadius;
       const wash = stroked && s.fill && !o.fill && HEX6.test(d.borderColor || '');
       d.fill = wash ? 'origin' : o.fill;

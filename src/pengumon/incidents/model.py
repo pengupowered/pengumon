@@ -47,6 +47,9 @@ class Incident(BaseModel):
     # or its raw samples were gone before it was computed); loss_seconds 0: no probe was lost (raised on latency).
     loss_start: Optional[float] = None
     loss_seconds: Optional[float] = None
+    # The outage this incident belongs to (incidents.outages): the id of the outage's first incident. None: not
+    # groupable (load, unknown, a host app, expected), and everywhere but GET /api/incidents and the MCP tool, which fill it.
+    outage_id: Optional[int] = None
 
     @computed_field
     @property

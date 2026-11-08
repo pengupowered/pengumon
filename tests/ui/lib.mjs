@@ -139,6 +139,15 @@ export async function createContext({ base, outDir, variant }) {
 
   // ---- waiting and reading ----
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // A closed dialog gives its history entry back a moment later (js/util.js: history.go(-1)); a reload sent while that
+  // traversal is still under way is cancelled by it (the reload never finishes). No person reloads within those
+  // milliseconds, but the steps do (close, then reload at once), so every reload of the harness first waits, at most 3 s,
+  // for the history to settle. (core.mjs has a step that reloads in the same task on purpose, through location.reload.)
+  // settled: no dialog's entry is the current one, or a dialog is open (then the entry is its own, nothing is pending)
+  const settleHistory = () => page.waitForFunction(() => !history.state?.pgModal || !!document.querySelector(".modal.active"),
+    { timeout: 3000 }).catch(() => {});
+  const rawReload = page.reload.bind(page);
+  page.reload = async (opts) => { await settleHistory(); return rawReload(opts); };
   const until = (fn, ...a) => page.waitForFunction(fn, { timeout: 15000 }, ...a).catch((e) => {
     throw new Error(`${e.message} while waiting for ${String(fn).slice(0, 160)} with ${JSON.stringify(a)}`);
   });
@@ -255,8 +264,16 @@ export async function createContext({ base, outDir, variant }) {
   // pickMode("light" | "dark" | ""): "" is "Like the system"; flipMode: the other one of what shows now.
   const darkNow = () => page.evaluate(() => (document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches));
   const pickInMenu = async (action, arg) => {
-    await click("#btnTheme");
-    await until(() => !document.getElementById("themeMenu").hidden);
+    // a window resize closes open menus (chrome.js): one a step caused just before (setViewport) can land right after
+    // this press and close the menu again, so a menu that is not open after a moment gets one more press
+    await frames(2); // a resize the page was sent has been delivered
+    for (let tries = 0; ; tries++) {
+      await click("#btnTheme");
+      const open = await page.waitForFunction(() => !document.getElementById("themeMenu").hidden, { timeout: 3000 })
+        .then(() => true, () => false);
+      if (open) break;
+      if (tries) { await until(() => !document.getElementById("themeMenu").hidden); break; } // the second press: the usual wait and error
+    }
     await click(`#themeMenu [data-action=${action}][data-arg="${arg}"]`);
     await until(() => document.getElementById("themeMenu").hidden);
   };

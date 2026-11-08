@@ -70,3 +70,4 @@ settings, Danger Zone, Change visibility) make it public once, or `docker compos
   tagged commit counts.
 - A failed release workflow can be re-run from the Actions tab; pushing the same image tags again overwrites them.
   The GitHub release step fails if the release already exists; delete that release and re-run the job.
+- Lint the workflows (actionlint with shellcheck on the `run:` blocks) sandboxed, from the repo root: `podman run --rm --network none --read-only --cap-drop ALL -v "$PWD/.github/workflows:/wf:ro" docker.io/rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color=false /wf/ci.yml /wf/release.yml` (1.7.12; update the digest only to a release at least 14 days old). Remove the image afterwards.

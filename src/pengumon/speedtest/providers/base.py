@@ -252,7 +252,9 @@ class SpeedProvider:
 
     name = ""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic):
+    # perf_counter, not monotonic: on Windows time.monotonic advances in steps of about 15.6 ms, so a short phase could
+    # measure 0 s (no speed); perf_counter is the high-resolution clock on every platform
+    def __init__(self, clock: Callable[[], float] = time.perf_counter):
         self.clock = clock
         self.server: Optional[str] = None
         self.meter: Optional[Meter] = None  # the direction running now, or the last one

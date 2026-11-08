@@ -79,6 +79,26 @@ export const steps = [
     });
   }],
 
+  ["Outages: the group is under Outage rules with a minutes field and two time fields; a change of the gap is saved, read back, and regroups the incidents card (the next step puts it back)", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    const GAP = "incidents.group_gap_minutes";
+    await settingsOpen(ctx);
+    ok("the group's title", /Outages/.test(await ctx.text("#set-sec-outage")));
+    const row = settingsRow(GAP);
+    eq("a number field", await page.$eval(`${row} input[data-key]`, (e) => `${e.type}|${e.value}`), "text|10"); // (the page's numeric fields are text boxes)
+    ok("in minutes, and 0 means no grouping", /min/.test(await ctx.text(row)) && /0: every drop is its own outage/.test(await ctx.text(row)));
+    eq("two time fields", await page.$$eval(`${settingsRow("incidents.maintenance_start")} input[data-key], ${settingsRow("incidents.maintenance_end")} input[data-key]`,
+      (els) => els.map((e) => e.value).join()), "00:00,06:00");
+    await settingsType(page, GAP, "0");
+    eq("one change", await settingsSaveLabel(page), "Save 1 change");
+    await settingsSave(ctx);
+    eq("read back", (await settingsValuesNow(page)).values[GAP], 0);
+    eq("the API follows at once", await page.evaluate(async () => (await (await fetch("/api/outages")).json()).gap_minutes), 0);
+    await ctx.click("#btnSettingsCancel");
+    // grouping off: the three drops of the night are rows of their own again
+    await until(() => /^17 recorded events$/.test(document.getElementById("incidentCountBadge").textContent) && !document.querySelector("#incidentsBody [data-v=summary]"));
+  }],
+
   ["search: rows are filtered by label, help text or key across sections; Escape clears it first and then closes; a phone and the keyboard can use it", async (ctx) => {
     const { eq, ok, page, phone, until } = ctx;
     await settingsOpen(ctx);
@@ -168,6 +188,61 @@ export const steps = [
     eq("a fresh draft is empty", await settingsSaveLabel(page), "Save");
     await ctx.click("#btnSettingsCancel");
     await until(() => !document.getElementById("settingsModal").classList.contains("active"));
+  }],
+
+  ["closing Settings leaves no dead Back press, by any way out, with or without a draft", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    const closed = () => until(() => !document.getElementById("settingsModal").classList.contains("active"));
+    const fresh = () => page.evaluate(() => { history.replaceState({ e0: 1 }, "", "/"); history.pushState({ e1: 1 }, "", "/"); }); // the page the user came from, and this one
+    // one Back from the closed dialog goes to the page the user came from, not to a copy of this one
+    const oneBack = async (how) => {
+      await page.evaluate(() => history.back());
+      await until(() => history.state && history.state.e0 === 1);
+      ok(`${how}: one Back reached the page before`, await page.evaluate(() => history.state.e0 === 1 && location.hash === ""));
+    };
+    const draft = () => settingsType(page, LOSS, "5");
+    // no draft: no entry is added at all
+    await fresh();
+    const length = await page.evaluate(() => history.length);
+    await settingsOpen(ctx);
+    await ctx.click("#btnSettingsCancel");
+    await closed();
+    eq("no draft: the history is as long as before", await page.evaluate(() => history.length), length);
+    await oneBack("no draft");
+    // a draft, Cancel > Discard
+    await fresh();
+    await settingsOpen(ctx);
+    await draft();
+    await settingsDiscard(ctx);
+    await oneBack("Cancel and Discard");
+    // a draft, Escape > Discard
+    await fresh();
+    await settingsOpen(ctx);
+    await draft();
+    await page.keyboard.press("Escape");
+    await until(() => !document.getElementById("settingsConfirm").hidden);
+    await ctx.click("#btnConfirmYes");
+    await closed();
+    await oneBack("Escape and Discard");
+    // a draft taken back by Reset (the entry is still there), then Cancel: nothing to discard
+    await fresh();
+    await settingsOpen(ctx);
+    await draft();
+    await ctx.click(`${settingsRow(LOSS)} [data-action=settingsReset]`);
+    eq("no change left", await settingsSaveLabel(page), "Save");
+    await ctx.click("#btnSettingsCancel");
+    await closed();
+    await oneBack("a draft undone, then Cancel");
+    // a draft, the Back button itself > Discard
+    await fresh();
+    await settingsOpen(ctx);
+    await draft();
+    await page.evaluate(() => history.back());
+    await until(() => !document.getElementById("settingsConfirm").hidden);
+    await ctx.click("#btnConfirmYes");
+    await closed();
+    await oneBack("Back and Discard");
+    await page.evaluate(() => history.forward());
   }],
 
   ["Save applies it: the value is live, the revision goes up, Changed shows; Reset to default then Save puts it back", async (ctx) => {
@@ -417,6 +492,41 @@ export const steps = [
     eq("the panel is gone with the draft", await page.$eval("#settingsPreview", (e) => e.hidden), true);
   }],
 
+  ["the Preview's \"would open differently\" line says what differs; an ongoing outage a few seconds apart says so", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    await settingsOpen(ctx);
+    await settingsType(page, LOSS, "4");
+    await until(() => !document.getElementById("btnSettingsPreview").hidden);
+    // the server's answer, made up: one outage still going on that opens 8 s later, one that also ends later
+    await page.evaluate(() => {
+      const real = window.fetch;
+      window.__realFetch = real;
+      const now = Math.floor(Date.now() / 60000) * 60 - 7200 + 10; // a minute's tenth second, so +8 s stays in the minute
+      const job = {
+        state: "done", progress: 1, recorded: 2, notes: [],
+        current: { incidents: 2, alerts: null }, draft: { incidents: 2, alerts: null },
+        changes: [
+          { in: "changed", kind: "local_down", severity: "critical", start: now + 8, end: null, was_start: now, was_end: null, was_severity: "critical" },
+          { in: "changed", kind: "gateway_slow", severity: "warning", start: now + 3600 + 5, end: now + 3600 + 400, was_start: now + 3600, was_end: now + 3600 + 300, was_severity: "warning" }
+        ]
+      };
+      window.fetch = (url, opts) => {
+        const u = String(url);
+        if (!u.startsWith("/api/settings/preview")) return real(url, opts);
+        const body = u === "/api/settings/preview" ? { id: "fake" } : job;
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+      };
+    });
+    await ctx.click("#btnSettingsPreview");
+    await until(() => document.querySelectorAll("#settingsPreview .set-changes li").length === 2);
+    const items = await page.$$eval("#settingsPreview .set-changes li", (els) => els.map((e) => e.textContent));
+    eq("an ongoing outage: only the offset, not the same text twice", items[0], "local down: opens 8 s later with the draft; still going on.");
+    eq("another: a start a few seconds off and an end that moved", items[1], "gateway slow: opens 5 s later with the draft; 5 min now, 7 min with the draft.");
+    ok("no note ends without a full stop", items.every((s) => s.endsWith(".")));
+    await settingsDiscard(ctx);
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+  }],
+
   ["a DNS lookup is added and saved; it appears in Path health's matrix", async (ctx) => {
     const { eq, ok, page, until, waitCount } = ctx;
     await ctx.showCard("matrix"); // not drawn while it is off screen
@@ -457,9 +567,31 @@ export const steps = [
     await until(() => (document.querySelector("[data-list=services] .set-card:last-of-type [data-lmsg$='timeout_seconds']")?.textContent ?? "") !== "");
     ok("the card is marked", await page.$eval(`${card} summary`, (e) => /Needs a fix/.test(e.textContent)));
     ok("Save is off", await page.$eval("#btnSettingsSave", (b) => b.disabled));
+    // a collapsed card says what is wrong in words, and Save's disabled state says why, with a way to the first problem
+    await page.$eval(card, (c) => { c.open = false; });
+    const inSummary = await page.$eval(`${card} > summary .set-card-e`, (e) => e.textContent);
+    ok(`the collapsed card shows the problem (${inSummary})`, inSummary.length > 5 && await page.$eval(`${card} > summary .set-card-e`, (e) => e.offsetParent !== null));
+    ok("the summary bar is showing", await page.$eval("#settingsProblems", (e) => !e.hidden && e.offsetParent !== null));
+    const why = await ctx.text("#settingsProblemText");
+    ok(`the summary names the item and the reason (${why})`, /^1 problem: Host app checks: Extra app: .+\.$/.test(why) && why.includes(inSummary.replace(/[.\s]+$/, "")));
+    eq("Save's tooltip says the same", await page.$eval("#btnSettingsSave", (b) => b.title), why);
+    await settingsType(page, LOSS, "abc");
+    const two = await ctx.text("#settingsProblemText");
+    ok(`two problems: the setting by its label first (${two})`, /^2 problems: .*Loss outage starts after: .+; Host app checks: Extra app: /.test(two));
+    await settingsType(page, LOSS, "3"); // the standard value: no change left
+    await until(() => /^1 problem:/.test(document.getElementById("settingsProblemText").textContent));
+    await page.$eval(card, (c) => { c.open = false; c.scrollIntoView(); });
+    await ctx.click("#settingsProblems button");
+    ok("Go to the first opens the card", await page.$eval(card, (c) => c.open));
+    // what is wrong is in view: the card's message for the field (the card itself may be taller than the dialog)
+    const msg = `${card} [data-lmsg$='timeout_seconds']`;
+    let seen = false; // (the scroll may be smooth: Firefox animates it, so give it a moment to land)
+    for (let i = 0; i < 30 && !(seen = await inView(page, msg)); i++) await new Promise((r) => setTimeout(r, 100));
+    ok("and brings the problem into view", seen);
     await page.$eval(`${card} [data-f=timeout_seconds]`, (e) => { e.focus(); e.select(); });
     await page.type(`${card} [data-f=timeout_seconds]`, "4");
     await until(() => !document.getElementById("btnSettingsSave").disabled);
+    ok("no summary once nothing is wrong", await page.$eval("#settingsProblems", (e) => e.hidden));
     eq("the id follows the name", await page.$eval(`${card} [data-f=id]`, (e) => e.value), "extra_app");
     await settingsSave(ctx);
     const state = await page.evaluate(async () => (await (await fetch("/api/settings")).json()).lists.services.items.map((i) => i.id));
@@ -617,13 +749,14 @@ export const steps = [
     const key = "classifier.local_latency_spike_threshold_ms";
     const other = "classifier.gateway_latency_spike_threshold_ms";
     await settingsOpen(ctx);
+    await settingsType(page, "classifier.busy_load_pct", "58");
     await settingsType(page, key, "40");
     await settingsType(page, other, "44");
-    eq("two changes", await settingsSaveLabel(page), "Save 2 changes");
+    eq("three changes", await settingsSaveLabel(page), "Save 3 changes");
     // someone else saves the same setting meanwhile (another tab): the page's base revision is now behind
     await page.evaluate(async (k) => {
       const state = await (await fetch("/api/settings")).json();
-      const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: state.revision, values: { [k]: 31 }, lists: {}, secrets: {} }) });
+      const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: state.revision, values: { [k]: 31, "classifier.busy_load_pct": 57 }, lists: {}, secrets: {} }) });
       if (!res.ok) throw new Error(`PUT ${res.status}`);
     }, key);
     ctx.expectStatus(409); // the real conflict is a real 409
@@ -632,7 +765,9 @@ export const steps = [
     await until(() => /Changed elsewhere/.test(document.getElementById("settingsNotes").textContent));
     ctx.expectStatus();
     ok("the note is in view, wherever the page was scrolled", await inView(page, "#settingsNotes"));
-    ok("the note names it", /Latency spike levels: Router/.test(await ctx.text("#settingsNotes")));
+    const note = await ctx.text("#settingsNotes");
+    ok(`the note names a setting by its group and label, with the value kept (${note})`, /Latency spike levels: Router \(now 31 ms\)/.test(note));
+    ok(`and one whose label is a sentence stem in full, not cut ("Busy line from.")`, /Busy line from \(now 57 %\)/.test(note));
     eq("theirs is shown", await page.$eval(`${settingsRow(key)} input[data-key]`, (e) => e.value), "31");
     eq("the rest stays", await settingsSaveLabel(page), "Save 1 change");
     eq("the other input", await page.$eval(`${settingsRow(other)} input[data-key]`, (e) => e.value), "44");
@@ -1031,6 +1166,13 @@ export const steps = [
     await settingsOpen(ctx);
     eq("the discarded value is gone on the next open", await page.$eval(`${settingsRow(LOSS)} input[data-key]`, (e) => e.value) !== "7", true);
     await click("#btnSettingsCancel");
+  }],
+
+  ["Outages: by the end of the file the gap is back at its default (an Import or a Save of values puts every other key back), and the incidents card groups the night event again", async (ctx) => {
+    const { eq, until, page } = ctx;
+    eq("the gap", (await settingsValuesNow(page)).values["incidents.group_gap_minutes"], 10);
+    await page.reload({ waitUntil: "load" });
+    await until(() => /^15 events · 17 incidents$/.test(document.getElementById("incidentCountBadge")?.textContent ?? ""));
   }],
 
 ];

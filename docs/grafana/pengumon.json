@@ -2865,7 +2865,7 @@
     {
       "type": "timeseries",
       "title": "Threads, descriptors, tasks",
-      "description": "Threads and open file descriptors of the process, and asyncio tasks. Any of the three growing without end is a leak.",
+      "description": "Threads and open file descriptors of the process (handles on Windows), and asyncio tasks. Any of the three growing without end is a leak.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

@@ -11,6 +11,8 @@ from pengumon.capabilities import Capability
 from pengumon.devices.samples import line_history, router_history
 from pengumon.engine.path_rules import ignoring_ping_ids
 from pengumon.incidents.model import Incident
+from pengumon.incidents.outage_read import with_outage_ids
+from pengumon.incidents.outages import Rules
 from pengumon.reports.dossier import build_dossier
 
 router = APIRouter(prefix="/api")
@@ -33,7 +35,11 @@ async def get_incidents(
     if not state.repository:
         return []
     rows = await state.repository.get_recent_incidents(limit=offset + limit, include_expected=include_expected, scope=scope)
-    return rows[offset:offset + limit]
+    page = rows[offset:offset + limit]
+    if scope == "service":
+        return page
+    # outage_id: an outage that straddles the page edge has the same id on both pages (the grouping reads by time)
+    return await with_outage_ids(state.repository, Rules.from_config(state.config), page)
 
 
 @router.get("/incidents/count")

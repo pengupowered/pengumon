@@ -38,6 +38,8 @@
   "- **Recorded incidents:** 4",
   "- **Cumulative duration:** 1 hour 12 minutes",
   "- **By cause:** line or the provider's first router: 2 (2 minutes 30 seconds), home network (router or Wi-Fi): 1 (1 hour), DNS lookups: 1 (10 minutes)",
+  "- **Outages:** 3 (drops that followed each other at neighboring places of the path are one outage), 0 min down in total",
+  "  - Oct 9 07:53 (ongoing), 60 min, 2 drops, down 0 min",
   "- 2 of these occurred while the line was at 70% load or more.",
   "- 2 events during heavy line load were excluded (expected).",
   "- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by 0.5 points or more.",

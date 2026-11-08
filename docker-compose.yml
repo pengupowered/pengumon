@@ -15,7 +15,10 @@
 # only restarts containers with that policy after a reboot.
 services:
   pengumon:
-    build: .
+    build:
+      context: .
+      args:
+        APT_REFRESH: ${APT_REFRESH:-}   # scripts/deploy.sh sets the date: the apt-get upgrade layer is rebuilt daily
     image: localhost/pengumon:latest
     container_name: pengumon
     restart: always

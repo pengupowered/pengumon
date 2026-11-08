@@ -39,7 +39,7 @@ def _refused(status: int) -> ProviderError:
 class CloudflareProvider(SpeedProvider):
     name = "cloudflare"
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic, transport: Optional[httpx.AsyncBaseTransport] = None,
+    def __init__(self, clock: Callable[[], float] = time.perf_counter, transport: Optional[httpx.AsyncBaseTransport] = None,
                  base: str = BASE):
         super().__init__(clock)
         self.base = base

@@ -132,7 +132,7 @@ final 2.5 s wait for late errors, and the waits before screenshots.
   the app accepts by default) that `lib.mjs` maps to 127.0.0.1 (`--host-resolver-rules` in Chromium, the pref
   `network.dns.localDomains` in Firefox; the container has no network and no DNS). A page on `127.0.0.1` or `localhost` is
   a *secure context*, where the Clipboard API, notifications and downloads just work; over `http://homeserver:8000` they do
-  not, so tests on 127.0.0.1 passed while the copy buttons, the path Export and the Alerts dialog failed for the owner.
+  not, so tests on 127.0.0.1 passed while the copy buttons, the path Export and the Alerts dialog failed for real users.
   The first core step asserts `window.isSecureContext === false` (and no `navigator.clipboard`), and the sign-in helper
   does too. The test page has no stand-in for the Clipboard API: `window.__clip()` returns what the page last copied
   through `execCommand("copy")` (read from the `copy` event), the only way to copy there. The checks of `test_ui_smoke.py`

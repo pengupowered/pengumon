@@ -37,3 +37,16 @@
 @media (max-width: 720px) { .tl-now { left: calc(50px + (100% - 50px) * var(--now, 1)) !important; } }
 
 @media (max-width: 720px) { #incidentPaginationInfo { flex-basis: 100%; } .panel-f #incidentPageNum { margin-inline: auto; } }
+
+/* An outage (2 or more drops that belong together): one row that opens to its drops, which are incident rows. */
+.inc-list .outage-toggle { display: flex; align-items: center; gap: 6px; }
+.inc-list .outage-toggle > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.inc-list .outage-toggle svg.i { flex: none; width: 14px; height: 14px; color: var(--ink-3); transition: transform .12s; transform: rotate(-90deg); }
+.inc-list .outage-toggle[aria-expanded="true"] svg.i { transform: none; }
+@media (prefers-reduced-motion: reduce) { .inc-list .outage-toggle svg.i { transition: none; } }
+.inc-list .inc-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 2px 0 0 20px; font-size: var(--fs-xs); color: var(--ink-3); }
+.inc-list .inc-state { font-weight: var(--fw-semi); color: var(--ink-2); }
+.inc-list .chip.maint { cursor: help; }
+.inc-list tr.outage-row td { padding-block: 8px; }
+.inc-list tr.drop-row td.lead { padding-left: 28px; }
+.inc-list tr.drop-row { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }

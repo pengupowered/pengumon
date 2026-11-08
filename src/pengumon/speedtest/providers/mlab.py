@@ -52,11 +52,15 @@ class NoRedirect(connect):
 class MLabProvider(SpeedProvider):
     name = "mlab"
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic, transport: Optional[httpx.AsyncBaseTransport] = None,
+    def __init__(self, clock: Callable[[], float] = time.perf_counter, transport: Optional[httpx.AsyncBaseTransport] = None,
                  locate_url: str = LOCATE_URL, connect_fn: Callable[..., Any] = NoRedirect, trusted_only: bool = True):
         super().__init__(clock)
         self.locate_url, self._connect, self._trusted_only = locate_url, connect_fn, trusted_only
-        self._client = httpx.AsyncClient(timeout=TIMEOUTS, follow_redirects=False, transport=transport,
+        # No proxy, like the test itself (base.PROXY_NOTE): a transport of its own is never routed through the
+        # environment's proxy settings (httpx applies them only to the transports it makes), and it still takes the
+        # environment's CA settings (SSL_CERT_FILE), as the other providers' transport does.
+        self._client = httpx.AsyncClient(timeout=TIMEOUTS, follow_redirects=False,
+                                         transport=transport if transport is not None else httpx.AsyncHTTPTransport(),
                                          headers={"User-Agent": USER_AGENT})
         self._urls: Optional[Dict[str, str]] = None
 
@@ -101,9 +105,10 @@ class MLabProvider(SpeedProvider):
                             target_s=target_s)
         try:
             async with asyncio.timeout(time_limit_s + STALL_GRACE_S):
+                # proxy=None: `websockets` uses the environment's proxy otherwise, and the test would measure it
                 async with self._connect(url, subprotocols=[SUBPROTOCOL], additional_headers={"User-Agent": USER_AGENT},
                                          max_size=MAX_MESSAGE, open_timeout=8, ping_interval=None,
-                                         close_timeout=3) as ws:
+                                         close_timeout=3, proxy=None) as ws:
                     meter.started = self.clock()  # the test proper starts when the handshake is done
                     await drive(ws, meter)
         except websockets.exceptions.ConnectionClosed:

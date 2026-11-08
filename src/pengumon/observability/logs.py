@@ -19,6 +19,7 @@ Configuration (environment wins over the setting):
 import json
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any, Callable, Dict, Mapping, Optional, TextIO
@@ -30,8 +31,14 @@ from pengumon.settings.env import env_value
 HANDLER_NAME = "pengumon"
 CONTEXT_ATTR = "pengumon_context"
 TEXT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-# Loggers that are too chatty at INFO for a service that runs for months: httpx logs every request.
-DEFAULT_LEVELS = {"httpx": "WARNING", "httpcore": "WARNING"}
+# Loggers that are too chatty at INFO for a service that runs for months: httpx logs every request. websockets' client
+# logs its handshake at DEBUG, request line and all: an M-Lab test's URL carries its access token in the query.
+DEFAULT_LEVELS = {"httpx": "WARNING", "httpcore": "WARNING", "websockets.client": "INFO"}
+# `websockets` logs every header of a handshake at DEBUG ("< cookie: ...", "> set-cookie: ..."), on the logger it is
+# given: uvicorn gives it `uvicorn.error`, so each /ws connection would put the browser's session cookie, or a bearer
+# token, into the log. These loggers get SecretHeaderFilter, whatever their level.
+SECRET_HEADER_LOGGERS = ("uvicorn.error", "websockets.server", "websockets.client")
+_SECRET_HEADER = re.compile(r"([<>] (?:cookie|set-cookie|authorization|proxy-authorization)):", re.IGNORECASE)
 _ADAPTER_KWARGS = frozenset({"exc_info", "stack_info", "stacklevel", "extra"})
 # Attributes of every LogRecord; a context key with one of these names would be ambiguous in JSON output.
 _RECORD_ATTRS = frozenset(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message", "asctime"}
@@ -115,6 +122,26 @@ class JsonFormatter(logging.Formatter):
         if record.stack_info:
             entry["stack"] = self.formatStack(record.stack_info)
         return json.dumps(entry, ensure_ascii=False, default=str)
+
+
+class SecretHeaderFilter(logging.Filter):
+    """Blanks the value of a credential header in a handshake line (`websockets`' DEBUG lines), before any handler sees
+    the record: the console, the OTLP export, anything added later."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # a record whose arguments do not fit its message is left to the handlers to report
+            return True
+        match = _SECRET_HEADER.match(message)
+        if match:
+            record.msg, record.args = f"{match.group(1)}: [redacted]", ()
+        return True
+
+
+_SECRET_HEADERS = SecretHeaderFilter()
+for _name in SECRET_HEADER_LOGGERS:  # when this module is imported (by the app itself): before any server starts
+    logging.getLogger(_name).addFilter(_SECRET_HEADERS)
 
 
 class TraceContextFilter(logging.Filter):

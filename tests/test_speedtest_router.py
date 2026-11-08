@@ -240,6 +240,40 @@ async def test_a_device_that_cannot_be_read_now_gives_none():
     assert await device(Plain())[0].read_wan_counters() is None
 
 
+async def test_a_refused_login_stops_the_counter_reads_until_a_poll_works_or_the_credentials_change():
+    """A wrong password (or a router locking logins out) cost one login attempt per read: about one a second through a
+    test, against a router that may lock its admin logins after a few. Polls carry on as before (a passing lockout must
+    not silence a router for good); the test's reads wait for one that works, or for new credentials."""
+    import httpx
+    from pengumon.drivers.asuswrt import AsusWrtDriver
+
+    logins = []
+
+    def refusing(request):
+        if request.url.path.endswith("login.cgi"):
+            logins.append(request)
+            return httpx.Response(200, json={"error_status": "3"})     # refused (a lockout reads the same)
+        return httpx.Response(200, json={"error_status": "2"})
+    client = httpx.AsyncClient(transport=httpx.MockTransport(refusing))
+    asus = AsusWrtDriver("http://192.0.2.1", "u", "wrong", client=client, clock=Clock())
+    dev, _ = device(asus)
+    for _ in range(5):                                                  # five seconds of a test
+        assert await dev.read_wan_counters() is None
+    assert len(logins) == 1
+    await dev.poll(force=True)                                          # the polls still try, on their own schedule
+    assert len(logins) == 2
+    assert await dev.read_wan_counters() is None and len(logins) == 2
+
+    driver = CounterDriver()                                            # a poll that works lifts it
+    dev, _ = device(driver)
+    dev._login_refused = True
+    assert await dev.read_wan_counters() is None and "read" not in driver.log
+    await dev.poll(force=True)
+    assert (await dev.read_wan_counters()).counters == WanCounters(123, 45)
+    dev._login_refused = True                                           # so do new credentials
+    dev.set_credentials("u", "new")
+    assert (await dev.read_wan_counters()).counters == WanCounters(123, 45)
+
 async def test_the_registry_reads_the_wan_device_and_without_one_gives_none():
     empty = DeviceRegistry([])
     assert await empty.read_wan_counters() is None

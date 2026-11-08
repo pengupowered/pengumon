@@ -13,7 +13,9 @@ build_test_image() {
     shift 3
     key="$(printf %s "$root" | sha1sum | cut -c1-12)"
     iid="$(mktemp)"
-    podman build -q --iidfile "$iid" --label "pengumon.test-tree=$key" "$@" -f "$root/$dockerfile" \
+    # APT_REFRESH: the date, so the apt-get upgrade layer is rebuilt once a day (Dockerfile)
+    podman build -q --iidfile "$iid" --label "pengumon.test-tree=$key" --build-arg "APT_REFRESH=$(date -u +%Y-%m-%d)" "$@" \
+        -f "$root/$dockerfile" \
         -t "localhost/$name:$key" "$root" >/dev/null
     built="$(cat "$iid")"; rm -f "$iid"
     new="${built#sha256:}"

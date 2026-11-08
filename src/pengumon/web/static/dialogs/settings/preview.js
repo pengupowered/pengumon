@@ -31,13 +31,18 @@ const phrase = (noun, d, c) => `<b class="num">${d}</b> ${noun}${d === 1 ? '' : 
 // An alert channel is set up (ntfy, or a webhook with its URL): without one there is nobody to alert, so the counts are left out.
 const hasChannel = () => Object.entries((S.server && S.server.secrets) || {}).some(([slot, st]) => st.set && /^(ntfy\.url|webhook\..*\.url)$/.test(slot));
 
+const hasAlerts = (job) => hasChannel() && [job.draft.alerts, job.current.alerts].every((n) => n !== null && n !== undefined);
+
 function counts(job) {
   const d = job.draft;
   const c = job.current;
   const line = [phrase('incident', d.incidents, c.incidents)];
-  if (hasChannel() && d.alerts !== null && d.alerts !== undefined && c.alerts !== null && c.alerts !== undefined) line.push(phrase('alert', d.alerts, c.alerts));
+  if (hasAlerts(job)) line.push(phrase('alert', d.alerts, c.alerts));
   return line.join('; ');
 }
+
+// The alert count is per outage (the drops of one outage send one alert), so it can be lower than the incident count.
+const alertsNote = (job) => (hasAlerts(job) ? '<p class="fine" data-alerts-note>Alerts are counted per outage: the drops of one outage send one alert.</p>' : '');
 
 // Said in the open, not in a tooltip: the stored count is not comparable with the two replayed ones.
 function recordedNote(job) {
@@ -50,17 +55,18 @@ function changeList(job) {
   const added = job.changes.filter((c) => c.in === 'draft');
   const moved = job.changes.filter((c) => c.in === 'changed');
   const length = (c) => (c.end ? escapeHtml(span(c.end - c.start)) : 'ongoing');
-  const item = (c) => `<li>${escapeHtml(when(c.start))}, ${escapeHtml(c.kind.replace(/_/g, ' '))}, ${escapeHtml(c.severity)}, ${length(c)}</li>`;
+  const item = (c) => `<li>${escapeHtml(when(c.start))}, ${escapeHtml(c.kind.replace(/_/g, ' '))}, ${escapeHtml(c.severity)}, ${length(c)}.</li>`;
   const lengthNow = (c) => (c.was_end ? escapeHtml(span(c.was_end - c.was_start)) : 'ongoing');
-  // only what differs: an outage still going on, started a few seconds apart, would read the same twice
+  // only what differs. An outage still going on opens a few seconds apart under two rule sets: say that, not the same minute twice.
   const change = (c) => {
     const diffs = [];
+    const offset = c.start - c.was_start;
     if (when(c.was_start) !== when(c.start)) diffs.push(`starts ${escapeHtml(when(c.was_start))} now, ${escapeHtml(when(c.start))} with the draft`);
+    else if (Math.abs(offset) >= 1) diffs.push(`opens ${escapeHtml(span(Math.abs(offset)))} ${offset < 0 ? 'earlier' : 'later'} with the draft`);
     if (c.was_severity !== c.severity) diffs.push(`${escapeHtml(c.was_severity)} now, ${escapeHtml(c.severity)} with the draft`);
     if (lengthNow(c) !== length(c)) diffs.push(`${lengthNow(c)} now, ${length(c)} with the draft`);
     const kind = escapeHtml(c.kind.replace(/_/g, ' '));
-    if (diffs.length) return `<li>${kind}: ${diffs.join('; ')}</li>`;
-    return `<li>${kind}: ${c.end ? 'the same minute' : 'still going on'}, ${escapeHtml(c.severity)}; only a few seconds apart</li>`;
+    return `<li>${kind}: ${diffs.length ? diffs.join('; ') : 'the same start and end'}${c.end ? '' : '; still going on'}.</li>`;
   };
   const block = (title, list, fn = item) => (list.length ? `<p class="fine top">${title}</p><ul class="set-changes">${list.map(fn).join('')}</ul>` : '');
   return block('Would no longer open:', gone) + block('Would newly open:', added) + block('Would open differently (same outage, other start, end or level):', moved, change);
@@ -82,7 +88,7 @@ export function previewHtml() {
   } else if (job && job.state === 'done' && job.draft && job.current) {
     body = `<div class="result st-${stale() ? 'unknown' : 'good'}${stale() ? ' stale' : ''}" id="settingsPreviewResult" role="status"><span>With these rules the last ${escapeHtml(days)} day${days === 1 ? '' : 's'} would have had ${counts(job)}.
       ${stale() ? '<b>Out of date: the draft changed since. Run the preview again.</b>' : ''}</span></div>
-      ${recordedNote(job)}${(job.notes || []).map((n) => `<p class="fine">${escapeHtml(n)}</p>`).join('')}${changeList(job)}`;
+      ${recordedNote(job)}${alertsNote(job)}${(job.notes || []).map((n) => `<p class="fine">${escapeHtml(n)}</p>`).join('')}${changeList(job)}`;
   } else if (job && (job.state === 'failed' || job.state === 'canceled')) {
     body = `<div class="result st-crit" id="settingsPreviewResult" role="status"><span>The preview ${job.state === 'failed' ? `failed${job.error ? `: ${escapeHtml(job.error)}` : ''}` : 'was canceled'}.</span></div>`;
   } else {

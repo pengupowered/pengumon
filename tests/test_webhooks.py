@@ -84,7 +84,7 @@ def test_json_payload_is_stable():
     body = _sender("json").payload(_alert(load_pct=72.0))
     assert body == {
         "version": 1, "source": "pengumon", "event": "incident_started", "severity": "critical",
-        "title": "Pengumon: ISP Outage", "message": "Cause: x\nHub unreachable", "incident_id": 7, "cause": "x",
+        "title": "Pengumon: ISP Outage", "message": "Cause: x\nHub unreachable", "incident_id": 7, "outage_id": None, "drops": None, "cause": "x",
         "service_id": None, "started_at": "2023-11-14T22:13:20Z", "ended_at": None, "duration_seconds": None,
         "load_pct": 72.0, "link": LINK,
     }

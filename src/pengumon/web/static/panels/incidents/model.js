@@ -2,15 +2,17 @@
 // another panel picked, and the view model every view of the card draws (view.js is the standard one; docs/themes.md,
 // "Drawing a card"). The body is the 7-day timeline, the window bar and the list of incidents (one line each: what, status,
 // when, how long, where; the description, load and evidence are the inspector's, which a row opens: the inspector is a
-// dialog, not a card). The header (count, busy-line toggle, filter, page size) and the footer (pager) are the frame, kept
+// dialog, not a card). Drops that belong together (an outage of 2 or more, GET /api/outages) are one row that opens to its
+// drops, which are the incident rows as they always were; an outage is shown whole (all its drops loaded) or not yet. The header (count, busy-line toggle, filter, page size) and the footer (pager) are the frame, kept
 // here.
 
 import { registerActions } from '../../js/dispatch.js';
 import { createCard } from '../../js/cards.js';
-import { icon, localFormat, nextMidnight, STATUS } from '../../js/util.js';
-import { CAUSES } from '../../js/path-api.js';
-import { CAP, hasMore, isLoading, loadAll, loadMore, loadSince, oldestLoaded, totalCounts } from './list.js';
-import { causeOf, durationOf, levelOfIncident, whenText } from './incidents.js';
+import { afterModalHistory, icon, localFormat, nextMidnight, STATUS } from '../../js/util.js';
+import { CAUSES, CAUSE_SHORT } from '../../js/path-api.js';
+import { CAP, hasMore, isLoading, loadAll, loadMore, loadSince, loadedOutages, oldestLoaded, totalCounts } from './list.js';
+import { causeOf, durationOf, formatDuration, levelOfIncident, whenText } from './incidents.js';
+import { settingsValues, val } from '../../js/settings-values.js';
 import standard from './view.js';
 
 const DAY = 86400;
@@ -22,6 +24,7 @@ let incidentSearchQuery = '';
 let incidentPageSize = 10;
 let incidentCurrentPage = 1;
 let showExpectedIncidents = false;
+const openOutages = new Set(); // outage ids whose drops are listed (state that survives a theme switch)
 let incidentWindow = null; // {start, end, label, lost, sent}: only the incidents overlapping this time (showIncidentWindow)
 
 const overlaps = (inc, win) => inc.start_time < win.end && (inc.end_time ?? Date.now() / 1000) > win.start;
@@ -90,52 +93,126 @@ function row(inc) {
   };
 }
 
+// A span as the summary line says it: "40 s", "14 min", "1h 05m".
+const spanText = (seconds) => (seconds < 60 ? `${Math.round(seconds)} s` : seconds < 3600 ? `${Math.round(seconds / 60)} min` : formatDuration(seconds));
+
+// One outage of 2 or more drops as the views draw it: the incident row's fields, a summary line, the label when it is set
+// and the control that lists its drops (the rows after it, `drops`, are in the view model only while it is open).
+function outageRow(o, members, complete, maintenance) {
+  const level = o.severity === 'critical' ? 'crit' : 'warn';
+  const open = openOutages.has(o.id);
+  const down = o.down_seconds > 0 ? ` · down ${spanText(o.down_seconds)}` : '';
+  const loaded = complete ? '' : ` (${members.length} loaded)`;
+  const stateNote = o.ongoing ? 'Ongoing' : o.settling ? 'may continue' : null;
+  const span = formatDuration(o.duration_seconds);
+  return {
+    id: `o${o.id}`,
+    kind: 'outage',
+    expected: false,
+    title: o.title,
+    status: { level, word: level === 'crit' ? 'Outage' : 'Degraded', icon: STATUS[level].icon, quiet: !o.ongoing },
+    when: { text: whenText(o.start_time), title: localFormat(o.start_time * 1000, { dateStyle: 'short', timeStyle: 'medium' }) },
+    duration: { text: o.ongoing ? `${span} so far` : span, lost: false,
+      title: `From the first drop's start to the last drop's end, ${span}, with the time between the drops. Down: the time a drop was critical.` },
+    cause: o.places.map((p) => CAUSE_SHORT[p] || p).join(' · '),
+    summary: `${o.drops} drops${down}${loaded}`,
+    state: stateNote,
+    maintenance: o.likely_maintenance ? { text: 'likely maintenance',
+      title: `Started between ${maintenance.start} and ${maintenance.end} at the provider: often planned work. Only a label: the downtime counts in full.` } : null,
+    toggle: { action: 'toggleOutage', arg: o.id, expanded: open,
+      label: `${o.title}: ${open ? 'hide' : 'show'} its ${o.drops} drops` },
+    open: { action: 'toggleOutage', arg: o.id, label: `${o.title}: ${open ? 'hide' : 'show'} its ${o.drops} drops` },
+    drops: open ? members.map((m) => ({ ...row(m), kind: 'drop' })) : []
+  };
+}
+
+// The rows of the list from the incidents loaded and the outages read (`s.outages`): an incident is a row, the drops of an
+// outage of 2 or more are one row (placed at its start), newest first. `matches`: whether an incident passes the filter and
+// the time window; an outage passes when any drop does (and then lists all of them). An outage with drops not loaded yet is
+// held back while there is more to load (list.js loads them), and shown with what is loaded at the end of the list.
+function buildRows(s, visible, matches, maintenance) {
+  const groups = new Map();
+  (s.outages || []).filter((o) => o.drops >= 2).forEach((o) => o.incident_ids.forEach((id) => groups.set(id, o)));
+  const byId = new Map(s.all.map((inc) => [inc.id, inc]));
+  const seen = new Set();
+  const found = [];
+  visible.forEach((inc) => {
+    const o = groups.get(inc.id);
+    if (!o) {
+      if (matches(inc)) found.push({ at: inc.start_time, row: () => row(inc) });
+      return;
+    }
+    if (seen.has(o.id)) return;
+    seen.add(o.id);
+    const members = o.incident_ids.map((id) => byId.get(id)).filter(Boolean);
+    const complete = members.length === o.incident_ids.length;
+    if (!complete && s.more) return;
+    if (members.some(matches)) found.push({ at: o.start_time, row: () => outageRow(o, members, complete, maintenance) });
+  });
+  return found.sort((a, b) => b.at - a.at);
+}
+
 // The view model from the card's state `s` ({all, query, pageSize, page, showExpected, window, totals, more, loading,
 // oldest}) and the moment: { timeline, window, list: {rows, empty}, frame, page, total } (page: the current page, kept inside the
 // pages there are). `window` is the bar naming the time another panel picked (its element has data-role="window": the
 // model focuses it when the panel is opened from another one); `frame` is what the header and footer show.
 export function present(s, nowMs) {
   const visible = s.showExpected ? s.all : s.all.filter((inc) => !inc.expected);
-  let filtered = s.window ? visible.filter((inc) => overlaps(inc, s.window)) : visible;
-  if (s.query) {
-    filtered = filtered.filter((inc) => (inc.title && inc.title.toLowerCase().includes(s.query))
+  const maintenance = s.maintenance || { start: '00:00', end: '06:00' };
+  const matches = (inc) => {
+    if (s.window && !overlaps(inc, s.window)) return false;
+    return !s.query || (inc.title && inc.title.toLowerCase().includes(s.query))
       || (inc.description && inc.description.toLowerCase().includes(s.query))
       || (inc.severity && inc.severity.toLowerCase().includes(s.query))
-      || (inc.cause_code && inc.cause_code.toLowerCase().includes(s.query)));
-  }
+      || (inc.cause_code && inc.cause_code.toLowerCase().includes(s.query));
+  };
+  const everything = buildRows(s, visible, () => true, maintenance);
+  const filtered = s.query || s.window ? buildRows(s, visible, matches, maintenance) : everything;
   const totalCount = filtered.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / s.pageSize));
   const page = Math.min(s.page, totalPages);
 
-  // the server's count when it gave one, else what is loaded so far ("+" while there may be more)
+  // the incidents behind the rows: the server's count when it gave one, else what is loaded so far ("+" while there may be more)
   const known = s.totals;
-  // the total shown is that same count wherever a total appears, while more is still to load (unfiltered; a filter counts what matches)
   const unfiltered = !s.query && !s.window;
   const knownShown = known ? (s.showExpected ? known.total : known.total - known.expected) : null;
-  const shownTotal = knownShown !== null && unfiltered && s.more ? Math.max(totalCount, knownShown) : totalCount;
+  const incidentCount = knownShown !== null ? knownShown : visible.length;
+  const grouped = everything.length !== visible.length; // (rows are fewer than incidents once an outage has 2 or more drops)
+  // the total shown, where a total appears, while more is still to load (unfiltered): rows are known only as far as loaded
+  const shownTotal = !grouped && knownShown !== null && unfiltered && s.more ? Math.max(totalCount, knownShown) : totalCount;
+  const plus = s.more && unfiltered && (grouped || knownShown === null) ? '+' : '';
+  // the list holds the newest CAP incidents; when the history has more, say so (the count above is the server's real one)
+  const capped = !s.more && s.all.length >= CAP && (!known || known.total > s.all.length);
+  const capNote = !capped ? '' : `Only the newest ${CAP} incidents are listed${known ? ` (of ${known.total.toLocaleString()} recorded)` : ''}. Older ones are in the ISP dossier (up to 30 days), the reliability report (up to 90 days) and the API (/api/incidents with limit and offset).`;
   const expectedCount = known ? known.expected : s.all.filter((inc) => inc.expected).length;
 
   const startIdx = (page - 1) * s.pageSize;
   const endIdx = Math.min(startIdx + s.pageSize, totalCount);
-  const items = filtered.slice(startIdx, endIdx);
+  const items = filtered.slice(startIdx, endIdx).map((f) => f.row());
+  // an open outage's drops follow its row (they are not rows of the pager)
+  const rows = items.flatMap((r) => [r, ...(r.drops || [])]);
   let empty = null;
   if (!items.length) {
     const [head, text] = s.query ? ['Nothing to show', 'No incident matches the filter.']
       : s.window ? emptyWindowText(s, s.window) : ['Nothing to show', 'No network incidents recorded.'];
     empty = { head, text, icon: 'ok' };
   }
+  const windowIncidents = s.window ? visible.filter(matches).length : 0;
   return {
     timeline: timeline(visible, s.window, nowMs),
-    window: s.window ? { label: s.window.label, found: totalCount === 1 ? '1 incident' : `${totalCount} incidents`,
+    window: s.window ? { label: s.window.label, found: windowIncidents === 1 ? '1 incident' : `${windowIncidents} incidents`,
       clear: { action: 'clearIncidentWindow', label: 'Show all', icon: 'close' } } : null,
-    list: { rows: items.map(row), empty },
+    list: { rows, empty },
     page,
     total: totalCount,
     frame: {
-      count: known ? `${s.showExpected ? known.total : known.total - known.expected} recorded events` : `${visible.length}${s.more ? '+' : ''} recorded events`,
+      cap: capNote,
+      count: capped ? `${incidentCount.toLocaleString()} recorded events · newest ${CAP} listed`
+        : grouped ? `${everything.length}${s.more ? '+' : ''} events · ${incidentCount} incidents`
+        : `${incidentCount}${s.more && knownShown === null ? '+' : ''} recorded events`,
       expected: { hidden: expectedCount === 0, text: `${s.showExpected ? 'Hide' : 'Show'} ${expectedCount} expected`, pressed: s.showExpected },
       info: totalCount === 0 ? 'Showing 0 events'
-        : `Showing ${startIdx + 1}–${endIdx} of ${shownTotal}${s.more && unfiltered && knownShown === null ? '+' : ''} events${s.query || s.window ? ' (filtered)' : ''}`,
+        : `Showing ${startIdx + 1}–${endIdx} of ${shownTotal}${plus} events${s.query || s.window ? ' (filtered)' : ''}${capped ? `, from the newest ${CAP} incidents` : ''}`,
       pageNum: `Page ${page} of ${totalPages}`,
       first: page <= 1, prev: page <= 1,
       next: page >= totalPages && !s.more, last: page >= totalPages && !s.more
@@ -143,8 +220,8 @@ export function present(s, nowMs) {
   };
 }
 
-// Made-up incidents for the parity test of the card's views: an ongoing outage, a degraded one with a loss span, an expected
-// busy-line event and a window naming an hour.
+// Made-up incidents for the parity test of the card's views: an ongoing incident, a degraded one with a loss span, an expected
+// busy-line event, an outage of 3 drops (open, with the maintenance label) and a window naming an hour.
 export function fixture() {
   const now = Date.now() / 1000;
   const inc = (id, extra) => ({ id, title: `Example incident ${id}`, severity: 'warning', cause: 'gateway', expected: false, description: '', start_time: now - 3600 * id, end_time: now - 3600 * id + 120,
@@ -152,17 +229,29 @@ export function fixture() {
   const all = [
     inc(1, { title: 'Example outage', severity: 'critical', end_time: null, duration_seconds: null, loss_seconds: null }),
     inc(2, { cause: 'line' }),
-    inc(3, { title: 'Example busy line', cause: 'load', expected: true, duration_seconds: 600, end_time: now - 3600 * 3 + 600, loss_seconds: 0 })
+    inc(3, { title: 'Example busy line', cause: 'load', expected: true, duration_seconds: 600, end_time: now - 3600 * 3 + 600, loss_seconds: 0 }),
+    // three drops of one provider event, the first inside the maintenance hours
+    inc(11, { title: 'Example line drop', severity: 'critical', cause: 'line', start_time: now - 3600 * 2, end_time: now - 3600 * 2 + 600, duration_seconds: 600 }),
+    inc(12, { title: 'Example line drop', severity: 'critical', cause: 'line', start_time: now - 3600 * 2 + 900, end_time: now - 3600 * 2 + 1200, duration_seconds: 300 }),
+    inc(13, { title: 'Example ISP loss', cause: 'isp', start_time: now - 3600 * 2 + 1500, end_time: now - 3600 * 2 + 1560, duration_seconds: 60 })
   ];
+  const outages = [{ id: 11, start_time: now - 3600 * 2, end_time: now - 3600 * 2 + 1560, ongoing: false, settling: false, duration_seconds: 1560,
+    down_seconds: 900, affected_seconds: 1260, drops: 3, critical_drops: 2, severity: 'critical', places: ['line', 'isp'], title: 'Example line drop',
+    cause_code: 'access_line_drop', likely_maintenance: true, incident_ids: [11, 12, 13] }];
+  openOutages.add(11);
   const win = { start: now - 4 * 3600, end: now, label: 'Example hour', lost: 3, sent: 60 };
-  return present({ all, query: '', pageSize: 10, page: 1, showExpected: true, window: win, totals: null, more: false, loading: false, oldest: null }, now * 1000);
+  const vm = present({ all, query: '', pageSize: 10, page: 1, showExpected: true, window: win, totals: null, more: false, loading: false, oldest: null,
+    outages, maintenance: { start: '00:00', end: '06:00' } }, now * 1000);
+  openOutages.delete(11);
+  return vm;
 }
 
 // ---------- the card ----------
 
 function state() {
   return { all: allRawIncidents, query: incidentSearchQuery, pageSize: incidentPageSize, page: incidentCurrentPage, showExpected: showExpectedIncidents,
-    window: incidentWindow, totals: totalCounts(), more: hasMore(), loading: isLoading(), oldest: oldestLoaded() };
+    window: incidentWindow, totals: totalCounts(), more: hasMore(), loading: isLoading(), oldest: oldestLoaded(),
+    outages: loadedOutages(), maintenance: { start: val(settingsValues(), 'incidents.maintenance_start', '00:00'), end: val(settingsValues(), 'incidents.maintenance_end', '06:00') } };
 }
 
 // Draws the card and its frame from the state now.
@@ -180,6 +269,7 @@ function render() {
     el.setAttribute('aria-pressed', String(f.expected.pressed));
     el.title = 'Incidents explained by a busy line (expected, not a fault)';
   });
+  set('incidentCapNote', (el) => { el.hidden = !f.cap; el.textContent = f.cap; });
   set('incidentPaginationInfo', (el) => { el.textContent = f.info; });
   set('incidentPageNum', (el) => { el.textContent = f.pageNum; });
   set('btnPageFirst', (el) => { el.disabled = f.first; });
@@ -192,6 +282,13 @@ export function initIncidentsCard(section) {
   root = section.querySelector('.panel-b');
   card = createCard({ panel: 'incidents', root, standard, fixture });
   document.addEventListener('zonechange', render); // the times and the timeline's days are on the page's clock
+}
+
+// Lists the drops of an outage under its row, or hides them again.
+export function toggleOutage(id) {
+  if (openOutages.has(id)) openOutages.delete(id);
+  else openOutages.add(id);
+  render();
 }
 
 export function toggleExpectedIncidents() {
@@ -227,7 +324,7 @@ export function showIncidentWindow(win) {
   // on a phone the panel's tab opens first; tabs.js shows it on hashchange, so the scroll waits for that
   if (section.hidden && tab && location.hash !== `#${tab}`) {
     window.addEventListener('hashchange', reveal, { once: true });
-    location.hash = tab;
+    afterModalHistory(() => { location.hash = tab; }); // the dialog that sent us here (Show in latency chart) gives its history entry back first
   } else reveal();
 }
 
@@ -277,7 +374,8 @@ registerActions('click', {
   showIncidentWindow: (el) => showIncidentWindow({ start: Number(el.dataset.start), end: Number(el.dataset.end),
     label: el.dataset.label, state: el.dataset.state, ...count(el, 'lost'), ...count(el, 'sent') }),
   clearIncidentWindow: () => showIncidentWindow(null),
-  toggleExpectedIncidents: () => toggleExpectedIncidents()
+  toggleExpectedIncidents: () => toggleExpectedIncidents(),
+  toggleOutage: (el) => toggleOutage(Number(el.dataset.arg))
 });
 registerActions('input', {
   handleIncidentSearch: (el) => handleIncidentSearch(el.value)

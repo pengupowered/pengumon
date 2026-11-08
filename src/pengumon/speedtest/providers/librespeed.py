@@ -20,7 +20,7 @@ MIB = 1024 * 1024
 class LibreSpeedProvider(SpeedProvider):
     name = "librespeed"
 
-    def __init__(self, base_url: str, clock: Callable[[], float] = time.monotonic,
+    def __init__(self, base_url: str, clock: Callable[[], float] = time.perf_counter,
                  transport: Optional[httpx.AsyncBaseTransport] = None):
         super().__init__(clock)
         self.base = base_url.rstrip("/")

@@ -58,8 +58,8 @@ def _populate(app_state):
     loop_monitor.tasks = 12  # (counted by the monitor on the loop)
 
 
-# Process figures some platforms do not give (process_stats: resident memory from /proc, Linux only; open descriptors on
-# Linux and macOS): their gauges are left out there, by design (docs/telemetry.md).
+# Process figures some platforms do not give (process_stats: whatever the platform's calls give; open descriptors on
+# Linux, macOS and Windows): their gauges are left out there, by design (docs/telemetry.md).
 PLATFORM_GAUGES = {"rss": "pengumon_process_memory_rss_bytes", "fds": "pengumon_process_open_fds"}
 
 

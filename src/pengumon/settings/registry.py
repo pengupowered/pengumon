@@ -145,7 +145,7 @@ class Setting:
     order: int = 0        # place within its section (set from the registry's order)
     related: Optional[str] = None  # a key shown beside it (the incident level next to a hop color), with a link to it
     also_in: Tuple[str, ...] = ()  # other sections that render the same value (asn_lookup: privacy too)
-    choice_labels: Optional[Dict[str, str]] = None  # stored choice -> the words the page shows ("critical": "Outages only")
+    choice_labels: Optional[Dict[str, str]] = None  # stored choice -> the words the page shows ("critical": "Critical incidents only")
     empty: Optional[str] = None  # what an empty (None) value means, in words ("learned from the router's traffic")
 
     def resolve(self) -> Tuple[Type[BaseModel], str, FieldInfo]:
@@ -243,13 +243,22 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Jitter to the internet targets above this is a fault upstream.", "Jitter spike levels", unit="ms"),
         _s("classifier.dns_timeout_threshold_ms", "Slow DNS above",
            "Median DNS lookup time above which DNS counts as slow.", "DNS", unit="ms"),
+        _s("incidents.group_gap_minutes", "Join drops into one outage when the next starts within",
+           "Drops at neighboring places of the path that start within this time of the last one ending are shown as "
+           "one outage. 0: every drop is its own outage. Changing it regroups the history; the incidents and "
+           "\"Recovery confirmed after\" are not changed.", "Outages", unit="min"),
+        _s("incidents.maintenance_start", "Likely maintenance from",
+           "An outage at the provider that starts in this window is labeled likely maintenance. Only a label: the "
+           "downtime counts in full. Time zone under Display.", "Outages", empty="never"),
+        _s("incidents.maintenance_end", "Likely maintenance until", "End of the window; it may cross midnight.",
+           "Outages", empty="never"),
     ])
     + _entries("alerts", [
         _s("notifications.public_url", "Dashboard address in alerts",
            "The link alerts carry back to this dashboard.", "Channels", empty="no link"),
-        _s("alerts.min_severity", "Send alerts for", "For network incidents only. With outages only, a warning that "
-           "turns into an outage is sent when it does. Host app alerts ignore this.", "Rules",
-           choice_labels={"warning": "Every incident", "critical": "Outages only"}),
+        _s("alerts.min_severity", "Send alerts for", "For network incidents only. With critical incidents only, a warning "
+           "that turns critical is sent when it does. Host app alerts ignore this.", "Rules",
+           choice_labels={"warning": "Every incident", "critical": "Critical incidents only"}),
         _s("alerts.delay_seconds", "Wait before alerting",
            "A network incident shorter than this sends nothing, not even a resolved message.", "Rules", **_MINUTES),
         _s("alerts.repeat_window_seconds", "Don't repeat the same cause within",

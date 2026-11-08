@@ -288,3 +288,116 @@ async def test_a_negative_content_length_is_a_protocol_error():
         await client.aclose()
         listening.close()
         await listening.wait_closed()
+
+
+async def answering(raw: bytes):
+    """A server on 127.0.0.1 that answers every connection's first request with `raw` and closes. Returns (the
+    listening server, its port, the requests it received)."""
+    received = []
+
+    async def answer(reader, writer):
+        try:
+            received.append(await reader.readuntil(b"\r\n\r\n"))
+            writer.write(raw)
+            await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+    listening = await asyncio.start_server(answer, "127.0.0.1", 0)
+    return listening, listening.sockets[0].getsockname()[1], received
+
+
+async def test_a_body_of_many_tiny_chunks_costs_little_and_arrives_in_few_pieces():
+    """100000 one-byte chunks (600 kB on the wire): every chunk of a read goes into one piece. Re-copying the buffer
+    for every line made this quadratic: the event loop (the whole app) was held for seconds, and for minutes with a
+    few MB, by a server that sends such a body (a LibreSpeed server is the owner's choice of any host)."""
+    n = 100_000
+    listening, port, _ = await answering(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + b"1\r\nx\r\n" * n
+                                         + b"0\r\n\r\n")
+    client = httpx.AsyncClient(transport=BulkTransport(), timeout=10.0)
+    loop = asyncio.get_running_loop()
+    try:
+        began = loop.time()
+        _, pieces = await get(client, f"http://127.0.0.1:{port}/")
+        took = loop.time() - began
+        assert b"".join(pieces) == b"x" * n
+        assert len(pieces) < 100 and took < 3.0, (len(pieces), took)       # (before: one piece per chunk, ~8 s)
+    finally:
+        await client.aclose()
+        listening.close()
+        await listening.wait_closed()
+
+
+@pytest.mark.parametrize("body", [
+    b"-1\r\n\r\n0\r\n\r\n",                        # a negative size (int() takes it)
+    b"0x5\r\nhello\r\n0\r\n\r\n",                  # a "0x" prefix (int(..., 16) takes it)
+    b"1_0\r\n" + b"x" * 16 + b"\r\n0\r\n\r\n",     # an underscore (int() takes it)
+    b"\r\nhello\r\n0\r\n\r\n",                     # no size at all
+    b"5\r\nhello, and more\r\n0\r\n\r\n",          # a chunk longer than its size
+    b"5\r\nhel",                                   # closed in the middle of a chunk
+    b"1" * (70 * 1024),                            # a size line with no end
+], ids=["negative", "0x prefix", "underscore", "no size", "longer than its size", "closed mid-chunk",
+        "size line with no end"])  # (short ids: Windows caps PYTEST_CURRENT_TEST, which holds the id, at 32,767 chars)
+async def test_a_malformed_chunked_body_is_a_protocol_error(body):
+    listening, port, _ = await answering(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + body)
+    client = httpx.AsyncClient(transport=BulkTransport(), timeout=5.0)
+    try:
+        with pytest.raises(httpx.RemoteProtocolError):
+            await get(client, f"http://127.0.0.1:{port}/")
+    finally:
+        await client.aclose()
+        listening.close()
+        await listening.wait_closed()
+
+
+async def test_chunk_extensions_and_trailers_are_dropped_and_the_body_arrives_whole():
+    listening, port, _ = await answering(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                                         b"5;name=value\r\nhello\r\nA \r\n, world!!!\r\n"
+                                         b"0\r\nX-One: 1\r\nX-Two: 2\r\n\r\n")
+    client = httpx.AsyncClient(transport=BulkTransport(), timeout=5.0)
+    try:
+        _, pieces = await get(client, f"http://127.0.0.1:{port}/")
+        assert b"".join(pieces) == b"hello, world!!!"
+    finally:
+        await client.aclose()
+        listening.close()
+        await listening.wait_closed()
+
+
+@pytest.mark.parametrize("method, headers", [
+    ("GET", {"X-Token": "abc\r\nX-Injected: 1"}),                # a CR LF in a value starts a header of its own
+    ("GET", {"X-Token": "abc\nGET /other HTTP/1.1"}),            # (a bare LF too)
+    ("GET", {"X-Token": "abc\x00"}),
+    ("GET", {"X Token": "abc"}),                                 # a name that is not a token
+    ("GET /other HTTP/1.1\r\nX:", {}),                           # a method that is not a token
+])
+async def test_a_request_head_that_would_break_out_of_its_line_is_refused_before_anything_is_sent(method, headers):
+    """httpx leaves these checks to h11, which this transport replaces; its URL already refuses control characters."""
+    listening, port, received = await answering(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+    client = httpx.AsyncClient(transport=BulkTransport(), timeout=5.0)
+    try:
+        with pytest.raises(httpx.LocalProtocolError):
+            await client.request(method, f"http://127.0.0.1:{port}/", headers=headers)
+        assert received == []
+        assert (await client.get(f"http://127.0.0.1:{port}/", headers={"X-Token": "abc"})).status_code == 200
+        assert len(received) == 1                                       # (a plain one goes through)
+    finally:
+        await client.aclose()
+        listening.close()
+        await listening.wait_closed()
+
+
+@pytest.mark.parametrize("status", [b"2000", b"20", b"9" * 5000], ids=["4 digits", "2 digits", "5000 digits"])
+async def test_a_status_that_is_not_three_digits_is_a_protocol_error(status):
+    """Not a ValueError out of int() (5000 digits are past Python's limit), whose text would become the test's reason."""
+    listening, port, _ = await answering(b"HTTP/1.1 " + status + b" OK\r\nContent-Length: 0\r\n\r\n")
+    client = httpx.AsyncClient(transport=BulkTransport(), timeout=5.0)
+    try:
+        with pytest.raises(httpx.RemoteProtocolError):
+            await client.get(f"http://127.0.0.1:{port}/")
+    finally:
+        await client.aclose()
+        listening.close()
+        await listening.wait_closed()

@@ -228,15 +228,105 @@ export function setClass(el, cls) {
 
 const openers = new Map(); // modal id -> the element that had focus when it opened, which gets it back on close
 
+// Back closes the topmost dialog (and stays on the page). Opening a dialog gives it a history entry, so Back lands on the
+// popstate below; closing it any other way (button, Escape) takes its entry away again, so no Back press is dead. Settings
+// and the path editor have their own route and guard (a hash, a draft to ask about), and the first-run question cannot be
+// dismissed: none of the three gets an entry here.
+const OWN_HISTORY = new Set(['settingsModal', 'pathEditorModal', 'accessSetupModal']);
+const pageToken = Math.random().toString(36).slice(2); // an entry of an earlier page load (a reload keeps history.state) is not this page's
+const entries = []; // modal ids, one per history entry of ours above the page's own (null: closed out of order, its entry is still there)
+let pendingEntries = 0; // entries given up by a close whose history.back() has not run yet
+let ownBacks = 0; // history moves we made ourselves: their popstate is not the user's Back
+let waiters = []; // functions that want the history settled (afterModalHistory)
+let takeTimer = null; // the pending takeEntryAway of a close (canceled when the page starts to unload)
+let leaving = false; // the page is unloading (a reload, a link): no more history moves of ours
+const ours = () => !!(history.state && history.state.pgModal === pageToken);
+const depthNow = () => (ours() ? history.state.depth : 0);
+
+function flushWaiters() {
+  if (pendingEntries || ownBacks) return;
+  const list = waiters;
+  waiters = [];
+  list.forEach((fn) => fn());
+}
+
+// Runs `fn` once a closing dialog has given its history entry back (a caller that closes a dialog and then changes the
+// hash would otherwise push before the entry is taken away, and the later Back would land on the wrong entry).
+export function afterModalHistory(fn) {
+  if (pendingEntries || ownBacks) waiters.push(fn); else fn();
+}
+
+function takeEntryAway() {
+  takeTimer = null;
+  if (leaving) return;
+  const extra = pendingEntries;
+  pendingEntries = 0;
+  if (extra && depthNow() === entries.length + extra) { // still the entry we gave up (nobody replaced or covered it)
+    ownBacks++;
+    setTimeout(() => { if (ownBacks) { ownBacks = 0; flushWaiters(); } }, 1000);
+    history.go(-extra);
+  } else flushWaiters();
+}
+
+function addEntry(id) {
+  entries.push(id);
+  const state = { pgModal: pageToken, depth: entries.length };
+  if (pendingEntries === 1 && depthNow() === entries.length) { // a dialog was just closed in this task: its entry is reused
+    pendingEntries = 0;
+    history.replaceState(state, '');
+    flushWaiters();
+  } else history.pushState(state, '');
+}
+
+function dropEntry(id) {
+  const at = entries.lastIndexOf(id);
+  if (at < 0) return;
+  entries[at] = null;
+  if (at !== entries.length - 1) return; // under another dialog: its entry goes when that one's does
+  let k = 0;
+  while (entries.length && entries[entries.length - 1] === null) { entries.pop(); k++; }
+  const first = pendingEntries === 0;
+  pendingEntries += k;
+  if (first) takeTimer = setTimeout(takeEntryAway, 0); // after what the caller does next in this task (Settings replaces the entry itself)
+}
+
+window.addEventListener('popstate', () => {
+  if (ownBacks) { ownBacks = 0; flushWaiters(); return; }
+  const depth = depthNow();
+  while (entries.length > depth) { // the user's Back: close what the entry left behind
+    const id = entries.pop();
+    if (id && document.getElementById(id)?.classList.contains('active')) closeModal(id);
+  }
+});
+// A history move of ours after a reload or a link has started would cancel that navigation (a traversal aborts it): once the
+// page starts to unload, the pending move is dropped (the entry stays: it is this page's, and the next load clears its mark).
+window.addEventListener('beforeunload', () => {
+  leaving = true;
+  if (takeTimer !== null) { clearTimeout(takeTimer); takeTimer = null; }
+  // still here after a while: the navigation was canceled (a draft's "leave this page?" answered Stay): carry on
+  setTimeout(() => { leaving = false; if (pendingEntries && takeTimer === null) takeTimer = setTimeout(takeEntryAway, 0); }, 2000);
+});
+let unloading = false; // the page is being unloaded: its fetches are cut off (Firefox rejects them), which is no error
+window.addEventListener('pagehide', () => { unloading = true; });
+window.addEventListener('pageshow', (ev) => { if (ev.persisted) { leaving = false; unloading = false; } }); // back from the bfcache: the page lives on
+// Whether the page is going away (a reload or a link has started): a request that fails now failed because of that.
+export const pageLeaving = () => leaving || unloading;
+// A reload keeps the entry of a dialog that was open: it is the page now, so it loses the mark (Back stays one press behind).
+window.addEventListener('load', () => { if (history.state && history.state.pgModal && history.state.pgModal !== pageToken) history.replaceState(null, ''); }, { once: true });
+
 export function openModal(id) {
   const modal = document.getElementById(id);
-  if (!modal.classList.contains('active')) openers.set(id, document.activeElement);
+  if (!modal.classList.contains('active')) {
+    openers.set(id, document.activeElement);
+    if (!OWN_HISTORY.has(id)) addEntry(id);
+  }
   modal.classList.add('active');
 }
 
 export function closeModal(id) {
   const modal = document.getElementById(id);
   modal.classList.remove('active');
+  dropEntry(id);
   const back = openers.get(id);
   openers.delete(id);
   const lost = !document.activeElement || document.activeElement === document.body || modal.contains(document.activeElement);

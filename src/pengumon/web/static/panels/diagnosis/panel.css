@@ -33,7 +33,7 @@ button.node:hover { transform: translateY(-2px); border-color: var(--line-strong
 .node-st { margin-left: auto; flex: none; color: var(--st); display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: var(--fw-semi); line-height: 1.2; white-space: nowrap; }
 .node-val { display: flex; align-items: baseline; gap: 4px; min-height: 30px; }
 .node-val b { font-size: var(--fs-2xl); font-weight: var(--fw-bold); letter-spacing: -.03em; line-height: 1; }
-.node-val b.node-word { font-size: var(--fs-lg); letter-spacing: -.01em; }
+.node-val b.node-word { font-size: var(--fs-lg); letter-spacing: -.01em; white-space: nowrap; } /* "Not probed" stays on one line */
 .node-val span { color: var(--ink-3); font-size: var(--fs-sm); }
 .node-meta { display: flex; gap: var(--sp-3); font-size: var(--fs-xs); color: var(--ink-3); flex-wrap: wrap; }
 .node-meta b { color: var(--ink-2); font-weight: var(--fw-semi); }
@@ -72,6 +72,7 @@ button.node:hover { transform: translateY(-2px); border-color: var(--line-strong
 .chain[data-dense="1"] .node-ic { width: 26px; height: 26px; }
 .chain[data-dense="1"] .node-top { gap: 6px; }
 .chain[data-dense="1"] .node-val b { font-size: var(--fs-xl); }
+.chain[data-dense="1"] .node-val b.node-word { font-size: var(--fs-lg); } /* a word ("Not probed") is not a figure: it must fit one line in a narrow node */
 .chain[data-dense="1"] .link .delta { padding: 1px 4px; font-size: 10px; }
 /* Many nodes in a medium hero (about 1024 px): the node icon goes, the label keeps its room */
 @container (min-width: 861px) and (max-width: 1100px) {
@@ -122,6 +123,7 @@ button.node:hover { transform: translateY(-2px); border-color: var(--line-strong
 .chain[data-dense="1"] .node-top { flex-wrap: wrap; row-gap: 3px; }
 .chain[data-dense="1"] .node-id { flex: 1 1 0; }
 .chain[data-dense="1"] .node-st { flex-basis: 100%; margin-left: 0; }
+.chain[data-dense="1"] .node-st { min-width: 0; max-width: 100%; white-space: normal; } /* a long word ("IPv6 unavailable on this host") wraps inside the node instead of running out of it */
 @container (max-width: 860px) {
   .node { grid-template-areas: "top top top" "name name name" "val meta spark"; }
   .node-spark { grid-area: spark; width: 100%; max-width: 150px; justify-self: end; margin: 0; }

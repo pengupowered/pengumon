@@ -130,7 +130,7 @@ function datasets(m, at) {
       sets.push({ id: 'band_hi', label: 'p10–p90', data: m.band.hi, borderWidth: 0, pointRadius: 0, backgroundColor: `${resolve(m.band.color)}26`, fill: '-1', spanGaps: false, order: 5 });
     }
     sets.push({ id: l.id, label: l.label, pathLabel: l.label, data: l.data, borderColor: color, backgroundColor: color,
-      borderWidth: 2, pointRadius: 0, tension: 0.25, spanGaps: false, order: 1 });
+      borderWidth: 2, pointRadius: 0, tension: 0.25, spanGaps: false, order: 1, ...(l.dash ? { borderDash: l.dash } : {}) });
   });
   if (m.wan) {
     sets.push({ id: 'wan_load', label: 'WAN download', data: m.wan.data, yAxisID: 'yLoad', borderColor: token('--ink-4'),
@@ -233,7 +233,7 @@ function charts(latencyCanvas, lossCanvas) {
 const KEY_STYLE = { line: '', band: ';opacity:.3', wan: ';opacity:.5', lost: ';width:3px;height:11px' };
 function legendHtml(items) {
   return items.map((it) => {
-    const key = `<i class="key${it.kind === 'line' ? ' line' : ''}" style="--c:${escapeHtml(it.color)}${KEY_STYLE[it.kind]}"></i>`;
+    const key = `<i class="key${it.kind === 'line' ? ' line' : ''}${it.dash ? ' dash' : ''}" style="--c:${escapeHtml(it.color)}${KEY_STYLE[it.kind]}"></i>`;
     const words = it.kind === 'line'
       ? `<b data-v="label">${escapeHtml(it.label)}</b>${it.sub !== undefined ? `<span class="muted" data-v="sub">${escapeHtml(it.sub)}</span>` : ''}`
       : `<span data-v="label">${escapeHtml(it.label)}</span>`;
@@ -275,6 +275,7 @@ function legendList(box, prefix, arrange) {
         const entry = box.children[i];
         const p = refs.get(entry);
         entry.style.setProperty('--c', it.color);
+        p.key.classList.toggle('dash', !!it.dash);
         if (it.title !== undefined) entry.title = it.title;
         text(p.label, it.label);
         if (!p.sub) return;

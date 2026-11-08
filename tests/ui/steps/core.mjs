@@ -722,11 +722,76 @@ export const steps = [
     await until(() => document.getElementById("tracerouteModal").classList.contains("active") && document.activeElement?.id === "traceTargetInput");
     ok("the trace dialog was loaded by that click", (await loaded()).split(",").includes("trace"));
     await click("[data-action=closeModal][data-arg=tracerouteModal]");
+    // the closed dialog gives its history entry back a moment later (js/util.js): a hash set before that lands could be
+    // undone by it, which no person is quick enough to meet; wait for it, as a person would
+    await until(() => !document.getElementById("tracerouteModal").classList.contains("active") && !history.state?.pgModal);
     // a link to #settings opens the page's Settings on load
     await page.evaluate(() => { location.hash = "settings"; });
     await page.reload({ waitUntil: "load" });
     await until(() => document.getElementById("settingsModal").classList.contains("active") && document.querySelectorAll("#settingsSections .set-row").length > 10);
     await click("[data-action=settingsClose]");
     await until(() => !document.getElementById("settingsModal").classList.contains("active") && location.hash === "");
+  }],
+
+  ["Back closes the top dialog and stays on the page; closing by its button or Escape leaves no history entry behind (Dossier, Layout, Trace route)", async ({ click, eq, layoutMounted, ok, page, sleep, until }) => {
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    // the page's own entry carries a mark: a press of Back that is "dead" (an entry left behind by a closed dialog) would
+    // show as the dialog's entry still being the current one after the dialog has closed
+    await page.evaluate(() => history.replaceState({ mark: "base" }, ""));
+    const here = () => page.evaluate(() => ({ mark: history.state?.mark ?? (history.state?.pgModal ? "dialog" : null), open: [...document.querySelectorAll(".modal.active")].map((m) => m.id).join(), url: location.pathname + location.search + location.hash }));
+    const base = (await here()).url;
+    const dialogs = [["Dossier", "[data-action=openDossierModal]", "dossierModal", "[data-action=closeModal][data-arg=dossierModal]"],
+      ["Layout", "#headerTools [data-action=openLayoutDialog]", "layoutModal", "[data-action=closeModal][data-arg=layoutModal]"],
+      ["Trace route", "[data-action=openModal][data-arg=tracerouteModal]", "tracerouteModal", "[data-action=closeModal][data-arg=tracerouteModal]"]];
+    for (const [name, opener, id, closer] of dialogs) {
+      await click(opener);
+      await until((i) => document.getElementById(i).classList.contains("active"), id);
+      eq(`${name}: opening gives it a history entry`, (await here()).mark, "dialog");
+      await page.evaluate(() => history.back());
+      await until((i) => !document.getElementById(i).classList.contains("active"), id);
+      let now = await here();
+      eq(`${name}: Back closed it and stayed on the page`, `${now.url}|${now.mark}|${now.open}`, `${base}|base|`);
+      for (const how of ["button", "Escape"]) {
+        await click(opener);
+        await until((i) => document.getElementById(i).classList.contains("active"), id);
+        if (how === "button") await click(closer); else await page.keyboard.press("Escape");
+        await until((i) => !document.getElementById(i).classList.contains("active"), id);
+        await until(() => history.state?.mark === "base"); // its entry went with it
+        await sleep(200);
+        now = await here();
+        eq(`${name}: closed by ${how}, no entry left behind`, `${now.url}|${now.mark}|${now.open}`, `${base}|base|`);
+      }
+    }
+    // one dialog over another: Back closes the top one only
+    await click("[data-action=openDossierModal]");
+    await until(() => document.getElementById("dossierModal").classList.contains("active"));
+    await click("[data-action=openAiPackModal]");
+    await until(() => document.getElementById("aiPackModal").classList.contains("active"));
+    await page.evaluate(() => history.back());
+    await until(() => !document.getElementById("aiPackModal").classList.contains("active"));
+    eq("Back closed Ask AI only", (await here()).open, "dossierModal");
+    await page.evaluate(() => history.back());
+    await until(() => !document.getElementById("dossierModal").classList.contains("active"));
+    eq("a second Back closed the Dossier too, still on the page", `${(await here()).url}|${(await here()).mark}`, `${base}|base`);
+    ok("the page was never left", await page.evaluate(() => location.href.startsWith("http")));
+  }],
+
+  ["a reload right after a dialog closes is not cancelled by the dialog giving its history entry back", async ({ click, eq, layoutMounted, page, until }) => {
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await click("[data-action=openDossierModal]");
+    await until(() => document.getElementById("dossierModal").classList.contains("active"));
+    await page.evaluate(() => { window.__beforeReload = true; });
+    // the close schedules the entry's removal for later in this task's wake; the reload starts in the same task, so the
+    // removal (a history traversal) would land on the reload in flight and cancel it
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "load", timeout: 15000 }),
+      page.evaluate(() => { document.querySelector("[data-action=closeModal][data-arg=dossierModal]").click(); location.reload(); }),
+    ]);
+    eq("the reload went through (a new page)", await page.evaluate(() => window.__beforeReload === undefined), true);
+    await layoutMounted();
   }],
 ];

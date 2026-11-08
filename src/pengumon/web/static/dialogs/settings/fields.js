@@ -6,7 +6,7 @@
 import { escapeHtml } from '../../js/util.js';
 import { panelTitles } from '../../js/layout.js';
 import { HOUR_UNITS, choiceFor, fmt, hoursText, isNumeric, parse, problem, readHours, same, speedEstimate, splitHours, toShown } from './model.js';
-import { S, isEnv, inDraft, listItems, roundSeconds, setValue, valueOf, valueState } from './store.js';
+import { S, changed, isEnv, inDraft, listItems, roundSeconds, setValue, valueOf, valueState } from './store.js';
 
 const ISP = 'classifier.isp_latency_spike_threshold_ms';
 const ZONE = 'general.timezone';
@@ -84,7 +84,7 @@ function themeOptions(spec, value) {
   return choices.map(([id, name]) => `<option value="${escapeHtml(id)}"${id === value ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
 }
 
-// A stored value of `spec` as the page shows it: "15 %", "5 min", "1 per million", "Outages only", "on", "New York
+// A stored value of `spec` as the page shows it: "15 %", "5 min", "1 per million", "Critical incidents only", "on", "New York
 // (America/New_York)", or what an empty value means ("learned from the router's traffic", else "none").
 export function shownValue(spec, v) {
   if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return spec.empty || 'none';
@@ -318,6 +318,7 @@ export function edit(el) {
   if (got.problem) {
     S.invalid[key] = got.problem;
     refreshRows();
+    changed(); // Save goes off and the summary of what stops it follows
     return;
   }
   setValue(key, got.stored); // clears an earlier problem; the page then refreshes the rows

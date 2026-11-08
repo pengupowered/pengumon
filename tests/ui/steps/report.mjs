@@ -8,6 +8,10 @@ export const steps = [
     await until(() => /^Last 7 days:/.test(document.getElementById("reportOutput").dataset.summary ?? ""));
     ok("headline", /\d+\.\d\d%/.test(await text("#reportOutput .rep-hero")));
     ok("hop rows", (await count("#reportOutput .rep-hops tbody tr")) >= 3);
+    // the seed's network incidents that are drops of the line: the night event (3 drops, down 6 min, 13 min from the first to the last), the
+    // gateway drop and the line loss (one drop each); the label is on the night event, and on the line loss too when this runs at night
+    const outages = (await text("#reportOutput [data-v=outages]")).trim();
+    ok(`the outages next to the incidents (${outages})`, /^3 outages, down 6 min in all, longest 13 min, [12] likely maintenance$/.test(outages));
     const hops = await page.$$eval("#reportOutput .rep-hops tbody td.lead .primary", (els) => els.slice(0, 3).map((e) => `${e.textContent}|${e.title}`).join(","));
     eq("hops as the rest of the page names them, the configured name on hover", hops,
       "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");

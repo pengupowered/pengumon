@@ -10,6 +10,7 @@
 // outage rules, versions.js the kept versions, lists/ the list editors.
 
 import { registerActions } from '../../js/dispatch.js';
+import { bus } from '../../js/bus.js';
 import { browserLayout } from '../../js/layout.js';
 import { closeMenus, fetchNetworkInfo, toast } from '../../js/chrome.js';
 import { refreshSettingsValues } from '../../js/settings-values.js';
@@ -20,6 +21,7 @@ import { accessHtml, loadAccess } from './access.js';
 import { edit, choose, isLayoutKey, layoutRowHtml, refreshRows, resetLayout, rowHtml, speedEstimateRowHtml, speedMlabRowHtml, useZone } from './fields.js';
 import { cancelPreview, defaultDays, hasRules, afterPreviewChange, previewHtml, runPreview, shown as previewShown, stopPreview } from './preview.js';
 import { applySearch, clearSearch, initSearch } from './search.js';
+import { conflictNames, problemList, problemSummary } from './problems.js';
 import { rememberSlot, refreshSlots, resetEditing, slotHtml } from './secrets.js';
 import {
   S, applyDocument, changeCount, changed, clearDraft, dropConflicts, hasProblems, listItems, listState, load, watchDraft, setList, setValue
@@ -37,6 +39,7 @@ let versionsShown = false;
 let confirmed = null; // what "Discard" / "Replace" does
 let validateTimer = 0;
 let validateSeq = 0;
+let problemsShown = []; // what stops Save now (problems.js), for the summary above the footer and its jump
 let notes = []; // [{level, html}] at the top of the page
 let ownBack = false; // reallyClose took the guard entry away with history.back(): the hashchange that follows is not the user's
 let guarded = false; // a history entry was added for this draft, so Back comes back to the dialog (guardBack)
@@ -196,9 +199,15 @@ function updateChrome() {
   const n = changeCount();
   const save = $('btnSettingsSave');
   save.querySelector('span').textContent = n ? `Save ${n} change${n === 1 ? '' : 's'}` : 'Save';
-  const local = Object.values(editors).some((ed) => ed.localProblems && ed.localProblems().length);
-  save.disabled = n === 0 || hasProblems() || local || saving;
-  save.title = hasProblems() ? 'Fix the marked fields first' : '';
+  const localList = Object.values(editors).flatMap((ed) => (ed.localProblems ? ed.localProblems() : []));
+  const stuck = problemList(localList);
+  save.disabled = n === 0 || hasProblems() || localList.length > 0 || saving;
+  const why = problemSummary(stuck);
+  save.title = hasProblems() || localList.length ? (why || 'Fix the marked fields first') : '';
+  problemsShown = stuck;
+  const box = $('settingsProblems');
+  box.hidden = !stuck.length;
+  $('settingsProblemText').textContent = why;
   $('btnSettingsPreview').hidden = !hasRules();
   const panel = $('settingsPreview');
   panel.hidden = !previewShown();
@@ -402,7 +411,7 @@ async function saved(result) {
   try { await fetchState(); } catch (e) { after.push({ level: 'warn', html: 'Saved. The page could not re-read the settings; reopen it.' }); }
   setNotes(after);
   if (S.server) { renderAll(); fetchVersions().then((list) => { versions = list; renderVersions(); updateChrome(); }).catch(() => {}); }
-  refreshSettingsValues();
+  refreshSettingsValues().then(() => bus.publish('settings:saved', applied)); // (the Incidents card regroups on it)
   refreshThemes(); // the default theme, the effects switch or a custom theme may have changed
   if (applied.includes('display.grafana_url')) grafanaLinks();
   if (applied.includes('devices')) setTimeout(() => location.reload(), 1500);
@@ -427,8 +436,9 @@ async function grafanaLinks() {
 async function conflicted(data) {
   const conflicts = data.conflicts || [];
   try { await fetchState(); } catch (e) { addNote('crit', '<b>Changed elsewhere,</b> and the page could not re-read the settings.'); return; }
-  const dropped = dropConflicts(conflicts);
-  setNotes([{ level: 'warn', html: `<b>Changed elsewhere; kept theirs:</b> ${escapeHtml(sentence(dropped.length ? dropped : conflicts))}. Your other changes are still here: press Save again.` }]);
+  const named = conflictNames(conflicts);
+  dropConflicts(conflicts);
+  setNotes([{ level: 'warn', html: `<b>Changed elsewhere; kept theirs:</b> ${escapeHtml(named.join('; '))}. Your other changes are still here: press Save again.` }]);
   renderAll();
   changed();
 }
@@ -520,6 +530,27 @@ function jumpToRow(key) {
   setTimeout(() => row.classList.remove('flash'), 1200);
 }
 
+// The first thing that stops Save: its row, or its list card (opened).
+function firstProblem() {
+  const p = problemsShown[0];
+  if (!p) return;
+  if (p.key) { jumpToRow(p.key); return; }
+  clearSearch();
+  const box = p.list && document.querySelector(`[data-box="${p.list}"]`);
+  if (!box) return;
+  const card = (p.id !== undefined ? [...box.querySelectorAll('[data-id]')].find((c) => c.dataset.id === p.id) : null) || box.querySelector(`[data-i="${p.i}"]`) || box.querySelector('.bad, .invalid') || box;
+  const adv = card.closest('details.set-adv');
+  if (adv) adv.open = true;
+  if (card.tagName === 'DETAILS') card.open = true;
+  // the card's top, then the field at fault if it is further down: centering the whole card put the top of a card taller
+  // than half the dialog, and with it the problem, above the visible part
+  card.scrollIntoView({ block: 'start' });
+  const field = card.querySelector('[aria-invalid="true"], .bad, .set-lmsg:not(:empty), [data-lmsg]:not(:empty)');
+  if (field) field.scrollIntoView({ block: 'nearest' });
+  card.classList.add('flash');
+  setTimeout(() => card.classList.remove('flash'), 1200);
+}
+
 function confirmYes() {
   const fn = confirmed;
   hideConfirm();
@@ -547,6 +578,7 @@ registerActions('click', {
   settingsChoice: (el) => choose(el.dataset.key, el.dataset.arg),
   settingsGoto: (el) => goto(el.dataset.arg),
   settingsJump: (el) => jumpToRow(el.dataset.arg),
+  settingsFirstProblem: () => firstProblem(),
   settingsConfirmYes: () => confirmYes(),
   settingsConfirmNo: () => keepEditing(),
   settingsPreviewCancel: () => { cancelPreview(); $('settingsPreview').querySelector('[data-action=settingsPreviewRun]')?.focus(); },

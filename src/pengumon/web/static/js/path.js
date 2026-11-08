@@ -14,7 +14,7 @@ export const SERIES = [
   { id: 'path_line', name: 'Gateway', cats: ['gateway'], color: '--s3', combine: 'worst' },
   { id: 'path_internet', name: 'Internet', cats: ['public'], fallback: ['dns'], color: '--s2', combine: 'median' },
   // the IPv6 servers discovery proposes as their own group: a line of their own, as Path health has a node of their own
-  { id: 'path_internet_v6', name: 'Internet (IPv6)', cats: ['public'], group: V6_GROUP, color: '--s4', combine: 'median' }
+  { id: 'path_internet_v6', name: 'Internet (IPv6)', cats: ['public'], group: V6_GROUP, color: '--s4', combine: 'median', dash: [6, 4] } // dashed: amber beside orange-red is not a difference to rely on
 ];
 
 const has = (v) => v !== null && v !== undefined;

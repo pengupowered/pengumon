@@ -21,7 +21,9 @@ classifier on the characterization scenario):
 * the load constants of engine/load.py, applied to the stored WAN rates of the router;
 * the speed tests stored in the window (`speed_tests`): a round inside a test, or in the tail the judged window still
   holds of it, is judged with `testing=True`, as the live classifier is (`SpeedMask`, pengumon.speedtest.mask);
-* the notifier's `AlertPolicy` (notify/policy.py) to count the alerts each rule set's incidents would have sent.
+* the notifier's `AlertPolicy` (notify/policy.py) to count the alerts each rule set's incidents would have sent, with
+  the drops joined into outages as the notifier joins them (`incidents.group_gap_minutes`, the running config's: the
+  preview does not change it): one alert per outage.
 
 How the samples become rounds: they are read in ts order, one hour at a time (`samples` is `(ts, target)` WITHOUT
 ROWID, so an hour is one primary-key range). A new round starts when a target id repeats or the time jumps by more than
@@ -54,6 +56,8 @@ from pengumon.engine.load_settings import LineConfig
 from pengumon.engine.prober import NetworkProber
 from pengumon.engine.prober_settings import DEFAULT_WINDOW_PROBES, DnsProbeConfig, HopStatusConfig
 from pengumon.incidents.model import Incident
+from pengumon.incidents.outages import GROUPABLE_PLACES, Drop, OutageBuilder, place_of
+from pengumon.incidents.settings import IncidentsConfig
 from pengumon.incidents.taxonomy import kinds_in_scope
 from pengumon.lines import wording
 from pengumon.engine.path_rules import ignoring_ping
@@ -225,28 +229,58 @@ def _announce_time(rule_set: _RuleSet, incident: Incident, policy: AlertPolicy) 
     return at
 
 
-def _alerts(rule_set: _RuleSet, timezone_name: Optional[str], last_ts: float) -> int:
+def _outages(incidents: List[Incident], policy: AlertPolicy, last_ts: float) -> List[List[Incident]]:
+    """The incidents grouped as the notifier groups them (incidents.outages.OutageBuilder, the same joining rule): the
+    drops of one outage together in start order, every other incident (expected, not a place of the path, or grouping
+    off) alone. An incident still open ends at the end of the window."""
+    rules = policy.outage_rules
+    groups: List[List[Incident]] = []
+    current: Optional[Tuple[OutageBuilder, List[Incident]]] = None
+    for number, incident in enumerate(sorted(incidents, key=lambda i: i.start_time)):
+        place = place_of(incident)
+        if incident.expected or not rules.grouping or place not in GROUPABLE_PLACES:
+            groups.append([incident])
+            continue
+        drop = Drop(number, incident.start_time, incident.end_time, incident.severity, place, incident.title, incident.cause_code)
+        if current is not None and current[0].joins(drop, rules.gap_seconds, last_ts):
+            current[0].add(drop)
+            current[1].append(incident)
+        else:
+            current = (OutageBuilder(drop), [incident])
+            groups.append(current[1])
+    return groups
+
+
+def _alerts(rule_set: _RuleSet, timezone_name: Optional[str], last_ts: float,
+            incidents: Optional[IncidentsConfig] = None) -> int:
     """The incident alerts this rule set's incidents would have sent in the window (the "resolved" messages aren't
-    counted), with the repeat window judged at send time per cause, as the notifier does."""
-    policy = AlertPolicy(rule_set.alerts, timezone_name or "UTC")
-    due = sorted((at, incident.cause_code) for incident in rule_set.incidents
-                 if (at := _announce_time(rule_set, incident, policy)) is not None and at <= last_ts)
+    counted), with the repeat window judged at send time per cause, as the notifier does. With `incidents` (the
+    running config's section) grouping on, the drops of an outage send one alert: at the earliest time one of them
+    would have been announced alone (a drop that joins asks again when the first was not announced, as the notifier
+    does), counted under the cause of its first drop."""
+    policy = AlertPolicy(rule_set.alerts, timezone_name or "UTC", incidents)
+    due = []
+    for group in _outages(rule_set.incidents, policy, last_ts):
+        times = [at for i in group if (at := _announce_time(rule_set, i, policy)) is not None and at <= last_ts]
+        if times:
+            due.append((min(times), group[0].cause_code))
     last_sent: Dict[str, float] = {}
     sent = 0
-    for at, cause in due:
+    for at, cause in sorted(due):
         if policy.repeat_allowed(last_sent.get(cause), at):
             last_sent[cause] = at
             sent += 1
     return sent
 
 
-def _counts(rule_set: _RuleSet, last_ts: float, timezone_name: Optional[str] = None) -> Dict[str, Any]:
+def _counts(rule_set: _RuleSet, last_ts: float, timezone_name: Optional[str] = None,
+            incidents: Optional[IncidentsConfig] = None) -> Dict[str, Any]:
     critical = sum(1 for i in rule_set.incidents if i.severity == "critical")
     warning = sum(1 for i in rule_set.incidents if i.severity == "warning")
     seconds = sum(((i.end_time if i.end_time is not None else last_ts) - i.start_time) for i in rule_set.incidents)
     return {"incidents": len(rule_set.incidents), "critical": critical, "warning": warning,
             "busy_hidden": rule_set.busy_runs, "total_seconds": round(seconds, 1),
-            "alerts": _alerts(rule_set, timezone_name, last_ts)}
+            "alerts": _alerts(rule_set, timezone_name, last_ts, incidents)}
 
 
 def _overlap(a: Tuple[float, Optional[float]], b: Tuple[float, Optional[float]]) -> bool:
@@ -294,15 +328,26 @@ def _recorded(conn: sqlite3.Connection, start: float, end: float) -> Optional[in
         return None
 
 
+def _lower_first(text: str) -> str:
+    """"The path ..." as the middle of a sentence; an acronym or a name ("DNS", "Wi-Fi") keeps its capital."""
+    return text[:1].lower() + text[1:] if text[:1].isupper() and text[1:2].islower() else text
+
+
 def _path_notes(conn: sqlite3.Connection, start: float, end: float, tz) -> List[str]:
     try:
-        rows = conn.execute("SELECT applied_at, summary FROM path_versions WHERE applied_at >= ? AND applied_at <= ? "
-                            "ORDER BY revision", (start, end)).fetchall()
+        rows = conn.execute("SELECT applied_at, summary, revision FROM path_versions WHERE applied_at >= ? AND "
+                            "applied_at <= ? ORDER BY revision", (start, end)).fetchall()
     except sqlite3.Error:
         return []
-    # the first version only records the path as it was; it is not a change
-    return [f"The path was changed on {_day(at, tz)} ({summary.rstrip('. ')}). The replay uses today's path for the whole window."
-            for at, summary in rows if summary != BASELINE_SUMMARY]
+    # the first version only records the path as it was (a baseline, or the import of config.yaml); it is not a change.
+    # Changes on one day are one note.
+    by_day: Dict[str, List[str]] = {}
+    for at, summary, revision in rows:
+        if summary == BASELINE_SUMMARY or revision == 1:
+            continue
+        by_day.setdefault(_day(at, tz), []).append(_lower_first(summary.rstrip(". ")))
+    return [f"The path was changed on {day} ({'; '.join(parts)}). The replay uses today's path for the whole window."
+            for day, parts in by_day.items()]
 
 
 def _read_rates(conn: sqlite3.Connection, device_id: Optional[str], start: float, end: float) -> List[Rate]:
@@ -348,6 +393,7 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
     spec: start, end (ts), round_seconds, targets (TargetConfig dicts, in path order), dns_probes (DnsProbeConfig dicts),
     hop_status (HopStatusConfig dict), rules {"current"|"draft": {"classifier": {...}, "line": {down_mbps, up_mbps},
     "alerts": {...} (AlertsConfig; the defaults when left out)}},
+    incidents (IncidentsConfig; left out: no grouping),
     learned {down_mbps, up_mbps}, wan_device_id, line_technology, timezone. Returns the result document and the two rule
     sets (with their incidents, for tests)."""
     start, end = float(spec["start"]), float(spec["end"])
@@ -356,6 +402,8 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
     dns_probes = [DnsProbeConfig.model_validate(d) for d in spec.get("dns_probes", [])]
     hop_status = HopStatusConfig.model_validate(spec.get("hop_status") or {})
     tz = zone(spec.get("timezone"))
+    # how drops are joined into outages (the running config's `incidents` section; left out: grouping off, as before outages)
+    incidents = IncidentsConfig.model_validate(spec["incidents"]) if spec.get("incidents") else None
 
     rates = _read_rates(conn, spec.get("wan_device_id"), start, end)
     rule_sets = [
@@ -496,8 +544,8 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
         notes.append("No probe samples are stored for this window.")
     return {
         "window": {"start": start, "end": end, "rounds": rounds, "gaps": gaps},
-        "current": _counts(current, last_ts, spec.get("timezone")),
-        "draft": _counts(draft, last_ts, spec.get("timezone")),
+        "current": _counts(current, last_ts, spec.get("timezone"), incidents),
+        "draft": _counts(draft, last_ts, spec.get("timezone"), incidents),
         "recorded": _recorded(conn, start, end),
         "changes": _changes(current, draft), "notes": notes,
     }, rule_sets

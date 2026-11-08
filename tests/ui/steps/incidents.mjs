@@ -6,11 +6,12 @@ export const variants = ["full"];
 export const steps = [
   ["incident table: paging, search, page size, expected-events toggle", async ({ click, eq, ok, page, shown, text, waitCount, waitText }) => {
     await waitCount("#incidentsBody tr.incident-row", 10);
-    eq("count", await text("#incidentCountBadge"), "14 recorded events");
-    eq("info", await text("#incidentPaginationInfo"), "Showing 1–10 of 14 events");
+    // 17 incidents, three of them one outage (the seed's night event): 15 rows
+    eq("count", await text("#incidentCountBadge"), "15 events · 17 incidents");
+    eq("info", await text("#incidentPaginationInfo"), "Showing 1–10 of 15 events");
     await click("#btnPageNext");
     await waitText("#incidentPageNum", /^Page 2 of 2$/);
-    await waitCount("#incidentsBody tr.incident-row", 4);
+    await waitCount("#incidentsBody tr.incident-row", 5);
     await click("#btnPageFirst");
     await waitText("#incidentPageNum", /^Page 1 of 2$/);
     await page.type("#incidentSearchInput", "blip 1");
@@ -18,27 +19,236 @@ export const steps = [
     await waitText("#incidentPaginationInfo", /\(filtered\)/);
     await page.$eval("#incidentSearchInput", (i) => { i.value = ""; i.dispatchEvent(new Event("input", { bubbles: true })); });
     await page.select("#incidentPageSizeSelect", "50");
-    await waitCount("#incidentsBody tr.incident-row", 14);
+    await waitCount("#incidentsBody tr.incident-row", 15);
     eq("toggle visible", await shown("#btnToggleExpected"), true);
     ok("toggle label", /Show 1 expected/.test(await text("#btnToggleExpected")));
     await click("#btnToggleExpected");
-    await waitCount("#incidentsBody tr.incident-row", 15);
-    await waitText("#incidentCountBadge", /^15 recorded events$/);
+    await waitCount("#incidentsBody tr.incident-row", 16);
+    await waitText("#incidentCountBadge", /^16 events · 18 incidents$/);
     ok("busy badge", /Expected/.test(await text("#incidentsBody")));
     await click("#btnToggleExpected");
-    await waitCount("#incidentsBody tr.incident-row", 14);
+    await waitCount("#incidentsBody tr.incident-row", 15);
   }],
 
   ["incident rows: one line each, the details are the inspector's, and a click anywhere on the row opens it", async ({ click, count, eq, ok, page, until, waitText }) => {
     eq("no description line in the list", await count("#incidentsBody .sub"), 0);
     eq("no load or busy chips in the list", /load|busy line/.test(await page.$eval("#incidentsBody", (e) => e.textContent)), false);
-    const heights = await page.$$eval("#incidentsBody tr.incident-row", (els) => els.map((e) => e.getBoundingClientRect().height));
+    const heights = await page.$$eval("#incidentsBody tr.incident-row:not(.outage-row)", (els) => els.map((e) => e.getBoundingClientRect().height));
     ok(`rows stay small (${Math.max(...heights).toFixed(0)} px)`, Math.max(...heights) <= 44);
     await page.evaluate(() => [...document.querySelectorAll("#incidentsBody tr")].find((tr) => tr.textContent.includes("Short gateway drop")).querySelector(".when").click());
     await waitText("#inspCauseTitle", /^Short gateway drop$/);
     ok("the description is in the inspector", /home-side address/.test(await page.$eval("#inspCauseDesc", (e) => e.textContent)));
     await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
     await until(() => !document.getElementById("incidentInspectorModal").classList.contains("active"));
+  }],
+
+  // The seed's night event: three drops of the line the night before, two minutes apart ("Night event drop 1" to "3", the first
+  // at 03:12 UTC, 240 s + 180 s + 120 s, the first and the third critical): one outage, down 6 min, likely maintenance.
+  ["an outage of several drops is one row with its summary and the maintenance label; its drops are listed when it is opened, and a drop opens the inspector", async ({ click, count, eq, ok, page, text, until, waitText }) => {
+    const only = "#incidentsBody tr.outage-row";
+    eq("one outage row", await count(only), 1);
+    eq("and the three drops are not rows of their own", await page.$$eval("#incidentsBody tr.incident-row", (rows) => rows.filter((r) => /Night event drop [23]/.test(r.textContent)).length), 0);
+    const row = await page.$eval(only, (tr) => ({
+      title: tr.querySelector("[data-v=title]").textContent.trim(), status: tr.querySelector("[data-v=status]").textContent.trim(),
+      summary: tr.querySelector("[data-v=summary]").textContent.trim(), chip: tr.querySelector("[data-v=maintenance]").textContent.trim(),
+      chipTitle: tr.querySelector("[data-v=maintenance]").title, duration: tr.querySelector("[data-v=duration]").textContent.trim(),
+      cause: tr.querySelector("[data-v=cause]").textContent.trim(), icon: !!tr.querySelector("[data-v=status] svg"),
+      expanded: tr.querySelector("button[data-action=toggleOutage]").getAttribute("aria-expanded"), state: !!tr.querySelector("[data-v=state]") }));
+    eq("its title is the longest critical drop's", row.title, "Night event drop 1");
+    eq("critical: the status word, with an icon", `${row.status}|${row.icon}`, "Outage|true");
+    eq("the summary: drops and the time the line was down", row.summary, "3 drops · down 6 min");
+    eq("the label", row.chip, "likely maintenance");
+    ok(`the label says what it is (${row.chipTitle})`, /Started between 00:00 and 06:00 at the provider: often planned work\. Only a label: the downtime counts in full\./.test(row.chipTitle));
+    eq("how long: the span from the first drop to the last", row.duration, "13m 00s");
+    eq("where: the places of the drops", row.cause, "Line · ISP");
+    eq("closed", row.expanded, "false");
+    eq("over: no ongoing note", row.state, false);
+    // the button is reached by the keyboard
+    await page.focus(`${only} button[data-action=toggleOutage]`);
+    await page.keyboard.press("Enter");
+    await until(() => document.querySelectorAll("#incidentsBody tr.drop-row").length === 3);
+    eq("open", await page.$eval(`${only} button[data-action=toggleOutage]`, (b) => b.getAttribute("aria-expanded")), "true");
+    eq("the drops, in the order they happened", await page.$$eval("#incidentsBody tr.drop-row [data-v=title]", (els) => els.map((e) => e.textContent.trim()).join()),
+      "Night event drop 1,Night event drop 2,Night event drop 3");
+    eq("the pager still counts rows", await text("#incidentPaginationInfo"), "Showing 1–15 of 15 events");
+    ok("the keyboard still has the button", await page.evaluate(() => document.activeElement.dataset.action === "toggleOutage"));
+    await page.evaluate(() => [...document.querySelectorAll("#incidentsBody tr.drop-row")].find((tr) => /drop 2/.test(tr.textContent)).querySelector(".when").click());
+    await waitText("#inspCauseTitle", /^Night event drop 2$/);
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+    await until(() => !document.getElementById("incidentInspectorModal").classList.contains("active"));
+    await click(`${only} button[data-action=toggleOutage]`);
+    await until(() => document.querySelectorAll("#incidentsBody tr.drop-row").length === 0);
+  }],
+
+  ["a search finds a drop inside an outage and shows the outage; opened, it lists every drop, not only the match", async ({ click, count, eq, page, until, waitText }) => {
+    await page.type("#incidentSearchInput", "drop 2");
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 1);
+    eq("the outage is the row", await count("#incidentsBody tr.outage-row"), 1);
+    await waitText("#incidentPaginationInfo", /^Showing 1–1 of 1 events \(filtered\)$/);
+    await click("#incidentsBody tr.outage-row button[data-action=toggleOutage]");
+    await until(() => document.querySelectorAll("#incidentsBody tr.drop-row").length === 3);
+    await click("#incidentsBody tr.outage-row button[data-action=toggleOutage]");
+    await until(() => document.querySelectorAll("#incidentsBody tr.drop-row").length === 0);
+    await page.$eval("#incidentSearchInput", (i) => { i.value = ""; i.dispatchEvent(new Event("input", { bubbles: true })); });
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 15);
+  }],
+
+  ["a time another panel picked keeps an outage when any drop overlaps it", async ({ click, count, eq, page, text, until }) => {
+    // the window is the third drop's two minutes: only that drop overlaps it, the outage shows with all of its drops
+    await page.evaluate(async () => {
+      const third = (await (await fetch("/api/incidents?limit=500")).json()).find((i) => i.title === "Night event drop 3");
+      const b = document.createElement("button");
+      Object.assign(b.dataset, { action: "showIncidentWindow", start: String(third.start_time + 10), end: String(third.start_time + 20), label: "Night hour", lost: "5", sent: "10" });
+      document.body.append(b);
+      b.click();
+      b.remove();
+    });
+    await until(() => !document.getElementById("incidentWindow").hidden);
+    eq("one row, the outage", await count("#incidentsBody tr.incident-row"), 1);
+    eq("it is the outage", await count("#incidentsBody tr.outage-row"), 1);
+    eq("and the bar counts the incidents in the time", (await text("#incidentWindow [data-f=found]")).trim(), "1 incident");
+    await click("[data-action=clearIncidentWindow]");
+    await until(() => document.getElementById("incidentWindow").hidden && document.querySelectorAll("#incidentsBody tr.incident-row").length === 15);
+  }],
+
+  ["a group is never shown with drops missing: held back while there is more to load, which is loaded until it is whole", async ({ eq, moduleUrl, page }) => {
+    const found = await page.evaluate(async (u) => {
+      const { present } = await import(u);
+      const now = Date.now() / 1000;
+      const inc = (id, extra = {}) => ({ id, title: `Example drop ${id}`, severity: "critical", cause: "line", expected: false, description: "", cause_code: "access_line_drop",
+        start_time: now - 3600 * id, end_time: now - 3600 * id + 60, duration_seconds: 60, loss_seconds: 60, ...extra });
+      const outage = { id: 3, start_time: now - 3 * 3600, end_time: now - 1 * 3600 + 60, ongoing: false, settling: false, duration_seconds: 7260, down_seconds: 180, affected_seconds: 180, drops: 3,
+        critical_drops: 3, severity: "critical", places: ["line"], title: "Example drop 3", cause_code: "access_line_drop", likely_maintenance: false, incident_ids: [3, 2, 1] };
+      const state = (all, more) => ({ all, query: "", pageSize: 10, page: 1, showExpected: false, window: null, totals: null, more, loading: false, oldest: null, outages: [outage], maintenance: { start: "00:00", end: "06:00" } });
+      const rows = (vm) => vm.list.rows.map((r) => `${r.kind || "incident"}:${r.id}`).join();
+      return {
+        // the oldest drop is not loaded yet and there is more: the group is held back, and its two loaded drops are not shown alone
+        held: rows(present(state([inc(1), inc(2)], true), now * 1000)),
+        heldCount: present(state([inc(1), inc(2)], true), now * 1000).total,
+        whole: rows(present(state([inc(1), inc(2), inc(3)], true), now * 1000)),
+        // at the end of the list (nothing more to load) it shows what there is, and says so
+        end: present(state([inc(1), inc(2)], false), now * 1000).list.rows[0].summary,
+        none: rows(present({ ...state([inc(1), inc(2), inc(3)], false), outages: null }, now * 1000)) };
+    }, await moduleUrl("../panels/incidents/model.js"));
+    eq("held back while drops are missing", found.held, "");
+    eq("and not counted as rows", found.heldCount, 0);
+    eq("whole: one outage row", found.whole, "outage:o3");
+    eq("at the end of the list, with what is there", found.end, "3 drops · down 3 min (2 loaded)");
+    eq("no outages read: every incident is a row", found.none, "incident:1,incident:2,incident:3");
+  }],
+
+  ["older incidents are loaded until an outage's drops are all there (the pages are cut through an outage)", async ({ eq, ok, page, text, until, waitText }) => {
+    await page.reload({ waitUntil: "load" });
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length > 0);
+    await page.evaluate(() => {
+      const now = Date.now() / 1000;
+      // 120 incidents, one every 3 days (so the first page already reaches back over the week); the outage is 9049, 9050 and 9051:
+      // the first page of 50 ends inside it
+      const all = Array.from({ length: 120 }, (_, i) => ({ id: 9000 + i, kind: "isp_loss", title: `Synthetic ${i}`, description: "", severity: "critical", cause_code: "access_line_drop", cause: "line",
+        start_time: now - 600 - i * 259200, end_time: now - 540 - i * 259200, duration_seconds: 60, expected: false, affected_targets: [] }));
+      const outage = { id: 9049, start_time: all[51].start_time, end_time: all[49].end_time, ongoing: false, settling: false, duration_seconds: 2 * 259200 + 60, down_seconds: 180, affected_seconds: 180,
+        drops: 3, critical_drops: 3, severity: "critical", places: ["line"], title: "Synthetic 49", cause_code: "access_line_drop", likely_maintenance: false, incident_ids: [9049, 9050, 9051] };
+      const real = window.fetch;
+      window.__asked = [];
+      window.__realFetch = real;
+      const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
+      window.fetch = (url, opts) => {
+        const u = new URL(String(url), location.href);
+        if (u.pathname === "/api/incidents/count") return json({ total: all.length, expected: 0 });
+        if (u.pathname === "/api/outages") return json({ gap_minutes: 10, outages: [outage] });
+        if (u.pathname !== "/api/incidents") return real(url, opts);
+        const limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0);
+        window.__asked.push(`${limit}@${offset}`);
+        return json(all.slice(offset, offset + limit));
+      };
+    });
+    await new Promise((r) => setTimeout(r, 2500)); // the first message has set the version the panel compares with
+    await page.evaluate(() => { window.__smokeMutate = new Function("d", "d.incidents_version = (d.incidents_version || 0) + 1000"); });
+    await until(() => window.__asked.length >= 2);
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    eq("the first page, then the next one because the outage reaches into it", await page.evaluate(() => window.__asked.slice(0, 2).join(" ")), "50@0 50@50");
+    await page.select("#incidentPageSizeSelect", "100");
+    await until(() => document.querySelectorAll("#incidentsBody tr.outage-row").length === 1);
+    ok("the outage is a row", /3 drops/.test(await text("#incidentsBody tr.outage-row")));
+    ok("its drops are not rows of their own", !/Synthetic 50|Synthetic 51/.test(await text("#incidentsBody")));
+    await waitText("#incidentCountBadge", /^\d+\+? events · 120 incidents$/);
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await page.reload({ waitUntil: "load" });
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 10);
+    await page.select("#incidentPageSizeSelect", "50"); // (as the steps before this one left it)
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 15);
+  }],
+
+  ["Amber CRT draws the outage: its line, summary and label, and its drops as lines that open the inspector", async ({ click, count, eq, ok, page, pickLook, text, until, waitText }) => {
+    await page.select("#incidentPageSizeSelect", "50"); // (the outage is older than the first ten rows)
+    await pickLook("amber-crt");
+    await until(() => document.querySelector("[data-panel=incidents] .panel-b").dataset.view === "amber-crt");
+    await until(() => document.querySelectorAll("[data-panel=incidents] .ac-outage").length === 1);
+    const line = await page.$eval("[data-panel=incidents] .ac-outage", (l) => ({ text: l.textContent, chip: l.querySelector("[data-v=maintenance]")?.textContent, summary: l.querySelector("[data-v=summary]")?.textContent,
+      expanded: l.querySelector("button[data-action=toggleOutage]")?.getAttribute("aria-expanded"), status: l.querySelector("[data-v=status]")?.textContent.trim() }));
+    eq("summary", line.summary, "3 drops · down 6 min");
+    eq("label", line.chip, "likely maintenance");
+    eq("status", line.status, "Outage");
+    eq("closed", line.expanded, "false");
+    eq("the drops are not lines yet", await count("[data-panel=incidents] .ac-drop"), 0);
+    await click("[data-panel=incidents] .ac-outage button[data-action=toggleOutage]");
+    await until(() => document.querySelectorAll("[data-panel=incidents] .ac-drop").length === 3);
+    await page.evaluate(() => [...document.querySelectorAll("[data-panel=incidents] .ac-drop")].find((l) => /drop 3/.test(l.textContent)).querySelector(".ac-what").click());
+    await waitText("#inspCauseTitle", /^Night event drop 3$/);
+    await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
+    await until(() => !document.getElementById("incidentInspectorModal").classList.contains("active"));
+    ok("the header counts the same", /^15 events · 17 incidents$/.test((await text("#incidentCountBadge")).trim()));
+    await click("[data-panel=incidents] .ac-outage button[data-action=toggleOutage]");
+    await until(() => document.querySelectorAll("[data-panel=incidents] .ac-drop").length === 0);
+    await pickLook("");
+  }],
+
+  ["every theme draws the outage inside the card at 1400 and at 390 px: nothing sticks out sideways, a drop's row is reachable", async ({ eq, page, phone, pickLook, until }) => {
+    // as the screenshot reviews measure it: an element past the window's right edge, or cut off by a box that hides its overflow
+    const sticksOut = (width) => page.evaluate((w) => {
+      const out = [];
+      const name = (e) => `${e.tagName.toLowerCase()}${typeof e.className === "string" && e.className ? "." + e.className.split(" ")[0] : ""}`;
+      document.querySelectorAll("[data-panel=incidents] .panel *").forEach((e) => {
+        if (!e.offsetParent && getComputedStyle(e).position !== "fixed") return;
+        const r = e.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        let edge = w, scrolls = false;
+        for (let p = e.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+          const o = getComputedStyle(p).overflowX;
+          if (o === "auto" || o === "scroll") { scrolls = true; break; }
+          if (o === "hidden" || o === "clip") edge = Math.min(edge, p.getBoundingClientRect().right);
+        }
+        if (!scrolls && r.right > edge + 1 && getComputedStyle(e).textOverflow !== "ellipsis") out.push(`${name(e)} +${Math.round(r.right - edge)}px`);
+      });
+      return `${out.slice(0, 4).join(", ")}|${document.documentElement.scrollWidth <= w}`;
+    }, width);
+    const open = async () => {
+      await page.select("#incidentPageSizeSelect", "50"); // (the outage is older than the first ten rows)
+      await until(() => document.querySelector("[data-panel=incidents] [data-action=toggleOutage]") !== null);
+      await until(() => { const b = document.querySelector("[data-panel=incidents] [data-action=toggleOutage]"); if (b.getAttribute("aria-expanded") !== "true") b.click(); return document.querySelectorAll("[data-panel=incidents] [data-action=inspectIncident][data-arg]").length >= 3; });
+    };
+    const looks = (await page.evaluate(() => JSON.parse(document.documentElement.dataset.looks).map((l) => l.id)));
+    const seen = [];
+    // (a theme is picked in the header's menu: a page load per theme would run into the rate limit of the history)
+    for (const id of ["", ...looks]) {
+      await pickLook(id);
+      await open();
+      eq(`${id || "default"} at 1400 px`, await sticksOut(1400), "|true");
+      seen.push(id || "default");
+    }
+    await phone(async () => {
+      await page.evaluate(() => { location.hash = "incidents"; });
+      await until(() => !document.querySelector("[data-panel=incidents]").hidden);
+      for (const id of ["", ...looks]) {
+        await pickLook(id);
+        await open();
+        eq(`${id || "default"} at 390 px`, await sticksOut(390), "|true");
+      }
+    });
+    await pickLook("");
+    await page.select("#incidentPageSizeSelect", "50"); // (the phone reloaded the page: back to what the steps after this one expect)
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 15);
+    eq("the default theme and every built-in one were looked at", seen.length >= 5, true);
   }],
 
   ["incident timeline: bars, lanes by cause", async ({ count, ok, until }) => {
@@ -240,6 +450,11 @@ export const steps = [
       // "Show in latency chart" leaves the Incidents tab for the Live tab, where the chart is
       await click("#btnSnapDashboard");
       await until(() => !document.querySelector("[data-panel=latency]").hidden && /^incident window /.test(document.getElementById("chartModeLabel").textContent));
+      // the inspector gave its history entry back before the tab changed: one Back returns to the Incidents tab (no dead press)
+      await until(() => location.hash === "#live" && history.state?.pgModal === undefined);
+      await page.evaluate(() => history.back());
+      await until(() => location.hash === "#incidents");
+      eq("Back from the Live tab lands on the Incidents tab, not on the inspector's leftover entry", await page.evaluate(() => `${location.hash}|${history.state?.pgModal === undefined}`), "#incidents|true");
       await setTheme(null);
     });
   }],
@@ -260,6 +475,7 @@ export const steps = [
       window.fetch = (url, opts) => {
         const u = new URL(String(url), location.href);
         if (u.pathname === "/api/incidents/count") return Promise.resolve(new Response(JSON.stringify({ total: all.length, expected: 2 }), { headers: { "content-type": "application/json" } }));
+        if (u.pathname === "/api/outages") return Promise.resolve(new Response(JSON.stringify({ gap_minutes: 10, outages: [] }), { headers: { "content-type": "application/json" } }));
         if (u.pathname !== "/api/incidents") return real(url, opts);
         const limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0);
         window.__asked.push(`${limit}@${offset}`);
@@ -307,6 +523,8 @@ export const steps = [
     await click("#btnPageLast");
     await waitText("#incidentPageNum", /^Page 3 of 3$/);
     eq("the last page", await page.$$eval("#incidentsBody tr.incident-row", (r) => r.length), 28);
+    // (the page count shows before the card has finished loading the last pieces: wait for the pager to settle)
+    await until(() => document.getElementById("btnPageNext").disabled).catch(() => {});
     eq("no Next past the end", await page.$eval("#btnPageNext", (b) => b.disabled), true);
     // put the real server back
     await page.evaluate(() => { window.fetch = window.__realFetch; });
@@ -371,19 +589,20 @@ export const steps = [
     ok("incidents and the hop rows mark a status", cards.incidents.status >= 3 && cards.matrix.status >= 3);
     await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length >= 3);
     const kept = await page.evaluate(async (u) => {
+      const single = () => [...document.querySelectorAll("#incidentsBody tr.incident-row:not(.outage-row)")]; // (an outage row is keyed by the outage)
       const { updateIncidentsTable } = await import(u);
       const list = await (await fetch("/api/incidents?limit=500")).json();
-      const rows = [...document.querySelectorAll("#incidentsBody tr.incident-row")];
+      const rows = single();
       rows.forEach((tr, i) => { tr.__kept = i; });
       const first = rows[0].querySelector("button.primary");
       first.focus();
       updateIncidentsTable(JSON.parse(JSON.stringify(list))); // the same list again: nothing is drawn again
-      const same = [...document.querySelectorAll("#incidentsBody tr.incident-row")].every((tr, i) => tr.__kept === i) && document.activeElement === first;
+      const same = single().every((tr, i) => tr.__kept === i) && document.activeElement === first;
       const last = rows[rows.length - 1];
       const changed = JSON.parse(JSON.stringify(list));
       changed.find((i) => String(i.id) === last.dataset.arg).title = "Renamed incident";
       updateIncidentsTable(changed); // one incident changed: its row is drawn again, the others stay
-      const now = [...document.querySelectorAll("#incidentsBody tr.incident-row")];
+      const now = single();
       const result = { same, kept: now.slice(0, -1).every((tr, i) => tr.__kept === i), redrawn: now[now.length - 1].__kept === undefined, title: now[now.length - 1].textContent.includes("Renamed incident"),
         focus: document.activeElement === first };
       updateIncidentsTable(list);
@@ -391,5 +610,23 @@ export const steps = [
     }, await moduleUrl("../panels/incidents/model.js"));
     ok("the same list leaves every row and the focus alone", kept.same);
     ok("a changed incident redraws only its row", kept.kept && kept.redrawn && kept.title && kept.focus);
+  }],
+
+  ["more than 500 incidents: the card says only the newest 500 are listed and where the rest is, and its count is the server's", async ({ eq, ok, page, stubFetch, text, until, waitText }) => {
+    const now = Math.floor(Date.now() / 1000);
+    const all = Array.from({ length: 500 }, (_, i) => ({ id: 20000 + i, kind: "gateway_down", title: `Synthetic ${i}`, description: "", severity: "warning", cause_code: "unknown_outage", cause: "isp",
+      start_time: now - 600 - i * 600, end_time: now - 560 - i * 600, duration_seconds: 40, expected: false, affected_targets: [] }));
+    const stubs = (total) => ({ "GET /api/incidents": { body: all }, "GET /api/incidents/count": { body: { total, expected: 0 } }, "GET /api/outages": { body: { gap_minutes: 10, outages: [] } } });
+    await stubFetch(stubs(650));
+    await waitText("#incidentCountBadge", /^650 recorded events/);
+    eq("the badge keeps the server's count and says what is listed", await text("#incidentCountBadge"), "650 recorded events · newest 500 listed");
+    ok("the note names the cap, the real total and where the rest is", /^Only the newest 500 incidents are listed \(of 650 recorded\)\. Older ones are in the ISP dossier .*the reliability report .*the API \(\/api\/incidents with limit and offset\)\.$/.test(await text("#incidentCapNote")));
+    await until(() => !document.getElementById("incidentCapNote").hidden);
+    eq("the footer does not claim more than is listed", await text("#incidentPaginationInfo"), "Showing 1–10 of 500 events, from the newest 500 incidents");
+    // exactly 500 recorded: nothing is left out, so nothing is said
+    await stubFetch(stubs(500));
+    await waitText("#incidentCountBadge", /^500 recorded events$/);
+    ok("no note when the list holds everything", await page.$eval("#incidentCapNote", (e) => e.hidden));
+    await stubFetch(null);
   }],
 ];

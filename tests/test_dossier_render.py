@@ -258,3 +258,32 @@ def test_tests_that_measured_nothing_say_so():
                                                          300.0, 20.0)))
     assert "- **Tests in the window:** 1 test (1 skipped)" in text and "- No test measured a speed." in text
     assert "Speed tests (" not in text.split("```text")[1]                      # nothing to put in the ticket
+
+
+def outage(start, end, drops, down, maintenance=False, ongoing=False):
+    return {"id": 1, "start_time": start, "end_time": None if ongoing else end, "ongoing": ongoing, "settling": False,
+            "duration_seconds": (NOW if ongoing else end) - start, "down_seconds": down, "affected_seconds": down,
+            "drops": drops, "critical_drops": drops, "severity": "critical", "places": ["line"], "title": "t",
+            "cause_code": "access_line_drop", "likely_maintenance": maintenance, "incident_ids": [1]}
+
+
+def test_the_dossier_lists_outages_that_joined_several_drops():
+    start = NOW - 20 * 3600          # 2025-10-08 12:53:20 UTC
+    one = outage(start, start + 1500, 7, 840.0, maintenance=True)
+    lone = outage(NOW - 3600, NOW - 3500, 1, 100.0)
+    text = render_dossier_markdown(facts(outages=[one, lone]))
+    assert "- **Outages:** 2 (" in text and "14 min down in total" not in text and "15.7 min down in total" in text
+    assert "  - Oct 8 12:53-13:18, 25 min, 7 drops, down 14 min, likely maintenance" in text
+    assert text.count("\n  - Oct") == 1                      # the single-drop outage has no line of its own
+    plain = render_dossier_markdown(facts(outages=[outage(start, start + 1500, 3, 60.0)]))
+    assert "  - Oct 8 12:53-13:18, 25 min, 3 drops, down 1 min\n" in plain + "\n"     # no label when it is not set
+    assert "likely maintenance" not in plain
+
+
+def test_an_ongoing_or_overnight_outage_says_so_and_no_outages_adds_no_line():
+    start = NOW - 3600
+    assert "Oct 9 07:53 (ongoing), 60 min, 2 drops" in render_dossier_markdown(
+        facts(outages=[outage(start, NOW, 2, 60.0, ongoing=True)]))
+    night = NOW - 22 * 3600           # 10:53 the day before; ends the next day
+    assert "Oct 8 10:53-Oct 9 08:53, 1320 min, 2 drops" in render_dossier_markdown(facts(outages=[outage(night, NOW, 2, 0.0)]))
+    assert "Outages" not in render_dossier_markdown(facts())

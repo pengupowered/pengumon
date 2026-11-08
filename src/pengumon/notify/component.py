@@ -19,7 +19,7 @@ async def register(ctx: Context) -> Optional[Component]:
     config, store = ctx.config, ctx.state.secret_store
 
     def policy() -> AlertPolicy:
-        return AlertPolicy(config.alerts, config.general.timezone)
+        return AlertPolicy(config.alerts, config.general.timezone, config.incidents)
 
     def secret_value():
         manager = getattr(ctx.state, "settings", None)  # W1's SettingsManager; None where the store is not running (tests)
@@ -34,7 +34,7 @@ async def register(ctx: Context) -> Optional[Component]:
 
     hub = getattr(ctx, "settings", None)  # the settings hub (W1); without it the notifier is set at start only
     if hub is not None:
-        @hub.on(keys=["notifications.public_url", "general.timezone"], prefixes=["alerts."], lists=["webhooks"],
+        @hub.on(keys=["notifications.public_url", "general.timezone"], prefixes=["alerts.", "incidents."], lists=["webhooks"],
                 slots=["ntfy.", "webhook.", "webhook_header."], name="notify.reconfigure")
         def _reconfigure(change) -> None:
             built = build_channels(config.notifications, store, secret_value=secret_value())

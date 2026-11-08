@@ -37,6 +37,14 @@ export function followQuietHops() {
 const causeText = (cause) => CAUSE_LONG[cause] || String(cause || 'unknown').replace(/_/g, ' ');
 
 const fmtPct = (v) => percentText(v, 3);
+// minutes as the report says them: "41 min", "1h 05m"
+const minutesText = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${String(Math.round(m % 60)).padStart(2, '0')}m` : `${Math.round(m)} min`);
+// The period's outages (incidents that belong together, GET /api/report incidents.outages) next to its incidents; null when the server sends none.
+function outagesText(o) {
+  if (!o || !(o.count > 0)) return o ? 'No outages' : null;
+  return `${o.count} outage${o.count === 1 ? '' : 's'}, down ${minutesText(o.down_minutes)} in all, longest ${minutesText(o.longest_minutes)}`
+    + (o.maintenance > 0 ? `, ${o.maintenance} likely maintenance` : '');
+}
 const hour = (h) => `${String(h).padStart(2, '0')}:00`;
 
 // The view model of a report: { state: 'ready', hero, downtime, incidents, lost, causes, excluded, hops, foot, summary }.
@@ -71,7 +79,7 @@ export function present(report, ctx) {
       subTitle: pub.map((h) => h.name).join(', ')
     },
     downtime: { label: 'Downtime', value: downtime },
-    incidents: { label: `Incidents, ${report.days} d`, value: String(inc.count) },
+    incidents: { label: `Incidents, ${report.days} d`, value: String(inc.count), sub: outagesText(inc.outages) },
     lost: {
       title: 'Lost per day',
       columns: Math.max(1, days.length),
@@ -123,7 +131,7 @@ export function fixture() {
       { target_id: 'fx_quiet', name: 'Example hop 2', availability_pct: 12.5, per_day: [12, 13, 12] },
       { target_id: 'fx_public', name: 'Example public DNS', availability_pct: 99.95, per_day: [100, 99.9, null] }
     ] },
-    incidents: { count: 2, minutes: 75, excluded_expected: 1, by_cause: [{ cause: 'gateway', minutes: 60 }, { cause: 'line', minutes: 15 }] },
+    incidents: { count: 2, minutes: 75, excluded_expected: 1, outages: { count: 1, down_minutes: 41, longest_minutes: 25, maintenance: 1 }, by_cause: [{ cause: 'gateway', minutes: 60 }, { cause: 'line', minutes: 15 }] },
     worst_hours: [{ hour: 20, loss_pct: 1.5 }]
   };
   return present(report, {

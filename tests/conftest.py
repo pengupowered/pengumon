@@ -78,3 +78,15 @@ async def mcp_state(tmp_path, monkeypatch):
     monkeypatch.setattr(security_config, "access_token", "")
     yield state
     await state.repository.close()
+
+
+MAX_TEST_ID = 16000  # half of what Windows allows: it caps an environment variable at 32,767 characters, and pytest puts the id in one
+
+
+def pytest_collection_modifyitems(config, items):
+    """A parametrized test whose id holds a long value (a 70 KiB body) failed on Windows only, in setup: pytest sets
+    PYTEST_CURRENT_TEST to the id. Refuse such ids on every platform, so the Linux run says so first."""
+    long = [item.nodeid[:120] + "..." for item in items if len(item.nodeid) > MAX_TEST_ID]
+    if long:
+        raise pytest.UsageError(f"test ids longer than {MAX_TEST_ID} characters (give the parametrize short ids): "
+                                + "; ".join(long))

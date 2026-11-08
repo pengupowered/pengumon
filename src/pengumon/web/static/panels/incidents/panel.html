@@ -15,6 +15,7 @@
     <div class="panel-b">
       <div class="tl" id="incidentTimeline" hidden></div>
       <div class="inc-window" id="incidentWindow" data-role="window" tabindex="-1" hidden><svg class="i sm" aria-hidden="true"><use href="#i-clock"/></svg><span>Incidents in <b data-f="label"></b> · <span data-f="found"></span></span><span class="grow"></span><button type="button" class="chip" data-action="clearIncidentWindow"><svg class="i sm" aria-hidden="true"><use href="#i-close"/></svg>Show all</button></div>
+      <p class="fine muted" id="incidentCapNote" hidden></p>
       <table class="dlist inc-list">
         <thead><tr><th>What</th><th>Status</th><th>When</th><th class="r">Duration</th><th>Cause <button type="button" class="info" data-action="toggleHelp" data-help="incident.cause" aria-label="About the cause and load"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></th><th></th></tr></thead>
         <tbody id="incidentsBody"><tr><td colspan="6" class="muted">No network incidents recorded.</td></tr></tbody>

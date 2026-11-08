@@ -43,6 +43,46 @@ async def test_incidents_lists_newest_first_in_the_configured_zone(mcp_state):
     assert (await call(mcp_state, "incidents", limit=1))["incidents"] == [row]
 
 
+async def _flapping(state, count=3, spacing=240.0):
+    """`count` line drops `spacing` seconds apart, a few minutes ago (they end 30 s after they start); their ids."""
+    from pengumon.incidents.model import Incident
+    base = time.time() - 3600
+    ids = []
+    for k in range(count):
+        start = base + k * spacing
+        ids.append(await state.repository.create_incident(Incident(
+            start_time=start, end_time=start + 30, cause_code="access_line_drop", title="Line drop", description="d",
+            severity="critical", kind="isp_outage", resolved=True)))
+        await state.repository.resolve_incident(ids[-1], start + 30)
+    return ids
+
+
+async def test_incidents_name_their_outage_and_the_answer_lists_the_outages(mcp_state):
+    ids = await _flapping(mcp_state)
+    out = await call(mcp_state, "incidents")
+    by_id = {i["id"]: i for i in out["incidents"]}
+    assert [by_id[i]["outage_id"] for i in ids] == [ids[0]] * 3
+    assert by_id[mcp_state.example_incident_id]["outage_id"] is not None     # a gateway loss: its own outage of one
+    assert [o["id"] for o in out["outages"]] == [ids[0], mcp_state.example_incident_id]   # newest first
+    assert out["outages_total_in_period"] == 2
+    big = out["outages"][0]
+    assert big["drops"] == 3 and big["critical_drops"] == 3 and big["incident_ids"] == ids and big["places"] == ["line"]
+    assert big["down_seconds"] == 90 and big["ongoing"] is False and isinstance(big["likely_maintenance"], bool)
+    assert big["start"][-6:] in ("-05:00", "-04:00") and big["title"] == "Line drop"
+    assert "neighboring places" in out["outage_note"] and "10 minutes" in out["outage_note"]
+    assert len((await call(mcp_state, "incidents", limit=1))["outages"]) == 1
+
+
+async def test_the_incidents_tool_describes_outages_and_follows_the_gap_setting(mcp_state):
+    desc = BY_NAME["incidents"].description
+    assert "outage_id" in desc and "likely maintenance" in desc and "guess" in desc
+    ids = await _flapping(mcp_state)
+    mcp_state.config.incidents.group_gap_minutes = 0
+    out = await call(mcp_state, "incidents")
+    assert all(i["outage_id"] == i["id"] for i in out["incidents"] if i["id"] in ids)
+    assert [o["drops"] for o in out["outages"]] == [1] * len(out["outages"]) and "0 minutes" in out["outage_note"]
+
+
 async def test_incidents_outside_the_period_are_left_out(mcp_state):
     from pengumon.incidents.model import Incident
     import time
@@ -288,3 +328,20 @@ async def test_ai_pack_is_limited_to_six_builds_a_minute_like_the_api(mcp_state)
     tools._pack_starts.extend([now] * 5)  # with the one just built: six within the minute
     with pytest.raises(ToolFailure, match="At most 6 packs a minute"):
         await call(mcp_state, "ai_pack", level="anonymized")
+
+
+def test_a_librespeed_servers_host_is_left_out_of_a_reason_whatever_its_case():
+    """The server label is the URL's host lowercased (urlsplit), while the 404 hint repeats the address as entered: a
+    host typed with capitals came through in the reason."""
+    from datetime import timezone
+
+    from pengumon.mcp.tools import _speed_row
+    from pengumon.speedtest.providers.librespeed import LibreSpeedProvider
+
+    provider = LibreSpeedProvider("http://Canary-LibreSpeed.LAN:8080/speed")
+    reason = f"download and upload: {provider._refused(404).reason}"
+    assert "Canary-LibreSpeed.LAN" in reason and provider.server == "canary-librespeed.lan"
+    out = _speed_row({"ts": 1_700_000_000.0, "trigger": "manual", "status": "failed", "provider": "librespeed",
+                      "server": provider.server, "reason": reason}, timezone.utc)
+    assert "canary-librespeed" not in json.dumps(out).lower()
+    assert out["reason"].startswith("download and upload: your LibreSpeed server answered HTTP 404")

@@ -246,15 +246,39 @@ async function firstRunBanner() {
 const DRIFT_EVERY_MS = 5 * 60 * 1000;
 let driftKey = '';
 
+// "03:00", or "5 Nov, 03:00" when it was not today.
+function checkTime(sec) {
+  const ms = sec * 1000;
+  const today = util.localFormat(Date.now(), { day: 'numeric', month: 'short' }) === util.localFormat(ms, { day: 'numeric', month: 'short' });
+  return util.localFormat(ms, today ? { hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+// Why a check failed, in words (the server's `error` says it in its own: no addresses in either).
+function failureReason(error) {
+  const e = String(error || '');
+  if (/^No trace reached/i.test(e)) return 'no trace reached the internet, so the connection may have been down';
+  if (/^Discovery failed/i.test(e)) return 'the route discovery hit an error';
+  return 'the check could not run';
+}
+
+// The standing line while the latest background check failed: when, why, and which check the path shown comes from.
+export function failedCheckLine(drift) {
+  const at = drift.checked_at ? ` at ${checkTime(drift.checked_at)}` : '';
+  const from = drift.good_at ? `the path shown is from ${checkTime(drift.good_at)}` : 'no earlier check has succeeded';
+  return `The last route check failed${at} (${failureReason(drift.error)}); ${from}.`;
+}
+
 export function driftBanner(drift, edit) {
-  const changes = drift.changes;
+  const failed = drift.state === 'failed';
+  const changes = drift.changes || [];
+  if (!changes.length) { // only the failed check to tell
+    return { level: 'unknown', icon: 'route', title: 'Route check', text: `· ${failedCheckLine(drift)}`, progress: false, actions: [] };
+  }
   const first = String(changes[0].text || '').replace(/\.$/, '');
   const more = changes.length > 1 ? ` (and ${changes.length - 1} more)` : '';
-  const goodAt = drift.good_at ? util.localFormat(drift.good_at * 1000, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
-  const failed = drift.state === 'failed' ? ` The latest route check could not run, so this is from the check on ${goodAt || 'an earlier day'}.` : '';
   const actions = [{ action: 'openPathEditor', arg: `discovery:${drift.discovery_id}`, label: 'Review', primary: true, needsEdit: true }];
   if (edit) actions.push({ action: 'dismissPathDrift', label: 'Dismiss', needsEdit: true });
-  return { level: 'warn', icon: 'route', title: 'Your path changed', text: `· ${first}${more}.${failed}`, progress: false, actions };
+  return { level: 'warn', icon: 'route', title: 'Your path changed', text: `· ${first}${more}.${failed ? ` ${failedCheckLine(drift)}` : ''}`, progress: false, actions };
 }
 
 export async function driftNotice() {
@@ -262,7 +286,7 @@ export async function driftNotice() {
   try { drift = await fetchDrift(); } catch (_) { return; }
   // a failed check keeps the changes of the last good one until they are reviewed
   const changes = drift && (drift.state === 'changed' || drift.state === 'failed') && drift.discovery_id ? (drift.changes || []) : [];
-  if (!changes.length) {
+  if (!changes.length && !(drift && drift.state === 'failed')) {
     if (notice === 'drift') { notice = ''; push({ banner: null }); }
     return;
   }

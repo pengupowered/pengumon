@@ -25,6 +25,10 @@
       <span id="settingsConfirmText"></span>
       <span class="set-confirm-b"><button type="button" class="btn sm" data-action="settingsConfirmNo" id="btnConfirmNo">Keep editing</button><button type="button" class="btn sm danger" data-action="settingsConfirmYes" id="btnConfirmYes">Discard</button></span>
     </div>
+    <div class="set-problems" id="settingsProblems" role="status" hidden>
+      <svg class="i sm" aria-hidden="true"><use href="#i-warn"/></svg><span id="settingsProblemText"></span>
+      <button type="button" class="btn sm" data-action="settingsFirstProblem">Go to the first</button>
+    </div>
     <footer class="modal-f">
       <div class="left">
         <button type="button" class="btn sm" id="settingsExport" data-action="settingsExport" aria-expanded="false" aria-controls="settingsExportView" aria-label="Export" title="Export" hidden><svg class="i" aria-hidden="true"><use href="#i-download"/></svg><span class="fl">Export</span></button>

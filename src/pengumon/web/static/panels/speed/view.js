@@ -98,7 +98,7 @@ function datasets(c, canvas) {
   const plan = token('--ink-3', canvas);
   const bad = token('--crit', canvas);
   const quiet = token('--ink-3', canvas);
-  const line = (label, color, points) => ({ label, data: points, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: points.length < 40 ? 3 : 0, pointHoverRadius: 5, tension: 0 });
+  const line = (label, color, points) => ({ label, data: points, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: points.length < 40 ? 3 : 0, pointHoverRadius: 5, tension: 0, ownCurve: true });
   // the plan: a dashed line (a hex color gets an alpha, which a theme's "fill" style takes as not its to fill)
   const dashed = (label, value) => ({ label, data: [{ x: c.xMin, y: value }, { x: c.xMax, y: value }], borderColor: /^#[0-9a-f]{6}$/i.test(plan) ? `${plan}e6` : plan, backgroundColor: 'transparent', borderWidth: 1, borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 0, tension: 0, isPlan: true });
   // failed and skipped tests: shapes on the axis (a cross, a hollow circle), so color is not the only difference

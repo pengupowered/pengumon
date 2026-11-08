@@ -44,8 +44,18 @@
 :root[data-look="amber-crt"] [data-panel="incidents"] .ac-empty b { color: var(--ink-1); margin-right: 1ch; }
 :root[data-look="amber-crt"] [data-panel="incidents"] .ac-empty svg.i { color: var(--good); flex: none; }
 
+/* an outage: [+] / [-] before its title, the summary under it, its drops as lines in from the left */
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-outage .ac-what::before { content: "[+] "; color: var(--ink-3); }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-outage .ac-what[aria-expanded="true"]::before { content: "[-] "; }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-wcell { min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-sub { color: var(--ink-3); font-size: var(--fs-xs); display: flex; flex-wrap: wrap; gap: 2px var(--sp-2); }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-state { color: var(--ink-1); font-weight: var(--fw-semi); }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-maint { border: 1px dashed var(--line-strong); padding: 0 6px; color: var(--ink-2); cursor: help; }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-drop { padding-left: calc(var(--sp-2) + 3ch); border-left-style: dashed; }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-drop .ac-what { font-weight: var(--fw-normal, 400); }
+
 @media (max-width: 900px) {
   :root[data-look="amber-crt"] [data-panel="incidents"] .ac-cols { display: none; }
   :root[data-look="amber-crt"] [data-panel="incidents"] .ac-ln { grid-template-columns: auto 1fr auto; grid-template-areas: "st st dur" "what what what" "when cause cause"; }
-  :root[data-look="amber-crt"] [data-panel="incidents"] .ac-stt { grid-area: st; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-what { grid-area: what; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-dur { grid-area: dur; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-when { grid-area: when; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-cause { grid-area: cause; }
+  :root[data-look="amber-crt"] [data-panel="incidents"] .ac-stt { grid-area: st; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-what, :root[data-look="amber-crt"] [data-panel="incidents"] .ac-wcell { grid-area: what; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-dur { grid-area: dur; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-when { grid-area: when; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-cause { grid-area: cause; }
 }

@@ -23,6 +23,7 @@ It is an `httpx.AsyncBaseTransport`, so the providers use the usual httpx client
 """
 
 import asyncio
+import re
 import socket
 import ssl
 from typing import AsyncIterator, Dict, List, Optional, Tuple
@@ -33,10 +34,24 @@ BATCH_S = 0.005  # the wait between two reads of a response body: what one read 
 READ_SIZE = 1 << 20  # what one read takes from the socket at most
 RECORD_SIZE = 64 * 1024  # what one decryption takes out at most (a TLS record holds 16 KiB)
 HEAD_MAX = 64 * 1024  # a response head larger than this is refused
+CHUNK_SIZE = re.compile(rb"[0-9A-Fa-f]{1,16}")  # a chunk's size: hex digits, nothing else
+# What a request's method and header names may be (RFC 9110 tokens), and what a header value must not hold: h11 checks
+# these for httpx's own transport, and httpx itself does not, so this transport does.
+TOKEN = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+VALUE = re.compile(rb"[^\x00\r\n]*")
 DEFAULT_TIMEOUT = 10.0
 ADDRESS_WAIT_S = 2.0  # how long a connection to one of several addresses may take before the next one is tried
 
 Key = Tuple[str, str, int]
+
+
+def _check_head(request: httpx.Request) -> None:
+    """Refuses a request whose method or headers would break out of their line (a CR or LF in a header value would start
+    a header or a request of its own), before anything is sent. The path and the host are httpx's: its URL refuses
+    control characters."""
+    if not TOKEN.fullmatch(request.method.encode("ascii", "replace")) or not all(
+            TOKEN.fullmatch(name) and VALUE.fullmatch(value) for name, value in request.headers.raw):
+        raise httpx.LocalProtocolError("a request method or header that HTTP/1.1 cannot carry", request=request)
 
 
 def _timeouts(request: httpx.Request) -> Dict[str, Optional[float]]:
@@ -192,6 +207,8 @@ class _Body(httpx.AsyncByteStream):
         self.transport, self.conn, self.length, self.chunked = transport, conn, length, chunked
         self.keep, self.timeout, self.request = keep, read_timeout, request
         self.done = False
+        self._left = 0  # chunked: bytes of the current chunk still to come
+        self._part = "size"  # chunked: what the next line is ("size", "end" of a chunk's data, "trailers")
 
     async def _more(self, wait: float) -> None:
         try:
@@ -200,16 +217,6 @@ class _Body(httpx.AsyncByteStream):
             raise httpx.ReadTimeout("the server sent nothing in time", request=self.request) from None
         except (OSError, ssl.SSLError) as e:
             raise httpx.ReadError(f"{e.__class__.__name__}: {e}", request=self.request) from None
-
-    async def _line(self) -> bytes:
-        conn = self.conn
-        while b"\r\n" not in conn.plain:
-            if conn.eof or len(conn.plain) > HEAD_MAX:
-                raise httpx.RemoteProtocolError("a malformed chunked body", request=self.request)
-            await self._more(0)
-        line, _, rest = bytes(conn.plain).partition(b"\r\n")
-        conn.plain = bytearray(rest)
-        return line
 
     async def _counted(self, n: Optional[int]) -> AsyncIterator[bytes]:
         """`n` bytes (None: up to the end of the stream), in the pieces they arrive in."""
@@ -231,21 +238,55 @@ class _Body(httpx.AsyncByteStream):
                                                 request=self.request)
             await self._more(self.transport.batch_s)
 
+    def _chunks(self, out: bytearray) -> bool:
+        """Takes what has arrived of a chunked body, without waiting: the chunks' data goes to `out`, the framing is
+        dropped. True once the body has ended (the last chunk and its trailers). Linear in what it reads, and every
+        chunk of a read goes into one piece: a server that sends a million one-byte chunks costs no more than one that
+        sends a few large ones (re-copying the buffer for every line, or a piece per chunk, held the event loop for
+        seconds per megabyte)."""
+        plain = self.conn.plain
+        while True:
+            if self._left:  # the data of a chunk
+                take = min(self._left, len(plain))
+                if not take:
+                    return False
+                out += plain[:take]
+                del plain[:take]
+                self._left -= take
+                continue
+            end = plain.find(b"\r\n")
+            if end < 0:
+                if len(plain) > HEAD_MAX:
+                    raise httpx.RemoteProtocolError("a malformed chunked body", request=self.request)
+                return False
+            line = bytes(plain[:end])
+            del plain[:end + 2]
+            if self._part == "size":
+                size = line.split(b";", 1)[0].strip()
+                if not CHUNK_SIZE.fullmatch(size):  # (int() alone also takes "-1", "0x10" and "1_0")
+                    raise httpx.RemoteProtocolError("a malformed chunk size", request=self.request)
+                self._left = int(size, 16)
+                self._part = "end" if self._left else "trailers"
+            elif self._part == "end":  # the CRLF after a chunk's data
+                if line:
+                    raise httpx.RemoteProtocolError("a chunk longer than its size", request=self.request)
+                self._part = "size"
+            elif not line:  # the trailers end with an empty line
+                return True
+
     async def __aiter__(self) -> AsyncIterator[bytes]:
         if self.chunked:
-            while True:
-                size_line = (await self._line()).split(b";", 1)[0].strip()
-                try:
-                    size = int(size_line, 16)
-                except ValueError:
-                    raise httpx.RemoteProtocolError("a malformed chunk size", request=self.request) from None
-                if size == 0:
-                    while await self._line():  # the trailers, up to the empty line
-                        pass
-                    break
-                async for piece in self._counted(size):
-                    yield piece
-                await self._line()  # the CRLF after the chunk
+            out = bytearray()
+            while not self._chunks(out):
+                if out:
+                    yield bytes(out)
+                    out.clear()
+                if self.conn.eof:
+                    raise httpx.RemoteProtocolError("the server closed the connection before the end of the body",
+                                                    request=self.request)
+                await self._more(self.transport.batch_s)
+            if out:
+                yield bytes(out)
         else:
             async for piece in self._counted(self.length):
                 yield piece
@@ -289,6 +330,7 @@ class BulkTransport(httpx.AsyncBaseTransport):
         url = request.url
         if url.scheme not in ("http", "https"):
             raise httpx.UnsupportedProtocol(f"no {url.scheme!r} here", request=request)
+        _check_head(request)
         key = (url.scheme, url.host, url.port or (443 if url.scheme == "https" else 80))
         timeouts = _timeouts(request)
         conn = await self._connection(key, timeouts, request)
@@ -348,7 +390,7 @@ class BulkTransport(httpx.AsyncBaseTransport):
         conn.plain = bytearray(rest)
         lines = raw.split(b"\r\n")
         parts = lines[0].split(b" ", 2)
-        if len(parts) < 2 or not parts[0].startswith(b"HTTP/1.") or not parts[1].isdigit():
+        if len(parts) < 2 or not parts[0].startswith(b"HTTP/1.") or not (len(parts[1]) == 3 and parts[1].isdigit()):
             raise httpx.RemoteProtocolError("not an HTTP/1.x answer", request=request)
         status = int(parts[1])
         answer: List[Tuple[bytes, bytes]] = []

@@ -78,6 +78,9 @@ class Device:
         self._last_attempt: float = 0.0  # when the device was last read (or its reading was last tried)
         self._failures = 0  # consecutive failed attempts, for the backoff
         self._auth_stopped = False  # the login was refused: no polling until set_credentials
+        # The last login was refused (by a poll or a speed test's counter read): no counter reads until a poll works or
+        # the credentials change. Each read would be a login attempt, about one a second through a test.
+        self._login_refused = False
         self._credentials_changed = asyncio.Event()
         self._log = get_logger("pengumon.devices", device=device_id, driver=driver.name, host=driver.host)
         self._state = StateLog(self._log, f"Polling {device_id} ({driver.name} at {driver.host})", clock=monotonic)
@@ -126,6 +129,7 @@ class Device:
     def set_credentials(self, username: str, password: str, *, source: Optional[str] = None) -> None:
         self.driver.set_credentials(username, password)
         self._auth_stopped = False
+        self._login_refused = False
         self._failures = 0
         self._credentials_changed.set()  # wakes run() if it stopped on a refused login
         if source is not None:
@@ -207,10 +211,10 @@ class Device:
         second): the driver's light counters read (`read_wan_counters`), on the same driver object and session as the
         polls, behind the same lock, so it never runs during a poll (it waits for one to end). None when the device
         cannot give one now: no such read, switched off, no password, a refused login, a device that must not be read
-        often (one with a minimum interval), or the read failed (logged at debug: the next one may work). Neither the
-        poll schedule nor the snapshot is touched."""
+        often (one with a minimum interval), or the read failed (logged at debug: the next one may work; after a
+        refused login none is tried until a poll works). Neither the poll schedule nor the snapshot is touched."""
         read = getattr(self.driver, "read_wan_counters", None)
-        if (read is None or not self.enabled or self._auth_stopped or self.min_interval_seconds
+        if (read is None or not self.enabled or self._auth_stopped or self._login_refused or self.min_interval_seconds
                 or Capability.WAN_COUNTERS not in self.driver.offers or self.driver.missing_configuration()):
             return None
         async with self._lock:
@@ -220,6 +224,8 @@ class Device:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                if classify(exc).kind == "auth":
+                    self._login_refused = True
                 self._log.debug(f"{self.id}: the WAN counters could not be read for the speed test",
                                 error=f"{type(exc).__name__}: {exc}")
                 return None
@@ -273,6 +279,8 @@ class Device:
                 error = classify(exc)
                 outcome, kind = "error", error.kind
                 self._failures += 1
+                if error.kind == "auth":  # (cleared only by a poll that works: a timeout says nothing of the login)
+                    self._login_refused = True
                 # Only a device that is easily upset (one with a minimum interval) stops: a router reports a
                 # passing lockout the same way as a wrong password, and must not go quiet for good over it
                 if error.kind == "auth" and self.min_interval_seconds and not self._auth_stopped:
@@ -290,6 +298,7 @@ class Device:
                 snapshot = await self.monitor.on_error(self._clock(), error)
             else:
                 self._failures = 0
+                self._login_refused = False
                 span.set_attribute("device.readings", sorted(c.value for c in result.readings))
                 if result.missing:
                     outcome = "partial"

@@ -40,7 +40,8 @@ async def test_a_report_without_data_is_empty_but_complete():
     assert report == {
         "days": 7, "tz_offset_minutes": 0, "generated_at": NOW,
         "availability": {"days": [], "hops": []},
-        "incidents": {"count": 0, "minutes": 0.0, "by_cause": [], "excluded_expected": 0},
+        "incidents": {"count": 0, "minutes": 0.0, "by_cause": [], "excluded_expected": 0,
+                      "outages": {"count": 0, "down_minutes": 0.0, "longest_minutes": 0.0, "maintenance": 0}},
         "loss_by_hour": [], "worst_hours": [],
     }
 
@@ -90,3 +91,33 @@ async def test_an_open_incident_counts_as_downtime_until_now():
             {"cause_code": "unknown_outage", "start_time": NOW - 7200, "duration_seconds": 60, "expected": 0, "kind": "gateway_down"}]
     incidents = (await build_report(Repo(incidents=rows), None, 7, now=NOW))["incidents"]
     assert incidents["minutes"] == 31.0 and incidents["by_cause"][0]["minutes"] == 31.0
+
+
+def drop_row(iid, start, end, kind="isp_outage", cause_code="access_line_drop", severity="critical", expected=0):
+    return {"id": iid, "cause_code": cause_code, "kind": kind, "start_time": start, "end_time": end,
+            "duration_seconds": None if end is None else end - start, "severity": severity, "expected": expected,
+            "title": "Line outage", "description": "d"}
+
+
+async def test_the_report_counts_outages_beside_the_incident_figures():
+    """Three drops two minutes apart are one outage (down: the critical ones, overlaps once); a lone drop a day later is
+    another; the incident count, minutes and causes stay per incident."""
+    t = (NOW // 86400 - 2) * 86400 + 3 * 3600   # 03:00 UTC two days back: inside the default maintenance hours (UTC)
+    rows = [drop_row(1, t, t + 60), drop_row(2, t + 180, t + 240, "isp_loss", severity="warning"),
+            drop_row(3, t + 300, t + 420), drop_row(4, NOW - 5000, NOW - 4900),
+            drop_row(5, t + 400, t + 450, expected=1)]
+    config = SimpleNamespace(targets=[], dns_probes=[], incidents=None, general=None)
+    inc = (await build_report(Repo(incidents=rows), config, 7, now=NOW))["incidents"]
+    assert inc["count"] == 4 and inc["excluded_expected"] == 1                       # per incident, as before
+    assert inc["outages"] == {"count": 2, "down_minutes": round((60 + 120 + 100) / 60, 1),
+                              "longest_minutes": 7.0, "maintenance": 1}
+
+
+async def test_outages_follow_the_gap_setting():
+    t = NOW - 5000
+    rows = [drop_row(1, t, t + 60), drop_row(2, t + 180, t + 240)]
+    joined = await build_report(Repo(incidents=rows), SimpleNamespace(targets=[], dns_probes=[]), 1, now=NOW)
+    assert joined["incidents"]["outages"]["count"] == 1
+    off = SimpleNamespace(targets=[], dns_probes=[], incidents=SimpleNamespace(
+        group_gap_minutes=0, maintenance_start="00:00", maintenance_end="06:00"), general=None)
+    assert (await build_report(Repo(incidents=rows), off, 1, now=NOW))["incidents"]["outages"]["count"] == 2

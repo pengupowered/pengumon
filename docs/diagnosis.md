@@ -44,6 +44,37 @@ gateway, line, ISP, internet, DNS, load, service), the groups the incident timel
 dossier use. Open an incident in the list to get its inspector: the probes around it, stage by stage. The scenarios
 and the placement rules follow; the panels are described in [dashboard.md](dashboard.md).
 
+## Outages
+
+One provider event is often several incidents: the line drops, comes back for a few minutes (longer than "Recovery
+confirmed after", so the incident ends), and drops again. An **outage** joins such drops. Incidents stay the raw record,
+unchanged, and "Recovery confirmed after" is not changed; an outage is computed on every read from the incidents and two
+settings (`incidents:`, Settings, Outage rules, group Outages), so changing them regroups the whole history.
+
+- **Which incidents.** Network incidents that are not `expected` and whose cause category is a place of the path: router,
+  gateway, line, isp, internet, or dns. Load, unknown and host-app incidents are never grouped: each stands alone and has
+  no outage.
+- **Neighbors.** The path is router, gateway, line, isp, internet. Two places are linked when they are neighbors (router
+  and gateway, gateway and line, ...); dns is linked to line, isp, internet and dns. A router drop does not join a line
+  or provider outage; it is its own.
+- **Joining.** In start order, an incident joins the current outage when it starts no later than
+  `incidents.group_gap_minutes` (10 by default) after the outage's latest end (a drop still open ends "now") and its place
+  is linked to the place of at least one drop in it. Otherwise it starts a new outage. A gap of 0 turns grouping off:
+  every drop is an outage of one, and alerts behave as before.
+- **Figures.** `drops`, `critical_drops`, the highest severity, the places in path order, the `title` and cause of the
+  longest critical drop (the longest drop when none was critical); `down_seconds` is the time of the critical drops with overlaps counted once, `affected_seconds`
+  all drops, `duration_seconds` the first start to the last end. An outage that ended less than the gap ago is
+  **settling**: another drop may still join it.
+- **Likely maintenance.** An outage that begins from `incidents.maintenance_start` up to, but not at, `maintenance_end`
+  (default 00:00 to 06:00, on the clock of `general.timezone`, may cross midnight) and whose drops are all at the line or the
+  provider's network (line, isp) is labeled *likely maintenance*. It is only a label, a guess from the hour: it hides,
+  shortens or discounts nothing, and the downtime counts in full. Empty window: never.
+
+The Incidents card shows an outage of 2 or more drops as one row that opens to its drops ([dashboard.md](dashboard.md)).
+The API is `GET /api/outages` and `outage_id` on `GET /api/incidents` ([api.md](api.md)); the reliability report, the ISP
+dossier, the AI pack and the MCP `incidents` tool count outages beside the incidents; alerts are sent per outage
+([webhooks.md](webhooks.md)).
+
 ## Where a fault is placed
 
 The gateway hop (shown as **Gateway**) is the gateway or modem answering on its home-side (LAN) address. Those pings

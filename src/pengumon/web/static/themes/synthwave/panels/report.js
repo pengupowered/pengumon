@@ -8,7 +8,7 @@ export default {
   mount(root, ctx) {
     const { escapeHtml: esc, html, text } = ctx.kit;
     let built = null;
-    const readout = (key, s) => `<div class="sw-read"><span class="sw-lbl">${esc(s.label)}</span><span class="sw-rv num" data-v="${key}">${esc(s.value)}</span></div>`;
+    const readout = (key, s) => `<div class="sw-read"><span class="sw-lbl">${esc(s.label)}</span><span class="sw-rv num" data-v="${key}">${esc(s.value)}</span>${s.sub ? `<span class="sw-rs" data-v="outages">${esc(s.sub)}</span>` : ''}</div>`;
 
     const frame = (vm) => {
       root.innerHTML = '<div class="sw-rep"><div class="sw-hero"></div><div class="sw-days"></div><div class="sw-causes"></div></div><p class="sw-excl" hidden></p>'

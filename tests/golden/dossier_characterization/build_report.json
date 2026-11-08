@@ -91,7 +91,13 @@
    ],
    "count": 4,
    "excluded_expected": 1,
-   "minutes": 68.0
+   "minutes": 68.0,
+   "outages": {
+    "count": 1,
+    "down_minutes": 0.0,
+    "longest_minutes": 60.0,
+    "maintenance": 0
+   }
   },
   "loss_by_hour": [
    {

@@ -9,7 +9,8 @@ const { escapeHtml: esc } = kit;
 
 const SKELETON = '<div class="skel" style="height:44px;width:60%;margin-bottom:14px"></div><div class="skel-stack"><div class="skel line" style="width:92%"></div><div class="skel line" style="width:76%"></div><div class="skel line" style="width:84%"></div></div>';
 
-const stat = (key, s) => `<div class="stat"><span class="lbl">${esc(s.label)}</span><span class="val num" data-v="${key}">${esc(s.value)}</span></div>`;
+const stat = (key, s) => `<div class="stat"><span class="lbl">${esc(s.label)}</span><span class="val num" data-v="${key}">${esc(s.value)}</span>`
+  + (s.sub ? `<span class="sub" data-v="outages">${esc(s.sub)}</span>` : '') + '</div>';
 
 // The headline with the downtime and the incident count.
 function hero(box, vm) {

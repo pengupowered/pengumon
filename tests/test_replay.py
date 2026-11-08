@@ -247,6 +247,23 @@ async def test_notes_name_a_path_change_and_missing_load(tmp_path):
     assert all(n.endswith(".") for n in notes)
 
 
+async def test_path_notes_are_one_per_day_and_read_as_a_sentence(tmp_path):
+    rows = [(T0 + k, "local", 1.0) for k in range(20)]
+    db = tmp_path / "pn.db"
+    await make_db(db, rows)
+    conn = sqlite3.connect(db)
+    for revision, at, summary in [(1, T0 + 1, "Imported 3 hops (config.yaml's targets)"), (2, T0 + 5, "3 hops added"),
+                                  (3, T0 + 6, "The hop Gateway moved up"), (4, T0 + 7, "DNS hop renamed.")]:
+        conn.execute("INSERT INTO path_versions (revision, applied_at, hop_count, summary, hops) VALUES (?, ?, 6, ?, '[]')",
+                     (revision, at, summary))
+    conn.commit()
+    spec = spec_for([("local", "local", "Local", "192.0.2.1", True)], T0, T0 + 20, dns=())
+    notes = [n for n in (await run_replay(spec, conn))["notes"] if "path was changed" in n]
+    assert len(notes) == 1  # two changes on one day are one note; the first version (the import) is no change
+    assert "(3 hops added; the hop Gateway moved up; DNS hop renamed)" in notes[0]
+    assert "Imported" not in notes[0]
+
+
 async def test_recorded_counts_the_stored_network_incidents_in_the_window(tmp_path):
     db = tmp_path / "c.db"
     await make_db(db, [(T0, "local", 1.0)])
@@ -399,6 +416,51 @@ def test_a_warning_that_rises_to_critical_is_counted_under_critical_only_from_it
     rule_set.alerts = AlertsConfig(min_severity="warning", delay_seconds=60)
     rule_set.escalated_at[id(incident)] = T0 + 50
     assert _alerts(rule_set, "UTC", T0 + 200) == 1  # a warning passes at its start: due at +60
+
+
+def _flap(rule_set, *drops, cause="access_line_drop", severity="warning"):
+    """Incidents of one cause as (start, end) offsets from T0, appended to the rule set."""
+    from pengumon.incidents.model import Incident
+    for a, b in drops:
+        rule_set.incidents.append(Incident(start_time=T0 + a, end_time=T0 + b, cause_code=cause, title="Example line drop",
+                                           description="d", severity=severity))
+
+
+def test_the_alert_preview_counts_one_alert_per_outage_as_the_notifier_sends_them():
+    from pengumon.engine.replay import _RuleSet, _alerts
+    from pengumon.incidents.settings import IncidentsConfig
+    alerts = AlertsConfig(delay_seconds=5, repeat_window_seconds=0)
+    rule_set = _RuleSet("draft", ClassifierConfig(), None, None, alerts)
+    _flap(rule_set, (0, 100), (220, 320), (440, 540))  # three drops, two minutes apart: one provider event
+    assert _alerts(rule_set, "UTC", T0 + 1000) == 3  # no incidents section given: grouping off, an alert each
+    assert _alerts(rule_set, "UTC", T0 + 1000, IncidentsConfig(group_gap_minutes=0)) == 3
+    assert _alerts(rule_set, "UTC", T0 + 1000, IncidentsConfig(group_gap_minutes=10)) == 1
+    assert _alerts(rule_set, "UTC", T0 + 1000, IncidentsConfig(group_gap_minutes=1)) == 3  # the gap is two minutes
+    _flap(rule_set, (900, 950), cause="load_induced_latency")  # a cause that is no place of the path is never joined
+    assert _alerts(rule_set, "UTC", T0 + 1000, IncidentsConfig(group_gap_minutes=10)) == 2
+
+
+def test_the_alert_preview_asks_again_when_a_later_drop_passes_the_filter_the_first_did_not():
+    from pengumon.engine.replay import _RuleSet, _alerts
+    from pengumon.incidents.settings import IncidentsConfig
+    rule_set = _RuleSet("draft", ClassifierConfig(), None, None, AlertsConfig(min_severity="critical", delay_seconds=5))
+    _flap(rule_set, (0, 100))  # a warning: filtered out
+    _flap(rule_set, (200, 300), severity="critical")  # joins it, and is critical
+    assert _alerts(rule_set, "UTC", T0 + 1000, IncidentsConfig(group_gap_minutes=10)) == 1
+    assert _alerts(rule_set, "UTC", T0 + 1000, IncidentsConfig(group_gap_minutes=0)) == 1  # (its own, as before)
+
+
+async def test_the_preview_spec_carries_the_running_grouping_and_the_cache_key_follows_it(tmp_path):
+    from types import SimpleNamespace
+    from pengumon.config import AppConfig
+    from pengumon.settings.preview import build_spec
+    config = AppConfig()
+    state = SimpleNamespace(config=config, repository=SimpleNamespace(db_path=tmp_path / "x.db"), classifier=None, devices=None)
+    spec, key = build_spec(state, {}, 7, T0)
+    assert spec["incidents"]["group_gap_minutes"] == config.incidents.group_gap_minutes
+    config.incidents.group_gap_minutes = 0
+    spec_off, key_off = build_spec(state, {}, 7, T0)
+    assert spec_off["incidents"]["group_gap_minutes"] == 0 and key_off != key
 
 
 # The replay keeps less than the prober does (engine.replay._Target) and skips the rounds in which nothing can happen.

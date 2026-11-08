@@ -6,8 +6,8 @@
 #                                              --build-arg WHEEL_STAGE=wheel-prebuilt, so the image holds
 #                                              exactly the file that was tested and attached to the release.
 #
-# python:3.12-slim as of 2026-10-11 (update: a base-image digest check, e.g. depguard base-image)
-ARG PYTHON_IMAGE=python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+# python:3.12-slim as of 2026-11-05 (update: a base-image digest check, e.g. depguard base-image)
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 ARG WHEEL_STAGE=wheel-built
 
 # ---- build: the wheel, with the hash-locked build backend; no build isolation, no download at build time ----
@@ -36,7 +36,10 @@ FROM ${PYTHON_IMAGE} AS runtime
 WORKDIR /app
 
 # Security updates of the base image, then setcap (below) and curl (health checks). No ping or traceroute: the app
-# sends ICMP itself (pengumon.engine.icmp_linux), traceroute included.
+# sends ICMP itself (pengumon.engine.icmp_linux), traceroute included. APT_REFRESH (scripts/deploy.sh passes the date)
+# makes a local build run the upgrade again at least once a day instead of reusing an old build's cached layer, which
+# kept fixed Debian packages out of local images; a CI build has no cache.
+ARG APT_REFRESH=
 RUN apt-get update && apt-get -y --no-install-recommends upgrade \
     && apt-get install -y --no-install-recommends \
     libcap2-bin \

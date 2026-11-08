@@ -417,7 +417,9 @@ def build_spec(state: "AppState", values: Dict[str, Any], days: Optional[int], n
         "wan_device_id": getattr(load, "device_id", None),
         "line_technology": devices.line_technology() if devices is not None else None,
         "timezone": config.general.timezone,
+        "incidents": config.incidents.model_dump(mode="json"),  # the notifier's grouping: one alert per outage
     }
-    key = hashlib.sha256(json.dumps({"rules": rules, "start": start, "end": end, "learned": spec["learned"]},
+    key = hashlib.sha256(json.dumps({"rules": rules, "start": start, "end": end, "learned": spec["learned"],
+                                     "incidents": spec["incidents"]},
                                     sort_keys=True).encode()).hexdigest()
     return spec, key

@@ -280,6 +280,25 @@ class IncidentQueries:
             ) as cursor:
                 return [dict(r) for r in await cursor.fetchall()]
 
+    async def get_incidents_touching(self, since: float) -> List[Dict[str, Any]]:
+        """The network incidents (not expected, not host apps) that started at or after `since`, or that were still
+        open at it or ended at or after it, as plain rows with only what outage grouping reads, oldest first. Not cached:
+        the grouping reads a widening window of them (incidents.outage_read)."""
+        kinds = kinds_in_scope("network")
+        async with self._db.read() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"""
+                SELECT id, start_time, end_time, cause_code, title, description, severity, kind
+                FROM incidents
+                WHERE COALESCE(expected, 0) = 0 AND (kind IS NULL OR kind IN ({','.join('?' * len(kinds))}))
+                  AND (start_time >= ? OR end_time IS NULL OR end_time >= ?)
+                ORDER BY start_time, id
+                """,
+                (*kinds, since, since),
+            ) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
     async def update_incident_path_trace(self, incident_id: int, hops: List[PathTraceHop]):
         """Attaches an automated path trace to an incident record."""
         hops_json = json.dumps([h.model_dump() for h in hops])

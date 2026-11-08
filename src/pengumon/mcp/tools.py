@@ -12,6 +12,7 @@ Settings (general.timezone; UTC when none).
 """
 
 import ipaddress
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from pengumon.capabilities import Capability
 from pengumon.devices.samples import line_history, router_history
 from pengumon.devices.summary import client_counts, device_label, summarize_snapshot
 from pengumon.engine.path_rules import ignoring_ping_ids
+from pengumon.incidents.outage_read import outages_since, with_outage_ids
+from pengumon.incidents.outages import Rules
 from pengumon.reports.common import pack_building
 from pengumon.reports.reliability import build_report
 from pengumon.reports.speed import summarize
@@ -103,8 +106,10 @@ def _repository(state):
     return state.repository
 
 
-def incident_summary(incident, tz: tzinfo) -> Dict[str, Any]:
-    return {"id": incident.id, "start": iso(incident.start_time, tz), "end": iso(incident.end_time, tz),
+def incident_summary(incident, tz: tzinfo, outage_ids: Optional[Dict[int, int]] = None) -> Dict[str, Any]:
+    """`outage_ids` (incident id -> outage id): given, the summary names the outage the incident belongs to (null: none)."""
+    extra = {} if outage_ids is None else {"outage_id": outage_ids.get(incident.id)}
+    return {**extra, "id": incident.id, "start": iso(incident.start_time, tz), "end": iso(incident.end_time, tz),
             "duration_seconds": incident.duration_seconds, "resolved": incident.resolved, "kind": incident.kind,
             "cause": incident.cause, "title": incident.title, "severity": incident.severity,
             "load_pct": incident.load_pct, "expected_from_load": incident.expected}
@@ -161,11 +166,38 @@ async def _incidents(state, args):
     period = args.get("period", "7d")
     limit = args.get("limit", DEFAULT_LIMIT)
     rows = await repo.get_recent_incidents(limit=_INCIDENT_SCAN, include_expected=True, scope="network")
-    since = time.time() - PERIODS[period]
+    now = time.time()
+    since = now - PERIODS[period]
     inside = [i for i in rows if i.start_time >= since]
-    return {"period": period, "total_in_period": len(inside), "returned": min(limit, len(inside)),
+    rules = Rules.from_config(state.config)
+    shown = inside[:limit]
+    ids = await _outage_ids(repo, rules, shown, now)
+    found = list(reversed(await outages_since(repo, rules, since, now)))
+    outages = [_outage_summary(o.summary(now, rules), tz) for o in found[:limit]]
+    return {"period": period, "total_in_period": len(inside), "returned": len(shown),
             "may_be_incomplete": len(rows) == _INCIDENT_SCAN and len(inside) == len(rows),
-            "incidents": [incident_summary(i, tz) for i in inside[:limit]]}
+            "incidents": [incident_summary(i, tz, ids) for i in shown],
+            "outages_total_in_period": len(found), "outages": outages,
+            "outage_note": "An outage joins incidents at neighboring places of the path that follow each other within "
+                           f"{int(rules.gap_seconds // 60)} minutes (0: grouping is off): one event at the provider "
+                           "often shows as several incidents. Count outages for how often the line went down. "
+                           "likely_maintenance is a guess from the hour of the day, not a fact."}
+
+
+async def _outage_ids(repo, rules: Rules, incidents, now: float) -> Dict[int, int]:
+    """Incident id -> outage id for these incidents (an incident in no outage is left out)."""
+    if not incidents:
+        return {}
+    grouped = await with_outage_ids(repo, rules, list(incidents), now)
+    return {i.id: i.outage_id for i in grouped if i.outage_id is not None}
+
+
+def _outage_summary(o: Dict[str, Any], tz: tzinfo) -> Dict[str, Any]:
+    return {"id": o["id"], "start": iso(o["start_time"], tz), "end": iso(o["end_time"], tz), "ongoing": o["ongoing"],
+            "duration_seconds": round(o["duration_seconds"]), "down_seconds": round(o["down_seconds"]),
+            "drops": o["drops"], "critical_drops": o["critical_drops"], "severity": o["severity"],
+            "places": o["places"], "title": o["title"], "likely_maintenance": o["likely_maintenance"],
+            "incident_ids": o["incident_ids"]}
 
 
 _DROPPED_EVIDENCE = ("incident", "samples", "docsis_snapshots", "router_snapshots")
@@ -310,13 +342,14 @@ _OWN_SERVER = "your LibreSpeed server"
 
 def _speed_row(row: Dict[str, Any], tz: tzinfo) -> Dict[str, Any]:
     """One stored test. A LibreSpeed test names its provider, never the server's address: the server label is that
-    address's host, and an error sentence can repeat it."""
+    address's host, and an error sentence can repeat it (in any case: the label is lowercased, a 404's hint repeats the
+    address as entered)."""
     own = row["provider"] == "librespeed"
     level, note = confidence(row)
     server = row.get("server")
     reason = row.get("reason")
     if own and server and reason:
-        reason = reason.replace(server, _OWN_SERVER)
+        reason = re.sub(re.escape(server), _OWN_SERVER, reason, flags=re.IGNORECASE)
     best = headline(row)
     return {
         "time": iso(row["ts"], tz), "trigger": row["trigger"], "status": row["status"], "reason": reason,
@@ -430,8 +463,11 @@ TOOLS: List[Tool] = [
          _schema(), _status),
     Tool("incidents",
          "Lists recent network incidents (outages and slow spells), newest first, with when they started and ended, "
-         "how long they lasted, the kind and cause, severity and the line load at the time. Use it to see how stable "
-         "the network has been, then call `incident` with an id for the evidence.",
+         "how long they lasted, the kind and cause, severity and the line load at the time. Each has an `outage_id`: an "
+         "outage joins incidents at neighboring places of the path that follow each other within a few minutes (a "
+         "flapping line or one provider event is several incidents but one outage), and `outages` lists them with "
+         "their drops, down time and whether they are likely maintenance (a guess from the hour). Use it to see how "
+         "stable the network has been, then call `incident` with an id for the evidence.",
          _schema(period=_period_schema("7d"), limit=_limit_schema()), _incidents),
     Tool("incident",
          "One incident in full: its description, the path trace taken when it began, and the evidence for its cause "

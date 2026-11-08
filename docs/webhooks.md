@@ -75,6 +75,15 @@ general:
   Messages about your own apps and route changes are not filtered by severity (an app has its own `notify` switch).
 - **Delay** counts from the start of the incident, which is dated to its first bad probe round, so "5 minutes" means
   an outage that lasted 5 minutes. An incident that ends first sends nothing, no start message and no "resolved".
+- **Outages** (`incidents.group_gap_minutes`, 10 by default, 0 turns it off). A line that drops, comes back for a few
+  minutes and drops again is one outage: it sends one start message, when the first drop is announced, and no message for
+  the drops that join it (a drop starts no later than the gap after the last one ended, at a neighboring place of the
+  path). One "resolved" message follows once the gap has passed with no new drop, so it comes that long after the line
+  came back; a new drop in that time cancels it. It says the span, the drops, the down time and, for an outage at the
+  provider that began in the maintenance hours, "likely maintenance" (a label only). If the first drop was filtered by
+  `min_severity`, a later critical drop that joins the outage announces it, as an escalation does. Quiet hours hold the
+  resolved message as they hold any. The notifier keeps the live outage in memory: after a restart the next drop starts a
+  new outage (and a new start message). With the gap at 0 every incident is announced and resolved on its own, as before.
 - **Quiet hours** hold a message until they end. What is still going on at that moment goes out once, with "Ongoing since 03:12:"
   after "Pengumon:" in the title (the time the incident or outage began, in your time zone). Something that ended in
   the meantime is dropped: an incident that resolved, an app that came back (both its messages). A route-change message is
@@ -107,6 +116,8 @@ meaning (`version` rises if that ever has to happen).
   "title": "Pengumon: ISP Outage",
   "message": "Cause: Internet Backbone Transit Loss\nHub unreachable\nLine load: 72%",
   "incident_id": 42,
+  "outage_id": 42,
+  "drops": 1,
   "cause": "internet_backbone_transit_loss",
   "service_id": null,
   "started_at": "2026-11-02T18:04:11Z",
@@ -120,7 +131,8 @@ meaning (`version` rises if that ever has to happen).
 - `event`: `incident_started`, `incident_resolved`, `service_down`, `service_up`, `path_changed`, `speed_slow`, `test`
 - `severity`: `info`, `warning` or `critical` (the incident's; resolved, back and test are `info`, an app that is down `warning`)
 - `title`, `message`: The text ntfy shows
-- `incident_id`, `cause`: The incident (network incidents only; `null` otherwise). The same id is in the dashboard.
+- `outage_id`, `drops`: The [outage](diagnosis.md#outages) a network incident message is about: the id of its first incident and how many drops it had when the message was written (one start message and one resolved message per outage; `null` for an incident that is never grouped, and for the other events). With `incidents.group_gap_minutes: 0` every incident is an outage of one.
+- `incident_id`, `cause`: The incident (network incidents only; `null` otherwise; for an outage, its first incident). The same id is in the dashboard.
   `cause` is one of these codes (more may be added, none changes meaning):
   - `local_wifi_mesh_drop`, `local_switch_cable_fault`: the router or mesh, Wi-Fi or cabling at home
   - `gateway_unreachable`: the gateway (modem) stopped answering on its home-side address while the router answered;

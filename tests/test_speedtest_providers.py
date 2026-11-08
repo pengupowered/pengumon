@@ -7,6 +7,7 @@ provider read, count or send more than the cap (plus the slack each module docum
 
 import asyncio
 import json
+import socket
 from urllib.parse import parse_qs
 
 import httpx
@@ -725,6 +726,76 @@ async def test_mlab_does_not_follow_a_redirect_from_the_server_it_was_given():
     assert target.queries == [] and target.sent == 0
 
 
+async def test_mlab_access_token_stays_out_of_the_log_even_at_debug(monkeypatch):
+    """`websockets` logs its handshake's request line (path and query: the access token) at DEBUG, and a debug log
+    level is one Settings choice away, and the console log is kept (podman logs, journald). Its client logger stays at
+    INFO by default."""
+    import io
+    import logging
+
+    from pengumon.observability.logs import setup_logging
+
+    for var in ("PENGUMON_LOG_LEVEL", "PENGUMON_LOG_LEVELS", "PENGUMON_LOG_FORMAT"):
+        monkeypatch.delenv(var, raising=False)
+    root = logging.getLogger()
+    saved = (list(root.handlers), root.level)
+    names = ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx", "httpcore", "websockets.client")
+    named = {n: (logging.getLogger(n).level, list(logging.getLogger(n).handlers), logging.getLogger(n).propagate)
+             for n in names}
+    stream = io.StringIO()
+    try:
+        setup_logging("debug", levels="", fmt="text", stream=stream)
+        async with NdtServer() as server:
+            provider = mlab(server)
+            await provider.download(200_000, LIMIT)
+            await provider.aclose()
+        assert "access_token=tok" in server.queries[0]                     # (it was sent)
+        # the test's own server logs it at debug (so debug was on); the client, which is Pengumon, does not
+        leaks = [line for line in stream.getvalue().splitlines() if "access_token" in line]
+        assert leaks and all("] websockets.server: " in line for line in leaks), leaks
+    finally:
+        root.handlers[:] = saved[0]
+        root.setLevel(saved[1])
+        for name, (level, handlers, propagate) in named.items():
+            logger = logging.getLogger(name)
+            logger.setLevel(level)
+            logger.handlers[:] = handlers
+            logger.propagate = propagate
+
+async def test_mlab_connects_directly_whatever_proxy_the_environment_sets(monkeypatch):
+    """The locate request and the websocket both ignore the environment's proxy (base.PROXY_NOTE: a test through a
+    proxy measures the proxy). Here the proxy is a closed port: anything sent through it fails."""
+    _clear_proxies(monkeypatch)
+    closed = socket.socket()
+    closed.bind(("127.0.0.1", 0))
+    dead = f"http://127.0.0.1:{closed.getsockname()[1]}"
+    closed.close()
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.setenv(name, dead)
+    async with NdtServer() as server:
+        located = []
+        body = json.dumps({"results": [{"machine": "m", "urls": {
+            "wss:///ndt/v7/download": f"ws://127.0.0.1:{server.port}/ndt/v7/download?access_token=tok",
+            "wss:///ndt/v7/upload": f"ws://127.0.0.1:{server.port}/ndt/v7/upload?access_token=tok"}}]}).encode()
+
+        async def locate(reader, writer):
+            located.append(await reader.readuntil(b"\r\n\r\n"))
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n"
+                         b"Connection: close\r\n\r\n%s" % (len(body), body))
+            await writer.drain()
+            writer.close()
+        listening = await asyncio.start_server(locate, "127.0.0.1", 0)
+        try:
+            provider = MLabProvider(clock=Clock(), trusted_only=False,       # the provider's own locate client
+                                    locate_url=f"http://127.0.0.1:{listening.sockets[0].getsockname()[1]}/locate")
+            result = await provider.download(500_000, LIMIT)
+            await provider.aclose()
+        finally:
+            listening.close()
+            await listening.wait_closed()
+    assert len(located) == 1 and located[0].startswith(b"GET /locate?")   # (a proxied request names the full URL)
+    assert result.bytes >= 500_000 and "access_token=tok" in server.queries[0]
+
 async def test_mlab_with_no_server_in_the_answer_is_a_failure():
     provider = MLabProvider(clock=Clock(), transport=httpx.MockTransport(
         lambda r: httpx.Response(200, json={"results": []})), trusted_only=False)
@@ -877,3 +948,14 @@ async def test_a_connection_failure_without_a_proxy_for_the_test_has_the_plain_r
         await provider.download(5_000_000, LIMIT)
     assert e.value.reason.startswith("could not connect to Cloudflare") and "proxy" not in e.value.reason
     await provider.aclose()
+
+
+def test_the_providers_time_with_the_high_resolution_clock():
+    """On Windows time.monotonic advances in steps of about 15.6 ms: a phase over loopback measured 0 s and no speed (a
+    CI run on windows-latest). perf_counter is the high-resolution clock on every platform."""
+    import time
+    from pengumon.speedtest.providers.base import SpeedProvider
+    assert CloudflareProvider().clock is time.perf_counter
+    assert LibreSpeedProvider("http://speed.example.com/backend").clock is time.perf_counter
+    assert MLabProvider().clock is time.perf_counter
+    assert SpeedProvider.__init__.__defaults__[0] is time.perf_counter

@@ -1,7 +1,8 @@
 """The process and the event loop: what pengumon itself costs the machine it runs on.
 
 `process_stats` reads the process's resident memory, CPU time, threads and open file descriptors (from /proc on Linux,
-`os.times` and `threading` elsewhere; a figure the platform cannot give is None, and its gauge is left out). The gauges
+system calls through ctypes on macOS and Windows (platform_stats.py), `os.times` for CPU time everywhere; a figure the
+platform cannot give is None, and its gauge is left out). The gauges
 that publish them are in gauges.py; they are read on the SDK's export thread, so every read here is a few syscalls.
 
 `LoopMonitor` is a small task on the event loop: it sleeps `interval` seconds, measures how much later than that it
@@ -17,6 +18,7 @@ import threading
 import time
 from typing import Awaitable, Callable, Dict, Optional
 
+from pengumon.observability import platform_stats
 from pengumon.observability.logs import ContextLogger, StateLog, get_logger
 from pengumon.observability.telemetry import loop_lag
 
@@ -47,10 +49,15 @@ def process_stats() -> Dict[str, Optional[float]]:
                     threads = int(line.split()[1])
     except (OSError, ValueError, IndexError):
         pass
+    fds = _open_fds()  # (/proc/self/fd, or /dev/fd on macOS; Windows has neither)
+    native = platform_stats.platform_stats()  # macOS and Windows: system calls; empty on Linux
+    rss = native.get("rss", rss)
+    threads = native.get("threads", threads)
+    fds = native.get("fds", fds)
     if threads is None:
-        threads = threading.active_count()  # the threads Python started: all there is to know off Linux
-    times = os.times()
-    return {"rss": rss, "user": times.user, "system": times.system, "threads": threads, "fds": _open_fds()}
+        threads = threading.active_count()  # the threads Python started: all there is to know if the system won't say
+    times = os.times()  # (GetProcessTimes on Windows, times() elsewhere)
+    return {"rss": rss, "user": times.user, "system": times.system, "threads": threads, "fds": fds}
 
 
 class LoopMonitor:

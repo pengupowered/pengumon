@@ -162,10 +162,32 @@ def test_months_are_calendar_months_in_the_zone():
 async def test_the_offset_is_created_once_and_kept(repo, clock):
     runner, _ = build(repo, clock, offset=12345)
     await runner.next_run()
+    assert await repo.get_meta(OFFSET_KEY) is None                  # a read (GET /api/speedtests) stores nothing
+    await runner.tick()                                             # the scheduler does
     assert await repo.get_meta(OFFSET_KEY) == "12345"
     other = SpeedTestRunner(make_config(), repo, clock=clock, offset_source=lambda: 99)      # a restart
     await other.next_run()
+    await other.tick()
     assert await repo.get_meta(OFFSET_KEY) == "12345"
+
+
+async def test_a_read_answers_with_the_offset_the_scheduler_then_stores(repo, clock):
+    runner, _ = build(repo, clock, offset=12345)
+    first = await runner.next_run()
+    assert await repo.get_meta(OFFSET_KEY) is None and await runner.next_run() == first    # (drawn once, not per read)
+    await runner.ensure_offset()                                                           # what run() does at its start
+    assert await repo.get_meta(OFFSET_KEY) == "12345" and await runner.next_run() == first
+
+
+async def test_many_busy_skips_after_the_last_test_do_not_move_the_schedule(repo, clock):
+    await repo.insert_speed_test({"ts": MIDNIGHT - DAY + OFFSET + 7, "trigger": "scheduled", "provider": "cloudflare",
+                                  "status": "ok", "duration_s": 7.0})
+    for i in range(25):                                              # more than _reference ever looked at
+        await repo.insert_speed_test({"ts": MIDNIGHT - DAY + OFFSET + 100 + i, "trigger": "scheduled",
+                                      "provider": "cloudflare", "status": "skipped", "reason": "line busy (50% load)"})
+    clock.now = MIDNIGHT + OFFSET + 5                               # a restart after today's slot
+    runner, _ = build(repo, clock)
+    assert await runner.next_run() == MIDNIGHT + OFFSET             # the slot after the real test: due, not tomorrow's
 
 
 async def test_a_new_install_waits_for_the_first_slot_after_it_started(repo, clock):
@@ -536,6 +558,26 @@ async def test_both_failing_is_a_failed_test_never_an_exception(repo, clock):
     assert row["reason"] == "download and upload: could not connect to Cloudflare"       # the same reason, once
     assert not runner.running
 
+
+async def test_a_long_reason_is_cut_between_words_so_a_host_is_never_cut_in_two(repo, clock):
+    """The reason keeps 300 characters. Cut inside a LibreSpeed server's host, what is left of it could not be found
+    by the MCP tools and the AI pack, which leave the host out: the word the cut falls in goes."""
+    from pengumon.mcp.tools import _speed_row
+
+    host = "canary-" + "a" * 60 + "." + "b" * 60 + ".example-lan.lan"         # (150 characters)
+    runner, _ = build(repo, clock, down=ProviderError(f"could not connect to {host}: ConnectError"),
+                      up=ProviderError(f"{host} did not answer in time"), server=host)
+    await runner.run_now()
+    await settle(runner)
+    (row,) = await tests_in(repo)
+    reason = row["reason"]
+    whole = f"download: could not connect to {host}: ConnectError; upload: {host} did not answer in time"
+    assert len(whole) > 300 and 300 - len(host) < whole.rindex(host) < 300   # (the cut would fall inside the host)
+    assert len(reason) <= 300 and reason == f"download: could not connect to {host}: ConnectError; upload:"
+    shown = _speed_row({**row, "provider": "librespeed"}, timezone.utc)
+    assert "canary" not in str(shown) and "aaaa" not in str(shown)
+    assert runner_module.cut_reason("a b", 2) == "a" and runner_module.cut_reason("ab cd", 4) == "ab"
+    assert runner_module.cut_reason("abcdef", 3) == "" and runner_module.cut_reason("abc", 3) == "abc"
 
 async def test_two_different_reasons_are_both_given(repo, clock):
     runner, _ = build(repo, clock, down=ProviderError("Cloudflare did not answer in time"),

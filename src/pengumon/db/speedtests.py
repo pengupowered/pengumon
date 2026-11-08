@@ -44,6 +44,17 @@ class SpeedTestQueries:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
+    async def latest_speed_test_moving_schedule(self, busy_reason: str) -> Optional[Dict[str, Any]]:
+        """The newest test that moves the schedule: any but a skip whose reason starts with `busy_reason` (a busy
+        line), however many of those came after it. None when there is none."""
+        async with self._db.read() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"{_SELECT} WHERE NOT (status = 'skipped' AND substr(COALESCE(reason, ''), 1, ?) = ?) "
+                "ORDER BY ts DESC, id DESC LIMIT 1", (len(busy_reason), busy_reason)) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
     async def speed_test_bytes(self, start_time: float, end_time: float) -> int:
         """Bytes the tests that started in [start_time, end_time) moved, both directions (the monthly data cap)."""
         async with self._db.read() as db:

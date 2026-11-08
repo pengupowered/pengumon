@@ -152,7 +152,10 @@ async def test_nothing_grows_with_the_data_beyond_its_cap(tmp_path):
     assert pack.chars <= ai_pack.HARD_CAP_CHARS and not any("still over" in t for t in pack.trimmed), pack.trimmed
     assert all(m["chars"] <= m["budget_chars"] for m in pack.modules), pack.modules
     # over the hard cap, it gives way in the design's order (4.1), and never a module's prompt text
-    for cap, gone in ((pack.chars - 1, ["incident rows cut to 10"]),
+    with pytest.MonkeyPatch.context() as mp:   # the untrimmed size: the first thing to give way is the incident rows
+        mp.setattr(ai_pack, "HARD_CAP_CHARS", 10**9)
+        untrimmed = render_pack(view, "full", "detailed").chars
+    for cap, gone in ((untrimmed - 1, ["incident rows cut to 10"]),
                       (12_000, ["incident rows cut to 10", "close-ups cut to 1", "module tables dropped",
                                 "still over the hard cap"])):
         with pytest.MonkeyPatch.context() as mp:

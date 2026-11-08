@@ -5,6 +5,56 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-08
+### Added
+- **Outages: drops that belong together are one event.** A line that drops, comes back for a few minutes and drops again
+  used to make one incident per drop (one 25-minute night at the provider made 7). Drops at the same or neighboring
+  places of the path that start within 10 minutes of the last one ending are now one **outage**: the Incidents card shows one row ("7 drops ·
+  down 14 min") that opens to the drops, and the report card, the ISP dossier, the Ask AI pack and the MCP `incidents`
+  tool count outages and their total down time. Incidents stay the record underneath, unchanged; the recovery rule is
+  not changed. Settings > Outage rules > Outages sets the gap (0 turns grouping off); a change regroups the history.
+- **"Likely maintenance"**: an outage at the line or the provider's hops (nothing else) that starts from 00:00 up to
+  06:00 (a setting) is labeled as likely planned work. Only a label: the downtime counts in full.
+- `GET /api/outages`; `outage_id` on every incident in `GET /api/incidents`; `outage_id` and `drops` in webhook payloads.
+- **Back closes a dialog.** With a dialog open on the dashboard (Dossier, an incident's details, Ask AI, Layout, ...),
+  the browser's or phone's Back closes it and stays on the page, instead of leaving Pengumon.
+- **Process telemetry on macOS and Windows**: Pengumon's own memory, threads and open handles are exported there too
+  (they were Linux only).
+- A standing line says when the last background route check failed, why, and from when the path shown is.
+### Changed
+- **Alerts per outage**: a flapping line sends one alert when the outage starts and one "resolved" when it is over (the
+  gap after the last drop, so a few minutes later than before), not one pair per drop. The Alerts preview counts the
+  same way. With grouping off, alerts are as before.
+- The container is built on Python 3.12.16 (python:3.12-slim of 2026-11-05). `scripts/deploy.sh` and the test scripts
+  now refresh the image's Debian security updates at least once a day; before, a local build could reuse an old cached
+  upgrade and miss fixes (the published images were not affected).
+- No speed test provider uses a proxy now (M-Lab used the environment's proxy settings).
+- Amber CRT draws the speed history as lines, not steps (a chart can keep its own curve under a theme's chart style:
+  `ownCurve`, docs/themes.md).
+- Settings > Alerts > Send alerts for: "Outages only" is now called "Critical incidents only" (same setting, same
+  behavior; "outage" now means a group of drops).
+- With more than 500 incidents, the Incidents card says that it lists the newest 500 and where the older ones are.
+- Settings: the "changed elsewhere" note names each setting in full; a problem inside a collapsed list card is shown in
+  words, and a line above the buttons says why Save is off, with a link to the first problem; the Preview says only
+  what differs for an outage still going on.
+- The IPv6 internet line in the latency chart is dashed, so it is not told from the IPv4 one by color alone, and "Not
+  probed" fits on one line in a long path.
+- The install scripts say why a backup before an upgrade failed (the exit status when the backup printed nothing).
+### Fixed
+- A long run of "line busy" skips no longer moves the speed test schedule.
+- Opening the Speed card no longer writes to the database.
+### Security
+- A speed test server could freeze Pengumon (probes and dashboard included) for seconds to minutes by sending its answer
+  in tiny chunks; the client's parser is now linear and stricter.
+- With a wrong router password, a speed test retried the router login about once a second, which can trigger the
+  router's lockout; a refused login now stops those reads until a poll works.
+- With the log level at debug, the dashboard's sign-in cookie or bearer token could appear in the console log (the
+  handshake lines of `websockets`; the OpenTelemetry export takes only uvicorn's warnings, so it did not carry them); the value of a `Cookie`, `Set-Cookie`, `Authorization` or `Proxy-Authorization` header is now
+  replaced by `[redacted]` at any level. An M-Lab test's access token is in the URL of its connection, which the
+  `websockets.client` logger repeats at debug: that logger now stays at `info` unless `PENGUMON_LOG_LEVELS` names it.
+- The speed test's HTTP client refuses line breaks in request headers and a malformed status code; a LibreSpeed
+  server's address is left out of what AI assistants see whatever its case.
+
 ## [0.25.2] - 2026-11-07
 ### Changed
 - **The speed test runs as often as you like**: Settings > Speed test > Run every takes any whole number of hours, days
@@ -526,7 +576,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.25.2...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/pengupowered/pengumon/compare/v0.25.2...v0.26.0
 [0.25.2]: https://github.com/pengupowered/pengumon/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/pengupowered/pengumon/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/pengupowered/pengumon/compare/v0.24.0...v0.25.0

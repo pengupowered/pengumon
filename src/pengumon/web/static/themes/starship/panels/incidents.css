@@ -44,3 +44,10 @@
    takes a second row and the tools wrap inside it */
 :root[data-look="starship"] [data-panel="incidents"] .panel > .panel-h { flex-wrap: wrap; }
 :root[data-look="starship"] [data-panel="incidents"] .panel > .panel-h .panel-tools { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; row-gap: 4px; }
+/* an outage: its title with the summary under it in the condensed face, its label a flat block, its drops in from the left */
+:root[data-look="starship"] [data-panel="incidents"] .inc-list tr.outage-row td { padding-block: 4px; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .outage-toggle svg.i { color: var(--accent); }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .inc-sub { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold); }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list .chip.maint { border-radius: 0; background: var(--ink-2); color: var(--bg); border: 0; padding: 0 8px; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list tr.drop-row td { background: none; border-top-style: dotted; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-list tr.drop-row td.lead { padding-left: 32px; }

@@ -29,6 +29,13 @@ export default {
       version = v;
       if (!first) load();
     });
+    // a Save in Settings (here or in another browser) may change how drops are grouped (incidents.group_gap_minutes): read again
+    let revision = null;
+    ctx.bus.subscribe('settings_revision', (r) => {
+      if (revision !== null && r !== revision) load();
+      revision = r;
+    }, { every: true });
+    ctx.bus.subscribe('settings:saved', () => load()); // a Save made here (the dialog publishes it once the values are read again)
     ctx.bus.subscribe('connection', (state) => { if (state === 'open' && version !== null) load(); });
     load();
     ctx.bus.subscribe('chart:range', (r) => { if (r && typeof r.start === 'number') loadSince(r.start); });

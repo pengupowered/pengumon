@@ -91,7 +91,9 @@ Base image: `$DG base-image .` compares the
 `Dockerfile` and `Dockerfile.test` (and the date comment), rebuild, run the tests, run `base-image`
 again; details in the depguard README, "Base image digest check". Image OS packages:
 `$DG os-scan localhost/pengumon:latest`; if it blocks, rebuild so
-the `apt-get upgrade` layer picks up the fix.
+the `apt-get upgrade` layer picks up the fix. `scripts/deploy.sh` and the test scripts pass the date as the build
+argument `APT_REFRESH`, so that layer is rebuilt at least once a day; without it (a plain `podman-compose build`) a
+build can reuse an old cached upgrade and miss fixes Debian has published since.
 
 ## Ignoring an advisory (with expiry)
 

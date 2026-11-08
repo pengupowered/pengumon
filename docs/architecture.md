@@ -49,6 +49,12 @@ its own rows. The services gauges stay in the table so that the order of `/metri
   answer in `settings/preview.py`, and what the MCP tools share with the routes in the feature packages
   (`devices/summary.py`, `services/summary.py`, the AI pack lock in `reports/common.py`). `api/__init__.py` holds only its docstring, so importing one route module loads only what that
   module needs.
+- **Outages.** The joining rule is one implementation, `incidents/outages.py` (`OutageBuilder`: pure, no I/O, told the
+  time), with its settings in `incidents/settings.py` (`incidents:`). `incidents/outage_read.py` reads the incidents an
+  outage needs from the repository (widening the window until the grouping is exact). Nothing is stored: outages are
+  computed on every read, by `api/outages.py` and `api/incidents.py` (`outage_id`), `reports/outages.py` (the report, the
+  dossier and the AI pack), the MCP `incidents` tool, and live by the notifier (`notify/notifier.py`, one outage at a
+  time, for the alerts) and the settings preview (`engine/replay.py`). See [diagnosis.md](diagnosis.md#outages).
 - **Cards (the page).** A card is a folder, `web/static/panels/<id>/` (`web/ui.py` finds it). A card drawn by views
   splits into its model (`model.js`, or `charts.js` for latency: fetching, state, actions, the view model with every
   value formatted) and its standard view (`view.js`: the DOM of its body). A built-in theme may add its own view of a
@@ -66,7 +72,7 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 - **4. probing** (`engine/probing.py`). Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one.
 - **5. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history.
 - **6. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
-- **7. notify** (`notify/component.py`). The notifier: ntfy and webhooks (`notify/notifier.py`, `notify/webhook.py`), for the classifier and the service checks.
+- **7. notify** (`notify/component.py`). The notifier: ntfy and webhooks (`notify/notifier.py`, `notify/webhook.py`), for the classifier and the service checks. It sends one alert per outage, not per incident ([webhooks.md](webhooks.md)), and follows `incidents:` changes live.
 - **8. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
 - **9. speedtest** (`speedtest/component.py`). Optional: the scheduled speed test. Needs the line load, the notifier and the classifier (it masks the classifier's verdicts while a test runs). It always registers; the scheduler reads `speedtest:` at every tick, so the setting needs no restart. Its `stop` ends a test still running, which records itself as interrupted.
 - **10. settings_preview** (`settings/preview_component.py`). The job store for the outage-rules preview; its `stop` kills a replay still running.
@@ -74,7 +80,7 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 - **12. clients** (`clients/component.py`). Optional: the client list.
 - **13. live** (`live/component.py`). The broadcaster task that feeds the `/ws` route (`api/live.py`).
 - **14. discovery** (`engine/discovery/component.py`). Optional: network discovery on request. Its `stop` (a run still going is canceled) runs early, because it comes late in the list.
-- **15. runtime** (`observability/component.py`). The event-loop monitor (lag and task count for the telemetry). Last in the list; it has nothing to stop.
+- **15. runtime** (`observability/component.py`). The event-loop monitor (lag and task count for the telemetry; `observability/runtime.py` also reads the process's memory, threads and handles, on macOS and Windows through `observability/platform_stats.py`). Last in the list; it has nothing to stop.
 
 The repository object exists before any component. The lifespan builds it from `config.database`
 (`storage.repository_for`, the bootstrap `db_path`); building it opens nothing.

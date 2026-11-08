@@ -19,6 +19,6 @@ def test_api_router_py_holds_no_route_handlers_only_includes():
 def test_the_app_serves_every_feature_router_and_metrics_outside_api():
     paths = set(app.openapi()["paths"])
     assert ROUTERS and "/metrics" in paths
-    assert {"/api/info", "/api/status", "/api/targets", "/api/incidents", "/api/incidents/dossier",
+    assert {"/api/info", "/api/status", "/api/targets", "/api/incidents", "/api/outages", "/api/incidents/dossier",
             "/api/history", "/api/report", "/api/report/loss-grid", "/api/uptime", "/api/mtr/trace",
             "/api/health"} <= paths

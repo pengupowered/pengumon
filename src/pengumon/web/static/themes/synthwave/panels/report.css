@@ -54,3 +54,4 @@
 :root[data-look="synthwave"] [data-panel="report"] .sw-hops td { padding: 6px 8px; border-top: 1px solid var(--line); color: var(--ink-1); }
 :root[data-look="synthwave"] [data-panel="report"] .sw-hops .r { text-align: right; }
 @media (max-width: 520px) { :root[data-look="synthwave"] [data-panel="report"] .sw-bn { font-size: 36px; } :root[data-look="synthwave"] [data-panel="report"] .sw-hops td, :root[data-look="synthwave"] [data-panel="report"] .sw-hops th { padding-inline: 4px; } }
+:root[data-look="synthwave"] [data-panel="report"] .sw-rs { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--ink-2); overflow-wrap: anywhere; }

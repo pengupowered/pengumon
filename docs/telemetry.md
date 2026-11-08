@@ -21,7 +21,12 @@ Logs go to stdout (journald, through Podman). Each line keeps the `time [LEVEL] 
 device=router driver=asuswrt failures=1`. A device that keeps failing logs when it starts failing, when the error
 changes, every 15 minutes while it lasts, and when it recovers (with the outage length), not on every poll.
 
-- `PENGUMON_LOG_LEVEL`: Root level (otherwise `server.log_level` in the settings, default `info`)
+- `PENGUMON_LOG_LEVEL`: Root level (otherwise `server.log_level` in the settings, default `info`). Some libraries' loggers
+  stay quieter unless `PENGUMON_LOG_LEVELS` names them: `httpx` and `httpcore` at `warning` (a line per request),
+  `websockets.client` at `info` (its debug lines repeat the M-Lab test's URL, access token included, so name it in
+  `PENGUMON_LOG_LEVELS` at `debug` only while diagnosing, and keep that log private).
+  The handshake lines `websockets` logs at `debug` (on `uvicorn.error` for the dashboard's `/ws`) never carry a
+  `Cookie`, `Set-Cookie`, `Authorization` or `Proxy-Authorization` value: it is replaced by `[redacted]` at any level.
 - `PENGUMON_LOG_LEVELS`: Per-logger levels, e.g. `pengumon.drivers=debug` (every request to the modem and router: method, path, status, duration, size; never bodies or query strings)
 - `PENGUMON_LOG_FORMAT`: `json` for one JSON object per line
 
@@ -69,10 +74,10 @@ id. Nothing on the 1 s probe path costs more than a few microseconds a round (me
 
 | Metric | Type | Attributes | What it tells you |
 |---|---|---|---|
-| `pengumon_process_memory_rss_bytes` | g | | Resident memory (Linux only; left out elsewhere). A line that climbs and never falls back is a leak |
+| `pengumon_process_memory_rss_bytes` | g | | Resident memory (Linux, macOS, Windows: the working set). A line that climbs and never falls back is a leak |
 | `pengumon_process_cpu_time_seconds` | g | `mode` user, system | CPU the process used since it started; graph `rate()` for cores |
 | `pengumon_process_threads` | g | | Threads of the process |
-| `pengumon_process_open_fds` | g | | Open file descriptors (Linux, macOS) |
+| `pengumon_process_open_fds` | g | | Open file descriptors (Linux, macOS); open handles on Windows |
 | `pengumon_asyncio_tasks` | g | | Asyncio tasks alive at the loop monitor's last sample (counted on the loop, not on the export thread) |
 | `pengumon_asyncio_loop_lag_seconds` | h | | How much later than asked a 0.5 s sleep woke up. Over 0.25 s for 2 s logs a WARNING once ("Event loop running late"), and one line when it is over |
 | `pengumon_probe_round_work_seconds` | h | `step` store, classify, publish | What pengumon itself spends in a round after the probes were answered; apart from probe round-trip time |

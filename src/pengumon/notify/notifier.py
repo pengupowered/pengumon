@@ -23,7 +23,8 @@ import httpx
 
 from pengumon.incidents.taxonomy import is_service_kind
 from pengumon.incidents.model import Incident
-from pengumon.notify.policy import AlertPolicy, Timing
+from pengumon.incidents.outages import Drop, OutageBuilder, drop_of
+from pengumon.notify.policy import SEVERITY_RANK, AlertPolicy, Timing
 from pengumon.notify.settings import SECRET_PREFIX, NotificationsConfig, WebhookConfig
 from pengumon.observability.telemetry import alert_delivery_duration, alerts, tracer
 from pengumon.secrets import SECRETS_DIR, SecretStore, resolve_webhook_secret
@@ -78,6 +79,22 @@ class _Pending:
             self.handle = None
 
 
+@dataclass
+class _Live:
+    """An outage the Notifier follows (incidents.outages: drops joined while the gap holds). One start alert, one
+    resolved alert, however many drops. Forgotten with the resolved alert, and by a restart."""
+    outage: OutageBuilder
+    first: Incident                  # the drop that started it: the start alert is about it
+    severity: str
+    load_pct: Optional[float] = None
+    dropped: bool = False            # the start alert was refused (severity filter, or the outage ended inside the delay)
+    suppressed: bool = False         # the repeat window held it back: not asked again
+
+    @property
+    def id(self) -> int:
+        return self.outage.id
+
+
 class Notifier:
     def __init__(
         self,
@@ -104,7 +121,9 @@ class Notifier:
         self._token = token
         self._client = client or httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS)
         self._last_sent: Dict[str, float] = {}
-        self._announced: Set[int] = set()  # incident ids whose start message went out
+        self._announced: Set[int] = set()  # incident ids (the first one's, for an outage) whose start message went out
+        self._current: Optional[_Live] = None  # the outage a new drop may still join (only with grouping on)
+        self._member: Dict[int, _Live] = {}  # incident id -> the outage it belongs to
         self._pending: Dict[str, _Pending] = {}  # waiting for the delay or the end of quiet hours
         self._tasks: Set[asyncio.Task] = set()
 
@@ -211,13 +230,71 @@ class Notifier:
     def on_incident_started(self, incident: Incident) -> None:
         if incident.expected or is_service_kind(incident.kind):  # app outages: notify_service_down, after a grace period
             return
-        self._consider(incident, incident.start_time)
+        rules = self.policy.outage_rules
+        drop = drop_of(incident)
+        if drop is None or not rules.grouping:  # not groupable, or grouping is off: each incident is announced alone
+            self._consider(incident, incident.start_time)
+            return
+        current = self._current
+        if current is not None and current.outage.joins(drop, rules.gap_seconds, self._wall()):
+            self._join(current, incident, drop)
+            return
+        live = _Live(OutageBuilder(drop), incident, incident.severity, incident.load_pct)
+        self._current = live
+        self._member[drop.id] = live
+        self._consider_outage(live, incident.start_time)
+
+    def _join(self, live: _Live, incident: Incident, drop: Drop) -> None:
+        """A drop that belongs to an outage that is live: it announces nothing of its own. The outage's resolved alert
+        (waiting for the gap to pass) is canceled. An outage the start alert was refused for is considered again, as
+        an escalation is."""
+        live.outage.add(drop)
+        self._member[drop.id] = live
+        self._drop(f"resolved:{live.id}")
+        self._rank_up(live, incident)
+        self._reconsider(live)
+
+    @staticmethod
+    def _rank_up(live: _Live, incident: Incident) -> None:
+        if SEVERITY_RANK.get(incident.severity, 0) > SEVERITY_RANK.get(live.severity, 0):
+            live.severity = incident.severity
+
+    def _reconsider(self, live: _Live) -> None:
+        key = f"incident:{live.id}"
+        if key in self._pending:
+            self._reschedule(key)  # timed again: the outage may now be exempt from quiet hours
+        elif live.id not in self._announced and live.dropped and not live.suppressed \
+                and self.policy.passes_severity(live.severity):
+            self._consider_outage(live, self._wall())
+
+    def _consider_outage(self, live: _Live, start_time: float) -> None:
+        if not self.policy.passes_severity(live.severity):
+            live.dropped = True
+            _count("incident_started", "dropped")
+            return
+        live.dropped = False
+
+        def due() -> Optional[Timing]:
+            if not self.policy.passes_severity(live.severity) or not live.outage.ongoing and live.id not in self._announced:
+                live.dropped = True  # (over before the delay was up: a drop that joins later asks again)
+                return None
+            return self.policy.incident_time(start_time, live.severity)
+
+        self._schedule(f"incident:{live.id}", due, lambda timing: self._announce_outage(live, timing))
 
     def on_incident_escalated(self, incident: Incident) -> None:
         """A warning incident became critical. With `min_severity: critical` it was not announced; it is considered
         now, as if it had started now. One that is announced or waiting keeps its place (a waiting one is timed
         again, since it may now be exempt from quiet hours)."""
         if incident.expected or is_service_kind(incident.kind):
+            return
+        live = self._member.get(incident.id)
+        if live is not None:
+            drop = drop_of(incident)
+            if drop is not None:
+                live.outage.replace(drop)
+            self._rank_up(live, incident)
+            self._reconsider(live)
             return
         key = self._incident_key(incident)
         if key in self._pending:
@@ -254,7 +331,29 @@ class Notifier:
             priority="high" if incident.severity == "critical" else "default",
             tags="rotating_light",
             incident_id=incident.id, cause=incident.cause_code, started_at=incident.start_time,
-            load_pct=incident.load_pct,
+            load_pct=incident.load_pct, **self._alone(incident),
+        ))
+
+    def _announce_outage(self, live: _Live, timing: Timing) -> None:
+        first = live.first
+        now = self.clock()
+        if not self.policy.repeat_allowed(self._last_sent.get(first.cause_code), now):
+            live.suppressed = True
+            _count("incident_started", "suppressed")
+            return
+        self._last_sent[first.cause_code] = now
+        self._announced.add(live.id)
+        drops = len(live.outage.members)
+        load = f"\nLine load: {first.load_pct:.0f}%" if first.load_pct is not None else ""
+        more = f"\nDrops so far: {drops}" if drops > 1 else ""
+        self._dispatch(Alert(
+            event="incident_started", severity=live.severity,
+            title=self._ongoing(f"Pengumon: {first.title}", timing, first.start_time),
+            message=f"Cause: {first.title}\n{first.description}{load}{more}",
+            priority="high" if live.severity == "critical" else "default",
+            tags="rotating_light",
+            incident_id=first.id, cause=first.cause_code, started_at=first.start_time, load_pct=first.load_pct,
+            outage_id=live.id, drops=drops,
         ))
 
     def _ongoing(self, title: str, timing: Timing, since: float) -> str:
@@ -263,8 +362,17 @@ class Notifier:
             return title
         return title.replace("Pengumon: ", f"Pengumon: Ongoing since {self.policy.clock_text(since)}: ", 1)
 
+    @staticmethod
+    def _alone(incident: Incident) -> Dict[str, Any]:
+        """The outage fields of an alert about an incident that is its own outage (grouping off)."""
+        return {"outage_id": incident.id, "drops": 1} if drop_of(incident) is not None else {}
+
     def on_incident_resolved(self, incident: Incident) -> None:
         if incident.expected or is_service_kind(incident.kind):
+            return
+        live = self._member.get(incident.id)
+        if live is not None:
+            self._member_resolved(live, incident)
             return
         if self._drop(self._incident_key(incident)):
             return  # still waiting for its time: it was never announced, so there is nothing to resolve
@@ -281,11 +389,68 @@ class Notifier:
             tags="white_check_mark",
             incident_id=incident.id, cause=incident.cause_code, started_at=incident.start_time,
             ended_at=incident.end_time, duration_seconds=incident.duration_seconds, load_pct=incident.load_pct,
+            **self._alone(incident),
         )
         # quiet hours hold a "resolved" too, unless the incident was exempt (critical, critical_still): the person
         # who heard about it at night hears that it is over
         self._schedule(f"resolved:{incident.id}", lambda: self.policy.quiet_time(at, incident.severity),
                        lambda timing: self._dispatch(alert))
+
+    def _member_resolved(self, live: _Live, incident: Incident) -> None:
+        """A drop of a live outage ended. When none is open, the outage's resolved alert goes out once the gap has
+        passed with no new drop (a drop that joins cancels it): quiet hours hold it as they hold any resolved alert."""
+        end = incident.end_time if incident.end_time is not None else self._wall()
+        member = next((m for m in live.outage.members if m.id == incident.id), None)
+        if member is not None:
+            live.outage.replace(Drop(member.id, member.start, end, incident.severity, member.place, member.title,
+                                     member.cause_code))
+        self._rank_up(live, incident)
+        if incident.load_pct is not None:
+            live.load_pct = max(live.load_pct or 0.0, incident.load_pct)
+        if live.outage.ongoing:
+            return
+        gap = self.policy.outage_rules.gap_seconds
+
+        def due() -> Optional[Timing]:
+            return self.policy.quiet_time(live.outage.latest_end(self._wall()) + gap, live.severity)
+
+        self._schedule(f"resolved:{live.id}", due, lambda timing: self._finish_outage(live))
+
+    def _finish_outage(self, live: _Live) -> None:
+        """The gap passed after the outage's last drop: it is over. Sends its one resolved alert if it was announced."""
+        self._forget(live)
+        self._drop(f"incident:{live.id}")  # never announced (still waiting): there is nothing to resolve
+        if live.id not in self._announced:
+            return
+        self._announced.discard(live.id)
+        summary = live.outage.summary(self._wall(), self.policy.outage_rules)
+        zone_text = self.policy.clock_text
+        span = f"{zone_text(summary['start_time'])}-{zone_text(summary['end_time'])} ({_duration_text(summary['duration_seconds'])})"
+        lines = [f"Cause: {summary['title']}", f"Span: {span}"]
+        if summary["drops"] > 1:
+            lines.append(f"Drops: {summary['drops']} ({summary['critical_drops']} critical)")
+            lines.append(f"Down: {_duration_text(summary['down_seconds'])}")
+        if summary["likely_maintenance"]:
+            lines.append("Likely maintenance (a guess from the hour: provider hops, in the maintenance hours). "
+                         "The downtime counts in full.")
+        if live.load_pct is not None:
+            lines.append(f"Peak line load: {live.load_pct:.0f}%")
+        self._dispatch(Alert(
+            event="incident_resolved", severity="info",
+            title=f"Pengumon: resolved, {summary['title']}",
+            message="\n".join(lines),
+            priority="default",
+            tags="white_check_mark",
+            incident_id=live.id, cause=summary["cause_code"], started_at=summary["start_time"],
+            ended_at=summary["end_time"], duration_seconds=summary["duration_seconds"], load_pct=live.load_pct,
+            outage_id=live.id, drops=summary["drops"],
+        ))
+
+    def _forget(self, live: _Live) -> None:
+        for m in live.outage.members:
+            self._member.pop(m.id, None)
+        if self._current is live:
+            self._current = None
 
     def notify_service_down(self, service, error, seconds_down: float) -> None:
         """A host app has not answered for the configured grace period (ServiceChecker decides when). Normal

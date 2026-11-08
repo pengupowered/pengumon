@@ -95,6 +95,19 @@ def test_a_librespeed_servers_host_is_never_shown(level):
     assert "own LibreSpeed server" in sec and "could not connect to the server: ConnectError" in sec
 
 
+@pytest.mark.parametrize("level", ["full", "vague", "anonymized"])
+def test_a_librespeed_servers_host_is_left_out_whatever_its_case_and_wherever_the_note_is_cut(level):
+    """The server label is lowercased, the 404 hint repeats the address as entered; and the note is cut at 80
+    characters after the host is replaced, never before (a cut host could not be found)."""
+    padding = "x" * (80 - len("download: could not connect to ") - 8)      # the cut falls 8 characters into the host
+    rows = [row(0, provider="librespeed", server=HOST, status="failed",
+                reason=f"download: {HOST.upper()} answered HTTP 404"),
+            row(1, provider="librespeed", server=HOST, status="failed",
+                reason=f"{padding}download: could not connect to {HOST}: ConnectError")]
+    md = render_pack(with_speed(rows), level).markdown
+    assert "canary-l" not in md.lower()                    # (not even the first 8 characters; the pack's other canaries
+    assert "download: the server answered HTTP 404" in section(md)    # are named canary-router-name and the like)
+
 def test_a_colo_or_machine_name_may_be_named_and_the_times_follow_the_level():
     rows = [row(0, server="AMS"), row(1, provider="mlab", server="mlab1-ams03.mlab-oti.measurement-lab.org")]
     full = section(render_pack(with_speed(rows), "full").markdown)

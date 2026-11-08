@@ -57,6 +57,7 @@ button.chip[aria-pressed="true"] { color: var(--ink-1); background: var(--accent
 /* Dot (legend swatch / series key). Never the only carrier of meaning. */
 .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c, var(--ink-3)); flex: none; }
 .key.line { width: 14px; height: 3px; border-radius: 2px; }
+.key.line.dash { background: repeating-linear-gradient(90deg, var(--c, var(--ink-3)) 0 4px, transparent 4px 6px); border-radius: 0; } /* a dashed line in the chart */
 
 /* ---------- Buttons ---------- */
 .btn {

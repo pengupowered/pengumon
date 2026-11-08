@@ -93,7 +93,7 @@ function colorsHtml(item, i) {
 function cardHtml(item, i) {
   const bad = errors[i];
   return `<details class="set-card th-card" data-i="${i}" data-id="${escapeHtml(item.id)}"${open.has(item.id) ? ' open' : ''}>
-    <summary>${icon('chevron', 'set-chev')}<span class="set-card-t">${escapeHtml(item.name || item.id)}</span><span class="set-card-s">${escapeHtml(modeWords(item.modes))}</span>${bad ? '<span class="chip st st-crit">Needs a fix</span>' : ''}</summary>
+    <summary>${icon('chevron', 'set-chev')}<span class="set-card-t">${escapeHtml(item.name || item.id)}</span><span class="set-card-s">${escapeHtml(modeWords(item.modes))}</span>${bad ? `<span class="chip st st-crit">Needs a fix</span><span class="set-card-e" role="alert">${escapeHtml(bad)}</span>` : ''}</summary>
     <div class="set-card-b">
       <p class="set-msg th-msg" role="alert">${escapeHtml(bad || '')}</p>
       <div class="set-grid">
@@ -281,6 +281,8 @@ export default {
       const chip = card.querySelector('summary .st-crit');
       if (message && !chip) card.querySelector('summary').insertAdjacentHTML('beforeend', '<span class="chip st st-crit">Needs a fix</span>');
       if (!message && chip) chip.remove();
+      card.querySelector('summary .set-card-e')?.remove();
+      if (message) card.querySelector('summary').insertAdjacentHTML('beforeend', `<span class="set-card-e" role="alert">${escapeHtml(message)}</span>`);
       if (message) { card.open = true; open.add(card.dataset.id); }
     });
   },

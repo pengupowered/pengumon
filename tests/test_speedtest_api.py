@@ -280,3 +280,12 @@ async def test_post_run_is_rate_limited_to_three_in_ten_minutes(app_state, repo,
 async def test_both_routes_are_in_the_openapi_schema_whether_or_not_it_is_on():
     paths = app.openapi()["paths"]
     assert "get" in paths["/api/speedtests"] and "post" in paths["/api/speedtests/run"]
+
+
+async def test_a_get_on_a_fresh_database_writes_nothing(repo, app_state, client):
+    runner, _ = runner_for(repo, app_state)
+    async with client as ac:
+        assert (await ac.get("/api/speedtests")).status_code == 200
+    assert await repo.get_meta("speedtest_offset_s") is None          # the scheduler stores the offset, not a read
+    await runner.ensure_offset()
+    assert await repo.get_meta("speedtest_offset_s") == "0"

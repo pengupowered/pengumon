@@ -11,7 +11,10 @@ registerHelp({
     + 'starts at the provider\'s first router while the gateway answers, so your line or that router. ISP: the provider\'s '
     + 'network beyond it (backbone, upstream latency). Internet: only the public servers failed. DNS: '
     + 'name lookups failed while pings worked. Load: delay explained by a busy line. The % load chip is the peak WAN load '
-    + 'around the event, as a share of the line capacity.',
+    + 'around the event, as a share of the line capacity. A row with "N drops" is an outage: drops at neighboring places of the '
+    + 'path that came one after another (the line dropped, came back for a few minutes, dropped again) are joined into one event; '
+    + 'open it to see each drop. "Down" is the time a critical drop was open. "Likely maintenance" is only a label, a guess from '
+    + 'the hour (Settings, Outage rules, Outages), and the downtime counts in full. docs/diagnosis.md, Outages, has the rule.',
   'line.load': (v) => 'How busy the internet line is, as a percentage of its capacity, from the router\'s WAN byte counters '
     + '(the larger of download and upload). Above ' + val(v, 'classifier.busy_load_pct', 60) + '% (the busy level in Settings) delay and loss at ISP hops count as expected, '
     + 'because a line near its limit queues packets; those incidents are marked as busy and can be hidden. Without '

@@ -232,3 +232,44 @@ def test_a_user_install_puts_the_pengumon_command_on_the_path_through_a_link_in_
     assert link.read_text() == "something else" and "left alone" in kept.stdout
     system = run("/usr/bin:/bin", scope="system")
     assert "CMD=" in system.stdout and "Linked" not in system.stdout
+
+
+def _backup_step(tmp_path, body):
+    """Runs install.sh's upgrade-backup step with a fake `pengumon` whose backup runs `body`; returns the result."""
+    start = SH.index("    backup_status=0")
+    end = SH.index("    stop_service\nfi", start)
+    fake = tmp_path / "pengumon"
+    fake.write_text(f"#!/bin/sh\n{body}\n")
+    fake.chmod(0o755)
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        'say() { echo "SAY: $*"; }\ndie() { echo "DIE: $*" >&2; exit 1; }\n'
+        + SH[SH.index("backup_data() {"):SH.index("# Stops the running service")]
+        + f'SCOPE=user\nPENGUMON="{fake}"\nif true; then\n' + SH[start:end] + "fi\n")
+    return subprocess.run(["sh", str(driver)], capture_output=True, text=True, check=False, timeout=30)
+
+
+@posix_shell
+def test_a_failed_backup_that_printed_nothing_still_says_why(tmp_path):
+    done = _backup_step(tmp_path, "exit 7")
+    assert done.returncode == 1
+    assert "the backup failed" in done.stderr and "exit status 7" in done.stderr and "no reason was given" not in done.stderr
+
+
+@posix_shell
+def test_a_failed_backup_shows_its_own_error(tmp_path):
+    done = _backup_step(tmp_path, "echo 'disk full' >&2; exit 2")
+    assert done.returncode == 1 and "disk full" in done.stderr
+
+
+@posix_shell
+def test_a_good_backup_is_reported(tmp_path):
+    done = _backup_step(tmp_path, "echo /somewhere/backup.db")
+    assert done.returncode == 0 and "SAY: Backup of your data: /somewhere/backup.db" in done.stdout
+
+
+def test_the_macos_backup_and_install_ps1_name_the_exit_status_when_the_backup_printed_nothing():
+    mac = SH[SH.index("sudo -u _pengumon"):SH.index("# Stops the running service")]
+    assert "exited with status" in mac
+    ps1 = (ROOT / "scripts" / "install.ps1").read_text()
+    assert "the backup printed nothing (exit code $backupExit)" in ps1

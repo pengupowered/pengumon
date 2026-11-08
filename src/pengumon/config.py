@@ -34,6 +34,7 @@ from pengumon.reports.settings import ReportsConfig, UptimeConfig
 from pengumon.services.settings import ServiceChecksConfig
 from pengumon.settings import lenient
 from pengumon.settings.general import GeneralConfig
+from pengumon.incidents.settings import IncidentsConfig
 from pengumon.speedtest.settings import SpeedtestConfig
 from pengumon.web.settings import DashboardConfig, DisplayConfig
 
@@ -111,6 +112,7 @@ class AppConfig(BaseModel):
     uptime: UptimeConfig = Field(default_factory=UptimeConfig)
     reports: ReportsConfig = Field(default_factory=ReportsConfig)
     speedtest: SpeedtestConfig = Field(default_factory=SpeedtestConfig)
+    incidents: IncidentsConfig = Field(default_factory=IncidentsConfig)
     _targets_are_defaults: bool = PrivateAttr(default=False)  # load_config filled in default_targets()
 
     @property

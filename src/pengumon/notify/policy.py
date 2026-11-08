@@ -8,6 +8,8 @@ window. Host-app and route-change alerts: quiet hours only. The test alert: neve
 from dataclasses import dataclass
 from typing import Optional
 
+from pengumon.incidents.outages import Rules
+from pengumon.incidents.settings import IncidentsConfig
 from pengumon.notify.settings import AlertsConfig
 from pengumon.timeofday import clock_text, window_end, zone
 
@@ -23,8 +25,14 @@ class Timing:
 
 
 class AlertPolicy:
-    def __init__(self, alerts: Optional[AlertsConfig] = None, timezone: str = "UTC"):
+    def __init__(self, alerts: Optional[AlertsConfig] = None, timezone: str = "UTC",
+                 incidents: Optional[IncidentsConfig] = None):
         alerts = alerts or AlertsConfig()
+        incidents = incidents or IncidentsConfig(group_gap_minutes=0)  # none given: grouping off, as before outages
+        # how drops are joined into outages, and the maintenance hours (incidents.outages): one alert per outage. The
+        # notify component passes the config's section; a policy built without one (the replay preview, tests) groups nothing
+        self.outage_rules = Rules(incidents.group_gap_minutes * 60.0, incidents.maintenance_start,
+                                  incidents.maintenance_end, zone(timezone))
         self.min_severity = alerts.min_severity
         self.delay_seconds = float(alerts.delay_seconds)
         self.repeat_window_seconds = float(alerts.repeat_window_seconds)

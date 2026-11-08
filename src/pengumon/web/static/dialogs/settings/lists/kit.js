@@ -69,6 +69,10 @@ export function makeListEditor(cfg) {
 
   const saved = (item) => ctx.savedIds().includes(item.id);
 
+  // The first problem of item `i` in words: the card shows it even when it is collapsed.
+  const errorOf = (i) => { const k = Object.keys(errors).find((x) => x.startsWith(`${i}.`)); return k ? errors[k] : ''; };
+  const errorLine = (i) => (errorOf(i) ? `<span class="set-card-e" role="alert">${escapeHtml(errorOf(i))}</span>` : '');
+
   function cardHtml(item, i) {
     const locked = saved(item) && cfg.idLocked !== false;
     const fields = cfg.fields.map((f) => fieldHtml({ ...f, list: cfg.id }, item, i, f.f === 'id' && locked)).join('');
@@ -77,7 +81,7 @@ export function makeListEditor(cfg) {
     const bad = Object.keys(errors).some((k) => k.startsWith(`${i}.`)) ? '<span class="chip st st-crit">Needs a fix</span>' : '';
     const flags = (cfg.chips ? cfg.chips(item, i) : '');
     return `<details class="set-card" data-i="${i}" data-id="${escapeHtml(item.id)}"${isOpen ? ' open' : ''}>
-      <summary>${icon('chevron', 'set-chev')}<span class="set-card-t">${escapeHtml(cfg.title(item) || item.id || 'New')}</span><span class="set-card-s">${escapeHtml(cfg.summary(item) || '')}</span>${off}${flags}${bad}</summary>
+      <summary>${icon('chevron', 'set-chev')}<span class="set-card-t">${escapeHtml(cfg.title(item) || item.id || 'New')}</span><span class="set-card-s">${escapeHtml(cfg.summary(item) || '')}</span>${off}${flags}${bad}${errorLine(i)}</summary>
       <div class="set-card-b">
         <div class="set-grid">${fields}</div>${cfg.extra ? cfg.extra(item, i, ctx) : ''}
         <div class="set-card-f">
@@ -183,6 +187,8 @@ export function makeListEditor(cfg) {
         const chip = sum.querySelector('.st-crit');
         if (bad && !chip) sum.insertAdjacentHTML('beforeend', '<span class="chip st st-crit">Needs a fix</span>');
         if (!bad && chip && chip.textContent === 'Needs a fix') chip.remove();
+        sum.querySelector('.set-card-e')?.remove();
+        if (bad) sum.insertAdjacentHTML('beforeend', errorLine(c.dataset.i));
         if (bad) c.open = true;
       }); }
     },

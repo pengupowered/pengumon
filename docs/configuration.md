@@ -163,6 +163,19 @@ classifier:
   window_probes: 10              # each target's last N probes (3-60): loss, median latency and jitter judged over them
 ```
 
+### Outages (`incidents:`)
+
+How drops of the line are joined into one outage, and the hours in which an outage at the provider is labeled likely
+maintenance ([diagnosis.md](diagnosis.md#outages)). On the Settings page it is the **Outages** group of Outage rules;
+both apply at once, and changing them regroups the history (incidents are not changed). The defaults:
+
+```yaml
+incidents:
+  group_gap_minutes: 10      # 0 to 120: drops this close (and at neighboring places) are one outage; 0: no grouping
+  maintenance_start: "00:00" # "HH:MM" in general.timezone, may cross midnight; both or neither (empty: never a label)
+  maintenance_end: "06:00"   # the window runs up to, not including, this minute
+```
+
 ### The speed test (`speedtest:`)
 
 Off by default. A scheduled download and upload test against Cloudflare, M-Lab or your own LibreSpeed server, with hard

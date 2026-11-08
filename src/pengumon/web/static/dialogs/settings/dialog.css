@@ -6,6 +6,14 @@
   padding: var(--sp-3) var(--sp-5); background: var(--warn-bg); border-top: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); font-size: var(--fs-sm);
 }
 .set-confirm[hidden] { display: none; }
+.set-problems {
+  display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center;
+  padding: var(--sp-2) var(--sp-5); background: var(--crit-bg); border-top: 1px solid color-mix(in srgb, var(--crit) 45%, transparent); font-size: var(--fs-sm);
+}
+.set-problems[hidden] { display: none; }
+.set-problems > span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.set-card-e { flex: 1 1 100%; color: var(--crit); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.set-card.flash, .th-card.flash, .dv-card.flash { animation: set-flash 1.2s ease-out; }
 .set-confirm-b { display: inline-flex; gap: var(--sp-2); }
 
 /* ---- the search box above the sections ---- */

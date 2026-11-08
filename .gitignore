@@ -41,7 +41,7 @@ data/*.db-shm
 .coverage
 htmlcov/
 
-# Backups (contain database copies), deploy artefacts
+# Backups (contain database copies), deploy artifacts
 .backup-*/
 *.db-journal
 !.env.example

@@ -36,12 +36,21 @@ function timeline(box) {
 // ---------- the table ----------
 
 // One incident's row: the title is the row's button (so the keyboard reaches it), a click anywhere on the row does the same.
+// An outage of 2 or more drops is a row of its own whose button lists or hides its drops (aria-expanded); its drops follow it as
+// incident rows (`drop`: a little in from the left).
 function row(r) {
-  const tr = el('tr', r.expected ? 'row-click incident-row expected' : 'row-click incident-row');
+  const outage = r.kind === 'outage';
+  const tr = el('tr', `row-click incident-row${r.expected ? ' expected' : ''}${outage ? ' outage-row' : ''}${r.kind === 'drop' ? ' drop-row' : ''}`);
   tr.dataset.action = r.open.action;
   tr.dataset.arg = r.open.arg;
+  const lead = outage
+    ? `<button type="button" class="primary outage-toggle" data-v="title" data-action="${r.toggle.action}" data-arg="${esc(r.toggle.arg)}" aria-expanded="${r.toggle.expanded}" aria-label="${esc(r.toggle.label)}" title="${esc(r.toggle.label)}">${icon('chevron')}<span>${esc(r.title)}</span></button>`
+      + `<span class="inc-sub"><span data-v="summary">${esc(r.summary)}</span>`
+      + (r.state ? ` <span class="inc-state" data-v="state">${esc(r.state)}</span>` : '')
+      + (r.maintenance ? ` <span class="chip maint" data-v="maintenance" title="${esc(r.maintenance.title)}">${esc(r.maintenance.text)}</span>` : '') + '</span>'
+    : `<button type="button" class="primary" data-v="title" data-action="${r.open.action}" data-arg="${esc(r.open.arg)}" title="${esc(r.open.label)}">${esc(r.title)}</button>`;
   tr.innerHTML = `
-    <td class="lead"><button type="button" class="primary" data-v="title" data-action="${r.open.action}" data-arg="${esc(r.open.arg)}" title="${esc(r.open.label)}">${esc(r.title)}</button></td>
+    <td class="lead">${lead}</td>
     <td class="aside"><span class="badge st-${r.status.level}${r.status.quiet ? ' quiet' : ''}" data-v="status" data-st="${r.status.level}">${icon(r.status.icon)}${esc(r.status.word)}</span></td>
     <td class="num" data-l=""><span class="when" data-v="when" title="${esc(r.when.title)}">${esc(r.when.text)}</span></td>
     <td class="num r"><span class="dur${r.duration.lost ? ' lost' : ''}" data-v="duration"${r.duration.title ? ` title="${esc(r.duration.title)}"` : ''}>${esc(r.duration.text)}</span></td>
@@ -49,6 +58,9 @@ function row(r) {
     <td class="r hide-narrow go" aria-hidden="true">${icon('right')}</td>`;
   return tr;
 }
+
+// A row is drawn again when it changed; its drops are rows of their own, so they are not part of an outage row's signature.
+const rowSig = (r) => JSON.stringify(r.kind === 'outage' ? { ...r, drops: undefined } : r);
 
 // The rows of the table body, or the sentence that says why there are none (a part: another view can draw them into a
 // table body of its own).
@@ -63,7 +75,7 @@ function rows(tbody) {
       }
       delete tbody.dataset.empty;
       [...tbody.children].filter((c) => c.dataset.item === undefined).forEach((c) => c.remove()); // the empty sentence
-      kit.list(tbody, l.rows, { key: (r) => r.id, render: row });
+      kit.list(tbody, l.rows, { key: (r) => r.id, render: row, sig: rowSig });
     },
     unmount() {}
   };

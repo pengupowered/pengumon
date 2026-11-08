@@ -150,6 +150,7 @@ try {
         } elseif ($out -match 'no database') {
             Say 'No database yet, so nothing to back up.'
         } else {
+            if (-not $out) { $out = "the backup printed nothing (exit code $backupExit)." }
             Fail "the backup failed, so nothing was changed: $out"
         }
         # Stop the task but keep its definition: `service install` reads the listen address (--host, --port) out of it

@@ -9,7 +9,7 @@ loss starting at the provider's first router while the gateway answers is the li
 import re
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -23,6 +23,7 @@ from pengumon.lines.levels import LineSignalConfig
 from pengumon.reports.common import (
     _canonical_order, _hop_label, _split_incidents, _targets, find_primary_failing_hop, material_loss_points,
 )
+from pengumon.reports.outages import outage_line, outage_totals, outages_of
 from pengumon.reports.speed import (SpeedSummary, counts_text, direction_text, latency_text, method_text, summarize,
                                     under_text)
 
@@ -62,6 +63,7 @@ class DossierFacts:
     line_levels: Optional[LineSignalConfig] = None  # the config's line levels, "typical" in the text (None: defaults)
     zone: tzinfo = timezone.utc                # the clock "Generated" is shown on (timeofday.viewer_zone)
     speed: Optional[SpeedSummary] = None       # the window's speed tests (None: there were none)
+    outages: List[Dict[str, Any]] = field(default_factory=list)  # the window's outages, oldest first (incidents.outages)
 
 
 # The incidents' cause categories (incidents.taxonomy) in the provider's terms.
@@ -119,6 +121,7 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     def lasted(r):  # an incident still open has no duration yet: it has lasted until now
         return r["duration_seconds"] if r["duration_seconds"] is not None else max(0.0, now - r.get("start_time", now))
 
+    outages = outages_of(incidents, config, now)
     total_dur_sec = sum(lasted(r) for r in incidents)
     total_dur_min = round(total_dur_sec / 60.0, 1)
     busy_pct = getattr(getattr(config, "classifier", None), "busy_load_pct", 60.0)
@@ -206,6 +209,7 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         line_levels=line_levels,
         zone=zone,
         speed=speed,
+        outages=outages,
     )
 
 
@@ -314,6 +318,11 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     if f.by_cause:
         parts = ", ".join(f"{CAUSE_WORDS.get(c, c)}: {n} ({_span(m * 60)})" for c, n, m in f.by_cause)
         L.append(f"- **By cause:** {parts}")
+    if f.outages:
+        totals = outage_totals(f.outages)
+        L.append(f"- **Outages:** {totals['count']} (drops that followed each other at neighboring places of the path "
+                 f"are one outage), {totals['down_minutes']:g} min down in total")
+        L += [f"  - {outage_line(o, f.zone, f.now)}" for o in reversed(f.outages) if o["drops"] > 1]
     if f.under_load:
         L.append(f"- {f.under_load} of these occurred while the line was at {f.busy_pct:g}% load or more.")
     if f.excluded:

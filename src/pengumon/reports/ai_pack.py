@@ -183,6 +183,21 @@ class CloseUpFact:
 
 
 @dataclass(frozen=True)
+class OutageFact:
+    """Drops joined into one outage (incidents.outages); only the fields the pack states."""
+    id: int
+    start: float
+    duration_s: float
+    down_s: float
+    drops: int
+    critical_drops: int
+    places: Tuple[str, ...]         # cause categories, path order
+    likely_maintenance: bool
+    incident_ids: Tuple[int, ...]
+    ongoing: bool = False
+
+
+@dataclass(frozen=True)
 class DayFact:
     date: str                       # local calendar day, ISO
     incidents: int
@@ -266,6 +281,8 @@ class PackView:
     last_incident_end: Optional[float] = None      # the end of the window's last incident (listed or not); None: from
     #                                                the listed ones
     speed: Optional[SpeedFact] = None              # the window's speed tests (None: there were none)
+    outages: Tuple[OutageFact, ...] = ()           # time order
+    outage_gap_minutes: int = 0                    # 0: grouping is off
 
 
 @dataclass
@@ -527,6 +544,34 @@ class _Render:
         body = _table(head, rows) if rows else "No incidents in this window."
         return f"## Incidents ({what})\n{body}\n\n", len(kept)
 
+    def outages(self) -> str:
+        """The outages that join more than one incident, with the incidents' numbers in the table above."""
+        f = self.f
+        if not f.outages:
+            return ""
+        many = [o for o in f.outages if o.drops > 1]
+        if not many:
+            return ("## Outages\n" + (f"Each incident above is an outage of its own: no two drops at neighboring places of the path "
+                                      f"followed each other within {f.outage_gap_minutes} min.\n\n" if f.outage_gap_minutes else
+                                      "Grouping is off (Settings): every drop is its own outage.\n\n"))
+        head = f"## Outages ({_count(len(f.outages), 'outage', 'outages')}, {len(many)} of them joining several incidents)"
+        what = (f"Drops at neighboring places of the path that follow each other within {f.outage_gap_minutes} min are "
+                "one outage: one provider event often shows as several incidents above. Count outages, not incidents, "
+                "for how often the line went down. Down: the critical drops' time, overlaps once. Likely maintenance: "
+                "a guess from the hour alone (the line or provider's network, in the maintenance hours set in Pengumon); "
+                "it changes no figure.")
+        rows = []
+        for o in many[-10:]:
+            nums = [self.number[i] for i in o.incident_ids if i in self.number]
+            hidden = len(o.incident_ids) - len(nums)
+            listed = ", ".join(f"#{n}" for n in nums) + (f" and {hidden} not in the table" if hidden and nums else
+                                                         f"{hidden} not in the table" if hidden else "")
+            rows.append([self.stamp(o.start), _dur(o.duration_s) + (" (ongoing)" if o.ongoing else ""), _dur(o.down_s),
+                         f"{o.drops} ({o.critical_drops} critical)", ", ".join(o.places),
+                         "yes" if o.likely_maintenance else "no", listed])
+        table = _table(["Start", "Lasted", "Down", "Drops", "Places", "Likely maintenance", "Incidents"], rows)
+        return f"{head}\n{what}\n{table}\n\n"
+
     def closeups(self, cap: int) -> str:
         ups = list(self.f.closeups)[:cap]
         if not ups:
@@ -673,7 +718,9 @@ class _Render:
         rows = []
         for t in kept:
             own = t.provider != "librespeed"      # the user's own server is named by its host: never shown
-            reason = t.reason if own or not t.server else t.reason.replace(t.server, "the server")
+            # (in any case, and before the reason is cut: the label is lowercased, a 404's hint repeats the address)
+            reason = t.reason if own or not t.server else re.sub(re.escape(t.server), "the server", t.reason,
+                                                                  flags=re.IGNORECASE)
             grade = bufferbloat_grade(t.idle_ms, t.loaded_down_ms, t.loaded_up_ms)
             rows.append([self.stamp(t.ts), t.status, SPEED_PROVIDERS.get(t.provider, t.provider),
                          self.t(t.server) if own and t.server else "-", _num(t.down_mbps), _num(t.up_mbps),
@@ -794,7 +841,7 @@ def render_pack(facts: PackView, level: str = FULL, detail: str = "compact") -> 
         r = _Render(facts, rx, detail)
         inc_text, shown = r.incidents(inc_cap)
         dev_text, info = r.devices(tables)
-        body = (r.header(tokens) + FIXED_TEXT + "\n\n" + r.hops() + r.findings() + inc_text + r.closeups(up_cap) + r.week()
+        body = (r.header(tokens) + FIXED_TEXT + "\n\n" + r.hops() + r.findings() + inc_text + r.outages() + r.closeups(up_cap) + r.week()
                 + r.speed(speed_cap)[0] + dev_text + r.tail() + "\n" + SYMPTOM_TEXT)
         for h in facts.hops:       # register every role for the key, used or not
             rx.hop(h.id)
@@ -1100,7 +1147,11 @@ def view_of(f, hops_identity: Mapping[str, Any], modules: Sequence[ModuleInput],
         changes=tuple(ChangeFact(c["at"], kinds.get(c["kind"], c["kind"]), c["kind"]) for c in f.changes),
         environment=tuple(environment), modules=tuple(modules), incident_total=len(f.incidents),
         provider_source=provider_source, last_incident_end=max((i.end for i in f.incidents), default=None),
-        speed=speed)
+        speed=speed,
+        outages=tuple(OutageFact(o["id"], o["start_time"], o["duration_seconds"], o["down_seconds"], o["drops"],
+                                 o["critical_drops"], tuple(o["places"]), o["likely_maintenance"],
+                                 tuple(o["incident_ids"]), o["ongoing"]) for o in getattr(f, "outages", ())),
+        outage_gap_minutes=getattr(f, "outage_gap_minutes", 0))
 
 
 def speed_fact(rows: Sequence[Mapping[str, Any]], plan_down: Optional[float], plan_up: Optional[float]) -> Optional[SpeedFact]:

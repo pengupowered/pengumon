@@ -179,6 +179,10 @@ export const steps = [
         return ["path_internet", "path_internet_v6"].map((id) => c.options.plugins.tooltip.callbacks.afterLabel({ dataset: { id }, dataIndex: i }).length);
       });
       eq("tooltip members: two IPv4 servers, and the IPv6 one alone", JSON.stringify(lines), JSON.stringify([2, 0]));
+      // the IPv6 line is told from the Internet line by its dashes as well as its color (amber beside orange-red is a weak difference)
+      const dashes = await page.evaluate(() => Object.fromEntries(Chart.getChart(document.getElementById("latencyChart")).data.datasets.filter((d) => /^path_/.test(d.id)).map((d) => [d.id, JSON.stringify(d.borderDash ?? null)])));
+      eq("only the IPv6 line is dashed", JSON.stringify(dashes), JSON.stringify({ path_router: "null", path_line: "null", path_internet: "null", path_internet_v6: "[6,4]" }));
+      eq("its legend key is dashed too", await page.$$eval("#latencyLegend .lg .key.line", (ks) => ks.map((k) => k.classList.contains("dash")).join()), "false,false,false,true");
     } finally {
       await stubFetch(null);
     }

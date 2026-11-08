@@ -89,7 +89,8 @@ response and then takes everything the socket holds, decrypting it in OpenSSL, i
 that arrive on their own. CPU per MB downloaded (user and system, this machine, an i9-10900X): through httpx's own
 transport 13.1 ms on loopback TLS with data arriving 16 KiB at a time and 9.7 to 10.3 ms from Cloudflare (one core is
 spent at about 800 Mbps); through the new one 5.6 ms on the same loopback test and 5.7 to 5.8 ms from Cloudflare. No proxy is used for
-the test (the transport does not read proxy settings): a test through a proxy would measure the proxy, not your line.
+the test, by any provider (the transport does not read proxy settings, and M-Lab's server lookup and WebSocket are told
+not to): a test through a proxy would measure the proxy, not your line.
 On a network that lets traffic out only through a proxy (`HTTPS_PROXY` set for Pengumon), the test therefore fails,
 and its reason says so.
 

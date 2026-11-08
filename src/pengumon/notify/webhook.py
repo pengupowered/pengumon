@@ -58,6 +58,8 @@ class Alert:
     load_pct: Optional[float] = None
     service_id: Optional[str] = None
     page: Optional[str] = None
+    outage_id: Optional[int] = None  # the outage a network incident alert is about (incidents.outages), with `drops`
+    drops: Optional[int] = None      # how many incidents the outage joined so far
 
 
 def alert_link(alert: Alert, public_url: Optional[str]) -> Optional[str]:
@@ -83,6 +85,8 @@ def json_payload(alert: Alert, link: Optional[str]) -> dict:
         "title": alert.title,
         "message": alert.message,
         "incident_id": alert.incident_id,
+        "outage_id": alert.outage_id,
+        "drops": alert.drops,
         "cause": alert.cause,
         "service_id": alert.service_id,
         "started_at": _iso(alert.started_at),

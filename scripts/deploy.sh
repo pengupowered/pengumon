@@ -127,6 +127,9 @@ step "Time zone for the container: ${TZ:-UTC (not found on the host)}"
 # ---- build and recreate ----
 if [ $NO_BUILD = 0 ]; then
     step "Building $IMAGE"
+    # the date: the image's apt-get upgrade layer is rebuilt once a day, not served from an old build's cache
+    APT_REFRESH="$(date -u +%Y-%m-%d)"
+    export APT_REFRESH
     run podman-compose build || fail "build failed"
     # A stale build cache must never ship another tree's code: the image's package has to equal src/pengumon here.
     step "Checking that the image holds this tree's code"

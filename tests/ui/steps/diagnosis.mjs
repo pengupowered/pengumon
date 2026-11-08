@@ -109,6 +109,33 @@ export const steps = [
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["longpath"] }],
 
+  ["path health with the IPv6 servers not probed (seven nodes): \"Not probed\" stays on one line at 1440, 1024 and phone width", async ({ eq, layoutSettled, ok, page, until, waitCount }) => {
+    await waitCount("#pathChain .node[data-node]", 6);
+    // the third public server is the IPv6 group, and this host has no IPv6 (as strips.mjs makes it)
+    await page.evaluate(() => {
+      window.__smokeMutate = (d) => d.targets.forEach((t) => {
+        if (t.target_id === "lp_public3") Object.assign(t, { group: "internet_v6", address: "2001:db8::53", status: "down", last_ms: null, recent_latencies: Array(30).fill(null), loss_pct: 100, loss_recent_pct: 100, ipv6_unavailable: true });
+      });
+    });
+    await waitCount("#pathChain .node[data-node]", 7);
+    await until(() => document.querySelector('#pathChain .node[data-node$="internet_v6"] .node-val')?.textContent === "Not probed");
+    for (const w of [1440, 1024, 390]) {
+      await page.setViewport({ width: w, height: 1000 });
+      await layoutSettled();
+      const m = await page.evaluate(() => {
+        const word = document.querySelector('#pathChain .node[data-node$="internet_v6"] .node-val b');
+        const line = parseFloat(getComputedStyle(word).lineHeight) || word.getBoundingClientRect().height;
+        return { lines: word.getClientRects().length, height: Math.round(word.getBoundingClientRect().height), line: Math.round(line), cut: word.scrollWidth > word.parentElement.clientWidth + 1,
+          chain: document.getElementById("pathChain").scrollWidth > document.getElementById("pathChain").clientWidth + 1 };
+      });
+      eq(`${w}: nodes (the ISP hops fold into one below 1200 px)`, await page.$$eval("#pathChain .node", (n) => n.length), w >= 1200 ? 7 : w >= 800 ? 5 : 7);
+      ok(`${w}: Not probed on one line (${JSON.stringify(m)})`, m.height <= m.line * 1.6 && !m.cut);
+      ok(`${w}: the chain does not overflow sideways`, !m.chain);
+    }
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    await page.setViewport({ width: 1400, height: 1000 });
+  }, { variants: ["longpath"] }],
+
   ["screenshots of the page with three public servers a few ms apart (PENGUMON_SMOKE_SHOTS=1)", async ({ SHOTS, page, path, outDir, until, waitCount }) => {
     if (!SHOTS) return;
     await waitCount("#pathChain .node[data-node]", 6);
@@ -243,5 +270,28 @@ export const steps = [
     // a broken link has no moving dashes
     const live = await page.$eval("#pathChain .link:not(.broken) .wirebox", (e) => getComputedStyle(e, "::after").animationName);
     eq("a live link's strip is animated", live, "flow");
+  }],
+
+  ["Path health: a failed route check leaves a standing line (when, why, which check the path is from), with or without unreviewed changes, and it goes when a check succeeds", async ({ eq, ok, page, stubFetch, text, until, waitText }) => {
+    const at = Math.floor(Date.now() / 1000);
+    const failed = { checked_at: at - 120, state: "failed", discovery_id: null, changes: [], good_at: at - 86400,
+      error: "No trace reached a public server, so the route was not compared (the connection may have been down)." };
+    await stubFetch({ "GET /api/path/drift": { body: failed } });
+    await waitText("#pathBanner", /The last route check failed at/);
+    const line = (await text("#pathBanner")).replace(/\s+/g, " ");
+    ok(`the line says when, why and from when (${line})`, /The last route check failed at .+ \(no trace reached the internet, so the connection may have been down\); the path shown is from .+\./.test(line));
+    ok("no address in it", !/\d+\.\d+\.\d+\.\d+|[0-9a-f:]{4,}::/.test(line));
+    eq("quiet: no Review or Dismiss to press", await page.$$eval("#pathBanner button", (b) => b.length), 0);
+    ok("not an alarm", !(await page.$eval("#pathBanner .result", (r) => r.classList.contains("st-warn") || r.classList.contains("st-crit"))));
+    // a later check that succeeded: the line goes (the page asks again on a zone change as it does every five minutes)
+    await page.evaluate(() => {
+      const real = window.fetch;
+      window.fetch = (url, opts) => (new URL(String(url), location.href).pathname === "/api/path/drift"
+        ? Promise.resolve(new Response(JSON.stringify({ checked_at: Date.now() / 1000, state: "same", changes: [], discovery_id: "ok1", good_at: Date.now() / 1000, error: null }), { headers: { "content-type": "application/json" } }))
+        : real(url, opts));
+      document.dispatchEvent(new Event("zonechange"));
+    });
+    await until(() => document.getElementById("pathBanner").hidden);
+    await stubFetch(null);
   }],
 ];

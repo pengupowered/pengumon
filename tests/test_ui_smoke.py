@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,7 @@ pytestmark = pytest.mark.skipif(
 
 
 async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
-    """Three hops of 1 s probes for 2 h 20 min, 15 network incidents plus a service one (a 2 h one, a short one with a path trace, one
+    """Three hops of 1 s probes for 2 h 20 min, 15 network incidents plus three of one outage the night before and a service one (a 2 h one, a short one with a path trace, one
     explained by load), DOCSIS and router history around them. `access_answered`: the first-run question (who can open the
     dashboard, pengumon.access) was answered "anyone on my home network"; only the `firstrun` variant leaves it open."""
     repo = DatabaseRepository(db_path=db_path)
@@ -105,6 +106,14 @@ async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
                             "first router (the CMTS node), or the hop deprioritizing ping replies."))
             continue
         await repo.create_incident(incident(f"Seeded blip {i + 1}", now - 1800 + i * 60, 20.0))
+    # one provider event the night before: three drops of the line, two minutes apart (inside the grouping gap), the first at
+    # 03:12 UTC (inside the maintenance hours, the line and the provider's hops only): one outage with the label
+    night = datetime.now(timezone.utc).replace(hour=3, minute=12, second=0, microsecond=0).timestamp() - 86400
+    for title, begin, seconds, kind, cause, severity in (
+            ("Night event drop 1", night, 240.0, "isp_loss", "access_line_drop", "critical"),
+            ("Night event drop 2", night + 360, 180.0, "isp_loss", "access_line_drop", "warning"),
+            ("Night event drop 3", night + 660, 120.0, "backbone_loss", "internet_backbone_transit_loss", "critical")):
+        await repo.create_incident(incident(title, begin, seconds, kind=kind, cause_code=cause, severity=severity))
     await repo.create_incident(Incident(
         start_time=now - 4000, end_time=now - 3900, duration_seconds=100.0, cause_code="service_unavailable",
         kind="service_down", title="Service Down is not responding", description="seeded service outage",

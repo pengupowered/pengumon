@@ -281,6 +281,23 @@ export const steps = [
     await stubFetch(null);
   }],
 
+  ["speed card: under a theme with stepped charts the history keeps its own curve while the latency chart steps", async ({ eq, page, pickLook, showCard, stubFetch, until }) => {
+    await stubFetch({ "GET /api/speedtests": { body: speedReal } });
+    try {
+      await pickLook("amber-crt");
+      await showCard("speed");
+      await until(() => { const c = document.querySelector("[data-panel=speed] canvas"); return !!(c && Chart.getChart(c)); });
+      eq("the theme steps the charts", await page.evaluate(() => document.documentElement.dataset.look), "amber-crt");
+      eq("the speed history's lines are not stepped", await page.evaluate(() => Chart.getChart(document.querySelector("[data-panel=speed] canvas")).data.datasets
+        .filter((d) => d.label === "Download" || d.label === "Upload").map((d) => d.stepped || false).join()), "false,false");
+      await until(() => [...document.querySelectorAll("[data-panel=latency] .panel-b canvas")].map((c) => Chart.getChart(c)).find((c) => c?.config.type === "line")
+        ?.data.datasets.find((x) => x.id === "path_router")?.stepped === "middle"); // the latency chart's still do
+    } finally {
+      await pickLook("");
+      await stubFetch(null);
+    }
+  }],
+
   ["speed card: a viewer without the password sees Run now but cannot use it", async ({ click, count, eq, page, waitText }) => {
     await waitText(`${BODY} [data-item=down] [data-v=num]`, /^236$/);
     const run = `${BODY} [data-action=speedAskRun]`;

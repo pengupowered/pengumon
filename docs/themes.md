@@ -219,7 +219,7 @@ charts as their modules draw them.
 | Field | Values | What it does |
 |---|---|---|
 | `line_width` | 0.5 to 6 | the width in px of a chart's main lines (the charts' own: 2); thinner lines (one per target, the WAN download) keep their proportion |
-| `curve` | `smooth`, `straight`, `stepped` | smooth: the chart's own curve; straight: straight segments between readings; stepped: steps |
+| `curve` | `smooth`, `straight`, `stepped` | smooth: the chart's own curve; straight: straight segments between readings; stepped: steps (a dataset with `ownCurve: true` keeps its own curve, see below) |
 | `grid` | true, false | false: no grid lines in the plot area |
 | `points` | 0 to 6 | a dot of this radius on every reading (0: none, the charts' own) |
 | `fill` | true, false | true: the area under each series line is washed with its color (a band or an area a chart fills itself keeps its own) |
@@ -230,7 +230,7 @@ no chart style. The page reads the style of the theme it shows from `<html data-
 `static/js/chart-theme.js` applies it: a Chart.js plugin registered once (`themeChartStyle`) sets, before every update of
 every chart, each line dataset's width, tension, `stepped`, point radius and fill from the dataset's own values (kept
 the first time it sees the dataset) and the theme's style, and hides the grid lines when `grid` is false. Modules keep
-giving their datasets their own widths and curves and never ask for the style; a theme change redraws every chart
+giving their datasets their own widths and curves and never ask for the style (a dataset whose readings are far apart, like the Speed card's one point per test, sets `ownCurve: true` and keeps its own tension and `stepped` whatever `curve` says; its width, points, fill and the grid still follow the style); a theme change redraws every chart
 (`applyChartTheme`), so the new style applies at once. The sparklines are not Chart.js charts: `sparkline.js` reads
 `spark` (`chartStyle()`) each time it draws one, and the cards draw again on a theme change. The router's last hour keeps
 its shape.
@@ -428,7 +428,9 @@ card while the view draws it (`[data-view="<id>"]`). Custom themes have no views
 
 `themes/amber-crt/panels/incidents.js` draws the card as a terminal log: a prompt line, the standard week (the
 `timeline` part), the window bar, and one line per incident (`when  [STATUS]  what  duration  cause`) where a line opens
-the incident's details; `incidents.css` is its look. Only what looks different is its own code; the timeline is the
+the incident's details; an outage of several drops is one line (`r.kind === 'outage'`) whose title button lists its drops
+(its drops follow it in `list.rows` as rows of `kind: 'drop'`) and carries a summary, a state and a
+maintenance label (`data-v` `summary`, `state`, `maintenance`); `incidents.css` is its look. Only what looks different is its own code; the timeline is the
 standard part. In short:
 
 ```js

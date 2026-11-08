@@ -63,6 +63,19 @@ BUSY_RETRY_SECONDS = 600.0
 BUSY_RETRIES = 3
 BUSY_REASON = "line busy"
 MB = 1_000_000
+REASON_MAX = 300  # characters of a test's reason that are kept
+
+
+def cut_reason(text: str, limit: int = REASON_MAX) -> str:
+    """At most `limit` characters, never ending in part of a word: a LibreSpeed server's host cut in two could not be
+    found, and left out, where the reason is shown without it (the MCP tools, the AI pack)."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    if not (text[limit].isspace() or head[-1].isspace()):  # the cut falls inside a word: the word goes
+        parts = head.rsplit(None, 1)
+        head = parts[0] if len(parts) == 2 else ""
+    return head.rstrip()
 
 
 def grade_of(row: Dict[str, Any]) -> Optional[str]:
@@ -84,6 +97,7 @@ class SpeedTestRunner:
         self.clock = clock
         self._spawn = spawn or (lambda coro: asyncio.ensure_future(coro))
         self._offset_source = offset_source
+        self._drawn: Optional[str] = None  # the offset drawn while none was stored (kept in memory until stored)
         self._notify_slow = notify_slow   # (down_mbps, up_mbps, plan_down, plan_up, alert_pct) -> None
         self.running = False
         self.last_ok: Optional[Dict[str, Any]] = None  # the last test that worked: the gauges (speedtest/gauges.py)
@@ -116,29 +130,37 @@ class SpeedTestRunner:
 
     # --- the schedule ---------------------------------------------------------------------------------------------
 
-    async def _offset(self, interval_s: float) -> float:
+    async def _offset(self, interval_s: float, store: bool = False) -> float:
         """The install's offset in seconds, created once (random within a day) and kept in meta. For an interval of
         two days or more it also picks the install's day within the interval, from the same number, so weekly tests are
-        not all on the same weekday (the slots count from the epoch, a Thursday), while the time of day stays."""
+        not all on the same weekday (the slots count from the epoch, a Thursday), while the time of day stays.
+        Only `store` writes it (the scheduler: `run` at its start, `tick`); a read (`next_run`, so GET /api/speedtests)
+        writes nothing: with none stored yet it answers with the number drawn here, which is the one the scheduler
+        then stores."""
         raw = await self.repository.get_meta(OFFSET_KEY)
         if raw is None or not raw.lstrip("-").isdigit():
-            raw = str(int(self._offset_source()))
-            await self.repository.set_meta(OFFSET_KEY, raw)
+            if self._drawn is None:
+                self._drawn = str(int(self._offset_source()))
+            raw = self._drawn
+            if store:
+                await self.repository.set_meta(OFFSET_KEY, raw)
         return spread_offset(int(raw), interval_s)
+
+    async def ensure_offset(self) -> None:
+        """Stores the install's offset when there is none yet (the scheduler's start)."""
+        await self._offset(86400.0, store=True)
 
     async def _reference(self) -> float:
         """The last recorded test that moves the schedule: any but a skip for a busy line. With none, when this run
         began (or, after the feature was turned on while the app ran, when that happened)."""
-        rows = await self.repository.get_speed_tests(0, self.clock() + 1, limit=20)
-        last = next((r["ts"] for r in rows if not (r["status"] == "skipped" and (r["reason"] or "").startswith(BUSY_REASON))),
-                    None)
-        reference = last if last is not None else self._started_at
+        row = await self.repository.latest_speed_test_moving_schedule(BUSY_REASON)
+        reference = row["ts"] if row is not None else self._started_at
         return max(reference, self._enabled_since) if self._enabled_since is not None else reference
 
-    async def _due(self, now: float) -> Tuple[float, float]:
+    async def _due(self, now: float, store: bool = False) -> Tuple[float, float]:
         """(the slot the next scheduled test belongs to, the moment it may start: the slot, a busy retry, and the window)."""
         interval = self.cfg.interval_hours * 3600.0
-        offset = await self._offset(interval)
+        offset = await self._offset(interval, store)
         slot = due_slot(await self._reference(), now, interval, offset)
         if slot == self._skipped_slot:
             slot = slot_after(slot, interval, offset)
@@ -158,6 +180,10 @@ class SpeedTestRunner:
 
     async def run(self) -> None:
         """The scheduler: a task that lives until shutdown."""
+        try:
+            await self.ensure_offset()
+        except Exception as e:
+            _log.error(f"Speed test scheduler: could not store the offset: {e}", exc_info=True)
         while True:
             try:
                 await self.tick()
@@ -178,7 +204,7 @@ class SpeedTestRunner:
             self._was_off, self._enabled_since = False, now
         if self.running:
             return
-        slot, at = await self._due(now)
+        slot, at = await self._due(now, store=True)
         if now < at or now - self._started_at < STARTUP_DELAY_SECONDS:
             return
         used, cap = await self.month_used_bytes(now), self.cfg.monthly_cap_bytes
@@ -329,7 +355,7 @@ class SpeedTestRunner:
                 errors = [f"{name}: {err.reason}" for name, err in (("download", down_err), ("upload", up_err)) if err]
             worked = [x for x in (down, up) if x is not None]
             row["status"] = "ok" if len(worked) == 2 else "partial" if worked else "failed"
-            row["reason"] = "; ".join(errors)[:300] or None
+            row["reason"] = cut_reason("; ".join(errors)) or None
             if errors:
                 _log.warning(f"Speed test ({trigger}): {row['reason']}")
         except (asyncio.CancelledError, _Stopped) as e:

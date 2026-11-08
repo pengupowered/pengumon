@@ -59,6 +59,7 @@ One card group per panel, each in its own folder. What a panel needs, and what i
   - Tab: Incidents
   - Needs: nothing
   - Without it: always shown
+  - Rows: one per incident, and one per [outage](diagnosis.md#outages) of 2 or more drops (see "The incidents card and outages" below)
 - When it breaks (`heat`)
   - Tab: Incidents
   - Needs: nothing
@@ -99,9 +100,14 @@ the path now: 10.9 ms, the median of the servers' last 60 probes", from the same
 node), and every figure in the dialog says the window it covers ("Median, last 5 min"). With more than five nodes (four in a medium card) the links and nodes get tighter, and in a
 medium-width card (about 1024 px) the node icons go and the latency pills move under the gaps. When even that leaves a
 node too little room (a long traceroute's worth of ISP hops), the ISP hops fold into one node: the worst hop sets its
-status and the last hop that answers its latency; Hop details still lists each one. ISP hops the owner grouped in the
+status and the last hop that answers its latency; Hop details still lists each one. ISP hops you grouped in the
 path editor ("one node with the hop before", the targets' `group`) are one node the same way. In a narrow card
 (container query, 860 px) the chain turns vertical and shows every hop.
+When the latest background route check failed (`GET /api/path/drift`, `state: failed`), a quiet line under the chain
+says when, why in plain words and which check the path shown comes from ("The last route check failed at 03:00 (no trace
+reached the internet, so the connection may have been down); the path shown is from 5 Nov, 03:00."); it goes with the
+next check that succeeds. The IPv6 servers' line in the latency chart is dashed, so it is told from the Internet line
+without relying on color.
 
 **Edit** in the card's header opens the path editor (`dialogs/path-editor`): the hops as cards, a draft that goes live
 only on Apply (configuration.md, "The probe path"). While no path was ever applied (a fresh install probing the default
@@ -181,7 +187,7 @@ Privacy, Discovery, Display, a collapsed Advanced area ("Change these only if yo
 on the left jumps between them; at 720 px and below it is a "Jump to section" list and the dialog is full screen.
 
 - **A row** is the label and input (numbers in their own unit: seconds, milliseconds, minutes, percent, "per
-  million"; choices in words, such as "Every incident" / "Outages only"), then the effect in one line and, under the
+  million"; choices in words, such as "Every incident" / "Critical incidents only"), then the effect in one line and, under the
   input, the standard value in one form ("Standard: 15 %", "Standard: none", or what an empty box means), the badges
   and **Reset to standard**. Badges: *Changed* (stored, not the standard value), *Unsaved* (in the draft), *From
   environment · NAME* (the input is read-only and there is no Reset), *Applies after a restart*. Every control sits in
@@ -191,10 +197,15 @@ on the left jumps between them; at 720 px and below it is a "Jump to section" li
   Escape ask before throwing a draft away. Every number is checked against its range in the browser (the message
   appears under the field and Save stays off) and again by the server 0.4 s after the last edit (messages and amber
   warnings land under the field they name). Saving sends the revision the page loaded; if a part you touched changed
-  elsewhere the server answers 409, the page keeps theirs, tells you which, and keeps the rest of your draft.
+  elsewhere the server answers 409, the page keeps theirs, names each setting in full with the value that was kept (a list by its name
+  and your items that were not kept), and keeps the rest of your draft.
+- **Why Save is off.** A line above the buttons says what stops Save ("2 problems: Busy line from: Enter a value from 1 to
+  100 %; Webhooks: Slack: URL needed.", three at most, then "and N more"), also for a problem inside a collapsed list card,
+  and "Go to the first" opens that row or card.
 - **Preview** (shown when the draft changes an outage or alert rule) replays the last N days of stored samples with the
   draft rules: "4 incidents instead of 9 · 2 alerts instead of 6 · recorded: 11", with the notes and a short list of the
-  incidents that would no longer open or would newly open. It runs on demand and is marked out of date after a further
+  incidents that would no longer open or would newly open. Alerts are counted per outage (the drops of one outage send one
+  alert), so they can be fewer than the incidents; for an outage still going on it lists only what differs. It runs on demand and is marked out of date after a further
   edit.
 - **Secrets** (the ntfy topic and token, a webhook's address, a header's value) are write-only: the row says "Set ·
   host" or "Not set" and offers Replace and Remove. The text you type goes to the server in the Save and is never shown
@@ -253,6 +264,30 @@ control. `tests/test_frontend.py` checks that every way into a lazy dialog is na
 The incident list (`panels/incidents/list.js`) loads the newest 50 incidents, and older ones in pages of 50 when the
 7-day timeline, a search, the last page, a time window opened from another panel or a custom chart range needs them, up
 to 500 (`GET /api/incidents?limit=&offset=`).
+When the history has more than 500, the card says so: its count stays the server's (`/api/incidents/count`), a note names
+the 500 listed and points to the ISP dossier, the reliability report and the API for older ones, and the footer says its
+total is of the newest 500.
+
+**Back and dialogs.** A dialog opened with `openModal` (`js/util.js`) gets a history entry, so the browser's or phone's
+Back closes the top dialog and stays on the page; a second Back leaves as before. Closing a dialog by its button or
+Escape takes the entry away again, so no Back press is dead. Settings (the `#settings` route), the path editor (its draft
+guard) and the first-run question keep their own handling.
+
+**The incidents card and outages.** Drops of the line that belong together ([diagnosis.md](diagnosis.md#outages)) are
+one row: the status word (**Outage** when a drop was critical, else **Degraded**, with its icon), the outage's title, when
+it began, its span (first drop's start to last drop's end, "so far" while one is open), the places ("Line · ISP"), and
+under the title a line "7 drops · down 14 min" (down = the time a critical drop was open, left out when 0) with
+**Ongoing** or **may continue** (settling: another drop may still join it) and the **likely maintenance** chip when set
+(a label from the hour, the downtime counts in full). The row's button (`aria-expanded`) lists the drops under it as the
+usual incident rows, each opening the inspector; an outage of one drop is the usual row. The pager, "Showing x-y of z"
+and the header count rows ("12 events · 20 incidents" once an outage joins drops); the filter shows an outage when any
+drop matches (opened, it lists all its drops), and a time from the heat map or Uptime keeps it when any drop overlaps
+it. Expected (busy-line) incidents are never grouped. The summary comes from `GET /api/outages` for the stretch of time
+the list has loaded, read again with every reload and after a Save in Settings; an outage with drops the list has not
+loaded yet is held back and older incidents are loaded until it is whole (`list.js`), so a group is never shown with
+missing drops (at the end of the list, or the 500 cap, it shows what is there: "3 drops (2 loaded)"). The 7-day timeline
+keeps one bar per drop. The Reliability card says "6 outages, down 41 min in all, longest 25 min" under its incident
+count (and how many are likely maintenance). Alerts previews in Settings count one alert per outage, as the notifier sends.
 
 A hidden tab is not drawn: `js/live.js` keeps only the newest message and publishes it once when the tab shows again
 (then `tab:resumed` makes the live chart fetch the minute it missed). A subscriber that must see every change of its

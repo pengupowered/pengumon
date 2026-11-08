@@ -1,6 +1,6 @@
 // Amber CRT's view of the Incidents card (docs/themes.md, "Drawing a card"): a terminal log. A prompt line, the standard
 // 7-day timeline, then one line per incident (`when  [STATUS]  what  duration  cause`) where a line opens the incident's
-// details. It draws from the card's view model (panels/incidents/model.js) and reuses the standard timeline. The look is
+// details; an outage of several drops is one line with a summary under it, `[+]` opens its drops as lines. It draws from the card's view model (panels/incidents/model.js) and reuses the standard timeline. The look is
 // incidents.css.
 
 export default {
@@ -40,7 +40,8 @@ export default {
     const parts = [timeline(tl)];
 
     const line = (r) => {
-      const row = el('div', `ac-ln st-${r.status.level}${r.expected ? ' expected' : ''}`);
+      const outage = r.kind === 'outage';
+      const row = el('div', `ac-ln st-${r.status.level}${r.expected ? ' expected' : ''}${outage ? ' ac-outage' : ''}${r.kind === 'drop' ? ' ac-drop' : ''}`);
       row.setAttribute('role', 'listitem');
       row.dataset.action = r.open.action;
       row.dataset.arg = r.open.arg;
@@ -49,12 +50,27 @@ export default {
       const st = status(mark(el('span', 'ac-stt'), 'status'), r.status.level, r.status.word, { icon: r.status.icon });
       const what = mark(el('button', 'ac-what', r.title), 'title');
       what.type = 'button';
-      what.dataset.action = r.open.action;
-      what.dataset.arg = r.open.arg;
-      what.title = r.open.label;
+      what.dataset.action = outage ? r.toggle.action : r.open.action;
+      what.dataset.arg = outage ? r.toggle.arg : r.open.arg;
+      what.title = outage ? r.toggle.label : r.open.label;
+      let cell = what;
+      if (outage) { // the title opens or closes the drops (the [+] / [-] is the css); the summary line is under it
+        what.setAttribute('aria-expanded', String(r.toggle.expanded));
+        what.setAttribute('aria-label', r.toggle.label);
+        cell = el('div', 'ac-wcell');
+        const sub = el('div', 'ac-sub');
+        sub.append(mark(el('span', null, r.summary), 'summary'));
+        if (r.state) sub.append(' ', mark(el('span', 'ac-state', r.state), 'state'));
+        if (r.maintenance) {
+          const m = mark(el('span', 'ac-maint', r.maintenance.text), 'maintenance');
+          m.title = r.maintenance.title;
+          sub.append(' ', m);
+        }
+        cell.append(what, sub);
+      }
       const dur = mark(el('span', `ac-dur${r.duration.lost ? ' lost' : ''}`, r.duration.text), 'duration');
       if (r.duration.title) dur.title = r.duration.title;
-      row.append(when, st, what, dur, mark(el('span', 'ac-cause', r.cause), 'cause'));
+      row.append(when, st, cell, dur, mark(el('span', 'ac-cause', r.cause), 'cause'));
       return row;
     };
 
@@ -77,7 +93,7 @@ export default {
           return;
         }
         if (empty) { delete log.dataset.empty; empty.remove(); }
-        list(log, l.rows, { key: (r) => r.id, render: line });
+        list(log, l.rows, { key: (r) => r.id, render: line, sig: (r) => JSON.stringify(r.kind === 'outage' ? { ...r, drops: undefined } : r) });
       },
       unmount() { parts.forEach((p) => p.unmount()); }
     };

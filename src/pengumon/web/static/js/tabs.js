@@ -8,6 +8,7 @@
 // screen) its tab is the current one. layout.js keeps the first two in data-available and data-layout-hidden.
 
 import { registerActions } from './dispatch.js';
+import { afterModalHistory } from './util.js';
 
 const DEFAULT_TAB = 'live';
 const NARROW = '(max-width: 720px)';
@@ -81,8 +82,7 @@ export function paintTabDots() {
 export function selectTab(name) {
   if (!presentTabs().has(name)) return;
   if (location.hash === `#${name}`) return;
-  location.hash = name;
-  window.scrollTo(0, 0);
+  afterModalHistory(() => { location.hash = name; window.scrollTo(0, 0); }); // a dialog that closed in this task (one whose button switches the tab) has given its history entry back first
 }
 
 registerActions('click', { selectTab: (el) => selectTab(el.dataset.arg) });

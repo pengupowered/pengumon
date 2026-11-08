@@ -64,7 +64,7 @@ function lines(data, mode, all) {
   SERIES.forEach((s) => {
     if (!data.series[s.id]) return;
     if (s.id === 'path_internet' && data.lo.some(has)) band = { lo: data.lo, hi: data.hi, color: { token: s.color } };
-    out.push({ id: s.id, kind: 'path', label: s.name, color: { token: s.color }, data: data.series[s.id] });
+    out.push({ id: s.id, kind: 'path', label: s.name, color: { token: s.color }, dash: s.dash, data: data.series[s.id] });
   });
   return { lines: out, band };
 }
@@ -126,7 +126,7 @@ function legend(data, mode, all, quiet) {
       else if (ids.length > 1) sub = `worst of ${ids.length}`;
       else sub = names[0] || '';
       const title = ids.length > 1 ? `${s.name}: ${s.combine === 'median' ? 'median' : 'worst'} of ${names.join(', ')}` : `${s.name}: ${sub}`;
-      items.push({ key: s.id, kind: 'line', color: `var(${s.color})`, label: s.name, sub, title, now: newest(data.series[s.id]) });
+      items.push({ key: s.id, kind: 'line', color: `var(${s.color})`, label: s.name, dash: !!s.dash, sub, title, now: newest(data.series[s.id]) });
     });
     if (data.lo.some(has)) items.push({ key: 'band', kind: 'band', color: 'var(--s2)', label: 'p10–p90 band' });
     const isp = all.filter((t) => t.enabled !== false && t.category === 'isp').length;

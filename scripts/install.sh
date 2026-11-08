@@ -152,7 +152,12 @@ backup_data() {
             echo "no database: the service account does not exist yet, so there is no data to back up"
             return 1
         fi
-        ( cd / && sudo -u _pengumon env "PENGUMON_DATA=$DATA" PYTHONDONTWRITEBYTECODE=1 "$PENGUMON" backup )
+        # (sudo's own refusals and the backup's errors both come out on stderr, which the caller keeps)
+        ( cd / && sudo -u _pengumon env "PENGUMON_DATA=$DATA" PYTHONDONTWRITEBYTECODE=1 "$PENGUMON" backup ) || {
+            status=$?
+            echo "the backup, run as the service account _pengumon with sudo, exited with status $status"
+            return "$status"
+        }
     fi
 }
 
@@ -323,12 +328,14 @@ explain_sudo
 umask 022
 if [ -x "$PENGUMON" ]; then
     say "Pengumon is already installed here ($("$PENGUMON" version 2> /dev/null || echo unknown)): upgrading."
-    if out="$(backup_data 2>&1)"; then
+    backup_status=0
+    out="$(backup_data 2>&1)" || backup_status=$?
+    if [ "$backup_status" -eq 0 ]; then
         say "Backup of your data: $out"
     else
         case "$out" in
             *"no database"*) say "No database yet, so nothing to back up." ;;
-            *) die "the backup failed, so nothing was changed: ${out:-no reason was given.}
+            *) die "the backup failed, so nothing was changed: ${out:-the backup printed nothing (exit status $backup_status).}
   To try the backup yourself: $(if [ "$SCOPE" = system ]; then echo "sudo $PENGUMON backup --system --to ~/pengumon-backup"; else echo "$PENGUMON backup"; fi)" ;;
         esac
     fi

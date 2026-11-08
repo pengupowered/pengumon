@@ -201,6 +201,10 @@ VALUES = {
     "server.log_levels": ("pengumon.devices=debug", devices_level),
     "access.allow_viewers": (True, lambda st: main.security_config.view_without_token),
     "mcp.enabled": (True, cfg("mcp.enabled")),
+    # outages are computed from the live config on every read, and the notifier's policy is rebuilt (notify.reconfigure)
+    "incidents.group_gap_minutes": (5, lambda st: st.notifier.policy.outage_rules.gap_seconds / 60),
+    "incidents.maintenance_start": ("01:00", lambda st: st.notifier.policy.outage_rules.maintenance_start),
+    "incidents.maintenance_end": ("05:30", lambda st: st.notifier.policy.outage_rules.maintenance_end),
     "speedtest.enabled": (True, speed("enabled")),
     "speedtest.provider": ("mlab", speed("provider")),
     "speedtest.librespeed_url": ("http://speed.example.com", speed("librespeed_url")),

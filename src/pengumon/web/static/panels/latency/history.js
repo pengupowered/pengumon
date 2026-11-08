@@ -4,7 +4,7 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { maxLivePoints, state } from '../../js/state.js';
-import { localFormat, median, targetList } from '../../js/util.js';
+import { localFormat, median, pageLeaving, targetList } from '../../js/util.js';
 import { SERIES, combine, seriesMembers } from '../../js/path.js';
 import { pingTargets, renderCharts, resetView, setLineMode, view } from './charts.js';
 import { primaryDevice } from '../../js/devices.js';
@@ -95,7 +95,7 @@ async function attachLoadOverlay(seq, times, startTime, endTime, tolerance) {
     });
     renderCharts();
   } catch (err) {
-    console.error('Error loading WAN load overlay:', err);
+    if (!pageLeaving()) console.error('Error loading WAN load overlay:', err); // (a reload cuts the request off: no error)
   }
 }
 
@@ -131,7 +131,7 @@ export async function preloadLiveHistory() {
     const times = fill(samples, true);
     attachLoadOverlay(seq, times, startTime, now, 30);
   } catch (err) {
-    console.error('Error preloading live history:', err);
+    if (!pageLeaving()) console.error('Error preloading live history:', err); // (a reload cuts the request off: no error)
   }
 }
 
@@ -147,7 +147,7 @@ async function loadHistory(durationSeconds) {
     const times = fill(samples, false);
     attachLoadOverlay(seq, times, startTime, now, Math.max(30, bucketSeconds * 1.5));
   } catch (err) {
-    console.error('Error fetching history:', err);
+    if (!pageLeaving()) console.error('Error fetching history:', err); // (a reload cuts the request off: no error)
   }
 }
 
@@ -175,7 +175,7 @@ export async function loadHistoricalRange(startTime, endTime) {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     document.querySelector('[data-panel="latency"] .panel').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
   } catch (err) {
-    console.error('Error loading custom range:', err);
+    if (!pageLeaving()) console.error('Error loading custom range:', err); // (a reload cuts the request off: no error)
   }
 }
 

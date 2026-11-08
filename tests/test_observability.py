@@ -346,3 +346,59 @@ def test_state_log_without_a_key_treats_every_new_message_as_a_different_error(c
     clock.now += 10
     assert state.failure("timeout: read timed out") is True
     assert _visible(handler)[-1] == ("WARNING", "Router poll still failing, now: timeout: read timed out")
+
+
+# --- credentials in a websocket handshake ------------------------------------------------------------------------
+
+COOKIE_SECRET, BEARER_SECRET = "cookie-canary-5f1e2d", "bearer-canary-9a8b7c"
+
+
+@pytest.mark.filterwarnings("ignore")
+@pytest.mark.parametrize("ws", ["auto", "websockets-sansio", "websockets"])
+async def test_a_websocket_handshake_never_logs_its_credentials(clean_root, monkeypatch, ws):
+    """uvicorn hands its `uvicorn.error` logger to `websockets`, which logs every handshake header at DEBUG: with the log
+    level at debug, each /ws connection put the browser's session cookie (or the bearer token) into the log. Served
+    by uvicorn on loopback, the real app, every implementation uvicorn can pick here (wsproto is not installed)."""
+    import asyncio
+    import socket
+
+    import uvicorn
+    from websockets.asyncio.client import connect
+
+    from pengumon.main import app, security_config
+
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", []), ("view_without_token", False)):
+        monkeypatch.setattr(security_config, name, value)
+    for var in ("PENGUMON_LOG_LEVEL", "PENGUMON_LOG_LEVELS", "PENGUMON_LOG_FORMAT"):
+        monkeypatch.delenv(var, raising=False)
+    stream = io.StringIO()
+    setup_logging("debug", levels="", fmt="text", stream=stream)
+    records = Capture(TextFormatter())
+    clean_root.addHandler(records)
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, lifespan="off", log_config=None, ws=ws))
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        assert server.started
+        silent = logging.getLogger("pengumon.test.ws-client")       # (the client's own debug lines are not the app's)
+        silent.setLevel(logging.WARNING)
+        headers = {"Cookie": f"pg_session={COOKIE_SECRET}", "Authorization": f"Bearer {BEARER_SECRET}"}
+        async with connect(f"ws://127.0.0.1:{port}/ws", additional_headers=headers, logger=silent,
+                           origin=f"http://127.0.0.1:{port}") as client:
+            await client.send("ping")
+        await asyncio.sleep(0.1)
+    finally:
+        server.should_exit = True
+        await task
+    text = "\n".join(records.lines()) + stream.getvalue()
+    assert any(r.name == "uvicorn.error" and r.levelno == logging.DEBUG for r in records.records)   # debug was on
+    assert COOKIE_SECRET not in text and BEARER_SECRET not in text
+    assert "< cookie: [redacted]" in text and "< authorization: [redacted]" in text    # (the line stays, its value not)
+    assert "< user-agent: " in text                                                    # (other headers are untouched)

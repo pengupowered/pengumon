@@ -31,6 +31,7 @@ from pengumon.reports.common import (
     _targets, find_primary_failing_hop, material_loss_points,
 )
 from pengumon.reports.dossier import collect_dossier_facts
+from pengumon.reports.outages import gap_minutes, outages_of
 from pengumon.reports.queries import MinuteRow, episode_loss, incident_rows, minute_row_chunks
 
 DAY = 86400.0
@@ -279,6 +280,8 @@ class PackFacts:
     load_codes: Tuple[str, ...] = ()                    # the event codes whose kind supports "load" (a busy line)
     service_outages: Dict[str, Tuple[int, float]] = field(default_factory=dict)   # host app id -> (outages, seconds)
     tz: Optional[tzinfo] = None                         # the zone the days and hours are local to
+    outages: List[Dict[str, Any]] = field(default_factory=list)   # the window's outages, oldest first (incidents.outages)
+    outage_gap_minutes: int = 0                         # incidents.group_gap_minutes: 0, every drop is its own outage
 
 
 def category_of(target: Any) -> str:
@@ -405,7 +408,7 @@ def path_shape(path: Sequence[Tuple[str, str]], hops: Mapping[str, Tuple[int, in
       none     no hop isolated;
       one_hop  the public hops' median loss is under `degraded_loss_pct` and under half the first hop's (the
                intermediate-hop rule: engine/classifier/rules.py apply_hop_deprioritization), and under
-               `one_hop_max_end_loss_pct`: a few per cent lost at the Internet is real loss the user had, whatever
+               `one_hop_max_end_loss_pct`: a few percent lost at the Internet is real loss the user had, whatever
                the hop before it lost;
       carried  otherwise: it carries on to the later hops. (Without a public hop to look at, carried.)"""
     walk = [(t, c) for t, c in path if c in PATH_CATEGORIES and hops.get(t, (0, 0))[0]]
@@ -1062,5 +1065,5 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         labels_of_events={c: getattr(k, "label", "") or c for c, k in kinds.items()},
         service_outages=_service_outages([r for r in raw if r not in network], now),
         load_codes=tuple(sorted(c for c, k in kinds.items() if "load" in getattr(k, "supports", ()))),
-        tz=tz,
+        tz=tz, outages=outages_of(network, config, now), outage_gap_minutes=gap_minutes(config),
     )

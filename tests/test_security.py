@@ -382,8 +382,8 @@ async def test_a_viewer_sees_the_dashboard(viewers):
     async with _client() as ac:
         page = await ac.get("/", headers={"Accept": "text/html"})
         assert page.status_code == 200 and "<html" in page.text.lower()
-        for path in ("/api/status", "/api/info", "/api/path", "/api/targets", "/api/incidents", "/api/devices",
-                     "/api/features", "/api/notifications", "/metrics"):
+        for path in ("/api/status", "/api/info", "/api/path", "/api/targets", "/api/incidents", "/api/outages",
+                     "/api/devices", "/api/features", "/api/notifications", "/metrics"):
             assert (await ac.get(path)).status_code != 401, path
         info = (await ac.get("/api/info")).json()
         assert info["can_edit"] is False and info["session"] == {"sign_out": False, "sign_out_everywhere": False}

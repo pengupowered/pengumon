@@ -5,3 +5,6 @@
 :root[data-look="mission-control"] [data-panel="incidents"] .tl-bar { border-radius: 1px; min-width: 6px; }
 :root[data-look="mission-control"] [data-panel="incidents"] .tl-now { width: 3px; }
 :root[data-look="mission-control"] [data-panel="incidents"] .inc-list .primary { font-size: var(--fs-md); }
+/* an outage: the summary under its title in the mono face, its drops marked by a rule on the left */
+:root[data-look="mission-control"] [data-panel="incidents"] .inc-list .inc-sub { font-family: var(--mono); }
+:root[data-look="mission-control"] [data-panel="incidents"] .inc-list tr.drop-row td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
