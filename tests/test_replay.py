@@ -537,3 +537,21 @@ def test_the_replays_target_keeps_what_the_prober_keeps_that_a_verdict_reads(see
         assert (target.status == "down") == (prober.stats["t"].status == "down")
         window = target.recent_latencies
         assert bool(target.hot) == (None in window or max((v for v in window if v is not None), default=0) >= 50.0)
+
+
+def test_a_slow_http_probe_is_no_affected_target_in_the_replay_as_in_the_live_code():
+    from pengumon.engine.classifier.metrics import AFFECTED_LATENCY_MS, round_metrics
+    from pengumon.engine.prober import NetworkProber
+    from pengumon.engine.replay import _Sample, _Target
+    from pengumon.models.probes import TargetConfig
+    prober = NetworkProber()
+    prober.register_target(TargetConfig(id="web", name="Web", category="custom", address="example.com", probe="http"))
+    prober.register_target(TargetConfig(id="ping", name="Ping", category="custom", address="192.0.2.9"))
+    stats = {tid: _Target(stat) for tid, stat in prober.stats.items()}
+    assert [stats["web"].probe, stats["ping"].probe] == ["http", "icmp"]
+    slow = AFFECTED_LATENCY_MS + 100.0
+    samples = [_Sample("web", 1.0, True, slow), _Sample("ping", 1.0, True, slow)]
+    assert round_metrics(stats, samples).failed_targets == ("ping",)  # the live prober's stats give the same
+    assert round_metrics(prober.stats, [s for s in samples]).failed_targets == ("ping",)
+    failed = [_Sample("web", 2.0, False, None)]
+    assert round_metrics(stats, failed).failed_targets == ("web",)  # a failed HTTP probe still counts

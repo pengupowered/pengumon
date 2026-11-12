@@ -3,6 +3,7 @@
 // view model changed, and the block that had the keyboard focus gets it back. docs/themes.md, "Drawing a card".
 
 import { kit } from '../../js/cards.js';
+import { numText } from '../../js/escape.js';
 
 const { escapeHtml: esc } = kit;
 
@@ -16,7 +17,7 @@ function markup(vm) {
       return `${head}<div class="strip-quiet" data-item="strip-${esc(r.id)}" data-v="summary" role="img" title="${esc(r.quiet.why)}" aria-label="${esc(r.quiet.aria)}">${esc(r.quiet.strip)}</div>`
         + `<span class="s-pct num" data-item="pct-${esc(r.id)}" data-v="availability" title="${esc(r.quiet.pctTitle)}">${esc(r.pct)}</span>`;
     }
-    const cells = r.cells.map((c, i) => `<button type="button" class="cell ${c.cls}" tabindex="${i ? -1 : 0}" data-item="${c.id}" data-v="tip" data-action="showIncidentWindow" data-start="${c.start}" data-end="${c.end}"`
+    const cells = r.cells.map((c, i) => `<button type="button" class="cell ${c.cls}" tabindex="${i ? -1 : 0}" data-item="${c.id}" data-v="tip" data-action="showIncidentWindow" data-start="${numText(c.start)}" data-end="${numText(c.end)}"`
       + ` data-label="${esc(c.label)}" data-state="${esc(c.state)}" data-tip="${esc(c.tip)}" aria-label="${esc(c.aria)}"></button>`).join('');
     return `${head}<div class="strip" style="--n:${r.cells.length}" data-item="strip-${esc(r.id)}" data-v="summary" role="group" data-roving aria-label="${esc(r.aria)}">${cells}</div>`
       + `<span class="s-pct num" data-item="pct-${esc(r.id)}" data-v="availability">${esc(r.pct)}</span>`;

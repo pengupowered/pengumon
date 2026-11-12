@@ -8,6 +8,7 @@
   border: 0; background: none; padding: 0; font: inherit; color: var(--ink-1); font-weight: var(--fw-semi);
 }
 /* the app's chevron points down: a closed card's points right, an open one's down (as .set-chev in dialog.css) */
+span.dv-toggle { cursor: default; } /* a viewer's card title: nothing to press */
 .dv-toggle svg.i { flex: none; color: var(--ink-3); transform: rotate(-90deg); transition: transform var(--t-fast) var(--ease); }
 .dv-card.open .dv-toggle svg.i { transform: none; }
 .dv-title { min-width: 0; overflow-wrap: anywhere; }

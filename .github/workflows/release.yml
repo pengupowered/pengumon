@@ -3,8 +3,8 @@
 # fast-forwarded onto main and tagged. The first job here finds that CI run (scripts/find-tested-run.sh) and fails if
 # there is none; nothing is tested again, and every file below is a download from that run's artifacts, not a rebuild.
 # The image is built from that wheel on a native runner for each architecture (amd64, arm64 for a Raspberry Pi; no
-# QEMU), the two are joined into one multi-architecture image ghcr.io/pengupowered/pengumon:X.Y.Z (and latest), and a
-# GitHub release is created from CHANGELOG.md with the wheel and the sdist, the universal lock, the install scripts and
+# QEMU), the two are joined into one multi-architecture image (first under the staging tag X.Y.Z-candidate; X.Y.Z and
+# latest are put on it only after its provenance attestation exists), and a GitHub release is created from CHANGELOG.md with the wheel and the sdist, the universal lock, the install scripts and
 # SHA256SUMS attached. Build provenance attestations are made for those files and for the image. Last, after a manual
 # approval (the GitHub environment "pypi"), the same wheel and sdist go to PyPI by trusted publishing. Downloading
 # artifacts of another run needs actions: read. See docs/releasing.md.
@@ -120,13 +120,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Join the two images under X.Y.Z and latest
+      # Only the staging tag here: X.Y.Z and latest must not point at an image whose provenance does not exist yet
+      # (publish-image below puts them on this digest once attest-image has succeeded).
+      - name: Join the two images under a staging tag
         id: join
         run: |
           version="${GITHUB_REF_NAME#v}"
-          docker buildx imagetools create -t "$IMAGE:$version" -t "$IMAGE:latest" "$IMAGE:$version-amd64" "$IMAGE:$version-arm64"
-          docker buildx imagetools inspect "$IMAGE:$version"
-          echo "digest=$(docker buildx imagetools inspect "$IMAGE:$version" --format '{{.Manifest.Digest}}')" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools create -t "$IMAGE:$version-candidate" "$IMAGE:$version-amd64" "$IMAGE:$version-arm64"
+          docker buildx imagetools inspect "$IMAGE:$version-candidate"
+          echo "digest=$(docker buildx imagetools inspect "$IMAGE:$version-candidate" --format '{{.Manifest.Digest}}')" >> "$GITHUB_OUTPUT"
 
   # Signed statements (Sigstore, through GitHub) of where the files and the image were built; anyone can check one with
   # `gh attestation verify <file> --repo pengupowered/pengumon`. These two jobs are the ones besides PyPI that
@@ -166,6 +168,31 @@ jobs:
           subject-digest: ${{ needs.manifest.outputs.digest }}
           push-to-registry: true
 
+  # Only now do X.Y.Z and latest appear: the same digest that was attested, so the tags never exist without provenance.
+  publish-image:
+    name: Image tags
+    needs: [manifest, attest-image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/pengupowered/pengumon
+      DIGEST: ${{ needs.manifest.outputs.digest }}
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the attested image X.Y.Z and latest
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx imagetools create -t "$IMAGE:$version" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
+          test "$(docker buildx imagetools inspect "$IMAGE:$version" --format '{{.Manifest.Digest}}')" = "$DIGEST"
+
   attest-files:
     name: File provenance
     needs: tested
@@ -199,7 +226,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [tested, manifest, attest-image, attest-files]
+    needs: [tested, manifest, attest-image, attest-files, publish-image]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

@@ -33,8 +33,13 @@ export default {
       canvas.height = BAND;
     };
     size();
-    window.addEventListener('resize', size);
+    // the canvas is resized by the next frame, once however many resize events came: dragging a window fires dozens, and each
+    // one reallocated the canvas
+    let stale = false;
+    const resized = () => { stale = true; };
+    window.addEventListener('resize', resized);
     const off = ctx.onFrame((now, dt) => {
+      if (stale) { stale = false; size(); }
       phase = (phase + (Math.min(dt, 1000) / 1000) * (STEP / CYCLE_S)) % STEP;
       g.clearRect(0, 0, width, BAND);
       g.fillStyle = ctx.tokens()['--accent'];
@@ -52,7 +57,7 @@ export default {
     }, FPS);
     return () => {
       off();
-      window.removeEventListener('resize', size);
+      window.removeEventListener('resize', resized);
       canvas.remove();
     };
   }

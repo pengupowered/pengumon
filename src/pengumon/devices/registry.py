@@ -19,7 +19,9 @@ from pengumon.devices.monitors import LineMonitor, RouterMonitor, UnconfiguredMe
 from pengumon.devices.wan import WanRates, WanReading
 from pengumon.drivers import DRIVERS
 from pengumon.observability import get_logger
-from pengumon.secrets import CredentialSources, password_env_var, secret_file_name
+from pengumon.secrets import (
+    CredentialSources, password_env_var, privacy_password_env_var, privacy_secret_file_name, secret_file_name,
+)
 
 ROUTER_CAPABILITIES = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM})
 
@@ -45,13 +47,17 @@ def monitor_class(device_id: str, driver: type) -> Type:
                             f"({', '.join(sorted(c.value for c in offers)) or 'no capabilities'})")
 
 
-def unconfigured_messages(device_id: str) -> UnconfiguredMessages:
-    """What the UI shows while the device is disabled or has no password."""
-    return UnconfiguredMessages(
-        disabled=f"Device {device_id} is disabled in configuration.",
-        missing_credentials=(f"Password for {device_id} not configured. Set {password_env_var(device_id)}, add "
-                             f"/run/secrets/{secret_file_name(device_id)}, or enter it in the settings."),
-    )
+def unconfigured_messages(device_id: str, *, privacy: bool = False) -> UnconfiguredMessages:
+    """What the UI shows while the device is disabled or has no password (`privacy`: an SNMPv3 authPriv device, which
+    also needs its privacy password)."""
+    if privacy:
+        missing = (f"Password or privacy password for {device_id} not configured. Set {password_env_var(device_id)} and "
+                   f"{privacy_password_env_var(device_id)}, add /run/secrets/{secret_file_name(device_id)} and "
+                   f"/run/secrets/{privacy_secret_file_name(device_id)}, or enter them in the settings.")
+    else:
+        missing = (f"Password for {device_id} not configured. Set {password_env_var(device_id)}, add "
+                   f"/run/secrets/{secret_file_name(device_id)}, or enter it in the settings.")
+    return UnconfiguredMessages(disabled=f"Device {device_id} is disabled in configuration.", missing_credentials=missing)
 
 
 def build_device(cfg: DeviceConfig, repository=None, secrets: Optional[CredentialSources] = None, *,
@@ -68,7 +74,7 @@ def build_device(cfg: DeviceConfig, repository=None, secrets: Optional[Credentia
         driver = driver_cls.from_config(cfg, credentials, client=client, **clocks)
     except ValueError as e:
         raise DeviceConfigError(f"device {cfg.id}: {e}") from None
-    messages = unconfigured_messages(cfg.id)
+    messages = unconfigured_messages(cfg.id, privacy=getattr(driver, "takes_privacy_password", False))
     if monitor_cls is RouterMonitor:
         if wan is None and wall_clock is not None:
             wan = WanRates(clock=wall_clock)
@@ -101,15 +107,16 @@ def build_devices(configs: Sequence[DeviceConfig], repository=None,
 
 def log_device(device: Device) -> None:
     """The one log line of a device once it is built (here and by the devices component's supervisor): what it is, how
-    often it is polled, what it offers, where its credentials came from (never what they are)."""
+    often it is polled, what it offers, where its credentials came from (never what they are). Not its address: the
+    line is exported over OTLP with the other logs (observability/export.py)."""
     offers = ",".join(sorted(c.value for c in device.driver.offers))
-    log = get_logger("pengumon.devices", device=device.id, driver=device.driver.name, host=device.driver.host)
+    log = get_logger("pengumon.devices", device=device.id, driver=device.driver.name)
     if not device.enabled:
-        log.info(f"Device {device.id} ({device.driver.name} at {device.driver.host}) is disabled in configuration",
+        log.info(f"Device {device.id} ({device.driver.name}) is disabled in configuration",
                  capabilities=offers)
         return
     source = device.credentials_source
-    log.info(f"Device {device.id}: {device.driver.name} at {device.driver.host} every "
+    log.info(f"Device {device.id}: {device.driver.name} every "
              f"{device.interval_seconds:g} s, offers {offers}; "
              + (f"password from {source}" if source else
                 ("no password configured" if device.needs_sign_in else "needs no password")),
@@ -125,6 +132,9 @@ class DeviceRegistry:
         self._devices: Tuple[Device, ...] = ()
         self._by_id: Mapping[str, Device] = {}
         self.errors: Dict[str, str] = {}
+        # Whether a speed test is running now (the speedtest component sets it): drivers with reads that can wait
+        # (`pause_reads`, the router's statistics pages) hold them meanwhile, whichever devices the registry has.
+        self.speed_test_running: Callable[[], bool] = lambda: False
         self.replace(devices)
 
     def replace(self, devices: Iterable[Device]) -> None:
@@ -136,6 +146,12 @@ class DeviceRegistry:
                 raise DeviceConfigError(f"device id {device.id!r} is used twice")
             by_id[device.id] = device
         self._devices, self._by_id = new, by_id
+        for device in new:
+            if hasattr(device.driver, "pause_reads"):
+                device.driver.pause_reads = self._speed_test_running
+
+    def _speed_test_running(self) -> bool:
+        return bool(self.speed_test_running())
 
     def __iter__(self) -> Iterator[Device]:
         return iter(self._devices)

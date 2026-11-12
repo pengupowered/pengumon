@@ -101,6 +101,20 @@ def child_text(element: ElementTree.Element, name: str) -> Optional[str]:
     return None
 
 
+URL_MAX = 512
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def child_url(element: ElementTree.Element, name: str) -> Optional[str]:
+    """A URL field (controlURL, URLBase) as written, trimmed: never cut nor its spaces collapsed, which made a wrong URL
+    whose requests failed without saying why. None when empty, longer than URL_MAX or holding a control character."""
+    for child in element:
+        if local_name(child.tag) == name:
+            value = (child.text or "").strip()
+            return value if value and len(value) <= URL_MAX and not _CONTROL.search(value) else None
+    return None
+
+
 @dataclass
 class Description:
     device_type: Optional[str]
@@ -127,13 +141,13 @@ def parse_description(body: bytes) -> Optional[Description]:
     for element in device.iter():
         if local_name(element.tag) != "service":
             continue
-        st, control = child_text(element, "serviceType"), child_text(element, "controlURL")
+        st, control = child_text(element, "serviceType"), child_url(element, "controlURL")
         if st and control and any(st.startswith(prefix) for prefix in WAN_SERVICES):
             services.append((st, control))
     model = " ".join(p for p in (child_text(device, "modelName"), child_text(device, "modelNumber")) if p)
     return Description(device_type=device_type, friendly_name=child_text(device, "friendlyName"),
                        manufacturer=child_text(device, "manufacturer"), model=clean_text(model) if model else None,
-                       services=services[:8], url_base=child_text(root, "URLBase"))
+                       services=services[:8], url_base=child_url(root, "URLBase"))
 
 
 def soap_body(service_type: str, action: str) -> bytes:

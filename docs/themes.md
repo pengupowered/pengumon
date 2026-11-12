@@ -123,6 +123,13 @@ The layers (`--z-*`) cannot be changed. The ranges are in `pengumon/web/themes.p
   phone width without sideways scrolling.
 - Motion in a skin (an animation) stops under `@media (prefers-reduced-motion: reduce)`.
 
+What the skin and view checks do not catch: they are a lint for the theme folders that ship in this repository (they are
+reviewed like any code), not a security boundary. They read selectors and look for words, so a determined author gets past
+them (a value built from pieces, a `url()` hidden in a custom property, a view that reaches `fetch` by a computed name).
+The checks refuse nested rules inside a scoped rule, CSS escapes in `url(`, `@import`, `src()` and `image-set()` to
+another site, and `import()` in a view; nothing more is promised. For the same reason, they are not applied to user-supplied
+files: a custom theme cannot bring a skin or a view at all, only values that the server checks one by one.
+
 A theme's skin, its token blocks and its card views' stylesheets are one generated stylesheet,
 `/static/v/<tree>/themes/<id>/theme.css` (`pengumon.web.themes.look_css`: tokens, then skin, then views), and the page
 links it only while the theme is in use ([How the page applies a theme](#how-the-page-applies-a-theme)). It is served from
@@ -409,7 +416,8 @@ For example: the path is drawn (the first message came) when `[data-panel=diagno
   view model it drew last). It is drawn at once until it has been drawn once (so it has its size and rows from the
   start, and the page does not grow when it scrolls in), while it holds the focus, and before the page is printed.
   The model still gets every message, so its data is right; only the drawing waits. Hop details (matrix: a message
-  every second, the last card) does this; every other card draws every view model wherever it is.
+  every second, the last card), Path health (diagnosis) and the latency chart do this; every other card draws every view
+  model wherever it is.
 - **Run-time fallback**: a theme view that throws in `mount` or `update`, or that cannot be loaded, is replaced by the
   standard view for that card for the rest of the page's life, with one warning in the console (`A theme's card view
   failed, ...`). A standard view that throws is an error, as before.
@@ -488,7 +496,8 @@ class names of a standard view are its own and may change.
 | Hop details (`matrix`) | `.hops` (a `.dlist`): `td.lead` (`.primary` the short name, `.sub`), `.chip` (the loss; `.chip.st` when it has a status), `.range` (`i` the band, `b` the average), `.range-n`, `[data-f="last"]` (`.ink-crit`, `.ink-muted`), `.sparkline` |
 | Uptime (`strips`) | `.strips` (one grid: `.s-hd`, `.s-hd.r`; per target `.s-name` (`span`, `small`), `.strip` of `.cell`s (`.w`, `.c`, `.b`, `.n`) or `.strip-quiet`, `.s-pct`; then `.s-axis`); `.strip-legend` (`.key`, `.grow`) |
 | Reliability (`report`) | `.rep-grid` (`.rep-hero` with `.stat`s and `.hero-num`, `.rep-mini`; `.rep-days` with `.rb-t`, `.days` of `.day`s (`.nodata`; `i` the bar, `span` the letter), `.rep-note`; `.rep-causes` with `.rb-t`, `.causes li` (`.cbar i`, `b`)); `.rep-hops-box` (`summary`, `.rep-hops`, a `.dlist`) |
-| Router | `.rgrid` (`.n<count>`) of `.rblock`s (`.wan`, `.sys`, `.clients`, `.mesh`), each titled `h3.rb-t` with its name in `.rb-n`; `.meter` (`.lbl`, `.val` with `[data-f="v"]`, `.track` with `.fill`; the share in `--v`, the level's color in `--mc`); `.wan-chart`; `.big-count`, `.stackbar` (`i` with `--c`), `.legend`; `.nodes li` (`.st-warn`; `.n-ic`, `.n-id`, `.n-st`, `button.n-c` with `b` and `i`); `.cap-note`; `[data-f="body"].dim` |
+| Internet use (`traffic`) | `.trf` of `.trf-state`, `.trf-notices` (`.trf-notice` with its status first, `.trf-reason`; `.trf-stale`), `.trf-sums` (`.trf-totals`, `.trf-range`, `.trf-busiest`), `.trf-chart` (`.trf-chart-bar` with `.trf-legend` of `.trf-key` (`.gap` for a hatched one) and a `.seg`; `.chart-box.trf-chart-box`; `.trf-notes` of `.trf-note`), `.trf-cols` of two `.trf-block`s (`.trf-devices`, `.trf-apps`), each a `h3.rb-t` (`.rb-n`, `.muted`) over `.trf-rows` of `.trf-row` (a device: a `button` with its icon, `.trf-who` (`.trf-name`, `.trf-sub`, `.trf-app`), `.trf-figs` (`.trf-down`, `.trf-up`) and `.trf-bar` with an `i` whose width is the share; an app: `.trf-row.app`), `.trf-empty`, `.trf-more` |
+| Router | `.rgrid` (`.n<count>`) of `.rblock`s (`.wan`, `.sys`, `.clients`, `.mesh`), each titled `h3.rb-t` with its name in `.rb-n`; `.meter` (`.lbl`, `.val` with `[data-f="v"]`, `.track` with `.fill`; the share in `--v`, the level's color in `--mc`); `.sysfacts` of `li`s (`.sf-l`, `.sf-v`, `.sf-s` with a `.sf-st` status; `.st-warn` / `.st-crit` on the `li`), `.sysevents` (`h4.rb-s`, a `ul` of `li`s with `.ev-w`, `.ev-x`); `.wan-chart`; `.big-count`, `.stackbar` (`i` with `--c`), `.legend`; `.nodes li` (`.st-warn`; `.n-ic`, `.n-id`, `.n-st`, `button.n-c` with `b` and `i`); `.cap-note`; `[data-f="body"].dim` |
 | Line | `.line-docsis` of `.gauge`s (`.st-<level>`, `.na`; `.g-name` with `[data-f="ic"]`: the status icon, its word in `data-word`; `[data-f="name"]`, the help; `.g-val`, `.g-bar` (`.g-zone.ok`, `.g-zone.mid`, `.g-spread`, `.g-mark`), `.g-scale`); `.gauge.fec` (`.serious`; `.fec-note`, `.fec-detail`, `.g-bar-free`); `.chan-sum` (`.chan-txt`, `.chan-strip`); `.cap-note`; `[data-f="body"].dim` |
 
 What a restyle may do and may not:
@@ -604,7 +613,9 @@ webhooks), so every browser has them, and are made by:
 An own theme has the id `custom-<name>`, colors (and any text sizes and corner radii a file brings, within the ranges)
 and nothing else: no skin, no effect, no card views, no chart style. The server checks every one on Save (`ThemeItem` in `pengumon/web/settings.py`:
 known token names, color values, sizes in range, no CSS text) before its values are written into the page. The
-contrast checks above are not enforced on own themes; that is the owner's call.
+contrast checks above are not enforced on own themes; that is the owner's call. `theme_warnings` in
+`pengumon/web/settings.py` lists what they would find in own themes, as warnings and never errors; two own themes cannot
+share an id.
 
 ## Card colors
 
@@ -616,6 +627,6 @@ that card's `<section data-panel>`, so the card's CSS and its canvas chart (thro
 own color everywhere. So that every card takes every theme's colors (and its own), card and dialog styles, skins,
 card views, card markup and card code write no color literal: `tests/test_frontend.py`
 (`test_cards_and_dialogs_take_their_colors_from_the_tokens`) fails on one, the made-up data of a card's fixture, the
-fallbacks `js/util.js` and `js/layout.js` document and the targets' configured colors aside. The choice is kept in this
+fallbacks `js/targets.js` and `js/layout.js` document and the targets' configured colors aside. The choice is kept in this
 browser's layout (`pengumon.layout.v1`); Settings > Display > "Use this browser's layout" makes it the one new browsers
 start with (`dashboard.colors`).

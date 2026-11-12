@@ -23,8 +23,15 @@ services:
     container_name: pengumon
     restart: always
     network_mode: host
+    # Every capability dropped but NET_RAW. no-new-privileges is deliberately not set: the image grants NET_RAW to the
+    # interpreter as a file capability (Dockerfile), and that option would stop the kernel applying it.
+    cap_drop:
+      - ALL
     cap_add:
       - NET_RAW
+    # A runaway process ends in this container instead of taking the host with it.
+    mem_limit: 512m
+    pids_limit: 256
     # The root filesystem is read-only; the app writes only to the data volume and /tmp.
     read_only: true
     tmpfs:

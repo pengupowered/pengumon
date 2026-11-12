@@ -1,12 +1,15 @@
 """GET /api/history: latency and loss samples for charting."""
 
+import asyncio
+import json
 import time
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 
 from pengumon.api.common import StateDep, json_response, record_answer, record_capped
-from pengumon.db.probes import HISTORY_ROW_CAP
+from pengumon.db.probes import HISTORY_ROW_CAP, HISTORY_THREAD_ROWS
 from pengumon.security import rate_limit
 
 router = APIRouter(prefix="/api")
@@ -17,11 +20,35 @@ router = APIRouter(prefix="/api")
 HISTORY_UNBUCKETED_MAX_SECONDS = 3600
 
 
+# json.dumps holds the GIL for a whole call, so a big answer is encoded in pieces of this many rows: the event loop gets
+# its turn between them.
+_ENCODE_CHUNK_ROWS = 2000
+
+
+def _dumps(content: Any) -> str:
+    return json.dumps(content, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _rows_json(rows: list) -> str:
+    """json.dumps(rows) byte for byte, one piece at a time."""
+    pieces = [_dumps(rows[i:i + _ENCODE_CHUNK_ROWS])[1:-1] for i in range(0, len(rows), _ENCODE_CHUNK_ROWS)]
+    return "[" + ",".join(pieces) + "]"
+
+
+def _encode(answer: Any, compact: bool) -> Response:
+    """json_response(answer), for an answer of many rows (run in a thread)."""
+    if compact:
+        text = '{"fields":' + _dumps(answer["fields"]) + ',"rows":' + _rows_json(answer["rows"]) + "}"
+    else:
+        text = _rows_json(answer)
+    return Response(text.encode("utf-8"), media_type="application/json")
+
+
 @router.get("/history", dependencies=[Depends(rate_limit("history", 60, 60))])
 async def get_history(
     state: StateDep,
-    start_time: Optional[float] = None,
-    end_time: Optional[float] = None,
+    start_time: Optional[float] = Query(None, allow_inf_nan=False),
+    end_time: Optional[float] = Query(None, allow_inf_nan=False),
     target_ids: Optional[List[str]] = Query(None),
     bucket_seconds: Optional[int] = Query(None),
     compact: bool = Query(False),
@@ -42,18 +69,18 @@ async def get_history(
         if et - st > HISTORY_UNBUCKETED_MAX_SECONDS:
             bucket_seconds = 10 if et - st <= 86400 else 60
             record_capped("history", "range")
-    rows = await state.repository.get_history(
+    answer, count = await state.repository.get_history_answer(
         start_time=st,
         end_time=et,
         target_ids=target_ids,
         bucket_seconds=bucket_seconds,
+        compact=compact,
     )
-    if len(rows) >= HISTORY_ROW_CAP:
+    if count >= HISTORY_ROW_CAP:
         record_capped("history", "rows")
-    if compact:
-        fields = list(rows[0]) if rows else []
-        response = json_response({"fields": fields, "rows": [list(r.values()) for r in rows]})
+    if count > HISTORY_THREAD_ROWS:
+        response = await asyncio.to_thread(_encode, answer, compact)
     else:
-        response = json_response(rows)
-    record_answer("history", len(rows), len(response.body))
+        response = json_response(answer)
+    record_answer("history", count, len(response.body))
     return response

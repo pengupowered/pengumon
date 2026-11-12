@@ -375,7 +375,7 @@ async def test_answers_to_someone_else_are_ignored(dgram, mismatch):
 
 @pytest.mark.parametrize("kind", ["dgram", "raw"])
 async def test_forged_echo_reply_with_the_right_id_sequence_and_source_is_ignored(kind, slow_monotonic, monkeypatch):
-    """The review's spoof: a reply "from" a dead host, right id and sequence, other data, made it look alive."""
+    """A spoofed reply: one "from" a dead host, right id and sequence, other data, made it look alive."""
     backend, fake = _scripted(kind, monkeypatch)
     try:
         task = await started(backend, TARGET, timeout=0.2)
@@ -448,6 +448,31 @@ async def test_a_pending_socket_error_does_not_stop_the_reader(dgram):
     assert await task == ProbeResult("reply", TARGET, 0.7)
 
 
+async def test_a_socket_that_keeps_failing_to_read_pauses_the_reader_instead_of_spinning_R4_L8(dgram, monkeypatch):
+    backend, fake = dgram
+    removed = []
+    await started(backend, TARGET, timeout=0.2)
+
+    class Loop:
+        def remove_reader(self, fd):
+            removed.append(fd)
+
+        def is_closed(self):
+            return False
+
+    backend._loop = Loop()
+    reads = []
+
+    def broken(bufsize, ancbufsize, flags=0):
+        reads.append(flags)
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(fake, "recvmsg", broken)
+    backend._on_readable()
+    assert removed == [fake.fileno()] and backend._loop is None
+    assert len(reads) < 20  # not the 256 of a spinning drain, twice
+
+
 async def test_raw_socket_time_exceeded_and_reply(raw_backend):
     backend, fake = raw_backend
     hop = await started(backend, TARGET, timeout=1.0, ttl=1)
@@ -504,12 +529,13 @@ async def test_a_failed_send_raises_and_is_not_left_pending(dgram, monkeypatch):
     assert backend._pending == {}
 
 
-async def test_close_cancels_what_is_in_flight(dgram):
+async def test_close_fails_what_is_in_flight_with_an_oserror_not_a_cancel_R4_L9(dgram):
     backend, fake = dgram
     task = await started(backend, TARGET, timeout=5.0)
     backend.close()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(OSError) as raised:
         await task
+    assert raised.value.errno == errno.EBADF and not task.cancelled()
     assert fake.closed
 
 

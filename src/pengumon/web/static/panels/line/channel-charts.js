@@ -2,15 +2,15 @@
 // readings. The shaded good zone and the bar colors are the server's: the zone comes from the device's `ranges`, each
 // bar's color from the channel's own `grades` (no limit is written here).
 
-import { escapeHtml } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { has } from '../../js/values.js';
 
-const has = (v) => v !== null && v !== undefined;
 const FILL = { good: 'var(--s1)', warn: 'var(--warn-fill)', critical: 'var(--crit)' };
 const H = 120;
 const LEFT = 38;
 
 // Axis ticks at round steps inside [min, max] (about four of them).
-export function ticksOf(min, max) {
+function ticksOf(min, max) {
   const raw = (max - min) / 4;
   const pow = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 5, 10].map((m) => m * pow).find((s) => s >= raw) || raw;

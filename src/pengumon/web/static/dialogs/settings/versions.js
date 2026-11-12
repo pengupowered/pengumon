@@ -1,8 +1,9 @@
 // Earlier versions: every Save is kept (the last 50). "Load" puts one in the page as a draft; Save then restores it.
 
-import { escapeHtml, localFormat } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { localFormat } from '../../js/clock.js';
 
-const SOURCES = { import: 'first import', save: 'saved', restore: 'restored', yaml_import: 'imported file' };
+const SOURCES = { import: 'first import', save: 'saved', restore: 'restored', yaml_import: 'imported file', upgrade: 'upgrade' };
 const when = (ts) => localFormat(ts * 1000, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 export async function fetchVersions() {
@@ -18,9 +19,9 @@ export async function fetchVersion(n) {
 }
 
 export function versionsHtml(list, current) {
-  const rows = list.map((v) => `<li><span class="set-ver-t"><b>Revision ${v.revision}</b>${v.revision === current ? ' <span class="chip">current</span>' : ''}
+  const rows = list.map((v) => `<li><span class="set-ver-t"><b>Revision ${Number(v.revision)}</b>${v.revision === current ? ' <span class="chip">current</span>' : ''}
       <span class="muted">${escapeHtml(when(v.applied_at))} · ${escapeHtml(SOURCES[v.source] || v.source)}</span><span class="set-ver-s">${escapeHtml(v.summary || '')}</span></span>
-      <button type="button" class="btn sm" data-action="settingsLoadVersion" data-arg="${v.revision}" data-needs-edit>Load</button></li>`).join('');
+      <button type="button" class="btn sm" data-action="settingsLoadVersion" data-arg="${Number(v.revision)}" data-needs-edit>Load</button></li>`).join('');
   return `<h3 class="section-t">Earlier versions</h3>
     <p class="fine top">Every Save is kept (the last 50). Loading one puts it here as a draft; Save restores it.</p>
     <ul class="set-vers">${rows || '<li class="fine">No versions yet.</li>'}</ul>`;

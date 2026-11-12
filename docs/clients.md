@@ -21,7 +21,12 @@ the router says is offline makes the router card warn. A node is known by its ow
 Each client also has a `kind` (phone, computer, game, network, printer) from the firmware's numeric `type` (or
 `isPrinter` / `isGateway`) when it is one of the few types mapped in `_CLIENT_KINDS`; any other type is left unknown. Without names, nodes are "Node 1", "Node 2", ... in the order of their ids. `mesh_node_labels`
 overrides any of them. The link rate the router reports is the Wi-Fi rate negotiated with the device, **not traffic**:
-this firmware reports no per-client traffic, so there are no top talkers.
+the client list carries no per-client traffic. Since 0.27 the router's own Traffic Analyzer gives the bytes per client
+and hour instead ([devices.md](devices.md#asuswrt-traffic-uptime-wan-link-and-temperature)): each row of the list then
+has a `traffic_hint`, the app the router counted at least 80 % of the client's last 24 hours as (a recognized app
+such as "Sony PlayStation", never a protocol label like "SSL/TLS"; only when the client moved at least 50 MB in a window
+that ended less than 48 hours ago; null otherwise). It is a hint shown beside the
+name, never a rename.
 
 * **Privacy** (`privacy.client_details`, enforced by the API, not the page): `token` (default) sends full names, IP and
   MAC addresses only to a request signed in with the password (Settings > Sign-in), so only someone with it can read them
@@ -35,3 +40,10 @@ this firmware reports no per-client traffic, so there are no top talkers.
   per mesh node as rows of `mesh_samples(device_id, ts, node_id, clients)`. The per-node counts are a table, not JSON
   in a column, because they are structured (the number of nodes varies) and a long range is then bucketed by a plain
   `GROUP BY` in SQLite. Both are pruned by retention like the other device samples.
+  The one exception is the router's traffic per client (schema v19, `traffic_hourly` and `traffic_apps`), stored by
+  MAC so that its history exists: `GET /api/devices/{id}/traffic` names the clients by the rule above, and the dossier,
+  the AI pack and the MCP tools describe a client only by its kind and maker ("a game console"), never by name or
+  address. Kept for `database.traffic_retention_days` (400 by default). And the names given to devices in Pengumon
+  (schema v20, `client_names`, by MAC; set with the pencil in a device's traffic dialog, or `PUT
+  /api/devices/{id}/clients/{key}/name`): shown instead of the router's name wherever names are shown in full, never
+  when they are masked, and never in the dossier, the AI pack or MCP. Only a request that may see names may set one.

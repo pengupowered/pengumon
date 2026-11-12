@@ -290,6 +290,9 @@ def as_linux(monkeypatch):
 
 def test_install_dry_run_prints_the_unit_and_changes_nothing(as_linux, capsys, monkeypatch):
     monkeypatch.setattr(service, "run_plan", lambda *a, **k: pytest.fail("a dry run must not run anything"))
+    # where install.sh puts it: the plan is made for the interpreter running this, and a system service is refused
+    # from a home folder, which is where a developer's or a CI runner's interpreter lives
+    monkeypatch.setattr(service.sys, "executable", "/opt/pengumon/venv/bin/python")
     assert cli.main(["service", "install", "--dry-run", "--system", "--port", "9100"]) == 0
     out = capsys.readouterr().out
     assert "Would install Pengumon" in out and "/etc/systemd/system/pengumon.service" in out
@@ -578,8 +581,9 @@ def test_install_on_every_connection_does_not_ask_for_a_token_that_is_set(as_lin
 
 
 @pytest.mark.parametrize("secrets, protected", [
-    ('{"access_token": "made-up-password"}', True),  # set on the page (Settings > Sign-in)
-    ('{"devices": {"router": {"password": "x"}}}', False),  # a device's password only
+    ('{"access_token": "made-up-password"}', True),  # set on the page by a version that kept the text
+    ('{"access_hash": {"salt": "00", "n": 2, "r": 1, "p": 1, "hash": "00"}}', True),  # set on the page: kept hashed
+    ('{"devices": {"router": {"password": "x"}}, "session_secret": "x"}', False),  # a device's password only
     ('{"access_token": ', False),  # damaged: unknown, so the advice stays
 ])
 def test_install_on_every_connection_knows_a_password_set_on_the_page(as_linux, monkeypatch, tmp_path, capsys,

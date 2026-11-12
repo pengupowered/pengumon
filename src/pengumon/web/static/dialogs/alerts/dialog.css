@@ -24,5 +24,5 @@
 .al-server { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
 .al-server .opt-row { border-top: 0; padding-top: 0; }
 .al-channels { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--ink-3); overflow-wrap: anywhere; }
-.al-channels b { color: var(--ink); font-weight: var(--fw-semi); }
+.al-channels b { color: var(--ink-1); font-weight: var(--fw-semi); }
 .al-preview { align-items: center; }

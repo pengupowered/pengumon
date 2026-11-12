@@ -2,9 +2,10 @@
 split of incident rows into real and expected ones; and the lock that builds one AI pack at a time."""
 
 import asyncio
+from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional
 
-from pengumon.incidents.taxonomy import is_service_kind
+from pengumon.incidents.taxonomy import incident_cause, is_service_kind
 from pengumon.reports.settings import ReportsConfig
 
 _DEFAULTS = ReportsConfig()
@@ -63,3 +64,20 @@ def _split_incidents(rows: List[Dict[str, Any]]):
     rows = [r for r in rows if not is_service_kind(r.get("kind"))]
     real = [r for r in rows if not r.get("expected")]
     return real, len(rows) - len(real)
+
+
+def lasted(r: Dict[str, Any], now: float) -> float:
+    """How long an incident row lasted, in seconds; one still open has no duration yet: it has lasted until now."""
+    return r["duration_seconds"] if r["duration_seconds"] is not None else max(0.0, now - r.get("start_time", now))
+
+
+def cause_totals(incidents: Iterable[Dict[str, Any]], now: float) -> Dict[str, List[float]]:
+    """{cause category: [incident count, minutes]} (incidents.taxonomy: the incident lanes' words), from the kind where
+    it says enough: a cause code alone can stand for more than one place (older rows, and access_line_drop for upstream
+    latency). The reports order them as they need."""
+    causes: Dict[str, List[float]] = defaultdict(lambda: [0, 0.0])
+    for r in incidents:
+        cause = incident_cause(r.get("kind"), r["cause_code"], r.get("description"))
+        causes[cause][0] += 1
+        causes[cause][1] += lasted(r, now) / 60.0
+    return causes

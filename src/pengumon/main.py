@@ -41,6 +41,10 @@ from pengumon.web import assets, pages
 # leaves the host process's logging alone.
 logger = get_logger("pengumon")
 
+# The only message a page sends over /ws is {"resync": true} (api/live.py reads at most 64 characters); uvicorn refuses a
+# bigger frame (close 1009) instead of buffering it.
+WS_MAX_MESSAGE_BYTES = 4096
+
 # Registered and started in this order, stopped in the reverse order (docs/architecture.md says why it is this one).
 # Adding a feature is a module with register(ctx) and one line here.
 COMPONENTS = [
@@ -80,11 +84,12 @@ async def lifespan(app: FastAPI):
 
 
 async def _validation_error(request: Request, exc: RequestValidationError):
-    """FastAPI's 422 answer, except that on credential routes (a device's, the sign-in's) the errors leave out the
-    submitted values: FastAPI echoes each invalid `input`, which there is a password (pydantic's hide_input_in_errors
-    does not reach it)."""
+    """FastAPI's 422 answer, except that on credential routes (a device's, the sign-in's, a settings save, which may
+    carry secrets and the current password) the errors leave out the submitted values: FastAPI echoes each invalid
+    `input`, which there is a password (pydantic's hide_input_in_errors does not reach it)."""
     path = request.url.path.rstrip("/")
-    if path.endswith("/credentials") or path == "/api/access" or path.startswith("/api/access/"):
+    if (path.endswith("/credentials") or path == "/api/access" or path.startswith("/api/access/")
+            or path == "/api/settings"):
         errors = [{k: v for k, v in error.items() if k != "input"} for error in exc.errors()]
         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
     return await request_validation_exception_handler(request, exc)
@@ -135,17 +140,39 @@ def tls_options() -> dict:
     return {"ssl_certfile": files[0], "ssl_keyfile": files[1]} if files else {}
 
 
+TRUSTED_PROXIES_ENV = "PENGUMON_TRUSTED_PROXIES"
+
+
+def proxy_options(environ=None) -> dict:
+    """uvicorn's options for X-Forwarded-For and X-Forwarded-Proto. Off unless PENGUMON_TRUSTED_PROXIES names the
+    reverse proxy's addresses (comma separated; networks such as 10.0.0.0/8 too): uvicorn's own default trusts them
+    from 127.0.0.1, and every process on this host connects from there (the container uses the host's network), so any
+    of them could choose the address the failed sign-ins and the rate limits are counted under. SystemExit for "*",
+    which would let every client choose it."""
+    value = (os.environ if environ is None else environ).get(TRUSTED_PROXIES_ENV, "").strip()
+    if not value:
+        return {"proxy_headers": False}
+    if "*" in value:
+        raise SystemExit(f"Pengumon cannot start: {TRUSTED_PROXIES_ENV}=* would let every client choose the address its "
+                         "sign-in attempts are counted under. Name the reverse proxy's address instead.")
+    return {"proxy_headers": True, "forwarded_allow_ips": value}
+
+
 def main():
     """Starts the server on the configured address (pengumon.paths.listen_address: PENGUMON_HOST/PORT, then the
     config's server section, then 127.0.0.1:8000), over HTTPS when a certificate is given (tls_options).
     `pengumon run` and `python -m pengumon.main` both end here."""
     host, port, _, _ = paths.listen_address(load_server_config())
     ssl = tls_options()
+    proxies = proxy_options()
     setup_logging()
     if ssl:
         logger.info(f"Serving HTTPS with the certificate {ssl['ssl_certfile']}")
+    if proxies["proxy_headers"]:
+        logger.info(f"Trusting X-Forwarded-For from {proxies['forwarded_allow_ips']} ({TRUSTED_PROXIES_ENV})")
     # log_config=None: uvicorn keeps its hands off logging; its loggers go through the pengumon handler.
-    uvicorn.run("pengumon.main:app", host=host, port=port, reload=False, log_config=None, **ssl)
+    uvicorn.run("pengumon.main:app", host=host, port=port, reload=False, log_config=None, ws_max_size=WS_MAX_MESSAGE_BYTES,
+                **proxies, **ssl)
 
 
 if __name__ == "__main__":

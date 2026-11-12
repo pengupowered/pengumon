@@ -111,6 +111,8 @@
 .set-access-shown code { flex: 1 1 200px; min-width: 0; padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-3); color: var(--ink-1); overflow-wrap: anywhere; user-select: all; }
 .set-access-confirm { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: center; justify-content: space-between; background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 45%, transparent); font-size: var(--fs-sm); }
 .set-access-confirm .set-access-b { margin-top: 0; }
+.set-access-current { flex: 1 1 100%; }
+.set-access-current .input { width: 100%; max-width: 24rem; }
 
 /* ---- list editors: cards ---- */
 .set-list { margin: var(--sp-4) 0; }
@@ -160,6 +162,7 @@
 @media (max-width: 720px) {
   #settingsModal .modal-content { height: 100dvh; max-height: 100dvh; border-radius: 0; }
   #settingsModal .modal-content::before { display: none; }
+  #settingsModal .modal-h { padding-top: calc(var(--sp-2) + env(safe-area-inset-top, 0px)); } /* the title clears a notch in the installed app */
   .set-wrap { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
   .set-rail { display: none; }
   .set-jump { display: flex; }

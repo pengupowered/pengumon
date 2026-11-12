@@ -1,6 +1,7 @@
 """Connections, schema migration, the target-id map, key/value state and retention: what every other part of
 the repository builds on. Holds the state the other mixins share (`_db`, the target maps, the incident cache)."""
 
+import asyncio
 import logging
 import os
 import time
@@ -19,8 +20,13 @@ from pengumon.observability.telemetry import db_retention_duration, db_retention
 logger = logging.getLogger("pengumon.db")
 
 DAY = 86400
+PRUNE_BATCH_ROWS = 5000  # rows one retention delete removes per write transaction (tens of milliseconds)
+PRUNE_VACUUM_PAGES = 2000  # free pages one incremental_vacuum step returns to the file per write transaction
 SPEED_TEST_MIN_DAYS = 32  # speed tests are kept at least this long (the monthly data cap needs the whole month)
 
+
+# Read-only connections (homeguard Database readers): enough for a page load's slow report plus its quick reads.
+READERS = 3
 
 class RepositoryCore:
     def __init__(
@@ -28,12 +34,20 @@ class RepositoryCore:
         db_path: Optional[str] = None,
         sample_flush_seconds: float = 10.0,
         retention_days: int = 7,
-        rollup_retention_days: int = 400,
+        rollup_retention_days: int = 90,
+        long_rollup_retention_days: int = 400,
+        traffic_retention_days: int = 400,
+        slot_retention_days: int = 7,
+        incident_retention_days: int = 0,
     ):
         self.db_path = paths.db_path(db_path)
         self._ensure_dir()
         self.retention_days = retention_days
         self.rollup_retention_days = rollup_retention_days
+        self.long_rollup_retention_days = long_rollup_retention_days
+        self.traffic_retention_days = traffic_retention_days
+        self.slot_retention_days = slot_retention_days  # the 10-second rollups; keeping them while raw is shorter is its point
+        self.incident_retention_days = incident_retention_days  # 0: resolved incidents are kept forever
         # targets table cache (key <-> id); tiny, and only grows when a new target first reports.
         self._target_ids: Dict[str, int] = {}
         self._target_keys: Dict[int, str] = {}
@@ -45,14 +59,18 @@ class RepositoryCore:
         self._last_flush = time.monotonic()
         self._flush_state = StateLog(get_logger("pengumon.db"), "Writing probe samples")
         self._dropping = False
-        # Two connections for the process lifetime: write() for everything that changes data (one transaction at
-        # a time) and read() for queries (read-only, whole results). synchronous=NORMAL is crash-safe in WAL
-        # (a power cut can lose the last moments of telemetry, never corrupt the file) and avoids an fsync per commit.
-        self._db = Database(self.db_path, pragmas=("synchronous=NORMAL",), wal=True)
+        # Connections for the process lifetime: write() for everything that changes data (one transaction at a
+        # time) and read() for queries (read-only, whole results) on up to READERS connections, so a slow report does
+        # not hold up the quick reads of a page load (one reader made them wait 300-500 ms). synchronous=NORMAL is
+        # crash-safe in WAL (a power cut can lose the last moments of telemetry, never corrupt the file) and avoids an
+        # fsync per commit.
+        self._db = Database(self.db_path, pragmas=("synchronous=NORMAL",), wal=True, readers=READERS)
         self._migrated = False
         # Bumped whenever an incident is created, resolved or annotated; keys the incident-list cache.
         self._incidents_version = 0
-        self._incidents_cache: Dict[int, tuple] = {}
+        self._incidents_cache: Dict[tuple, tuple] = {}
+        # Bumped whenever the path is applied or a removed hop's history is deleted (db/path.py); keys the report cache.
+        self._path_changes = 0
 
     def read(self):
         """The read-only connection, as an async context manager: for queries that live outside the repository
@@ -86,6 +104,10 @@ class RepositoryCore:
     @property
     def incidents_version(self) -> int:
         return self._incidents_version
+
+    @property
+    def path_changes(self) -> int:
+        return self._path_changes
 
     async def close(self):
         try:
@@ -161,54 +183,102 @@ class RepositoryCore:
             await db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
 
     async def cleanup_old_samples(
-        self, retention_days: Optional[int] = None, rollup_retention_days: Optional[int] = None
+        self, retention_days: Optional[int] = None, rollup_retention_days: Optional[int] = None,
+        long_rollup_retention_days: Optional[int] = None,
     ) -> Dict[str, int]:
-        """Prunes raw telemetry older than retention_days (probe samples, device and line samples) and per-minute
-        rollups older than rollup_retention_days, then returns the freed pages to the file system.
+        """Prunes raw telemetry older than retention_days (probe samples, device and line samples), 10-second rollups
+        older than slot_retention_days, per-minute rollups older than rollup_retention_days and quarter-hour rollups (and speed tests and
+        device events) older than long_rollup_retention_days, then returns the freed pages to the file system.
 
-        Incidents are kept: they're the record of outages and are tiny (hundreds of rows)."""
+        Incidents are kept unless database.incident_retention_days is set: they're the record of outages and are tiny
+        (hundreds of rows). Then resolved ones older than that go, open ones never."""
         if retention_days is None:
             retention_days = self.retention_days
         if rollup_retention_days is None:
             rollup_retention_days = self.rollup_retention_days
+        if long_rollup_retention_days is None:
+            long_rollup_retention_days = self.long_rollup_retention_days
         with tracer.start_as_current_span("db.retention") as span:
-            removed = await self._prune(retention_days, rollup_retention_days)
+            removed = await self._prune(retention_days, rollup_retention_days, long_rollup_retention_days)
             span.set_attributes({f"db.removed.{table}": n for table, n in removed.items()})
         return removed
+
+    async def _delete_old(self, table: str, where: str, params: tuple, keys: str) -> int:
+        """Deletes the rows of `table` matching `where` (the table's own name and SQL; `keys`: the columns that identify
+        a row) in batches of PRUNE_BATCH_ROWS, each its own write transaction. Returns the rows deleted. After a long stop
+        or a lowered retention the backlog is millions of rows: one transaction would hold the write lock for all of
+        it, and the probe loop's sample flush (and every other writer) would wait. The lock goes back to the queue
+        between batches, so a waiting writer goes first."""
+        total = 0
+        while True:
+            async with self._db.write() as db:
+                cursor = await db.execute(
+                    f"DELETE FROM {table} WHERE ({keys}) IN (SELECT {keys} FROM {table} WHERE {where} LIMIT ?)",
+                    (*params, PRUNE_BATCH_ROWS))
+                n = cursor.rowcount
+            total += n
+            if n < PRUNE_BATCH_ROWS:
+                return total
+            await asyncio.sleep(0)
 
     @staticmethod
     async def _free_pages(db: aiosqlite.Connection) -> int:
         async with db.execute("PRAGMA freelist_count") as cursor:
             return (await cursor.fetchone())[0]
 
-    async def _prune(self, retention_days: int, rollup_retention_days: int) -> Dict[str, int]:
+    async def _prune(self, retention_days: int, rollup_retention_days: int,
+                     long_rollup_retention_days: int) -> Dict[str, int]:
         await self.flush_samples()  # so buffered samples are pruned by the same rule
         started = time.monotonic()
         now = time.time()
         cutoff_ts = now - (retention_days * DAY)
+        slot_cutoff = now - max(self.slot_retention_days, retention_days) * DAY
         removed: Dict[str, int] = {}
+        delete = self._delete_old
+        removed["samples"] = await delete("samples", "ts < ?", (cutoff_ts,), "ts, target")
+        removed["rollup_10s"] = await delete("rollup_10s", "slot < ?", (int(slot_cutoff // 10),), "slot, target")
+        removed["rollup_1m"] = await delete(
+            "rollup_1m", "minute < ?", (int((now - rollup_retention_days * DAY) // 60),), "minute, target")
+        removed["rollup_15m"] = await delete(
+            "rollup_15m", "quarter < ?", (int((now - long_rollup_retention_days * DAY) // 900),), "quarter, target")
+        # the speed tests are a few rows a day, kept as long as the longest rollups, and never less than a
+        # calendar month and a day: the monthly data cap sums this month's tests
+        removed["speed_tests"] = await delete(
+            "speed_tests", "ts < ?", (now - max(long_rollup_retention_days, SPEED_TEST_MIN_DAYS) * DAY,), "rowid")
+        # every device at once
+        removed["device_samples"] = await delete("device_samples", "ts < ?", (cutoff_ts,), "device_id, ts")
+        removed["line_samples"] = await delete("line_samples", "ts < ?", (cutoff_ts,), "rowid")
+        removed["mesh_samples"] = await delete("mesh_samples", "ts < ?", (cutoff_ts,), "device_id, ts, node_id")
+        # the router's traffic: database.traffic_retention_days (the latest app windows go with their age too)
+        traffic_cutoff = now - self.traffic_retention_days * DAY
+        removed["traffic_hourly"] = await delete(
+            "traffic_hourly", "hour < ?", (int(traffic_cutoff),), "device_id, hour, client")
+        removed["traffic_apps"] = await delete("traffic_apps", "window_end < ?", (int(traffic_cutoff),), "rowid")
+        # device events (restarts, WAN link changes) are a few rows a month and explain old incidents: kept as long
+        # as the quarter-hour rollups
+        removed["device_events"] = await delete(
+            "device_events", "ts < ?", (now - long_rollup_retention_days * DAY,), "rowid")
+        if self.incident_retention_days > 0:
+            # resolved incidents only: an open one is the outage going on, whatever its age
+            removed["incidents"] = await delete(
+                "incidents", "resolved = 1 AND COALESCE(end_time, start_time) < ?",
+                (now - self.incident_retention_days * DAY,), "rowid")
+            if removed["incidents"]:
+                self._incidents_version += 1  # the incident-list caches and the dashboards refetch
         async with self._db.write() as db:
-            cursor = await db.execute("DELETE FROM samples WHERE ts < ?", (cutoff_ts,))
-            removed["samples"] = cursor.rowcount
-            cursor = await db.execute(
-                "DELETE FROM rollup_1m WHERE minute < ?", (int((now - rollup_retention_days * DAY) // 60),)
-            )
-            removed["rollup_1m"] = cursor.rowcount
-            # the speed tests are rows of the per-minute kind (a few a day), kept as long as the rollups, and never less
-            # than a calendar month and a day: the monthly data cap sums this month's tests
-            cursor = await db.execute("DELETE FROM speed_tests WHERE ts < ?",
-                                      (now - max(rollup_retention_days, SPEED_TEST_MIN_DAYS) * DAY,))
-            removed["speed_tests"] = cursor.rowcount
-            for table in ("device_samples", "line_samples", "mesh_samples"):
-                # Every device at once: a scan of the table (a few ms for a week of 10 s polls), once an hour.
-                cursor = await db.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff_ts,))
-                removed[table] = cursor.rowcount
-            await db.commit()
             freed = await self._free_pages(db)
-            # Each step of the pragma frees pages, so it has to be stepped to the end.
-            async with db.execute("PRAGMA incremental_vacuum") as cursor:
-                await cursor.fetchall()
-            freed -= await self._free_pages(db)
+        # Each step of the pragma frees pages, so it has to be stepped to the end: in bounded steps, each its own
+        # write transaction, so the probe loop's flush gets in between.
+        while True:
+            async with self._db.write() as db:
+                before = await self._free_pages(db)
+                async with db.execute(f"PRAGMA incremental_vacuum({PRUNE_VACUUM_PAGES})") as cursor:
+                    await cursor.fetchall()
+                after = await self._free_pages(db)
+            if after <= 0 or after >= before:
+                break
+            await asyncio.sleep(0)
+        freed -= after
         for table, n in removed.items():
             if n:
                 db_retention_rows.add(n, {"table": table})
@@ -216,7 +286,8 @@ class RepositoryCore:
             db_vacuum_pages.add(freed)
         db_retention_duration.record(time.monotonic() - started)
         logger.info(
-            f"Retention ({retention_days} days raw, {rollup_retention_days} days rollups): removed "
+            f"Retention ({retention_days} days raw, {rollup_retention_days} days per-minute, "
+            f"{long_rollup_retention_days} days quarter-hour): removed "
             + ", ".join(f"{n:,} {t}" for t, n in removed.items() if n)
             + f" in {(time.monotonic() - started) * 1000:.0f} ms"
             if any(removed.values()) else f"Retention ({retention_days} days): nothing to remove"

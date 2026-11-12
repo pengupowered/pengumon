@@ -3,8 +3,11 @@
 // so.
 
 import { registerActions } from '../../js/dispatch.js';
-import { escapeHtml, icon, initTargets, keepKeyboard } from '../../js/util.js';
-import { ROLE_SHORT } from '../../js/path-api.js';
+import { escapeHtml } from '../../js/escape.js';
+import { icon } from '../../js/dom.js';
+import { initTargets } from '../../js/targets.js';
+import { keepKeyboard } from '../../js/modal.js';
+import { ROLE_SHORT } from '../../js/roles.js';
 
 const PRIVATE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|127\.|f[cd]|fe80)/i;
 let hops = [];
@@ -22,7 +25,11 @@ function suggestedStage(h) {
   if (h.hop_number === 1) return 'local';
   if (PRIVATE.test(h.ip)) return 'gateway';
   const last = hops.filter((x) => x.ip).slice(-1)[0];
-  return last && last.hop_number === h.hop_number && h.ip === traced ? 'public' : 'isp';
+  if (!last || last.hop_number !== h.hop_number) return 'isp';
+  // The traced address itself; for a host name (whose address the trace does not report) the hop that ends the list with an
+  // answer, since a trace stops at its destination and an unfinished one ends in hops that did not answer.
+  const literal = /^[0-9.]+$/.test(traced) || traced.includes(':');
+  return (literal ? h.ip === traced : hops[hops.length - 1] === h) ? 'public' : 'isp';
 }
 
 function row(h) {
@@ -32,14 +39,14 @@ function row(h) {
     const pick = suggestedStage(h);
     action = monitored.has(h.ip)
       ? '<span class="chip">monitored</span>'
-      : `<select class="input sm-select" id="traceStage${h.hop_number}" aria-label="Add hop ${h.hop_number} as">${STAGES.map(([v, w]) => `<option value="${v}"${v === pick ? ' selected' : ''}>${w}</option>`).join('')}</select>`
-        + ` <button type="button" class="btn sm outline" data-action="monitorHop" data-needs-edit data-arg="${h.hop_number}">${icon('plus')}Monitor</button>`;
+      : `<select class="input sm-select" id="traceStage${Number(h.hop_number)}" aria-label="Add hop ${Number(h.hop_number)} as">${STAGES.map(([v, w]) => `<option value="${v}"${v === pick ? ' selected' : ''}>${w}</option>`).join('')}</select>`
+        + ` <button type="button" class="btn sm outline" data-action="monitorHop" data-needs-edit data-arg="${Number(h.hop_number)}">${icon('plus')}Monitor</button>`;
   }
   return `<tr>
-    <td class="lead num" data-l="Hop">${h.hop_number}</td>
+    <td class="lead num" data-l="Hop">${Number(h.hop_number)}</td>
     <td class="mono aside" data-l="Address">${escapeHtml(h.ip || '*')}</td>
     <td data-l="Name">${escapeHtml(h.label || '-')}</td>
-    <td class="r num" data-l="RTT">${reply ? `${h.rtt_ms} ms` : '<span class="lost">no reply</span>'}</td>
+    <td class="r num" data-l="RTT">${reply ? `${escapeHtml(String(h.rtt_ms))} ms` : '<span class="lost">no reply</span>'}</td>
     <td class="r tr-act">${action}</td>
   </tr>`;
 }
@@ -47,11 +54,13 @@ function row(h) {
 function render() {
   const answered = hops.filter((h) => h.ip).length;
   if (!hops.length) {
+    $('traceStatus').textContent = 'No hops came back.';
     $('tracerouteResults').innerHTML = `<div class="empty st st-warn">${icon('warn')}<div><b>No hops came back</b>The trace finished without a single hop. Check the address and try again.</div></div>`;
     return;
   }
   $('tracerouteResults').innerHTML = `<div class="table-wrap"><table class="dlist trace"><thead><tr><th>Hop</th><th>Address</th><th>Name</th><th class="r">RTT</th><th><span class="sr-only">Monitor</span></th></tr></thead><tbody>${hops.map(row).join('')}</tbody></table></div>
     <p class="fine">${hops.length} hops, ${answered} answered. A hop that never replies cannot be probed; <b>Monitor</b> adds one that did as a target, probed every second, as the stage picked beside it.</p><div id="traceNote" role="status" aria-live="polite"></div>`;
+  $('traceStatus').textContent = `Trace finished: ${hops.length} hops, ${answered} answered.`;
 }
 
 async function loadMonitored() {
@@ -68,6 +77,8 @@ export async function runTracerouteModal(ev) {
   const resultsDiv = $('tracerouteResults');
   const button = $('btnRunTrace');
   button.disabled = true;
+  resultsDiv.setAttribute('aria-busy', 'true');
+  $('traceStatus').textContent = 'Tracing…';
   resultsDiv.innerHTML = `<div class="skel-stack" aria-busy="true"><div class="skel line" style="width:92%"></div><div class="skel line" style="width:76%"></div><div class="skel line" style="width:84%"></div></div><p class="fine">Tracing the hops to ${escapeHtml(host)}: usually 5 to 15 s, up to about 45 s when hops do not answer.</p>`;
 
   try {
@@ -85,7 +96,9 @@ export async function runTracerouteModal(ev) {
     render();
   } catch (err) {
     resultsDiv.innerHTML = `<div class="empty st st-crit">${icon('warn')}<div><b>The trace failed</b>${escapeHtml(err.message)}</div></div>`;
+    $('traceStatus').textContent = `The trace failed: ${err.message}`;
   } finally {
+    resultsDiv.setAttribute('aria-busy', 'false');
     button.disabled = false;
   }
 }

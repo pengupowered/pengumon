@@ -135,3 +135,13 @@ def test_module_level_secret_and_session_paths_come_from_paths():
     from pengumon import secrets, security
     assert secrets.SECRETS_PATH == paths.secrets_path()
     assert security.SESSIONS_PATH == paths.sessions_path()
+
+
+def test_main_caps_the_size_of_a_websocket_message(tmp_path, monkeypatch):
+    from pengumon import main as app_main
+    calls = []
+    monkeypatch.setattr(app_main.uvicorn, "run", lambda *a, **k: calls.append(k))
+    monkeypatch.setattr(app_main, "setup_logging", lambda: None)
+    monkeypatch.setenv("PENGUMON_DATA", str(tmp_path / "nothing-here"))
+    app_main.main()
+    assert calls[-1]["ws_max_size"] == 4096

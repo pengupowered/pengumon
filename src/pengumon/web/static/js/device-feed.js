@@ -18,13 +18,24 @@ function live(id, snapshot) {
   const w = watched.get(id);
   if (!w || !snapshot) return;
   w.liveAt = Date.now();
+  // the summary repeats every second: a card repaints (and re-serializes its parts) only for one that differs
+  const sig = JSON.stringify(snapshot);
+  if (w.sig === sig) return;
+  w.sig = sig;
   publish(id, snapshot);
 }
 
 async function fetchOne(id) {
   try {
     const res = await fetch(`/api/devices/${encodeURIComponent(id)}`);
-    if (res.ok) publish(id, await res.json());
+    if (!res.ok) return;
+    const snapshot = await res.json();
+    // an answer that was slow must not put an older reading over a newer one a live message brought meanwhile
+    const shown = bus.last(`device:${id}`);
+    if (shown && typeof shown.timestamp === 'number' && typeof snapshot.timestamp === 'number' && snapshot.timestamp < shown.timestamp) return;
+    const w = watched.get(id);
+    if (w) w.sig = null; // (the next live summary is shown again, as it always was)
+    publish(id, snapshot);
   } catch (e) {
     console.warn(`device ${id}: no reading`, e);
   }
@@ -47,6 +58,12 @@ function start(b) {
   bus = b;
   // every change, also while hidden: a card keeps the readings this page saw (a card's history of them)
   b.subscribe('devices', (map) => Object.entries(map || {}).forEach(([id, snap]) => live(id, snap)), { every: true });
+  // the map itself is published only when it changes (live.js), so a device the live message keeps carrying is marked as
+  // heard from on every message (otherwise the fallback poll would start after two quiet minutes)
+  b.subscribe('message', (m) => {
+    const now = Date.now();
+    Object.keys((m && m.devices) || {}).forEach((id) => { const w = watched.get(id); if (w) w.liveAt = now; });
+  });
   setInterval(poll, 5000);
 }
 
@@ -62,6 +79,9 @@ export function watchDevice(b, device, fn) {
 
 // A snapshot that came from elsewhere (the setup dialog's test poll) goes to the device's panels too.
 export function publishDevice(id, snapshot) {
-  if (bus) publish(id, snapshot);
+  if (!bus) return;
+  const w = watched.get(id);
+  if (w) w.sig = null;
+  publish(id, snapshot);
 }
 

@@ -52,3 +52,9 @@
 :root[data-look="starship"] [data-panel="router"] .n-c i { height: 10px; border-radius: 0; align-self: center; background: repeating-linear-gradient(90deg, var(--accent) 0 5px, transparent 5px 7px); }
 :root[data-look="starship"] [data-panel="router"] .cap-note { color: var(--ink-2); }
 :root[data-look="starship"] [data-panel="router"] .n-st:empty { display: none; }
+/* what the router says about itself, and its events: flat blocks, the events as lines */
+:root[data-look="starship"] [data-panel="router"] .rblock.sys > .sysfacts,
+:root[data-look="starship"] [data-panel="router"] .rblock.sys > .sysevents { grid-column: 1 / -1; }
+:root[data-look="starship"] [data-panel="router"] .sysfacts li { border-radius: 0; border-left: 6px solid var(--accent); box-shadow: none; }
+:root[data-look="starship"] [data-panel="router"] .sysfacts li.st-warn, :root[data-look="starship"] [data-panel="router"] .sysfacts li.st-crit { border-left-color: var(--st); box-shadow: none; }
+:root[data-look="starship"] [data-panel="router"] .sf-l, :root[data-look="starship"] [data-panel="router"] .rb-s { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; }

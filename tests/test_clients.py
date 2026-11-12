@@ -21,7 +21,7 @@ from pengumon.devices.settings import DeviceConfig
 from pengumon.db import migrations
 from pengumon.devices.registry import DeviceRegistry, build_device
 from pengumon.devices.summary import mesh_nodes
-from pengumon.drivers.asuswrt import (
+from pengumon.drivers.asuswrt_parse import (
     _parse_client_list, _parse_clients, _parse_mesh_names, _parse_mesh_nodes, build_mesh, node_id,
 )
 from pengumon.main import app, security_config
@@ -165,6 +165,24 @@ def test_a_lone_router_has_no_mesh_even_when_the_router_names_itself():
     assert build_mesh(lone, {"0000aa": "Router"}, {}) is None
 
 
+def test_clients_and_mesh_nodes_are_capped_whatever_the_router_lists():
+    """A home router has tens of clients and a few nodes; a broken answer must not make thousands of rows a minute."""
+    macs = [f"02:00:00:{i >> 16 & 255:02X}:{i >> 8 & 255:02X}:{i & 255:02X}" for i in range(3000)]
+    body = json.dumps({"get_clientlist": {m: {"isOnline": "1", "mac": m, "amesh_papMac": m} for m in macs}})
+    clients = _parse_client_list(body)
+    assert len(clients.clients) == 2048 and _parse_clients(body) == 2048
+    mesh = build_mesh(clients, {}, {})
+    assert len(mesh.nodes) == 32
+    nodes = json.dumps({"get_cfg_clientlist": [{"mac": m, "alias": f"n{i}", "online": "1"} for i, m in enumerate(macs)]})
+    assert len(_parse_mesh_nodes(nodes)[0]) == 32 and len(set(_parse_mesh_names(nodes).values())) == 32
+
+
+def test_openwrt_clients_are_capped():
+    from pengumon.drivers.openwrt import build_clients
+    leases = {"dhcp_leases": [{"macaddr": f"02:00:00:00:{i >> 8:02x}:{i & 255:02x}"} for i in range(3000)]}
+    assert len(build_clients(leases, {}, None).clients) == 2048
+
+
 def test_node_ids_take_a_mac_or_its_last_six_hex_digits():
     assert node_id("AA:AA:AA:00:0B:C1") == "000bc1" and node_id("000BC1") == "000bc1" and node_id("nope") is None
 
@@ -203,6 +221,8 @@ class Router:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("login.cgi"):
             return httpx.Response(200, json={"asus_token": "tok"})
+        if request.url.path.endswith(".asp"):  # the status and traffic pages: not on this router
+            return httpx.Response(404)
         hook = parse_qs(request.content.decode())["hook"][0]
         self.hooks.append(hook)
         if hook == "get_cfg_clientlist()":
@@ -222,7 +242,7 @@ async def test_readings_come_with_the_client_list_without_another_request_and_th
     device = make_router(router, clock)
     await device.poll(force=True)
     # one combined request for everything; the node names are the one rare extra request
-    assert router.hooks == ["netdev();cpu_usage();memory_usage();get_clientlist()", "get_cfg_clientlist()"]
+    assert router.hooks == ["netdev();cpu_usage();memory_usage();get_clientlist();uptime()", "get_cfg_clientlist()"]
     monitor = device.monitor
     assert len(monitor.latest_clients.clients) == 7 and monitor.clients_at == clock.now
     assert [n.label for n in monitor.latest_mesh.nodes] == ["RT-EXAMPLE", "Study", "Node 1"]
@@ -236,7 +256,7 @@ async def test_readings_come_with_the_client_list_without_another_request_and_th
     assert router.hooks[2:] == ["netdev();cpu_usage();memory_usage()"] * 5
     clock.now += 10  # a minute after the first read: read again, with the node list (its online state: every minute)
     await device.poll(force=True)
-    assert router.hooks[-2:] == ["netdev();cpu_usage();memory_usage();get_clientlist()", "get_cfg_clientlist()"]
+    assert router.hooks[-2:] == ["netdev();cpu_usage();memory_usage();get_clientlist();uptime()", "get_cfg_clientlist()"]
     assert router.hooks.count("get_cfg_clientlist()") == 2 and monitor.clients_at == clock.now
 
 
@@ -287,7 +307,7 @@ async def test_retention_prunes_mesh_counts_like_device_samples(repo):
     now = time.time()
     from pengumon.db.samples import MeshCount
     await repo.insert_mesh_counts([MeshCount("router", now - 9 * 86400, "000001", 3), MeshCount("router", now - 60, "000001", 4)])
-    removed = await repo.run_retention(retention_days=7) if hasattr(repo, "run_retention") else await repo._prune(7, 400)
+    removed = await repo.run_retention(retention_days=7) if hasattr(repo, "run_retention") else await repo._prune(7, 90, 400)
     assert removed["mesh_samples"] == 1
     assert [r[2] for r in await repo.get_mesh_counts("router", 0, now + 1, 60)] == [4.0]
 
@@ -397,7 +417,8 @@ async def test_the_clients_answer_has_the_list_the_nodes_and_a_summary(app_state
     phone = next(c for c in body["clients"] if c["label"] == "Ann's phone")
     assert phone["ip"] == "192.0.2.12" and phone["mac"] == MAC % 2 and phone["rssi_dbm"] == -58
     assert (phone["link_tx_mbps"], phone["link_rx_mbps"], phone["connected_s"]) == (866.0, 780.0, 97509)
-    assert not {k for k in phone if "traffic" in k or "bytes" in k}
+    # no byte counts in the list; the main app from the router's traffic statistics, when one stands out (none here)
+    assert phone["traffic_hint"] is None and not {k for k in phone if "bytes" in k}
     assert next(c for c in body["clients"] if c["online"] is False and c["connection"] == "wired")["label"] == "printer"
     assert body["privacy"] == {"configured": "full", "applied": "full", "hint": None}
 
@@ -446,6 +467,24 @@ async def test_a_viewer_without_the_token_gets_masked_clients(app_state, monkeyp
         assert all("ip" not in c and "mac" not in c for c in body["clients"])
         assert "Sign in" in body["privacy"]["hint"] if setting == "token" else "Settings > Privacy" in body["privacy"]["hint"]
     assert signed_in.json()["privacy"]["applied"] == ("masked" if setting == "masked" else "full")
+
+
+async def test_the_read_token_gets_masked_clients_and_a_hashed_password_the_full_list(app_state, monkeypatch):
+    """The read token sees what a viewer sees, whether or not viewing is on; the password kept as a hash (set on the
+    Settings page) still counts as "a token is set" for the owner's own view."""
+    await polled_state(app_state, privacy="token")
+    read_token = "pgr_made-up-read-token-for-clients"
+    monkeypatch.setattr(security_config, "access_token", "")
+    monkeypatch.setattr(security_config, "access_hash", security.hash_token(TOKEN, n=16, r=1, p=1))
+    monkeypatch.setattr(security_config, "session_secret", "made-up-session-secret-for-clients")
+    monkeypatch.setattr(security_config, "read_token_hash", security.read_token_digest(read_token))
+    monkeypatch.setattr(security_config, "view_without_token", False)
+    async with api() as ac:
+        reader = await ac.get("/api/devices/router/clients", headers={"Authorization": f"Bearer {read_token}"})
+        owner = await ac.get("/api/devices/router/clients", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert reader.status_code == 200 and reader.json()["privacy"]["applied"] == "masked"
+    assert not any(needle in reader.text for needle in FULL_ONLY) and "Sign in" in reader.json()["privacy"]["hint"]
+    assert owner.status_code == 200 and owner.json()["privacy"]["applied"] == "full"
 
 
 async def test_masked_rows_carry_no_mac_in_their_keys(app_state):
@@ -646,3 +685,13 @@ async def test_the_clients_api_sends_the_kind_even_when_names_are_masked():
     device = make_router(router, clock)
     await device.poll(force=True)
     assert clients_api._row(device.monitor.latest_clients.clients[0], False)["kind"] == "phone"
+
+
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan", "Infinity"])
+@pytest.mark.parametrize("name", ["start_time", "end_time"])
+async def test_the_history_refuses_a_time_that_is_not_a_finite_number(app_state, repo, name, value):
+    """An infinite end_time reached math.ceil(inf) in the bucketing: a 500 with a traceback in the log."""
+    await polled_state(app_state, repo=repo)
+    async with api() as ac:
+        res = await ac.get(f"/api/devices/router/clients/history?{name}={value}")
+    assert res.status_code == 422

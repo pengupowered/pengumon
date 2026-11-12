@@ -8,9 +8,11 @@
         <div class="empty st st-crit compact" id="setupError" hidden></div>
         <p class="lead-p" id="setupLead"></p>
         <div class="field"><label for="setupAddress">Address</label><input class="input mono" id="setupAddress" readonly><span class="hint" id="setupAddressHint"></span></div>
-        <div class="field"><label for="setupUsername">Username</label><input class="input" type="text" id="setupUsername" value="admin" autocomplete="username"></div>
-        <div class="field"><label for="setupPassword">Password</label><div class="input-wrap"><input class="input" type="password" id="setupPassword" placeholder="Admin password" required autocomplete="current-password" spellcheck="false">
-          <button type="button" class="btn icon sm" id="btnShowPassword" data-action="toggleSetupPassword" aria-label="Show password"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></button></div></div>
+        <div class="field" id="setupUsernameField"><label for="setupUsername" id="setupUsernameLabel">Username</label><input class="input" type="text" id="setupUsername" value="admin" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other"></div>
+        <div class="field"><label for="setupPassword" id="setupPasswordLabel">Password</label><div class="input-wrap"><input class="input" type="password" id="setupPassword" placeholder="Admin password" required autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other" spellcheck="false">
+          <button type="button" class="btn icon sm" id="btnShowPassword" data-action="toggleSetupPassword" data-arg="setupPassword" aria-label="Show password"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></button></div></div>
+        <div class="field" id="setupPrivacyField" hidden><label for="setupPrivacy" id="setupPrivacyLabel">Privacy password</label><div class="input-wrap"><input class="input" type="password" id="setupPrivacy" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other" spellcheck="false">
+          <button type="button" class="btn icon sm" id="btnShowPrivacy" data-action="toggleSetupPassword" data-arg="setupPrivacy" aria-label="Show privacy password"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></button></div></div>
         <details class="setup-src"><summary class="fine">For containers and scripts</summary><p class="fine" id="setupSource"></p></details>
         <div id="setupResult" role="status" aria-live="polite"></div>
       </div></div>

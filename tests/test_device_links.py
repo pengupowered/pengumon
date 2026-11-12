@@ -191,3 +191,18 @@ async def test_a_hop_the_owner_set_to_no_device_is_never_linked_again(links_app,
     assert imported["device_matches"] == {} and imported["hops"][0]["device_unlinked"] is True
     # and a start that links the home hops of an older path leaves it alone too
     assert [t.device_id for t in await link_devices([LAN.model_copy(update={"device_unlinked": True})], [ROUTER], resolve=resolve)] == [None]
+
+
+async def test_a_viewer_gets_no_device_proposals_from_get_path(links_app, monkeypatch):
+    """The proposals may look up host names; only the path editor (an editor's) uses them."""
+    from pengumon.main import security_config
+    ac, _ = links_app
+    await ac.put("/api/path", json={"base_revision": 1, "hops": [_hop(LAN, 0), _hop(LINE, 1), _hop(ISP, 2)]})
+    await ac.put("/api/path", json={"base_revision": 2, "hops": [_hop(LAN, 0, device_id=None),
+                                                                 _hop(LINE, 1, device_id="modem"), _hop(ISP, 2)]})
+    monkeypatch.setattr(security_config, "access_token", "example-token")
+    monkeypatch.setattr(security_config, "view_without_token", True)
+    viewer = (await ac.get("/api/path")).json()
+    editor = (await ac.get("/api/path", headers={"Authorization": "Bearer example-token"})).json()
+    assert viewer["device_matches"] == {} and [h["id"] for h in viewer["hops"]] == [h["id"] for h in editor["hops"]]
+    assert editor["device_matches"] == {"lan": "router"}

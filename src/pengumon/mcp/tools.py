@@ -7,8 +7,14 @@ arguments the schema cannot catch (a JSON-RPC -32602). Nothing here imports the 
 (docs/architecture.md: what the routes and the tools share lives in the feature packages).
 
 Nothing a tool returns holds a secret: devices are summarized from their latest snapshot (never their configuration or
-credentials), clients are counts only, and the AI pack carries its own redaction. Times are ISO 8601 in the zone set in
-Settings (general.timezone; UTC when none).
+credentials), clients are counts only (`traffic` and the traffic hours of `incident` describe a device by its kind, maker
+and main app, never by name or address), and the AI pack carries its own redaction. No device host either: the
+classifier's titles and descriptions name the router and gateway with their addresses ("reaching Mesh (192.168.88.1)"),
+so they pass the hops' redactor at Vague (a hop by its role word, reports.contributions.hop_redactor), and every string
+of a tool's answer passes the Vague scan's patterns (`scrubbed`: home addresses, MACs, home host names, secrets in
+URLs), whatever field carries it (a target id made from an address, a hop named after its host name, a device's own
+words). `services` (the owner's own check URLs) and `ai_pack` (its own levels) are left to themselves. Times are ISO 8601
+in the zone set in Settings (general.timezone; UTC when none).
 """
 
 import ipaddress
@@ -17,18 +23,21 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from pydantic_core import to_jsonable_python
 
 from pengumon.analysis.incident import inspect_incident as run_inspection
 from pengumon.capabilities import Capability
 from pengumon.devices.samples import line_history, router_history
-from pengumon.devices.summary import client_counts, device_label, summarize_snapshot
+from pengumon.devices import traffic as router_traffic
+from pengumon.devices.summary import POLL_FAILED, POLL_FAILURES, client_counts, device_label, summarize_snapshot
 from pengumon.engine.path_rules import ignoring_ping_ids
 from pengumon.incidents.outage_read import outages_since, with_outage_ids
 from pengumon.incidents.outages import Rules
 from pengumon.reports.common import pack_building
+from pengumon.reports.redact import SCAN_RULES, VAGUE
+from pengumon.reports.queries import DNS_NAME
 from pengumon.reports.reliability import build_report
 from pengumon.reports.speed import summarize
 from pengumon.reports.uptime import build_uptime
@@ -61,7 +70,8 @@ PERIODS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 _STAGES = ("local", "gateway", "isp", "public", "dns", "custom")
 _TIME_KEYS = frozenset({
     "timestamp", "start_time", "end_time", "since", "last_checked", "last_ok", "last_poll", "window_start",
-    "window_end", "event_start", "event_end", "generated_at", "as_of", "loss_start"})
+    "window_end", "event_start", "event_end", "generated_at", "as_of", "loss_start",
+    "ts", "hour", "boot_at", "previous_boot_at"})  # (the last four: device events and traffic hours of `incident`)
 
 
 def plain(value: Any) -> Any:
@@ -106,12 +116,47 @@ def _repository(state):
     return state.repository
 
 
-def incident_summary(incident, tz: tzinfo, outage_ids: Optional[Dict[int, int]] = None) -> Dict[str, Any]:
-    """`outage_ids` (incident id -> outage id): given, the summary names the outage the incident belongs to (null: none)."""
+# --- what no answer carries: home addresses and names ---------------------------------------------------------------
+
+_NET = tuple((re.compile(pattern, re.IGNORECASE), repl) for _, pattern, repl in SCAN_RULES[VAGUE])
+
+
+def scrubbed(value: Any) -> Any:
+    """`value` (plain data) with every string passed through the Vague scan's patterns."""
+    if isinstance(value, str):
+        for pattern, repl in _NET:
+            value = pattern.sub(repl, value)
+        return value
+    if isinstance(value, dict):
+        return {k: scrubbed(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrubbed(v) for v in value]
+    return value
+
+
+def _scrubbing(handler: Callable[[Any, Dict[str, Any]], Awaitable[Any]]):
+    async def run(state, args):
+        return scrubbed(plain(await handler(state, args)))
+    return run
+
+
+async def _hop_words(state):
+    """The hops' redactor at Vague: free text (titles, descriptions) names a hop by its role word."""
+    from pengumon.reports.contributions import hop_redactor  # imported when asked, as the AI pack's build is
+    return await hop_redactor(state.repository, state.config, VAGUE)
+
+
+def _said(rx, text: Optional[str]) -> Optional[str]:
+    return rx.text(text) if rx is not None and text else text
+
+
+def incident_summary(incident, tz: tzinfo, outage_ids: Optional[Dict[int, int]] = None, rx=None) -> Dict[str, Any]:
+    """`outage_ids` (incident id -> outage id): given, the summary names the outage the incident belongs to (null: none).
+    `rx`: the hops' redactor the title passes (_hop_words)."""
     extra = {} if outage_ids is None else {"outage_id": outage_ids.get(incident.id)}
     return {**extra, "id": incident.id, "start": iso(incident.start_time, tz), "end": iso(incident.end_time, tz),
             "duration_seconds": incident.duration_seconds, "resolved": incident.resolved, "kind": incident.kind,
-            "cause": incident.cause, "title": incident.title, "severity": incident.severity,
+            "cause": incident.cause, "title": _said(rx, incident.title), "severity": incident.severity,
             "load_pct": incident.load_pct, "expected_from_load": incident.expected}
 
 
@@ -145,10 +190,12 @@ async def _status(state, args):
         raise ToolFailure("Pengumon is still starting: there is no diagnosis yet.")
     tz = zone_of(state)
     diagnosis = state.classifier.last_diagnosis
+    rx = await _hop_words(state)
     return {
-        "status": diagnosis.status, "cause": diagnosis.cause_code, "title": diagnosis.title,
-        "description": diagnosis.description, "load_pct": diagnosis.load_pct, "as_of": iso(diagnosis.timestamp, tz),
-        "active_incident": incident_summary(diagnosis.active_incident, tz) if diagnosis.active_incident else None,
+        "status": diagnosis.status, "cause": diagnosis.cause_code, "title": _said(rx, diagnosis.title),
+        "description": _said(rx, diagnosis.description), "load_pct": diagnosis.load_pct,
+        "as_of": iso(diagnosis.timestamp, tz),
+        "active_incident": incident_summary(diagnosis.active_incident, tz, rx=rx) if diagnosis.active_incident else None,
         "stages": _stages(state),
         "stage_note": "Per stage of the path (local network, gateway/modem, ISP, public internet, DNS): worst hop "
                       "status, mean latest latency, worst recent loss and jitter over the stage's hops.",
@@ -173,10 +220,11 @@ async def _incidents(state, args):
     shown = inside[:limit]
     ids = await _outage_ids(repo, rules, shown, now)
     found = list(reversed(await outages_since(repo, rules, since, now)))
-    outages = [_outage_summary(o.summary(now, rules), tz) for o in found[:limit]]
+    rx = await _hop_words(state)
+    outages = [_outage_summary(o.summary(now, rules), tz, rx) for o in found[:limit]]
     return {"period": period, "total_in_period": len(inside), "returned": len(shown),
             "may_be_incomplete": len(rows) == _INCIDENT_SCAN and len(inside) == len(rows),
-            "incidents": [incident_summary(i, tz, ids) for i in shown],
+            "incidents": [incident_summary(i, tz, ids, rx=rx) for i in shown],
             "outages_total_in_period": len(found), "outages": outages,
             "outage_note": "An outage joins incidents at neighboring places of the path that follow each other within "
                            f"{int(rules.gap_seconds // 60)} minutes (0: grouping is off): one event at the provider "
@@ -192,11 +240,11 @@ async def _outage_ids(repo, rules: Rules, incidents, now: float) -> Dict[int, in
     return {i.id: i.outage_id for i in grouped if i.outage_id is not None}
 
 
-def _outage_summary(o: Dict[str, Any], tz: tzinfo) -> Dict[str, Any]:
+def _outage_summary(o: Dict[str, Any], tz: tzinfo, rx) -> Dict[str, Any]:
     return {"id": o["id"], "start": iso(o["start_time"], tz), "end": iso(o["end_time"], tz), "ongoing": o["ongoing"],
             "duration_seconds": round(o["duration_seconds"]), "down_seconds": round(o["down_seconds"]),
             "drops": o["drops"], "critical_drops": o["critical_drops"], "severity": o["severity"],
-            "places": o["places"], "title": o["title"], "likely_maintenance": o["likely_maintenance"],
+            "places": o["places"], "title": _said(rx, o["title"]), "likely_maintenance": o["likely_maintenance"],
             "incident_ids": o["incident_ids"]}
 
 
@@ -207,21 +255,51 @@ _DROPPED_EVIDENCE = ("incident", "samples", "docsis_snapshots", "router_snapshot
 _LAN_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"))
 
 
-def _trace_without_lan(hops):
-    """The incident's path trace with every private, link-local or loopback hop shown as "private" and without its
-    name: the first hops are the router and modem, whose LAN addresses are the devices' hosts (no device host in any
-    tool's output). Public hops keep their address and name: they are what an ISP ticket needs."""
+def _ip(value: Any):
+    try:
+        return ipaddress.ip_address(str(value or "").strip().strip("[]"))
+    except ValueError:
+        return None
+
+
+def _addresses(targets, categories: Tuple[str, ...]) -> frozenset:
+    return frozenset(ip for t in targets if getattr(t, "category", None) in categories
+                     for ip in [_ip(getattr(t, "address", None))] if ip is not None)
+
+
+def _trace_without_lan(hops, targets=()):
+    """The incident's path trace with every hop on the household's side shown as "private" and without its name: the
+    first hops are the router and modem, whose addresses are the devices' hosts (no device host in any tool's output).
+    That side is every private, link-local or loopback hop, a hop at the address of the router or gateway target (a
+    router's global IPv6 address, a gateway's public WAN address behind double NAT, whose reverse name embeds it), and,
+    when the trace reaches a hop at an ISP target's address, every hop before that one. Hops from the provider on keep
+    their address and name: they are what an ISP ticket needs, when the name has the shape of a host name (the rule of
+    reports.queries.path_trace_names: a reverse name is text from outside, so one with spaces, or longer than DNS
+    allows, is left out)."""
     if not isinstance(hops, list):
         return hops
+    home, provider = _addresses(targets, ("local", "gateway")), _addresses(targets, ("isp",))
+    first_provider = next((k for k, hop in enumerate(hops)
+                           if isinstance(hop, dict) and _ip(hop.get("ip")) in provider), None)
     out = []
-    for hop in hops:
-        try:
-            ip = ipaddress.ip_address(str(hop.get("ip", "")))
-            local = ip.is_link_local or ip.is_loopback or ip.is_unspecified or any(ip in net for net in _LAN_NETS)
-        except ValueError:
+    for k, hop in enumerate(hops):
+        ip = _ip(hop.get("ip")) if isinstance(hop, dict) else None
+        if ip is None:
             local = True  # "*" or anything unparsed: nothing to show
-        out.append({**hop, "ip": "private", "hostname": None} if local else hop)
+        else:
+            local = (ip.is_link_local or ip.is_loopback or ip.is_unspecified or any(ip in net for net in _LAN_NETS)
+                     or ip in home or (first_provider is not None and k < first_provider))
+        if local:
+            out.append({**hop, "ip": "private", "hostname": None})
+        elif isinstance(hop, dict) and hop.get("hostname") is not None and not _is_host_name(hop["hostname"]):
+            out.append({**hop, "hostname": None})  # reverse DNS is whatever the zone's owner wrote: not text for a model
+        else:
+            out.append(hop)
     return out
+
+
+def _is_host_name(name: Any) -> bool:
+    return isinstance(name, str) and len(name) <= 254 and DNS_NAME.fullmatch(name) is not None
 
 
 async def _incident(state, args):
@@ -237,7 +315,9 @@ async def _incident(state, args):
     reach = {"snapshot_reach_seconds": poll} if poll else {}
     inspection = await run_inspection(repo, targets, incident, **reach,
                                       line=line_history(state.devices, repo), router=router_history(state.devices, repo),
-                                      classifier=getattr(cfg, "classifier", None))
+                                      classifier=getattr(cfg, "classifier", None),
+                                      traffic=router_traffic.traffic_source(state.devices, "generic"),
+                                      tz=tz)
     evidence = plain(inspection.to_response())
     out = {k: v for k, v in evidence.items() if k not in _DROPPED_EVIDENCE}
     correlation = out.get("docsis_correlation")
@@ -246,10 +326,11 @@ async def _incident(state, args):
     out["probe_samples_omitted"] = len(evidence.get("samples", ()))
     out["modem_snapshots_omitted"] = len(evidence.get("docsis_snapshots", ()))
     out["router_snapshots_omitted"] = len(evidence.get("router_snapshots", ()))
+    rx = await _hop_words(state)
     return localize({
-        "incident": {**incident_summary(incident, tz), "description": incident.description,
+        "incident": {**incident_summary(incident, tz, rx=rx), "description": _said(rx, incident.description),
                      "affected_targets": incident.affected_targets, "loss_seconds": incident.loss_seconds,
-                     "path_trace": _trace_without_lan(plain(incident.path_trace))},
+                     "path_trace": _trace_without_lan(plain(incident.path_trace), targets)},
         "evidence": out,
         "evidence_note": "Per-hop impact over the incident, the modem correlation, and counts of the raw samples "
                          "left out; the dashboard has the charts.",
@@ -271,29 +352,19 @@ async def _report(state, args):
         hops.append({"name": target["name"], "availability_pct": target["availability_pct"],
                      "outage_blocks": cells.count("outage"), "degraded_blocks": cells.count("degraded"),
                      "busy_blocks": cells.count("busy")})
-    return localize({
+    out = localize({
         "period": period, "zone": uptime["zone"], "window_start": uptime["start"], "window_end": uptime["end"],
         "block_seconds": uptime["block_seconds"], "uptime_by_hop": hops,
         "daily_availability": reliability["availability"], "incidents": reliability["incidents"],
-        "worst_hours_of_day": reliability["worst_hours"], "generated_at": reliability["generated_at"],
+        "worst_hours_of_day": None, "generated_at": reliability["generated_at"],
     }, tz)
+    out["worst_hours_of_day"] = reliability["worst_hours"]  # its "hour" is the hour of the day (0-23), not a time
+    return out
 
 
 # --- devices, services --------------------------------------------------------------------------------------------
 
 _CLIENT_KEYS = ("online", "wired", "by_band")
-# A failed poll's message is the driver's own words, which can name the device's host, the login it tried (OpenWrt:
-# "refused the login of 'admin'") or the address a socket dialed: the tool says what kind of failure it was instead.
-# The messages of a device that is not set up ("unconfigured") are Pengumon's own, with the device id only, and stay.
-_POLL_FAILURES = {
-    "auth": "The device refused Pengumon's sign-in: check its username and password in Settings.",
-    "unreachable": "The device could not be reached.",
-    "timeout": "The device did not answer in time.",
-    "protocol": "The device answered, but not in a way Pengumon understands.",
-    "unsupported": "The device does not offer what Pengumon reads from it.",
-    "internal": "Pengumon failed while reading the device; see its log.",
-}
-_POLL_FAILED = "The last poll of the device failed."
 _SEE_DASHBOARD = " The dashboard shows the device's own message."
 
 
@@ -301,7 +372,7 @@ def _device(device) -> Dict[str, Any]:
     snapshot = device.latest_snapshot
     latest = summarize_snapshot(snapshot) if snapshot is not None else None
     if latest is not None and latest.get("error_message") and snapshot.status != "unconfigured":
-        latest["error_message"] = _POLL_FAILURES.get(snapshot.error_kind, _POLL_FAILED) + _SEE_DASHBOARD
+        latest["error_message"] = POLL_FAILURES.get(snapshot.error_kind, POLL_FAILED) + _SEE_DASHBOARD
     out: Dict[str, Any] = {
         "id": device.id, "label": device_label(device), "kind": getattr(device.driver, "label", None) or device.driver.name,
         "model": getattr(device.config, "model", None), "enabled": device.enabled,
@@ -452,6 +523,49 @@ async def _ai_pack(state, args):
             "level": level, "markdown": pack["markdown"], "modules": pack["modules"]}
 
 
+# --- traffic ------------------------------------------------------------------------------------------------------
+
+TRAFFIC_TOP_DEFAULT = 10
+
+
+async def _traffic(state, args):
+    repo = _repository(state)
+    tz = zone_of(state)
+    device = router_traffic.traffic_device(state.devices)
+    if device is None:
+        return {"available": False, "reason": "No configured router reports traffic per client.", "clients": []}
+    hours = int(args.get("hours", 24))
+    top = int(args.get("top", TRAFFIC_TOP_DEFAULT))
+    namer = router_traffic.Namer("generic", getattr(device.monitor, "latest_clients", None))
+    status = router_traffic.status_of(device)
+    body = await router_traffic.summary(repo, device.id, hours, namer, top=top, tz=tz)
+
+    def apps(rows):
+        return [{"app": a["app"], "download_bytes": a["down"], "upload_bytes": a["up"]} for a in rows]
+
+    clients = []
+    for c in body["clients"]:
+        clients.append({"device": c["label"], "vendor": c["vendor"], "download_bytes": c["down"],
+                        "upload_bytes": c["up"], "top_apps": apps(c["apps"]), "main_app": c["traffic_hint"]})
+    busiest = sorted((h for h in body["wan"] if h["down"] is not None), key=lambda h: -h["down"])[:3]
+    return {
+        "device": device.id, "available": status.available, "reason": status.reason,
+        "hours": hours, "from": iso(body["start"], tz), "to": iso(body["end"], tz),
+        "newest_hour_ends": iso(body["window_end"], tz),
+        "totals": {"download_bytes": body["totals"]["down"], "upload_bytes": body["totals"]["up"]},
+        "busiest_hours": [{"hour": iso(h["hour"], tz), "download_bytes": h["down"], "upload_bytes": h["up"]}
+                          for h in busiest],
+        "clients": clients,
+        "apps": apps(body["apps"]),
+        "apps_window_ends": iso(body["apps_window_end"], tz),
+        "apps_days": body["apps_days"],
+        "note": "The router's own count (its Traffic Analyzer), per clock hour, published after the hour ends. App "
+                "figures: for 47 hours or less, the router's latest 24-hour window; for more, the sum of the whole local "
+                "days (midnight to midnight) up to the last midnight, apps_days saying which and how many had figures. "
+                "Clients are ranked by download over the hours asked.",
+    }
+
+
 # --- the list ------------------------------------------------------------------------------------------------------
 
 TOOLS: List[Tool] = [
@@ -460,7 +574,7 @@ TOOLS: List[Tool] = [
          "likely cause in words, the line load, the open incident if there is one, and for each stage of the path "
          "(local network, gateway or modem, ISP, public internet, DNS) the latest latency, recent packet loss and "
          "jitter. Start here; it is cheap.",
-         _schema(), _status),
+         _schema(), _scrubbing(_status)),
     Tool("incidents",
          "Lists recent network incidents (outages and slow spells), newest first, with when they started and ended, "
          "how long they lasted, the kind and cause, severity and the line load at the time. Each has an `outage_id`: an "
@@ -468,24 +582,24 @@ TOOLS: List[Tool] = [
          "flapping line or one provider event is several incidents but one outage), and `outages` lists them with "
          "their drops, down time and whether they are likely maintenance (a guess from the hour). Use it to see how "
          "stable the network has been, then call `incident` with an id for the evidence.",
-         _schema(period=_period_schema("7d"), limit=_limit_schema()), _incidents),
+         _schema(period=_period_schema("7d"), limit=_limit_schema()), _scrubbing(_incidents)),
     Tool("incident",
          "One incident in full: its description, the path trace taken when it began, and the evidence for its cause "
          "(per-hop loss and latency over the incident, whether the modem's signal explains it). Use it to answer "
          "'why did the internet drop at that time?'. Raw samples are left out; their counts are given.",
          {"type": "object", "properties": {"id": {"type": "integer", "minimum": 1, "maximum": 2**53,
                                                   "description": "The incident id from `incidents`."}},
-          "required": ["id"], "additionalProperties": False}, _incident),
+          "required": ["id"], "additionalProperties": False}, _scrubbing(_incident)),
     Tool("report",
          "Uptime and reliability over a day, a week or a month: availability of every hop of the path, how many "
          "outage and degraded blocks it had, availability per day, incidents by cause and the worst hours of the "
          "day for packet loss. Use it for 'how reliable has my internet been?'.",
-         _schema(period=_period_schema("7d")), _report),
+         _schema(period=_period_schema("7d")), _scrubbing(_report)),
     Tool("devices",
          "The modem and router Pengumon polls: what each is, whether the last poll worked, its headline readings "
          "(cable line signal levels and error counts, WAN rates, CPU and memory load) with Pengumon's grades, and "
          "counts of connected clients (never who they are). No passwords or addresses.",
-         _schema(), _devices),
+         _schema(), _scrubbing(_devices)),
     Tool("services",
          "The apps on the machine running Pengumon whose health it checks: each one's name, whether it is up, "
          "degraded or down, response time, the error if it is not up, and its last outages. Empty when none are "
@@ -502,7 +616,18 @@ TOOLS: List[Tool] = [
          "the router reports WAN counters, else the test's own (measured_by \"test\": one server, which may not fill "
          "the line); the test's own figures are kept beside them. Repeated slow results are the finding. Empty when "
          "the speed test is off.",
-         _schema(period=_period_schema("7d"), limit=_limit_schema()), _speed_tests),
+         _schema(period=_period_schema("7d"), limit=_limit_schema()), _scrubbing(_speed_tests)),
+    Tool("traffic",
+         "Who used the internet? The router's own count of the bytes each connected device downloaded and uploaded "
+         "(its Traffic Analyzer), per clock hour, over the last `hours`: the totals, the busiest hours, the devices "
+         "ranked by download with their top apps (and the app a device mostly uses), and the apps of all devices "
+         "together. Use it to explain a busy line or a slow evening. A device is described by its kind and maker "
+         "(\"game console\", \"phone\"), never by name or address. Empty when no router reports it.",
+         _schema(hours={"type": "integer", "minimum": 1, "maximum": 720,
+                        "description": "How many complete hours back (default 24)."},
+                 top={"type": "integer", "minimum": 1, "maximum": 50,
+                      "description": f"How many devices and apps to list (default {TRAFFIC_TOP_DEFAULT})."}),
+         _scrubbing(_traffic)),
     Tool("ai_pack",
          "A written troubleshooting summary of the network (Markdown) for a period or one incident: the findings, "
          "the timeline, the path and the devices, ready to reason over or to hand to a person. The slowest tool; "

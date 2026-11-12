@@ -13,6 +13,7 @@ failures, and stops polling after a refused login until its credentials change.
 
 import asyncio
 import time
+import traceback
 from typing import Callable, Dict, Optional, Protocol
 
 import httpx
@@ -43,11 +44,18 @@ class Monitor(Protocol):
     async def on_result(self, ts: float, result: PollResult) -> object: ...
 
 
+MESSAGE_MAX = 300  # an error's message is stored with every failed poll and shown on the page: never unbounded
+
+
 def classify(exc: BaseException) -> DriverError:
-    """The DriverError for anything a driver's poll raised."""
+    """The DriverError for anything a driver's poll raised, its message at most MESSAGE_MAX characters (an
+    exception's text can carry whatever a device sent)."""
     if isinstance(exc, DriverError):
-        return exc
+        if len(exc.message) <= MESSAGE_MAX:
+            return exc
+        return DriverError(exc.kind, exc.message[:MESSAGE_MAX - 3] + "...", transport=exc.transport)
     detail = str(exc) or type(exc).__name__
+    detail = detail if len(detail) <= MESSAGE_MAX - 40 else detail[:MESSAGE_MAX - 43] + "..."
     if isinstance(exc, httpx.TimeoutException):
         return DriverError("timeout", detail, transport=True)
     if isinstance(exc, httpx.TransportError):  # connection refused, DNS, reset, ...
@@ -67,6 +75,9 @@ class Device:
         `min_interval_seconds` is the least time between two attempts to read the device (0: no limit)."""
         self.id = device_id
         self.driver = driver
+        http = getattr(driver, "http", None)
+        if hasattr(http, "device_id"):  # a driver's DeviceHttp names this device on its spans, not its address
+            http.device_id = device_id
         self.monitor = monitor
         self.interval_seconds = interval_seconds
         self.min_interval_seconds = min_interval_seconds
@@ -82,14 +93,25 @@ class Device:
         # the credentials change. Each read would be a login attempt, about one a second through a test.
         self._login_refused = False
         self._credentials_changed = asyncio.Event()
-        self._log = get_logger("pengumon.devices", device=device_id, driver=driver.name, host=driver.host)
-        self._state = StateLog(self._log, f"Polling {device_id} ({driver.name} at {driver.host})", clock=monotonic)
+        # (named by id and driver, never by address: the records are exported over OTLP, observability/export.py)
+        self._log = get_logger("pengumon.devices", device=device_id, driver=driver.name)
+        self._state = StateLog(self._log, f"Polling {device_id} ({driver.name})", clock=monotonic)
         self._missing: Dict[Capability, StateLog] = {}
         self._unconfigured_logged: Optional[str] = None
         # One poll at a time per device: the API's test poll after new credentials must not interleave with the
         # scheduled one (driver session state, CPU and rate baselines); it waits and then polls itself.
         self._lock = asyncio.Lock()
         self._attributes = {"device.id": device_id, "device.driver": driver.name}
+
+    def _for_export(self, text: str) -> str:
+        """`text` (an error or a reason a driver gave) as it may go to a log record or a span, which are exported over
+        OTLP (observability/export.py): the device's address becomes its id and its login name (as the driver writes it,
+        quoted) "the login". The snapshot keeps the original text: the page shows the owner which address failed."""
+        login = getattr(self.driver, "login_name", None)
+        for secret, plain in ((self.driver.host, self.id), (repr(login) if login else None, "the login")):
+            if secret:
+                text = text.replace(secret, plain)
+        return text
 
     def inherit_gate(self, previous: "Device") -> None:
         """Takes over when `previous` (the device this one replaces, same id and driver at the same host) last tried
@@ -126,8 +148,13 @@ class Device:
     def has_credentials(self) -> bool:
         return self.credentials_source is not None or not self.needs_sign_in
 
-    def set_credentials(self, username: str, password: str, *, source: Optional[str] = None) -> None:
-        self.driver.set_credentials(username, password)
+    def set_credentials(self, username: str, password: str, *, source: Optional[str] = None,
+                        privacy_password: Optional[str] = None) -> None:
+        """`privacy_password` only for a driver that takes one (SNMPv3 authPriv); None keeps the one it has."""
+        if privacy_password is not None:
+            self.driver.set_credentials(username, password, privacy_password)
+        else:
+            self.driver.set_credentials(username, password)
         self._auth_stopped = False
         self._login_refused = False
         self._failures = 0
@@ -227,7 +254,7 @@ class Device:
                 if classify(exc).kind == "auth":
                     self._login_refused = True
                 self._log.debug(f"{self.id}: the WAN counters could not be read for the speed test",
-                                error=f"{type(exc).__name__}: {exc}")
+                                error=self._for_export(f"{type(exc).__name__}: {exc}"))
                 return None
             ended = self._monotonic()
         return WanReading((started + ended) / 2, counters) if counters is not None else None
@@ -287,14 +314,23 @@ class Device:
                     self._auth_stopped = True
                     self._log.warning(f"{self.id} refused the login: not polling it again until its credentials "
                                       "are changed", error="auth")
-                span.set_status(Status(StatusCode.ERROR, error.message))
+                span.set_status(Status(StatusCode.ERROR, self._for_export(error.message)))
                 span.set_attribute("error.type", error.kind)
-                logged = self._state.failure(f"{error.kind}: {error.message}", key=error.kind)
+                logged = self._state.failure(f"{error.kind}: {self._for_export(error.message)}", key=error.kind)
                 if error.kind == "internal":
-                    span.record_exception(exc)
+                    # The traceback names the device's address wherever an exception message does: both the span event
+                    # and the log line carry it as text with the address made its id (`_for_export`), not as the
+                    # exception itself, which the exporters would write out whole.
+                    trace_text = self._for_export("".join(traceback.format_exception(exc)))
+                    span.add_event("exception", {"exception.type": type(exc).__name__,
+                                                 "exception.message": self._for_export(str(exc)),
+                                                 "exception.stacktrace": trace_text})
                     # With the state log's cadence (first time, changed error, reminders), not on every poll.
-                    log = self._log.exception if logged else self._log.debug
-                    log("driver raised an unexpected exception", error=error.kind)
+                    if logged:
+                        self._log.error("driver raised an unexpected exception", error=error.kind,
+                                        traceback=trace_text)
+                    else:
+                        self._log.debug("driver raised an unexpected exception", error=error.kind)
                 snapshot = await self.monitor.on_error(self._clock(), error)
             else:
                 self._failures = 0
@@ -329,6 +365,8 @@ class Device:
                     state = self._missing[capability] = StateLog(
                         self._log.bind(capability=capability.value), f"{self.id} {capability.value}",
                         clock=self._monotonic)
-                state.failure(reason)
-            elif state is not None:
+                state.failure(self._for_export(reason))
+            elif state is not None and capability in result.readings:
+                # (a capability read in rounds, like traffic_usage, says why it has none once: the polls in between,
+                # with neither a reading nor a reason, are no recovery)
                 state.success()

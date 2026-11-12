@@ -20,6 +20,7 @@ is not followed (`websockets` would follow one to any secure host otherwise; see
 """
 
 import asyncio
+import json
 import time
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlsplit
@@ -29,13 +30,15 @@ import websockets
 from websockets.asyncio.client import connect
 
 from pengumon import __version__
-from pengumon.speedtest.providers.base import (RAMP_FRACTION, STALL_GRACE_S, TIMEOUTS, USER_AGENT, Meter, ProviderError,
-                                               SpeedProvider, Transfer, failure)
+from pengumon.drivers.http import CappedBody
+from pengumon.speedtest.providers.base import (ANSWER_MAX, HEADERS, RAMP_FRACTION, STALL_GRACE_S, TIMEOUTS, USER_AGENT,
+                                               Meter, ProviderError, SpeedProvider, Transfer, failure)
 
 LOCATE_URL = "https://locate.measurementlab.net/v2/nearest/ndt/ndt7"
 SUBPROTOCOL = "net.measurementlab.ndt.v7"
 DOWNLOAD_KEY, UPLOAD_KEY = "wss:///ndt/v7/download", "wss:///ndt/v7/upload"
 MAX_MESSAGE = 1 << 24  # the spec: a limit smaller than this is not allowed
+MAX_QUEUE = 2  # messages received and not yet read: with MAX_MESSAGE each, 32 MiB at most (the default 16: 256 MiB)
 FIRST_SIZE, MAX_SEND = 1 << 13, 1 << 18
 TRUSTED_DOMAINS = ("measurement-lab.org", "measurementlab.net")
 WHO = "M-Lab"
@@ -61,27 +64,32 @@ class MLabProvider(SpeedProvider):
         # environment's CA settings (SSL_CERT_FILE), as the other providers' transport does.
         self._client = httpx.AsyncClient(timeout=TIMEOUTS, follow_redirects=False,
                                          transport=transport if transport is not None else httpx.AsyncHTTPTransport(),
-                                         headers={"User-Agent": USER_AGENT})
+                                         headers=HEADERS)
         self._urls: Optional[Dict[str, str]] = None
 
     async def _locate(self) -> Dict[str, str]:
         if self._urls is not None:
             return self._urls
         try:
-            response = await self._client.get(self.locate_url, params={"client_name": "pengumon",
-                                                                       "client_version": __version__})
+            async with self._client.stream("GET", self.locate_url, params={"client_name": "pengumon",
+                                                                           "client_version": __version__}) as response:
+                status = response.status_code
+                body = CappedBody(response, ANSWER_MAX)  # (its answer is a few KB)
+                content = await body.read() if status == 200 else b""
         except httpx.HTTPError as e:
             raise failure(e, "the M-Lab locate service")
-        if response.status_code != 200:
-            reason = f"the M-Lab locate service answered HTTP {response.status_code}"
+        if status != 200:
+            reason = f"the M-Lab locate service answered HTTP {status}"
             raise ProviderError(reason + (" (probably a rate limit); try another provider"
-                                          if response.status_code in (403, 429) else ""))
+                                          if status in (403, 429) else ""))
+        if body.truncated:
+            raise ProviderError(f"the M-Lab locate service answered with more than {ANSWER_MAX // 1024} KiB: not read")
         try:
-            results = response.json()["results"]
+            results = json.loads(content)["results"]
             first = results[0]
             urls = {k: first["urls"][k] for k in (DOWNLOAD_KEY, UPLOAD_KEY)}
             machine = str(first.get("machine") or "")
-        except (ValueError, KeyError, IndexError, TypeError):
+        except (ValueError, KeyError, IndexError, TypeError, RecursionError):
             raise ProviderError("the M-Lab locate service found no server") from None
         for url in urls.values():
             self._check(url)
@@ -107,8 +115,8 @@ class MLabProvider(SpeedProvider):
             async with asyncio.timeout(time_limit_s + STALL_GRACE_S):
                 # proxy=None: `websockets` uses the environment's proxy otherwise, and the test would measure it
                 async with self._connect(url, subprotocols=[SUBPROTOCOL], additional_headers={"User-Agent": USER_AGENT},
-                                         max_size=MAX_MESSAGE, open_timeout=8, ping_interval=None,
-                                         close_timeout=3, proxy=None) as ws:
+                                         max_size=MAX_MESSAGE, max_queue=MAX_QUEUE, open_timeout=8,
+                                         ping_interval=None, close_timeout=3, proxy=None) as ws:
                     meter.started = self.clock()  # the test proper starts when the handshake is done
                     await drive(ws, meter)
         except websockets.exceptions.ConnectionClosed:
@@ -127,8 +135,8 @@ class MLabProvider(SpeedProvider):
         async def drive(ws, meter: Meter) -> None:
             while not meter.done:
                 message = await ws.recv()
-                if isinstance(message, bytes):
-                    meter.add(len(message))  # the whole message: it was received (see the module docstring)
+                if isinstance(message, bytes):  # the whole message counts: it was received (the module docstring);
+                    meter.over += len(message) - meter.add(len(message))  # what is past the cap is not for the speed
             await ws.close()
 
         return await self._session(DOWNLOAD_KEY, cap_bytes, time_limit_s, drive, target_s)

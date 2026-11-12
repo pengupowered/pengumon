@@ -19,8 +19,12 @@
 // only when the set of nodes changes; every message then just updates classes and texts in place.
 
 import { state } from '../../js/state.js';
-import { backhaulText, formatMs, latestMs, setClass, setText } from '../../js/util.js';
+import { backhaulText } from '../../js/device-text.js';
+import { formatMs, plural } from '../../js/format.js';
+import { latestMs } from '../../js/values.js';
+import { setClass, setText } from '../../js/dom.js';
 import { featureAvailable, primaryDevice } from '../../js/devices.js';
+import { deviceName } from '../../js/device-text.js';
 
 // The devices the picture names: the primary line and router (the server's choice, devices.js primaryDevice) and the
 // device that lists the clients (the first of the `clients` feature's providers).
@@ -50,8 +54,6 @@ function make(tag, className, text) {
   return el;
 }
 
-const pretty = (s) => String(s).replace(/_/g, ' ');
-const deviceLabel = (d) => (d.model ? pretty(d.model) : (d.host || d.id));
 const ms = (v) => (v === null || v === undefined ? null : formatMs(v, { unit: true, tenths: true }));
 
 // The enabled targets of a category, as the live message lists them.
@@ -60,7 +62,7 @@ function inCategory(targets, ...categories) {
 }
 
 // A hop's picture: { status, latency } of the worst target of the category, null when it has no target.
-export function hopOf(targets, category) {
+function hopOf(targets, category) {
   const list = inCategory(targets, category);
   if (!list.length) return null;
   const worst = list.reduce((a, b) => (RANK[b.status] > RANK[a.status] ? b : a));
@@ -68,7 +70,7 @@ export function hopOf(targets, category) {
 }
 
 // The Internet node: the public targets, standing in with isp, then dns ones when there are none.
-export function internetOf(targets) {
+function internetOf(targets) {
   const list = [['public'], ['isp'], ['dns']].map(c => inCategory(targets, ...c)).find(l => l.length);
   if (!list) return null;
   const up = list.filter(t => t.status !== 'down');
@@ -77,7 +79,7 @@ export function internetOf(targets) {
   return { status, latency: answers.length ? Math.min(...answers) : null };
 }
 
-export function wanText(router) {
+function wanText(router) {
   const rx = router ? router.wan_rx_rate_mbps : null;
   if (rx === null || rx === undefined) return null;
   const f = (v) => (Math.round(v * 10) / 10);
@@ -154,8 +156,8 @@ function control(g, arg, title) {
 function layoutKey(targets) {
   const nodes = meshNodes();
   return JSON.stringify([
-    !!internetOf(targets), lineDevice() ? deviceLabel(lineDevice()) : null,
-    routerDevice() ? deviceLabel(routerDevice()) : null, !!hopOf(targets, 'local'), !!clientsDevice(), featureAvailable('line_load'),
+    !!internetOf(targets), lineDevice() ? deviceName(lineDevice()) : null,
+    routerDevice() ? deviceName(routerDevice()) : null, !!hopOf(targets, 'local'), !!clientsDevice(), featureAvailable('line_load'),
     nodes.map(n => [n.id, n.label]), !!clientTotals()
   ]);
 }
@@ -166,9 +168,9 @@ function build(targets) {
   const refs = { cols: [], links: [], leaves: new Map(), pills: [] };
   const specs = [];
   if (internetOf(targets)) specs.push({ id: 'internet', ic: 'globe', kind: 'Internet', name: 'Public targets' });
-  if (lineDevice()) specs.push({ id: 'line', ic: 'modem', kind: 'Gateway', name: deviceLabel(lineDevice()) });
+  if (lineDevice()) specs.push({ id: 'line', ic: 'modem', kind: 'Gateway', name: deviceName(lineDevice()) });
   if (routerDevice() || hopOf(targets, 'local')) {
-    specs.push({ id: 'router', ic: 'router', kind: 'Router', name: routerDevice() ? deviceLabel(routerDevice()) : 'Local router' });
+    specs.push({ id: 'router', ic: 'router', kind: 'Router', name: routerDevice() ? deviceName(routerDevice()) : 'Local router' });
   }
   refs.hasRouter = specs.some(sp => sp.id === 'router');
   const nodes = refs.hasRouter ? meshNodes() : [];
@@ -251,8 +253,6 @@ function build(targets) {
   body.append(wide, list);
   view.refs = refs;
 }
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function paintStatus(n, hop) {
   const st = hop ? ST[hop.status] : 'unknown';

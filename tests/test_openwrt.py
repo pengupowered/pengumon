@@ -13,8 +13,8 @@ from pengumon.devices.settings import DeviceConfig
 from pengumon.drivers import DRIVERS
 from pengumon.drivers.common import proc_stat_cpu
 from pengumon.drivers.openwrt import (
-    ARP_TABLE, NO_SESSION, PROC_STAT, READ_METHODS, OpenWrtDriver, arp_online, band_of, memory_pct, wan_device,
-    wifi_interfaces,
+    ARP_TABLE, NO_SESSION, PROC_STAT, READ_METHODS, OpenWrtDriver, arp_online, band_of, build_clients, memory_pct,
+    wan_device, wifi_interfaces,
 )
 from pengumon.secrets import CredentialSources, password_env_var
 
@@ -217,6 +217,7 @@ async def test_calls_the_acl_refuses_leave_out_only_their_readings(caplog):
     ubus = FakeUbus(denied={f"file {PROC_STAT}", ("luci-rpc", "getWirelessDevices"), f"file {ARP_TABLE}"})
     clock = Clock()
     device = build(ubus, clock)
+    device.set_credentials("svc-login", "pw")
     with caplog.at_level(logging.WARNING, logger="pengumon.drivers.openwrt"):
         await device.driver.poll()
         clock.now += 10
@@ -229,6 +230,10 @@ async def test_calls_the_acl_refuses_leave_out_only_their_readings(caplog):
     assert system.client_count == 3  # without the ARP table every leased client counts as online
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len([w for w in warnings if PROC_STAT in w]) == 1  # once, not once per poll
+    for record in caplog.records:  # exported over OTLP: neither the router's address nor its login name
+        shown = record.getMessage() + repr(getattr(record, "pengumon_context", {}))
+        assert "host" not in getattr(record, "pengumon_context", {}) and device.driver.host not in shown
+        assert "svc-login" not in shown
 
 
 async def test_a_session_refused_everything_is_an_auth_error_naming_the_acl():
@@ -268,6 +273,33 @@ async def test_no_ubus_endpoint_and_non_json_answers_are_protocol_errors():
     device = build(lambda request: httpx.Response(200, json={"jsonrpc": "2.0", "id": 0, "result": [0, {}]}))
     with pytest.raises(DriverError, match="no session id"):
         await device.driver.poll()
+
+
+async def test_hostile_answers_are_protocol_errors_or_left_out_never_internal_ones():
+    deep = httpx.Response(200, text="[" * 200_000)
+    device = build(lambda request: deep)
+    with pytest.raises(DriverError) as err:
+        await device.driver.poll()
+    assert err.value.kind == "protocol"
+
+    class OddIds(FakeUbus):
+        def __call__(self, request):
+            response = super().__call__(request)
+            body = json.loads(response.content)
+            if isinstance(body, list):  # one answer more, whose id is a list
+                return httpx.Response(200, json=body + [{"jsonrpc": "2.0", "id": [1], "result": [0, {}]}])
+            return response
+    result = await build(OddIds()).driver.poll()
+    assert Capability.WAN_COUNTERS in result.readings
+
+    assert build_clients({"dhcp_leases": 5}, {}, None).clients == ()
+    assert build_clients({"dhcp_leases": "02:00:00:00:00:01"}, {}, None).clients == ()
+
+
+def test_a_json_rpc_error_code_of_any_size_is_named_in_a_few_characters():
+    from pengumon.drivers.openwrt import _answer
+    answer = _answer(("system", "info", {}), {"error": {"code": ["x" * 100_000], "message": "m" * 100_000}})
+    assert answer.problem.startswith("system info: JSON-RPC error") and len(answer.problem) < 150
 
 
 async def test_a_transport_error_becomes_an_unreachable_snapshot():

@@ -26,6 +26,7 @@ from pydantic import ValidationError
 from pengumon.config import BOOTSTRAP_KEYS, AppConfig
 from pengumon.notify.settings import SECRET_PREFIX, WebhookConfig, WebhookItem, webhook_id
 from pengumon.settings import lenient, registry
+from pengumon.settings.dotted import pop_dotted, present
 from pengumon.settings.document import SettingsDocument
 
 DROPPED_KEYS = {"prober.ping_count_per_probe": "does nothing; dropped"}
@@ -65,24 +66,6 @@ def get_path(obj: Any, path: str) -> Any:
     for part in path.split("."):
         obj = getattr(obj, part)
     return obj
-
-
-def present(raw: Any, path: str) -> bool:
-    """Whether the mapping sets the dotted path (every parent a mapping, the leaf present and not null)."""
-    node = raw
-    for part in path.split("."):
-        if not isinstance(node, dict) or part not in node:
-            return False
-        node = node[part]
-    return node is not None
-
-
-def _pop(raw: dict, path: str) -> Any:
-    parts = path.split(".")
-    node = raw
-    for part in parts[:-1]:
-        node = node.get(part) if isinstance(node, dict) else None
-    return node.pop(parts[-1], None) if isinstance(node, dict) else None
 
 
 def _dropped(paths: Iterable[str], key: str) -> bool:
@@ -205,7 +188,7 @@ def read_settings(raw: Any, *, hop_ids: Iterable[str] = (), move_secrets: bool =
         return result
     data = copy.deepcopy(raw)
     data.pop("targets", None)
-    raw_hooks = _pop(data, "notifications.webhooks")
+    raw_hooks = pop_dotted(data, "notifications.webhooks")
     for key, why in DROPPED_KEYS.items():
         if present(raw, key):
             result.notes.append(f"{key}: {why}")

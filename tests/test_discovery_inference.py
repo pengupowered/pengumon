@@ -403,3 +403,41 @@ async def test_the_gateway_addresses_share_the_device_check_budget():
     asked = set(result.lan.hosts())
     assert len(asked) == MAX_DEVICE_HOSTS
     assert {"10.0.0.1", "192.168.0.1", "192.168.1.1", "192.168.100.1"} <= asked
+
+
+def _raises(*_a, **_k):
+    raise RuntimeError("one odd device answer")
+
+
+async def test_a_device_check_that_raises_costs_only_its_own_evidence_R4_M3():
+    """A page check that raises something other than an HTTP error (a hostile answer) is no evidence for that host;
+    the other hosts' pages and the rest of the run are kept."""
+    traces = three_paths(shared=[("10.0.0.1", 0.7), ("203.0.113.1", 9.0)])
+    result = await discover(traces, options=NO_ASN, gateway="10.0.0.1",
+                            pages={"10.0.0.1": _raises, "192.168.1.1": XFINITY_LOGIN})
+    assert "device_page" not in kinds(by_address(result)["10.0.0.1"])
+    assert result.hops
+
+
+async def test_a_failing_upnp_search_does_not_end_the_run_or_the_asn_lookup_R4_M3(monkeypatch):
+    from pengumon.engine.discovery import upnp
+
+    async def broken(*_a, **_k):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(upnp, "discover_igds", broken)
+    traces = three_paths(shared=[("10.0.0.1", 0.7), ("203.0.113.1", 9.0), ("203.0.113.9", 10.0)])
+    result = await discover(traces, gateway="10.0.0.1", pages={"10.0.0.1": XFINITY_LOGIN},
+                            asns={"203.0.113.1": (64500, "EXAMPLE-NET - Example Networks, LLC, ZZ")})
+    hops = by_address(result)
+    assert "device_page" in kinds(hops["10.0.0.1"])
+    assert "asn" in kinds(hops["203.0.113.1"])
+
+
+async def test_an_address_answering_at_two_ttls_is_one_proposed_hop_R4_M6():
+    traces = three_paths(shared=[("10.0.0.1", 0.7), ("203.0.113.1", 9.0), ("203.0.113.1", 9.5), ("203.0.113.9", 10.0)])
+    result = await discover(traces, options=NO_ASN, gateway="10.0.0.1")
+    addresses = [h["address"] for h in result.hops]
+    assert addresses.count("203.0.113.1") == 1
+    assert len(set(addresses)) == len(addresses)
+    assert len({h["id"] for h in result.hops}) == len(result.hops)

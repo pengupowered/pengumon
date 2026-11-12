@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field, field_validator
 
 class LineConfig(BaseModel):
     """Internet line capacity in Mbps; None = learned from router history (99.9th percentile, 7 days)."""
-    down_mbps: Optional[float] = Field(default=None, gt=0)
-    up_mbps: Optional[float] = Field(default=None, gt=0)
+    down_mbps: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    up_mbps: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
     isp_name: Optional[str] = Field(default=None, max_length=60)  # names the dossier ("Acme Outage & ...")
 
     @field_validator("isp_name")

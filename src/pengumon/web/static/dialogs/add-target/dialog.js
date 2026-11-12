@@ -3,7 +3,12 @@
 // (a taken id, the limit of custom targets, a host it refuses) is shown the same way.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, hostProblem, icon, initTargets, keepKeyboard, slug } from '../../js/util.js';
+import { closeModal, keepKeyboard } from '../../js/modal.js';
+import { escapeHtml } from '../../js/escape.js';
+import { hostProblem } from '../../js/host.js';
+import { icon } from '../../js/dom.js';
+import { initTargets } from '../../js/targets.js';
+import { slug } from '../../js/format.js';
 
 const ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const FIELDS = ['name', 'address', 'id'];
@@ -144,4 +149,4 @@ registerActions('change', {
 registerActions('click', {
   cancelAddTarget: () => cancelAddTarget()
 });
-keepKeyboard($('addTargetModal'), '#targetName');
+keepKeyboard($('addTargetModal'), '#targetName', { onEscape: cancelAddTarget }); // Escape clears the form like Cancel

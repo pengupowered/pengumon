@@ -4,20 +4,11 @@
 // docs/themes.md, "Drawing a card"; a theme's own view of this card gets these parts as ctx.std.parts.
 
 import { kit } from '../../js/cards.js';
+import { paint } from '../../js/dom.js';
 import { series, token } from '../../js/chart-theme.js';
-import { localFormat } from '../../js/util.js';
+import { localFormat } from '../../js/clock.js';
 
 const { el, icon, mark, status } = kit;
-
-// A box that is drawn again only when `key` (what it shows) changed; hidden when `build` draws nothing.
-function paint(box, key, build) {
-  const sig = JSON.stringify(key);
-  if (box._sig === sig) return;
-  box._sig = sig;
-  box.replaceChildren();
-  build(box);
-  box.hidden = !box.childNodes.length;
-}
 
 // A status as icon + word in a new element (data-st on it).
 function badge(s, cls) {

@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from pengumon.drivers.http import CappedBody, total_deadline
 from pengumon.notify.settings import WebhookConfig
 
 logger = logging.getLogger("pengumon.notify")
@@ -24,6 +25,7 @@ PAYLOAD_VERSION = 1
 DISCORD_LIMIT = 2000  # characters in a Discord message's content
 MAX_REDIRECTS = 3
 RETRY_DELAY_SECONDS = 2.0
+ANSWER_MAX_BYTES = 16 * 1024  # a webhook's answer is not used; read this far, decoded, and no further
 
 
 def failure_words(error: Exception) -> str:
@@ -32,7 +34,7 @@ def failure_words(error: Exception) -> str:
     status = getattr(getattr(error, "response", None), "status_code", None)
     if status:
         return f"the server answered {status}"
-    if isinstance(error, httpx.TimeoutException):
+    if isinstance(error, (httpx.TimeoutException, TimeoutError)):
         return "timed out"
     if isinstance(error, httpx.ConnectError):
         return "could not connect"
@@ -163,25 +165,34 @@ class WebhookSender:
 
     async def _post(self, client: httpx.AsyncClient, body: dict) -> Optional[str]:
         url = self.config.url
+        headers = {**self._headers, "Accept-Encoding": "identity"}  # (the answer is not used: asked for as it is)
         try:
             for _ in range(MAX_REDIRECTS + 1):
-                response = await client.post(url, json=body, headers=self._headers, follow_redirects=False,
-                                             timeout=self.config.timeout_seconds)
-                if response.status_code not in (301, 302, 303, 307, 308):
+                # (httpx's timeouts are per read: the whole exchange has a deadline of its own)
+                async with asyncio.timeout(total_deadline(self.config.timeout_seconds)):
+                    async with client.stream("POST", url, json=body, headers=headers, follow_redirects=False,
+                                             timeout=self.config.timeout_seconds) as response:
+                        await CappedBody(response, ANSWER_MAX_BYTES).read()  # bounded, decoded only that far
+                        status, location = response.status_code, response.headers.get("location", "")
+                if status not in (301, 302, 303, 307, 308):
                     break
-                target = urljoin(url, response.headers.get("location", ""))
+                target = urljoin(url, location)
                 if not self._same_host(target):
                     return "refused: redirect to another host"
+                if urlsplit(url).scheme == "https" and urlsplit(target).scheme != "https":
+                    return "refused: redirect to plain HTTP"  # the header secrets would go out in clear
                 url = target
             else:
                 return "refused: too many redirects"
-            if response.status_code >= 400:
-                return f"the server answered {response.status_code}"
+            if status >= 400:
+                return f"the server answered {status}"
             return None
         except Exception as e:  # httpx messages can hold the URL, so only these words are kept
             return failure_words(e)
 
     def _same_host(self, target: str) -> bool:
+        """Same host name and port as the configured URL (the scheme is checked separately: http to https on the same
+        host and port is followed, since the port then stays the one written in the URL; https to http never is)."""
         a, b = urlsplit(self.config.url), urlsplit(target)
         return b.scheme in ("http", "https") and (b.hostname or "").lower() == (a.hostname or "").lower() \
             and b.port == a.port

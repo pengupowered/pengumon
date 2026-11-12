@@ -4,13 +4,15 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { maxLivePoints, state } from '../../js/state.js';
-import { localFormat, median, pageLeaving, targetList } from '../../js/util.js';
-import { SERIES, combine, seriesMembers } from '../../js/path.js';
+import { localFormat } from '../../js/clock.js';
+import { has, median } from '../../js/values.js';
+import { pageLeaving } from '../../js/modal.js';
+import { targetList } from '../../js/targets.js';
+import { SERIES, combine, roundKeys, seriesMembers, wholeEdges } from '../../js/path.js';
 import { pingTargets, renderCharts, resetView, setLineMode, view } from './charts.js';
 import { primaryDevice } from '../../js/devices.js';
 import { applyTabs, selectTab } from '../../js/tabs.js';
 
-const has = (v) => v !== null && v !== undefined;
 let requestSeq = 0;
 
 // Fetches /api/history in its compact form (field names once, one array per row). Null when the request fails.
@@ -25,16 +27,21 @@ async function fetchSamples(query) {
   });
 }
 
-// Samples (one per target and second or bucket) -> the view model. `round`: group raw samples by whole seconds.
+// Samples (one per target and probe or bucket) -> the view model. `round`: raw samples, grouped by probe round (roundKeys),
+// a point per round as the live feed draws a point per message; else the server's buckets, a point each.
 function fill(samples, round) {
   const members = seriesMembers(targetList());
   const byTime = new Map();
+  const rounds = round ? roundKeys(samples.map((s) => s.timestamp)) : null;
   samples.forEach((s) => {
-    const ts = round ? Math.round(s.timestamp) : s.timestamp;
+    const ts = round ? rounds.get(s.timestamp) : s.timestamp;
     if (!byTime.has(ts)) byTime.set(ts, {});
     byTime.get(ts)[s.target_id] = s;
   });
-  const times = [...byTime.keys()].sort((a, b) => a - b);
+  // (the newest and oldest second or bucket may hold some targets only: left out, see wholeEdges)
+  const inWindow = new Set(samples.map((s) => s.target_id));
+  const pathIds = [...new Set(Object.values(members).flat())].filter((id) => inWindow.has(id));
+  const times = wholeEdges([...byTime.keys()].sort((a, b) => a - b), (ts) => byTime.get(ts), pathIds, round ? 5 : 2);
   resetView();
   view.times = times;
   const lat = (s) => (s && (s.success === undefined || s.success) && has(s.latency_ms) ? s.latency_ms : null);
@@ -55,12 +62,10 @@ function fill(samples, round) {
   });
   if (!view.lo.length) { view.lo = times.map(() => null); view.hi = times.map(() => null); }
   // every pinged target on its own, for the "Each target" lines and the members in the path series' tooltips
-  const present = new Set(samples.map((s) => s.target_id));
   pingTargets().forEach((t) => {
-    if (present.has(t.id)) view.byTarget[t.id] = times.map((ts) => lat(byTime.get(ts)[t.id]));
+    if (inWindow.has(t.id)) view.byTarget[t.id] = times.map((ts) => lat(byTime.get(ts)[t.id]));
   });
   // loss: the worst path target at each point, and which one it was (the lane's tooltip names it)
-  const pathIds = Object.values(members).flat();
   view.loss = [];
   view.lossBy = [];
   times.forEach((ts) => {
@@ -89,7 +94,7 @@ async function attachLoadOverlay(seq, times, startTime, endTime, tolerance) {
     const snaps = (await res.json()).filter((r) => has(r.wan_rx_rate_mbps));
     if (!snaps.length || seq !== requestSeq) return;
     let j = 0;
-    view.wan = times.map((t) => {
+    view.wan = view.times.map((t) => { // (the points the live feed added while this was fetched are in view.times too)
       while (j + 1 < snaps.length && Math.abs(snaps[j + 1].timestamp - t) <= Math.abs(snaps[j].timestamp - t)) j++;
       return Math.abs(snaps[j].timestamp - t) <= tolerance ? Math.round(snaps[j].wan_rx_rate_mbps * 10) / 10 : null;
     });

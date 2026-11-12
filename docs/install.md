@@ -173,7 +173,11 @@ docker compose up -d --build          # or: podman-compose up -d --build
 ```
 
 `scripts/deploy.sh` is the maintainer's deploy: it adds a dependency audit, a rollback image and a database backup
-before rebuilding.
+before rebuilding. The one rollback point it keeps is the previous image tagged `pre-deploy-<stamp>` and a folder
+`~/backups/pengumon/<stamp>/` holding the database and `secrets.json`, with `<stamp>` like `2026-11-11-143005`, to the
+second (it refuses to reuse a stamp, so two deploys in one second stop instead of overwriting the first rollback point).
+To roll back, restore both the database and `secrets.json` from that folder: the newer `secrets.json` holds the
+password as a hash that an older version cannot read.
 
 ## Your first minutes
 
@@ -248,6 +252,8 @@ in your home directory and finds nothing (it says so, and points here). Use `--s
 `sudo /opt/pengumon/venv/bin/pengumon paths --system` shows where the service keeps its data and its `config.yaml`
 (`/var/lib/pengumon`; on macOS `/Library/Application Support/Pengumon`). An upgrade with the install script runs the
 backup for you, as the service's account.
+The previous program stays next to the new one as `venv.old` (in the app folder) until the next install; if the upgrade
+fails before the new program has started once (or you interrupt it), the script puts it back and starts the old service again. On Linux and macOS a data folder inside the program folder is refused, and so is a system install's program folder that is not owned by root or can be written by others.
 
 ## Uninstall
 

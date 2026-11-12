@@ -38,7 +38,7 @@ async def test_v17_adds_the_speed_test_table_to_a_v16_database_and_keeps_what_wa
     con.commit()
     assert not con.execute("SELECT 1 FROM sqlite_master WHERE name = 'speed_tests'").fetchall()
     con.close()
-    assert await migrations.migrate(path) == migrations.LATEST_VERSION == 17
+    assert await migrations.migrate(path) == migrations.LATEST_VERSION >= 19
     con = sqlite3.connect(path)
     columns = [(c[1], c[2], c[5]) for c in con.execute("PRAGMA table_info(speed_tests)")]
     assert columns == [("id", "INTEGER", 1), ("ts", "REAL", 0), ("duration_s", "REAL", 0), ("trigger", "TEXT", 0),
@@ -49,9 +49,9 @@ async def test_v17_adds_the_speed_test_table_to_a_v16_database_and_keeps_what_wa
     assert con.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'speed_tests' AND "
                        "name NOT LIKE 'sqlite_%'").fetchall() == [("idx_speed_tests_ts",)]
     assert con.execute("SELECT value FROM meta WHERE key = 'k'").fetchone() == ("v",)
-    assert con.execute("PRAGMA user_version").fetchone() == (17,)
+    assert con.execute("PRAGMA user_version").fetchone() == (migrations.LATEST_VERSION,)
     con.close()
-    assert await migrations.migrate(path) == 17                      # runs once
+    assert await migrations.migrate(path) == migrations.LATEST_VERSION  # runs once
 
 
 async def test_a_new_database_has_the_table(repo):
@@ -96,15 +96,17 @@ async def test_the_bytes_of_a_range_count_both_directions_and_skips_count_nothin
 
 # --- retention -----------------------------------------------------------------------------------------------------
 
-async def test_retention_removes_tests_older_than_the_rollup_retention_and_keeps_newer_ones(repo):
+async def test_retention_removes_tests_older_than_the_quarter_hour_retention_and_keeps_newer_ones(repo):
+    """Speed tests are kept as long as the quarter-hour rollups (long_rollup_retention_days), not the per-minute ones."""
     now = time.time()
     await repo.insert_speed_test(row(now - 61 * DAY))
     await repo.insert_speed_test(row(now - 59 * DAY))
     await repo.insert_speed_test(row(now - 1 * DAY))
-    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=60)
+    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, long_rollup_retention_days=60)
     assert removed["speed_tests"] == 1
     assert len(await repo.get_speed_tests(0, now + 1)) == 2
-    assert (await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=60))["speed_tests"] == 0
+    assert (await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30,
+                                           long_rollup_retention_days=60))["speed_tests"] == 0
 
 
 async def test_retention_keeps_a_month_and_a_day_of_tests_for_the_monthly_cap(repo):
@@ -113,7 +115,7 @@ async def test_retention_keeps_a_month_and_a_day_of_tests_for_the_monthly_cap(re
     now = time.time()
     await repo.insert_speed_test(row(now - 33 * DAY, bytes_down=1))
     await repo.insert_speed_test(row(now - 31 * DAY, bytes_down=10))
-    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30)
+    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, long_rollup_retention_days=30)
     assert removed["speed_tests"] == 1
     assert await repo.speed_test_bytes(0, now) == 10
 

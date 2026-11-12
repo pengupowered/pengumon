@@ -1,0 +1,15 @@
+/* Mission control's Internet use card: the standard view (panels/traffic/view.js) restyled for a wall display: the totals large
+   (sized with container units, so a wider card shows them larger), the chart taller, each device's download larger over a thicker
+   bar, the captions quiet. A card under 440 px (a phone) keeps the standard sizes. */
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-totals { font-size: clamp(var(--fs-lg), 3.6cqw, 30px); font-weight: var(--fw-bold); letter-spacing: -.01em; }
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-range,
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-busiest,
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-note { color: var(--ink-3); }
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-chart-box { --h: 240px; }
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-down { font-size: var(--fs-lg); }
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-bar { height: 8px; border-radius: 2px; }
+:root[data-look="mission-control"] [data-panel="traffic"] .trf-bar i { border-radius: 2px; }
+@container (max-width: 440px) {
+  :root[data-look="mission-control"] [data-panel="traffic"] .trf-totals { font-size: var(--fs-md); }
+  :root[data-look="mission-control"] [data-panel="traffic"] .trf-chart-box { --h: 190px; }
+}

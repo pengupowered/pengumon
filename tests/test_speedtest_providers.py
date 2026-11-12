@@ -8,6 +8,7 @@ provider read, count or send more than the cap (plus the slack each module docum
 import asyncio
 import json
 import socket
+import zlib
 from urllib.parse import parse_qs
 
 import httpx
@@ -564,6 +565,59 @@ async def test_librespeed_errors_are_failures():
     await provider.aclose()
 
 
+# --- compressed and oversized answers ----------------------------------------------------------------------
+
+class Junk(httpx.AsyncByteStream):
+    """`pieces` pieces of `size` bytes each (gzip of zeros with `gzip=True`); `served` counts what the client took."""
+
+    def __init__(self, pieces, size=64 * 1024, gzip=False):
+        self.pieces, self.size, self.gzip, self.served = pieces, size, gzip, 0
+
+    async def __aiter__(self):
+        z = zlib.compressobj(wbits=zlib.MAX_WBITS | 16)
+        for _ in range(self.pieces):
+            piece = z.compress(bytes(self.size)) if self.gzip else b"x" * self.size
+            self.served += len(piece)
+            yield piece
+            await asyncio.sleep(0)
+
+
+@pytest.mark.parametrize("which", ["cloudflare", "librespeed"])
+async def test_every_request_asks_for_no_compression_and_a_compressed_download_is_refused_not_counted(which):
+    clock, log = Clock(), Log()
+
+    async def handler(request):
+        log.headers.append(dict(request.headers))
+        if request.method == "GET":  # 1 MiB of gzip that would inflate to 1 GiB
+            return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=Junk(1024, 1 << 20, gzip=True))
+        await take(request, clock, log, 10e6)
+        return httpx.Response(200, content=b"")
+
+    provider = cloudflare(handler, clock) if which == "cloudflare" else librespeed(handler, clock)
+    with pytest.raises(ProviderError, match="compressed"):
+        await provider.download(25_000_000, LIMIT)
+    await provider.upload(2_000_000, LIMIT)
+    assert log.headers and all(h["accept-encoding"] == "identity" for h in log.headers)
+    await provider.aclose()
+
+
+@pytest.mark.parametrize("which", ["cloudflare", "librespeed"])
+async def test_an_upload_reads_only_the_start_of_an_answer_that_never_ends(which):
+    clock, log = Clock(), Log()
+    answers = []
+
+    async def handler(request):
+        await take(request, clock, log, 10e6)
+        answers.append(Junk(320))  # 20 MiB
+        return httpx.Response(200, stream=answers[-1])
+
+    provider = cloudflare(handler, clock) if which == "cloudflare" else librespeed(handler, clock)
+    result = await provider.upload(2_000_000, LIMIT)
+    assert result.bytes == 2_000_000
+    assert answers and all(a.served <= 128 * 1024 for a in answers)
+    await provider.aclose()
+
+
 # --- M-Lab (ndt7) ------------------------------------------------------------------------------------------------
 
 MESSAGE = 64 * 1024
@@ -653,6 +707,34 @@ async def test_mlab_download_never_counts_more_than_one_message_past_a_small_cap
         await provider.aclose()
     assert result.bytes <= 300_000 + MESSAGE
     assert server.sent < 300_000 * 10                                 # the server did not get to send ten times the cap
+
+
+async def test_mlab_records_the_whole_last_message_but_measures_the_speed_on_the_cap():
+    """The message that crosses the cap was received: it counts toward the data (the record and the monthly cap),
+    while the speed is that of the bytes up to the cap."""
+    async with NdtServer() as server:
+        provider = mlab(server)
+        result = await provider.download(100_000, LIMIT)
+        assert provider.moved() == result.bytes
+        await provider.aclose()
+    assert result.bytes == 2 * MESSAGE                                # two whole messages, past the cap of 100 000
+    assert provider.meter.total == 100_000 and provider.meter.over == 2 * MESSAGE - 100_000
+
+
+async def test_mlab_keeps_at_most_two_messages_waiting():
+    """websockets' default queue (16 messages of up to 16 MiB) let a server have 256 MiB buffered."""
+    asked = []
+
+    def connect(url, **kwargs):
+        asked.append(kwargs)
+        raise OSError("refused")
+
+    async with NdtServer() as server:
+        provider = MLabProvider(clock=Clock(), transport=server.locate(None), trusted_only=False, connect_fn=connect)
+        with pytest.raises(ProviderError):
+            await provider.download(1_000_000, LIMIT)
+        await provider.aclose()
+    assert asked[0]["max_queue"] == 2 and asked[0]["max_size"] == 1 << 24
 
 
 async def test_mlab_upload_sends_binary_messages_never_beyond_the_cap():
@@ -801,6 +883,22 @@ async def test_mlab_with_no_server_in_the_answer_is_a_failure():
         lambda r: httpx.Response(200, json={"results": []})), trusted_only=False)
     with pytest.raises(ProviderError, match="found no server"):
         await provider.download(1_000_000, LIMIT)
+
+
+@pytest.mark.parametrize("gzip", [False, True])
+async def test_mlab_reads_no_more_than_64_kib_of_the_locate_answer(gzip):
+    junk = Junk(64, 1 << 20, gzip=gzip)  # 64 MiB, or 64 KB of gzip that would inflate to it
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, headers={"content-encoding": "gzip"} if gzip else {}, stream=junk)
+
+    provider = MLabProvider(clock=Clock(), transport=httpx.MockTransport(handler), trusted_only=False)
+    with pytest.raises(ProviderError, match="more than 64 KiB"):
+        await provider.download(1_000_000, LIMIT)
+    assert junk.served <= 2 << 20 and seen[0].headers["accept-encoding"] == "identity"
+    await provider.aclose()
 
 
 async def test_mlab_refused_connection_is_a_failure():

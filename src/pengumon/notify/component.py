@@ -5,7 +5,8 @@ to the channels or the rules reaches it through `Notifier.reconfigure`, with no 
 from typing import Optional
 
 from pengumon.components import Component, Context
-from pengumon.notify.notifier import Notifier, build_channels
+from pengumon.notify.channels import build_channels
+from pengumon.notify.notifier import Notifier
 from pengumon.notify.policy import AlertPolicy
 from pengumon.observability import get_logger
 

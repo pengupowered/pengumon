@@ -14,16 +14,26 @@ Threats this addresses:
   <PREFIX>_SESSION_MAX_AGE_DAYS (default 30) and whenever the token changes. With a `SessionStore` from the app,
   POST /logout refuses that cookie from then on, and POST /logout?everywhere=1 every cookie issued until then.
   Without one, POST /logout only clears the cookie of the browser that sends it.
+* **Guessing the token** - every failed credential (Bearer, /login, a signed link's key) is counted per client
+  address (an IPv6 address by its /64) and for all addresses together (`AuthThrottle`); past either limit the
+  credential is not even compared. A valid session cookie and the read token are never throttled, an address that
+  has signed in recently is exempt from the all-addresses ceiling, so guesses from elsewhere cannot lock the owner
+  out, and a POST to /login must be same-origin, so another site's page cannot submit guesses to drive the count.
 * **Oversized bodies** and **abuse of expensive endpoints** (`rate_limit`).
 
 Optionally (`<PREFIX>_VIEW_WITHOUT_TOKEN`, off by default, and only for an app whose profile declares a
 `ViewerPolicy`), someone without the token may read what the policy allows (GET/HEAD of its paths, receive-only
 websockets) while every state-changing request, and every path the policy keeps private, still needs the token.
 
+Also optional, each off unless the app sets it: the token kept as an scrypt hash (`access_hash`), a random
+`session_secret` that signs the cookies (so a cookie is no offline check of the token), and a read token
+(`read_token_hash`) that reads what the viewer policy allows plus its `reader_post` paths.
+
 Everything that differs between apps lives in an `AppProfile`; an app declares one and subclasses
 `SecurityConfig` to attach it. No third-party dependencies beyond FastAPI/Starlette.
 """
 
+import asyncio
 import hashlib
 import hmac
 import html
@@ -34,8 +44,11 @@ import math
 import os
 import re
 import tempfile
+import threading
 import time
-from collections import defaultdict, deque
+import weakref
+from collections import OrderedDict, defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Deque, Dict, List, Mapping, Optional, Protocol, Tuple, Union
@@ -50,14 +63,32 @@ except ImportError:  # Windows: no cross-process lock (see FileSessionStore)
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()"
+HSTS = "max-age=31536000"  # with cookie_secure only; no includeSubDomains (other hosts of the domain), no preload
 
-# Session cookie: "2.<issued, ms since the epoch>.<hex HMAC-SHA256 of "2|<issued>">". The key is derived from the
-# access token under a label of its own, never from a value that has been handed out (the old cookie was
-# HMAC(token, session_purpose) itself, so it must not be the key now).
+# Session cookie: "<format>.<issued, ms since the epoch>.<hex HMAC-SHA256 of "<format>|<issued>">".
+# Format 2 (no session_secret): the key is derived from the access token under a label of its own, never from a value
+# that has been handed out (the old cookie was HMAC(token, session_purpose) itself, so it must not be the key now).
+# Format 3 (the app gave a session_secret): the key is derived from that secret, the session purpose, the app's token
+# generation and an id of the credential (so a new token still signs every browser out), never from the token alone:
+# a cookie is then no offline check of the token. Each config accepts only its own format.
 SESSION_FORMAT = "2"
-_SESSION_RE = re.compile(r"2\.(0|[1-9][0-9]{0,15})\.([0-9a-f]{64})")
+SESSION_FORMAT_SECRET = "3"
+_SESSION_RE = re.compile(r"([23])\.(0|[1-9][0-9]{0,15})\.([0-9a-f]{64})")
 SESSION_KEY_LABEL = "homeguard-session-key-v2|"
+SESSION_KEY_LABEL_SECRET = "homeguard-session-key-v3|"
+CAPABILITY_LABEL_SECRET = "homeguard-capability-v3|"
+TOKEN_ID_LABEL = "homeguard-token-id|"
+MIN_SESSION_SECRET_LENGTH = 16
 RESERVED_PURPOSE_PREFIX = "homeguard-"
+
+# The token kept as a hash (SecurityConfig.access_hash): {"salt": hex, "n": int, "r": int, "p": int, "hash": hex},
+# scrypt from the standard library. N=2**15, r=8 is 32 MiB and some tens of milliseconds per check; a check runs in a
+# small thread pool of its own, never on the event loop, and a success is remembered (see _HashedTokenCheck).
+SCRYPT_N, SCRYPT_R, SCRYPT_P = 2 ** 15, 8, 1
+SCRYPT_SALT_BYTES, SCRYPT_HASH_BYTES = 16, 32
+_SCRYPT_MAX_N, _SCRYPT_MAX_R, _SCRYPT_MAX_P = 2 ** 20, 32, 16
+MAX_PRESENTED_TOKEN = 4096  # characters: a longer "token" is a failure without being hashed
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 DEFAULT_SESSION_MAX_AGE_DAYS = 30.0
 MAX_SESSION_MAX_AGE_DAYS = 400.0  # browsers keep a cookie at most 400 days whatever Max-Age says
 MIN_SESSION_MAX_AGE_DAYS = 1 / 24  # one hour: shorter would make Max-Age round to nothing and loop the sign-in
@@ -74,6 +105,81 @@ def session_id(value: str) -> str:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+# --- the token as a hash, and the read token ---------------------------------------------------------------------
+
+def _scrypt_maxmem(n: int, r: int, p: int) -> int:
+    return 128 * r * (n + p + 2) + 65536  # what OpenSSL needs for these parameters, plus room
+
+
+def check_token_hash(record: Any) -> Dict[str, Any]:
+    """The record, checked: {"salt": hex, "n": power of two, "r": int, "p": int, "hash": hex}. ValueError otherwise
+    (also for parameters so large that one check would take a long time or much memory)."""
+    if not isinstance(record, Mapping) or set(record) != {"salt", "n", "r", "p", "hash"}:
+        raise ValueError("a token hash is an object with exactly salt, n, r, p and hash")
+    salt, n, r, p, digest = (record[k] for k in ("salt", "n", "r", "p", "hash"))
+    for name, value in (("salt", salt), ("hash", digest)):
+        if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-f]{2}){16,64}", value):
+            raise ValueError(f"a token hash's {name} is 16 to 64 bytes of lowercase hex")
+    for name, value, top in (("n", n, _SCRYPT_MAX_N), ("r", r, _SCRYPT_MAX_R), ("p", p, _SCRYPT_MAX_P)):
+        if type(value) is not int or not 1 <= value <= top:
+            raise ValueError(f"a token hash's {name} is an integer from 1 to {top}")
+    if n < 2 or n & (n - 1):
+        raise ValueError("a token hash's n is a power of two")
+    return {"salt": salt, "n": n, "r": r, "p": p, "hash": digest}
+
+
+def hash_token(token: str, *, n: int = SCRYPT_N, r: int = SCRYPT_R, p: int = SCRYPT_P) -> Dict[str, Any]:
+    """A record for SecurityConfig.access_hash: scrypt of the token with a new random salt. Slow on purpose (run it
+    in a thread from async code)."""
+    if not isinstance(token, str) or not token:
+        raise ValueError("there is no token to hash")
+    salt = os.urandom(SCRYPT_SALT_BYTES)
+    digest = hashlib.scrypt(_bytes(token), salt=salt, n=n, r=r, p=p, maxmem=_scrypt_maxmem(n, r, p),
+                            dklen=SCRYPT_HASH_BYTES)
+    return check_token_hash({"salt": salt.hex(), "n": n, "r": r, "p": p, "hash": digest.hex()})
+
+
+def verify_token_hash(record: Mapping[str, Any], token: str) -> bool:
+    """True when `token` is the one `record` was made from (constant-time comparison). Slow on purpose: never call
+    it on an event loop. ValueError for a record that is not one (check_token_hash)."""
+    rec = check_token_hash(record)
+    if not isinstance(token, str) or not token or len(token) > MAX_PRESENTED_TOKEN:
+        return False
+    expected = bytes.fromhex(rec["hash"])
+    got = hashlib.scrypt(_bytes(token), salt=bytes.fromhex(rec["salt"]), n=rec["n"], r=rec["r"], p=rec["p"],
+                         maxmem=_scrypt_maxmem(rec["n"], rec["r"], rec["p"]), dklen=len(expected))
+    return hmac.compare_digest(got, expected)
+
+
+def _record_id(record: Mapping[str, Any]) -> str:
+    """A short name for one token hash record (it changes with every new hash: a new salt)."""
+    canonical = json.dumps({k: record.get(k) for k in ("salt", "n", "r", "p", "hash")}, sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def read_token_digest(token: str) -> str:
+    """What SecurityConfig.read_token_hash holds for a read token: its SHA-256, hex. A fast hash is enough: a read
+    token is random (an app makes it with `secrets`), so it cannot be guessed from the digest, and the digest itself
+    is no credential."""
+    return hashlib.sha256(_bytes(token)).hexdigest()
+
+
+def client_key(host: Optional[str]) -> str:
+    """The key failed credentials are counted under: an IPv4 address as it is, an IPv6 address by its /64 (one
+    household or one attacker gets a whole /64, and changes addresses inside it freely), an IPv4-mapped IPv6 address
+    as the IPv4 address. Anything else (a test client's name) as it is, shortened."""
+    text = (host or "?").strip()
+    try:
+        ip = ipaddress.ip_address(text.split("%", 1)[0])
+    except ValueError:
+        return text[:64] or "?"
+    if ip.version == 6:
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
 
 
 @dataclass(frozen=True)
@@ -118,15 +224,20 @@ class ViewerPolicy:
     `allow` and is matched without regard to case; patterns are those of `_pattern` (`*` one segment, `**` anything).
     A websocket without the token is accepted only on a path in `websockets` (exact paths), and is receive-only: what
     the client sends never reaches the app (it gets only connect and disconnect). Everything else still needs the
-    token: a state-changing method can never be allowed."""
+    token: a state-changing method can never be allowed.
+
+    The same policy says what the read token (SecurityConfig.read_token_hash) may do, whether or not viewing without
+    the token is on: everything a viewer may, plus POST to the exact paths in `reader_post` (a read-only API that is a
+    POST, like an MCP endpoint). Empty by default."""
 
     allow: Tuple[str, ...]
     deny: Tuple[str, ...] = ()
     websockets: Tuple[str, ...] = ()
     methods: Tuple[str, ...] = ("GET", "HEAD")
+    reader_post: Tuple[str, ...] = ()
 
     def __post_init__(self):
-        for name in ("allow", "deny", "websockets", "methods"):
+        for name in ("allow", "deny", "websockets", "methods", "reader_post"):
             if isinstance(getattr(self, name), str):  # ("/x") instead of ("/x",): one pattern per character
                 raise ValueError(f"ViewerPolicy.{name} must be a tuple of strings, not a string")
         unsafe = [m for m in self.methods if m not in SAFE_METHODS]
@@ -135,6 +246,9 @@ class ViewerPolicy:
         for path in self.websockets:
             if not isinstance(path, str) or not path.startswith("/") or "*" in path:
                 raise ValueError(f"a viewer websocket is an exact path starting with '/': {path!r}")
+        for path in self.reader_post:
+            if not isinstance(path, str) or not path.startswith("/") or "*" in path or "\\" in path:
+                raise ValueError(f"a reader POST path is an exact path starting with '/': {path!r}")
         object.__setattr__(self, "_allow", tuple(_pattern(p) for p in self.allow))
         object.__setattr__(self, "_deny", tuple(_pattern(p, re.IGNORECASE) for p in self.deny))
 
@@ -152,6 +266,13 @@ class ViewerPolicy:
 
     def permits_websocket(self, path: str) -> bool:
         return path in self.websockets and not self.denies(path)
+
+    def permits_reader(self, method: str, path: str) -> bool:
+        """True when a request carrying the read token may make this request: what a viewer may, or a POST to one of
+        the exact `reader_post` paths."""
+        if self.permits(method, path):
+            return True
+        return method == "POST" and path in self.reader_post and not self.denies(path)
 
 
 @dataclass(frozen=True)
@@ -425,6 +546,17 @@ class SecurityConfig:
     session_max_age_days: float = DEFAULT_SESSION_MAX_AGE_DAYS
     session_store: Optional[SessionStore] = None  # enables POST /logout?everywhere=1
     view_without_token: bool = False  # with a token: viewers may read what the profile's viewer_policy allows
+    # The token as an scrypt hash (hash_token) instead of access_token; needs session_secret. When both are set, the
+    # plain access_token is the one checked.
+    access_hash: Optional[Mapping[str, Any]] = None
+    # A random secret of the app's (at least 16 characters, kept with its other secrets): when set, session cookies
+    # (format 3) and signed links are keyed with it instead of with the token. Empty: as before (format 2).
+    session_secret: str = ""
+    # Mixed into the cookie key with a session_secret: change it to sign every browser out. A new token (or hash) signs
+    # them out anyway: an id of the credential is part of the key too.
+    token_generation: str = ""
+    # read_token_digest(<the read token>): a Bearer with that token reads what the viewer policy allows (auth "reader").
+    read_token_hash: str = ""
 
     def __post_init__(self):
         _check_session_days(self.session_max_age_days)
@@ -432,12 +564,30 @@ class SecurityConfig:
         if self.view_without_token and (profile is None or profile.viewer_policy is None):
             raise ValueError("view_without_token is on, but this app declares no viewer policy "
                              "(AppProfile.viewer_policy): it cannot offer viewing without the token")
+        if self.access_hash is not None:
+            self.access_hash = check_token_hash(self.access_hash)
+            if not self.session_secret:
+                raise ValueError("access_hash needs a session_secret: without the token itself nothing else could key "
+                                 "the session cookies")
+        if self.session_secret and len(self.session_secret) < MIN_SESSION_SECRET_LENGTH:
+            raise ValueError(f"session_secret must have at least {MIN_SESSION_SECRET_LENGTH} characters")
+        if self.read_token_hash:
+            if not _HEX64.fullmatch(self.read_token_hash):
+                raise ValueError("read_token_hash is read_token_digest(<token>): 64 lowercase hex characters")
+            if profile is None or profile.viewer_policy is None:
+                raise ValueError("a read token is set, but this app declares no viewer policy (AppProfile.viewer_policy) "
+                                 "to say what it may read")
+
+    @property
+    def token_set(self) -> bool:
+        """True when signing in is required: a token is set, as text or as a hash."""
+        return bool(self.access_token) or bool(self.access_hash)
 
     @property
     def viewers_allowed(self) -> bool:
         """True when someone without the token may read what the viewer policy allows (a token is set, and so is
         view_without_token). Without a token everyone may do everything anyway."""
-        return bool(self.access_token) and self.view_without_token
+        return self.token_set and self.view_without_token
 
     @classmethod
     def from_env(cls, session_store: Optional[SessionStore] = None):
@@ -457,7 +607,25 @@ class SecurityConfig:
     def _derive(self, purpose: str) -> str:
         return hmac.new(_bytes(self.access_token), purpose.encode(), hashlib.sha256).hexdigest()
 
+    def _credential_id(self) -> str:
+        """Names the token in force without being a check of it (it needs the session secret): part of the keys
+        derived from the session secret, so a new token signs everyone out and voids the signed links."""
+        if self.access_token:
+            return "t:" + hmac.new(_bytes(self.session_secret), _bytes(TOKEN_ID_LABEL + self.access_token),
+                                   hashlib.sha256).hexdigest()
+        return "h:" + _record_id(self.access_hash or {})
+
+    def _secret_key(self, label: str, purpose: str) -> bytes:
+        material = "|".join((label + purpose, self.token_generation, self._credential_id()))
+        return hmac.new(_bytes(self.session_secret), _bytes(material), hashlib.sha256).digest()
+
     def capability_key(self, purpose: str) -> str:
+        """The key of a signed link for `purpose`: derived from the session secret when there is one (and a token),
+        else from the token as before. ValueError for a hashed token without a session secret."""
+        if self.session_secret and self.token_set:
+            return self._secret_key(CAPABILITY_LABEL_SECRET, purpose).hex()[:32]
+        if not self.access_token and self.access_hash:
+            raise ValueError("access_hash needs a session_secret")
         return self._derive(purpose)[:32]
 
     # -- session cookie ----------------------------------------------------------------------------
@@ -465,25 +633,44 @@ class SecurityConfig:
     def session_max_age_seconds(self) -> int:
         return int(self.session_max_age_days * 86400)
 
-    def _session_signature(self, issued_ms: int) -> str:
-        key = hmac.new(_bytes(self.access_token), (SESSION_KEY_LABEL + self.PROFILE.session_purpose).encode(),
-                       hashlib.sha256).digest()
-        return hmac.new(key, f"{SESSION_FORMAT}|{issued_ms}".encode(), hashlib.sha256).hexdigest()
+    @property
+    def _session_format(self) -> str:
+        return SESSION_FORMAT_SECRET if self.session_secret else SESSION_FORMAT
+
+    def _session_signature(self, issued_ms: int) -> Optional[str]:
+        """The signature of a cookie issued at `issued_ms`, or None when nothing can key it (a hashed token without a
+        session secret)."""
+        fmt = self._session_format
+        if self.session_secret:
+            if not self.token_set:
+                return None
+            key = self._secret_key(SESSION_KEY_LABEL_SECRET, self.PROFILE.session_purpose)
+        elif self.access_hash and not self.access_token:
+            return None
+        else:
+            key = hmac.new(_bytes(self.access_token), (SESSION_KEY_LABEL + self.PROFILE.session_purpose).encode(),
+                           hashlib.sha256).digest()
+        return hmac.new(key, f"{fmt}|{issued_ms}".encode(), hashlib.sha256).hexdigest()
 
     def issue_session(self, now_ms: Optional[int] = None) -> str:
-        """A new session cookie value, issued now (or at `now_ms`)."""
+        """A new session cookie value, issued now (or at `now_ms`). ValueError when nothing can key it."""
         issued = _now_ms() if now_ms is None else int(now_ms)
-        return f"{SESSION_FORMAT}.{issued}.{self._session_signature(issued)}"
+        signature = self._session_signature(issued)
+        if signature is None:
+            raise ValueError("no session cookie can be issued: a hashed token needs a session_secret")
+        return f"{self._session_format}.{issued}.{signature}"
 
     def _signed_issue_time(self, value: str) -> Optional[int]:
-        """The issue time of a cookie this server signed with the current token, else None. Nothing else checked."""
-        if not self.access_token or not isinstance(value, str):
+        """The issue time of a cookie this server signed with the current token (and session secret, in its format),
+        else None. Nothing else checked."""
+        if not self.token_set or not isinstance(value, str):
             return None
         match = _SESSION_RE.fullmatch(value)
-        if not match:
+        if not match or match.group(1) != self._session_format:
             return None
-        issued = int(match.group(1))
-        if not _same(match.group(2), self._session_signature(issued)):
+        issued = int(match.group(2))
+        expected = self._session_signature(issued)
+        if expected is None or not _same(match.group(3), expected):
             return None
         return issued
 
@@ -525,7 +712,7 @@ class SecurityConfig:
 
     def describe(self) -> Dict[str, object]:
         return {
-            "auth_required": bool(self.access_token),
+            "auth_required": self.token_set,
             "origin_check": True,
             "host_check": True,
             "extra_allowed_hosts": self.allowed_hosts,
@@ -533,6 +720,7 @@ class SecurityConfig:
             "session_max_age_days": self.session_max_age_days,
             "sign_out_everywhere": self.session_store is not None,
             "view_without_token": self.viewers_allowed,
+            "read_token": self.token_set and bool(self.read_token_hash),
         }
 
 
@@ -584,22 +772,195 @@ class _BodyTooLarge(Exception):
     pass
 
 
-class LoginThrottle:
-    """5 attempts per minute per client address."""
+MAX_THROTTLE_KEYS = 4096  # client keys a throttle or rate limit remembers at most
 
-    def __init__(self, limit: int = 5, window: float = 60.0):
-        self.limit, self.window = limit, window
-        self.hits: Dict[str, Deque[float]] = defaultdict(deque)
+
+def _prune(q: Deque[float], now: float, window: float) -> None:
+    while q and now - q[0] > window:
+        q.popleft()
+
+
+def _make_room(table: Dict[Any, Deque[float]], window_of, now: float, cap: int) -> None:
+    """Before a new key goes into `table`: drop every key whose entries have all expired; if that is not enough, the
+    oldest keys (insertion order) until there is room. `window_of(key)` is that key's window."""
+    if len(table) < cap:
+        return
+    for key in list(table):
+        _prune(table[key], now, window_of(key))
+        if not table[key]:
+            del table[key]
+    while len(table) >= cap:
+        del table[next(iter(table))]
+
+
+class LoginThrottle:
+    """`limit` attempts per `window` seconds per key (5 a minute). Remembers at most `max_keys` keys: keys whose
+    attempts have all expired are dropped first, then the oldest. (The middleware itself now uses AuthThrottle.)"""
+
+    def __init__(self, limit: int = 5, window: float = 60.0, max_keys: int = MAX_THROTTLE_KEYS):
+        self.limit, self.window, self.max_keys = limit, window, max_keys
+        self.hits: Dict[str, Deque[float]] = {}
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
-        q = self.hits[key]
-        while q and now - q[0] > self.window:
-            q.popleft()
+        q = self.hits.get(key)
+        if q is None:
+            _make_room(self.hits, lambda _k: self.window, now, self.max_keys)
+            q = self.hits[key] = deque()
+        _prune(q, now, self.window)
         if len(q) >= self.limit:
             return False
         q.append(now)
         return True
+
+
+class AuthThrottle:
+    """Failed credentials (a wrong Bearer token, a wrong token on /login, a wrong signed-link key), counted per client
+    key (`client_key`: an IPv6 address by its /64) and for all clients together.
+
+    * Per client: after `limit` failures within `window` seconds, that client's credentials are not compared at all
+      until the oldest failure is `window` old (429). Someone at another address is not affected.
+    * All clients together: after `global_limit` failures within `window` (an attacker who changes addresses), a
+      client that has not signed in recently is refused the same way. A client that has (a correct token, the read
+      token or a valid session cookie within `known_seconds`) is exempt from this ceiling, though not from its own
+      limit: so guesses from many addresses cannot lock the owner's devices out. A new device of the owner's has to
+      wait while such an attack goes on (or use a signed-in browser); that is the price of the ceiling.
+    * Session cookies are never counted or refused here: one cannot be guessed (an HMAC-SHA256), and every browser
+      holds an invalid one after a new token, its maximum age or a sign-out everywhere. Nor is a correct read token
+      (random, so as unguessable): the middleware compares it before it asks `refused`.
+
+    Memory is bounded: at most `max_keys` client keys with failures and `max_known` known clients."""
+
+    def __init__(self, limit: int = 5, window: float = 60.0, global_limit: int = 20, known_seconds: float = 86400.0,
+                 max_keys: int = MAX_THROTTLE_KEYS, max_known: int = 1024, clock=time.monotonic):
+        self.limit, self.window, self.global_limit = limit, window, global_limit
+        self.known_seconds, self.max_keys, self.max_known = known_seconds, max_keys, max_known
+        self.clock = clock
+        self.failures: Dict[str, Deque[float]] = {}
+        self.all_failures: Deque[float] = deque()
+        self.known: "OrderedDict[str, float]" = OrderedDict()  # client key -> last success (clock)
+
+    def clear(self) -> None:
+        self.failures.clear()
+        self.all_failures.clear()
+        self.known.clear()
+
+    def _is_known(self, key: str, now: float) -> bool:
+        seen = self.known.get(key)
+        if seen is None:
+            return False
+        if now - seen > self.known_seconds:
+            del self.known[key]
+            return False
+        return True
+
+    def refused(self, key: str) -> Optional[str]:
+        """None when a credential from this client may be compared now; "client" when this client has failed too
+        often, "server" when all clients together have and this one has not signed in recently."""
+        now = self.clock()
+        q = self.failures.get(key)
+        if q is not None:
+            _prune(q, now, self.window)
+            if not q:
+                del self.failures[key]
+            elif len(q) >= self.limit:
+                return "client"
+        _prune(self.all_failures, now, self.window)
+        if len(self.all_failures) >= self.global_limit and not self._is_known(key, now):
+            return "server"
+        return None
+
+    def retry_after(self, key: str) -> int:
+        """Seconds until this client's credentials are compared again (at least 1)."""
+        now = self.clock()
+        q = self.failures.get(key)
+        oldest = q[0] if q and len(q) >= self.limit else (self.all_failures[0] if self.all_failures else now)
+        return max(1, math.ceil(self.window - (now - oldest)))
+
+    def fail(self, key: str) -> float:
+        """Records a failure; returns its time (for `forgive`)."""
+        now = self.clock()
+        q = self.failures.get(key)
+        if q is None:
+            _make_room(self.failures, lambda _k: self.window, now, self.max_keys)
+            q = self.failures[key] = deque()
+        q.append(now)
+        self.all_failures.append(now)
+        return now
+
+    def forgive(self, key: str, stamp: float) -> None:
+        """Takes back a failure recorded with `fail` before a slow check that then succeeded."""
+        for q in (self.failures.get(key), self.all_failures):
+            if q is not None:
+                try:
+                    q.remove(stamp)
+                except ValueError:  # already expired
+                    pass
+        if key in self.failures and not self.failures[key]:
+            del self.failures[key]
+
+    def succeed(self, key: str) -> None:
+        """This client proved it has a credential: exempt from the all-clients ceiling for `known_seconds`."""
+        now = self.clock()
+        if key in self.known:
+            self.known.move_to_end(key)
+        elif len(self.known) >= self.max_known:
+            self.known.popitem(last=False)
+        self.known[key] = now
+
+
+_SCRYPT_POOL: Optional[ThreadPoolExecutor] = None
+_SCRYPT_POOL_LOCK = threading.Lock()
+
+
+def _scrypt_pool() -> ThreadPoolExecutor:
+    """Two threads of their own for token hash checks: never the event loop, and never every thread of the default
+    pool (each check holds 32 MiB for some tens of milliseconds)."""
+    global _SCRYPT_POOL
+    with _SCRYPT_POOL_LOCK:
+        if _SCRYPT_POOL is None:
+            _SCRYPT_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="homeguard-scrypt")
+        return _SCRYPT_POOL
+
+
+class _HashedTokenCheck:
+    """Checks a presented token against SecurityConfig.access_hash. A success is remembered, so the slow hash runs
+    once per correct token and process, not on every request: the cache holds HMAC(<random key of this process>,
+    <record id> + token) of successes only (at most `max_entries`), so neither it nor a memory dump of it is a fast
+    check of guesses without the key, and a new hash (a new token) never matches an old entry. Failures are not
+    cached: the AuthThrottle in front of this bounds how many slow checks a guesser can cause."""
+
+    def __init__(self, max_entries: int = 64):
+        self._key = os.urandom(32)
+        self._ok: "OrderedDict[bytes, None]" = OrderedDict()
+        self._record: Optional[str] = None
+        self.max_entries = max_entries
+
+    def _digest(self, record_id: str, presented: str) -> bytes:
+        return hmac.new(self._key, _bytes(record_id + "\x00" + presented), hashlib.sha256).digest()
+
+    def cached(self, record: Mapping[str, Any], presented: str) -> bool:
+        record_id = _record_id(record)
+        if record_id != self._record:  # a new token: nothing remembered applies any more
+            self._ok.clear()
+            self._record = record_id
+            return False
+        digest = self._digest(record_id, presented)
+        if digest in self._ok:
+            self._ok.move_to_end(digest)
+            return True
+        return False
+
+    async def verify(self, record: Mapping[str, Any], presented: str) -> bool:
+        """The slow check, in the scrypt pool. ValueError for a record that is not one."""
+        record_id = _record_id(record)
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(_scrypt_pool(), verify_token_hash, dict(record), presented)
+        if ok and record_id == self._record:
+            self._ok[self._digest(record_id, presented)] = None
+            while len(self._ok) > self.max_entries:
+                self._ok.popitem(last=False)
+        return ok
 
 
 @dataclass
@@ -608,6 +969,15 @@ class Rejection:
     detail: str
     redirect: Optional[str] = None
     challenge: bool = False
+    retry_after: Optional[int] = None
+
+
+THROTTLED_DETAIL = {
+    "client": "Too many failed sign-in attempts from this address. Wait a minute and try again.",
+    "server": "Too many failed sign-in attempts on this server. Wait a minute and try again, or use a browser "
+              "that is still signed in.",
+}
+READER_REFUSED = "The read token can only read. This needs the password."
 
 
 class _Request:
@@ -619,7 +989,8 @@ class _Request:
         self.method: str = scope["method"]
         self.path: str = scope["path"]
         self.host: str = headers.get("host", "")
-        # set by _guard_auth: "bearer", "cookie", "link", "open" (no token) or "viewer" (no token sent, viewing allowed)
+        # set by _guard_auth: "bearer", "cookie", "link", "open" (no token), "reader" (the read token) or "viewer" (no
+        # token sent, viewing allowed)
         self.auth: Optional[str] = None
 
 
@@ -642,11 +1013,24 @@ FULL_ACCESS = ("open", "bearer", "cookie")  # the ways of reaching an app that m
 
 def can_edit(request_or_scope: Any) -> bool:
     """True when this request may change state: it carries the token (Bearer or the session cookie), or the app has no
-    token. False for a viewer (`<PREFIX>_VIEW_WITHOUT_TOKEN`), a signed link, a public path, or a request the
-    middleware did not see. For an app's info endpoint, so the page can offer or disable its edit controls; the
-    middleware enforces it whatever the page shows."""
+    token. False for a viewer (`<PREFIX>_VIEW_WITHOUT_TOKEN`), the read token, a signed link, a public path, or a
+    request the middleware did not see. For an app's info endpoint, so the page can offer or disable its edit controls;
+    the middleware enforces it whatever the page shows."""
     scope = getattr(request_or_scope, "scope", request_or_scope)
     return (scope.get("homeguard") or {}).get("auth") in FULL_ACCESS
+
+
+async def confirm_token(request_or_scope: Any, presented: Any) -> bool:
+    """For an app route that asks for the token again before a sensitive change (a new token, say): True when
+    `presented` is the token in force (plain or hashed; never the read token). A wrong one counts as a failed attempt
+    of this client in the middleware's throttle; while the client is throttled the token is not compared and this
+    raises HTTPException(429) with Retry-After. True when the app has no token (everyone may change everything).
+    RuntimeError for a request the middleware did not see."""
+    scope = getattr(request_or_scope, "scope", request_or_scope)
+    check = (scope.get("homeguard") or {}).get("confirm")
+    if check is None:
+        raise RuntimeError("this request did not pass through SecurityMiddleware")
+    return await check(scope, presented)
 
 
 class SecurityMiddleware:
@@ -655,7 +1039,9 @@ class SecurityMiddleware:
         self.cfg = cfg
         self.profile: AppProfile = cfg.PROFILE
         self.logger = logging.getLogger(f"{self.profile.slug}.security")
-        self.throttle = LoginThrottle()
+        self.throttle = AuthThrottle()
+        _THROTTLES.add(self.throttle)
+        self._hashed = _HashedTokenCheck()
         for purpose in self.profile.capabilities.values():
             # a link key is a published HMAC of its purpose: it must never equal a session purpose or key label
             if purpose == self.profile.session_purpose or purpose.startswith(RESERVED_PURPOSE_PREFIX):
@@ -664,7 +1050,7 @@ class SecurityMiddleware:
             raise ValueError("view_without_token is on, but the profile declares no viewer_policy")
         # a signed link's path is private by intent: never a viewer's, whatever the policy allows
         self._link_paths = {(_normal_path(p) or p).lower() for p in self.profile.capabilities}
-        if not self.cfg.access_token:
+        if not self.cfg.token_set:
             self.logger.warning(self.profile.no_token_warning)
         elif self.cfg.viewers_allowed:
             self.logger.warning("Viewing without the token is on: anyone who can reach this port can read what the "
@@ -694,31 +1080,128 @@ class SecurityMiddleware:
                 return v
         return ""
 
-    def _auth_method(self, scope, headers: Dict[str, str], path: str) -> Optional[str]:
-        """How this request is signed in ("open" when no token is configured), or None."""
-        if not self.cfg.access_token:
-            return "open"
+    @staticmethod
+    def _client(scope) -> str:
+        return client_key((scope.get("client") or ("?", 0))[0])
+
+    async def _token_matches(self, key: str, presented: str) -> bool:
+        """Whether `presented` is the token in force, recording a failure (or success) for this client. The caller has
+        just checked `self.throttle.refused(key)`, with no await in between: so concurrent guesses cannot all pass
+        that check before the first failure is recorded (the slow path records it before it waits, and takes it back
+        on success)."""
+        cfg = self.cfg
+        if cfg.access_token:
+            if isinstance(presented, str) and _same(presented, cfg.access_token):
+                self.throttle.succeed(key)
+                return True
+            self.throttle.fail(key)
+            return False
+        record = cfg.access_hash
+        if not record:
+            return False
+        if not isinstance(presented, str) or not presented or len(presented) > MAX_PRESENTED_TOKEN:
+            self.throttle.fail(key)
+            return False
+        if self._hashed.cached(record, presented):
+            self.throttle.succeed(key)
+            return True
+        stamp = self.throttle.fail(key)
+        try:
+            ok = await self._hashed.verify(record, presented)
+        except ValueError as exc:
+            self.logger.error(f"The access token hash cannot be used ({exc}); refusing the token")
+            return False
+        current = cfg.access_hash
+        if ok and (cfg.access_token or not current or _record_id(current) != _record_id(record)):
+            ok = False  # the token changed while this one was being checked
+        if ok:
+            self.throttle.forgive(key, stamp)
+            self.throttle.succeed(key)
+        return ok
+
+    def _read_token_matches(self, presented: str) -> bool:
+        digest = self.cfg.read_token_hash
+        return bool(digest) and _same(read_token_digest(presented), digest)
+
+    async def _authenticate(self, scope, headers: Dict[str, str], path: str) -> Tuple[Optional[str], Optional[str]]:
+        """(how this request is signed in, or None; why its credential was not compared, or None). The first is "open"
+        when no token is configured, else "bearer", "reader", "cookie" or "link". The second is "client" or "server"
+        (AuthThrottle.refused) when it carries a Bearer token or a link key that was not compared because of failed
+        attempts; a valid session cookie or read token is never refused."""
+        cfg = self.cfg
+        if not cfg.token_set:
+            return "open", None
+        key = self._client(scope)
+        cookie_ok = None  # checked once, when needed
+
+        def by_cookie() -> bool:
+            nonlocal cookie_ok
+            if cookie_ok is None:
+                cookie_ok = cfg.session_valid(self._cookie(headers))
+                if cookie_ok:
+                    self.throttle.succeed(key)
+            return cookie_ok
+
         bearer = headers.get("authorization", "")
-        if bearer.lower().startswith("bearer ") and _same(bearer[7:].strip(), self.cfg.access_token):
-            return "bearer"
-        if self.cfg.session_valid(self._cookie(headers)):
-            return "cookie"
+        if bearer.lower().startswith("bearer "):
+            presented = bearer[7:].strip()
+            # The read token is compared before the throttle is asked, as a cookie is never refused: it is random (as
+            # unguessable as a cookie), so failed attempts elsewhere must not lock out the clients that use it.
+            if self._read_token_matches(presented):
+                self.throttle.succeed(key)
+                return "reader", None
+            refused = self.throttle.refused(key)
+            if refused:
+                return ("cookie", None) if by_cookie() else (None, refused)
+            if await self._token_matches(key, presented):  # a wrong one is counted there
+                return "bearer", None
+            self.logger.warning(f"Wrong Bearer token from {key}")
+        if by_cookie():
+            return "cookie", None
         purpose = self.profile.capabilities.get(path)
         if purpose:  # capability URL: the client cannot send headers
             query = scope.get("query_string", b"").decode("utf-8", "replace")
-            key = parse_qs(query).get("key", [""])[0]
-            if key and _same(key, self.cfg.capability_key(purpose)):
-                return "link"
-        return None
+            link_key = parse_qs(query).get("key", [""])[0]
+            if link_key:
+                refused = self.throttle.refused(key)
+                if refused:
+                    return None, refused
+                try:
+                    expected = cfg.capability_key(purpose)
+                except ValueError:
+                    return None, None
+                if _same(link_key, expected):
+                    return "link", None
+                self.throttle.fail(key)
+        return None, None
 
-    def _authorized(self, scope, headers: Dict[str, str], path: str) -> bool:
-        return self._auth_method(scope, headers, path) is not None
+    async def _confirm(self, scope, presented: Any) -> bool:
+        """confirm_token: the token in force only (never the read token), throttled like a Bearer token."""
+        if not self.cfg.token_set:
+            return True
+        key = self._client(scope)
+        refused = self.throttle.refused(key)
+        if refused:
+            raise HTTPException(status_code=429, detail=THROTTLED_DETAIL[refused],
+                                headers={"Retry-After": str(self.throttle.retry_after(key))})
+        ok = await self._token_matches(key, presented if isinstance(presented, str) else "")
+        if not ok:
+            self.logger.warning(f"Wrong token given to confirm a change, from {key}")
+        return ok
 
     def _viewer_may(self, method: str, path: str) -> bool:
         """True when a request without the token may still be made: viewing is on and the policy allows it."""
         if not self.cfg.viewers_allowed or (_normal_path(path) or path).lower() in self._link_paths:
             return False
         return self.profile.viewer_policy.permits(method, path)
+
+    def _reader_may(self, method: str, path: str) -> bool:
+        """True when a request with the read token may be made: what a viewer may (viewing on or not), or a POST to
+        one of the policy's reader_post paths. Never a signed link's path."""
+        policy = self.profile.viewer_policy
+        if policy is None or (_normal_path(path) or path).lower() in self._link_paths:
+            return False
+        return policy.permits_reader(method, path)
 
     def _clear_cookie(self) -> Tuple[bytes, bytes]:
         cookie = (f"{self.profile.cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
@@ -729,7 +1212,8 @@ class SecurityMiddleware:
         """What the app may read with session_status(request)."""
         signed_in = auth == "cookie"
         scope["homeguard"] = {"auth": auth, "sign_out": signed_in,
-                              "sign_out_everywhere": signed_in and self.cfg.session_store is not None}
+                              "sign_out_everywhere": signed_in and self.cfg.session_store is not None,
+                              "confirm": self._confirm}
 
     # -- guards: each returns a Rejection, or None to let the request through --------------------
     def _guard_host(self, ctx: "_Request") -> Optional[Rejection]:
@@ -739,12 +1223,19 @@ class SecurityMiddleware:
         return Rejection(421, f"Host not allowed. Add it to {self.profile.env_prefix}_ALLOWED_HOSTS.")
 
     def _guard_origin(self, ctx: "_Request") -> Optional[Rejection]:
-        """Cross-site requests can't change state. Non-browser clients send neither header and pass."""
-        if ctx.method in SAFE_METHODS or ctx.path == "/login":
+        """Cross-site requests can't change state, nor sign in: a POST to /login is checked too, so another site's
+        page cannot submit wrong tokens to drive the throttle of failed sign-ins (and lock out the owner's address).
+        The sign-in page's own form sends its Origin, which matches. Non-browser clients send neither header and
+        pass."""
+        if ctx.method in SAFE_METHODS:
             return None
         origin = ctx.headers.get("origin")
         if origin is not None:
             if origin_allowed(origin, ctx.host, self.cfg):
+                return None
+            if origin == "null" and ctx.headers.get("sec-fetch-site") == "same-origin":
+                # a form of this origin's own page under Referrer-Policy: no-referrer, for which browsers send
+                # "Origin: null"; Sec-Fetch-Site cannot be set by a page, and another site's page gets "cross-site"
                 return None
             self.logger.warning(f"Blocked cross-origin {ctx.method} {ctx.path} from origin {origin[:80]!r}")
             return Rejection(403, "Cross-origin request blocked.")
@@ -752,14 +1243,26 @@ class SecurityMiddleware:
             return Rejection(403, "Cross-site request blocked.")
         return None
 
-    def _guard_auth(self, ctx: "_Request") -> Optional[Rejection]:
+    def _throttled(self, ctx: "_Request", refused: str) -> Rejection:
+        key = self._client(ctx.scope)
+        return Rejection(429, THROTTLED_DETAIL[refused], retry_after=self.throttle.retry_after(key))
+
+    async def _guard_auth(self, ctx: "_Request") -> Optional[Rejection]:
         p = self.profile
-        if not self.cfg.access_token:
+        if not self.cfg.token_set:
             ctx.auth = "open"
             return None
         if ctx.path in p.public_paths or ctx.path.startswith(tuple(p.public_prefixes)):
             return None
-        ctx.auth = self._auth_method(ctx.scope, ctx.headers, ctx.path)
+        auth, refused = await self._authenticate(ctx.scope, ctx.headers, ctx.path)
+        if refused:
+            return self._throttled(ctx, refused)
+        if auth == "reader":
+            if not self._reader_may(ctx.method, ctx.path):
+                return Rejection(403, READER_REFUSED)
+            ctx.auth = auth
+            return None
+        ctx.auth = auth
         if ctx.auth:
             return None
         if self._viewer_may(ctx.method, ctx.path):
@@ -779,8 +1282,10 @@ class SecurityMiddleware:
     async def _reject(self, send, r: "Rejection", path: str) -> None:
         if r.redirect:
             return await self._respond(send, r.status, b"", path, extra=[(b"location", r.redirect.encode())])
-        extra = [(b"www-authenticate", f'Bearer realm="{self.profile.slug}"'.encode())] if r.challenge else None
-        await self._json(send, r.status, r.detail, path, extra=extra)
+        extra = [(b"www-authenticate", f'Bearer realm="{self.profile.slug}"'.encode())] if r.challenge else []
+        if r.retry_after is not None:
+            extra.append((b"retry-after", str(r.retry_after).encode()))
+        await self._json(send, r.status, r.detail, path, extra=extra or None)
 
     # -- response decoration ---------------------------------------------------------------------
     def _cache_control(self, path: str, status: int) -> Optional[str]:
@@ -802,6 +1307,8 @@ class SecurityMiddleware:
             (b"content-security-policy", self.profile.csp.encode()),
             (b"permissions-policy", PERMISSIONS_POLICY.encode()),
         ]
+        if self.cfg.cookie_secure:  # served over HTTPS: browsers must not fall back to plain HTTP for a year
+            hdrs.append((b"strict-transport-security", HSTS.encode()))
         if cache:
             value = self._cache_control(path, status)
             if value:
@@ -809,7 +1316,7 @@ class SecurityMiddleware:
         return hdrs
 
     # -- websocket ---------------------------------------------------------------------------------
-    def _websocket_auth(self, scope, headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+    async def _websocket_auth(self, scope, headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
         """(problem, auth method). The HTTP guards never see websocket scopes. Browsers don't apply the
         same-origin policy to websockets, so any page could otherwise open one: Host, Origin and the token are
         checked here."""
@@ -821,7 +1328,12 @@ class SecurityMiddleware:
             return f"Origin not allowed: {(origin or '')[:80]!r}", None
         # Header or cookie (or a signed link, on a capability path that is a websocket).
         path = scope.get("path", "")
-        auth = self._auth_method(scope, headers, path)
+        auth, refused = await self._authenticate(scope, headers, path)
+        if refused:
+            return THROTTLED_DETAIL[refused], None
+        policy = self.profile.viewer_policy
+        if auth == "reader" and (policy is None or not policy.permits_websocket(path)):
+            return "The read token cannot open this websocket", None
         if auth is None and self.cfg.viewers_allowed and self.profile.viewer_policy.permits_websocket(path):
             auth = "viewer"
         if auth is None:
@@ -830,16 +1342,16 @@ class SecurityMiddleware:
 
     async def _websocket(self, scope, receive, send):
         headers = self._headers(scope)
-        problem, auth = self._websocket_auth(scope, headers)
+        problem, auth = await self._websocket_auth(scope, headers)
         if problem is not None:
             self.logger.warning(f"Rejected websocket {scope.get('path', '')}: {problem}")
             await receive()  # websocket.connect
             await send({"type": "websocket.close", "code": 1008})
             return
         self._annotate(scope, auth)
-        if auth == "viewer":
-            # Receive-only: what a viewer sends is read and dropped here, so the app never acts on it. It still hears
-            # connect and disconnect (and its own close), so its receive loop ends as usual.
+        if auth in ("viewer", "reader"):
+            # Receive-only: what a viewer (or the read token) sends is read and dropped here, so the app never acts on
+            # it. It still hears connect and disconnect (and its own close), so its receive loop ends as usual.
             async def viewer_receive():
                 while True:
                     message = await receive()
@@ -889,9 +1401,11 @@ class SecurityMiddleware:
 
         ctx = _Request(scope, self._headers(scope))
         if ctx.path == "/login":
-            rejection = self._guard_host(ctx)
-            if rejection:
-                return await self._reject(send, rejection, ctx.path)
+            # Host, and for a POST the Origin rule, before the body is read or anything is counted
+            for guard in (self._guard_host, self._guard_origin):
+                rejection = guard(ctx)
+                if rejection:
+                    return await self._reject(send, rejection, ctx.path)
             return await self._login(scope, receive, send, ctx.headers, ctx.method)
         if ctx.path == "/logout":
             # Same Host and Origin rules as any state-changing request: another site cannot sign you out (a plain
@@ -904,6 +1418,8 @@ class SecurityMiddleware:
 
         for guard in (self._guard_host, self._guard_origin, self._guard_auth, self._guard_declared_size):
             rejection = guard(ctx)
+            if asyncio.iscoroutine(rejection):
+                rejection = await rejection
             if rejection:
                 return await self._reject(send, rejection, ctx.path)
         self._annotate(scope, ctx.auth)
@@ -950,23 +1466,28 @@ class SecurityMiddleware:
     async def _login(self, scope, receive, send, headers, method):
         path = "/login"
         html_type = "text/html; charset=utf-8"
-        if not self.cfg.access_token:
+        if not self.cfg.token_set:
             return await self._respond(send, 303, b"", path, extra=[(b"location", b"/")])
         if method == "GET":
             return await self._respond(send, 200, self._login_page(), path, html_type)
         if method != "POST":
             return await self._json(send, 405, "Method not allowed.", path)
-        client = (scope.get("client") or ("?", 0))[0]
-        if not self.throttle.allow(client):
-            return await self._respond(send, 429, self._login_page("Too many attempts. Wait a minute."), path, html_type)
         body = b""
         while True:
             msg = await receive()
             body += msg.get("body", b"")
             if not msg.get("more_body") or len(body) > 4096:
                 break
+        client = self._client(scope)
+        # checked after the body is read, right before the comparison (no await between): concurrent attempts cannot
+        # all pass the check before the first failure is counted
+        refused = self.throttle.refused(client)
+        if refused:
+            text = "Too many attempts. Wait a minute." if refused == "client" else THROTTLED_DETAIL["server"]
+            return await self._respond(send, 429, self._login_page(text), path, html_type,
+                                       extra=[(b"retry-after", str(self.throttle.retry_after(client)).encode())])
         supplied = parse_qs(body.decode("utf-8", "ignore")).get("token", [""])[0]
-        if _same(supplied, self.cfg.access_token):
+        if await self._token_matches(client, supplied):
             cookie = (f"{self.profile.cookie_name}={self.cfg.issue_session()}; Path=/; HttpOnly; SameSite=Strict; "
                       f"Max-Age={self.cfg.session_max_age_seconds}" + ("; Secure" if self.cfg.cookie_secure else ""))
             return await self._respond(send, 303, b"", path,
@@ -977,8 +1498,8 @@ class SecurityMiddleware:
     async def _logout(self, ctx: "_Request", send):
         """POST /logout clears this browser's cookie and, when the app gave a SessionStore, refuses that cookie from
         now on (a copy of it too). POST /logout?everywhere=1 instead refuses every session cookie issued until now
-        (all browsers; needs a store); it needs a valid sign-in (cookie or Bearer), so nobody on the network can sign
-        everyone out. Both redirect to /login (to / without a token)."""
+        (all browsers; needs a store); it needs a valid sign-in (cookie or Bearer token; not the read token), so nobody
+        on the network can sign everyone out. Both redirect to /login (to / without a token)."""
         path = "/logout"
         if ctx.method != "POST":
             return await self._json(send, 405, "Method not allowed.", path, extra=[(b"allow", b"POST")])
@@ -986,10 +1507,15 @@ class SecurityMiddleware:
         values = parse_qs(query, keep_blank_values=True).get("everywhere")
         if values is not None and values != ["1"]:
             return await self._json(send, 400, "everywhere must be 1.", path)
-        if values and self.cfg.access_token:
+        if values and self.cfg.token_set:
             if self.cfg.session_store is None:
                 return await self._json(send, 501, "Signing out everywhere is not enabled in this app.", path)
-            if self._auth_method(ctx.scope, ctx.headers, path) is None:
+            auth, refused = await self._authenticate(ctx.scope, ctx.headers, path)
+            if refused:
+                return await self._reject(send, self._throttled(ctx, refused), path)
+            if auth == "reader":
+                return await self._reject(send, Rejection(403, READER_REFUSED), path)
+            if auth not in FULL_ACCESS:
                 return await self._reject(send, Rejection(401, "Authentication required.", challenge=True), path)
             try:
                 self.cfg.session_store.revoke_all(_now_ms())
@@ -997,7 +1523,7 @@ class SecurityMiddleware:
                 self.logger.error(f"Signing out everywhere failed: {exc.__class__.__name__}")
                 return await self._json(send, 500, "Could not sign out everywhere. See the server log.", path)
             self.logger.warning("Signed out everywhere: every session cookie issued until now is refused")
-        elif self.cfg.access_token:
+        elif self.cfg.token_set:
             try:  # so that a copy of this cookie stops working too, not only this browser's
                 self.cfg.end_session(self._cookie(ctx.headers))
             except Exception as exc:
@@ -1005,7 +1531,7 @@ class SecurityMiddleware:
                 return await self._json(send, 500, "Signed out in this browser, but the server could not record it, so "
                                         "a copy of the sign-in would still work. Sign in and sign out everywhere, "
                                         "or see the server log.", path, extra=[self._clear_cookie()])
-        location = b"/login" if self.cfg.access_token else b"/"
+        location = b"/login" if self.cfg.token_set else b"/"
         return await self._respond(send, 303, b"", path, extra=[(b"location", location), self._clear_cookie()])
 
 
@@ -1014,22 +1540,32 @@ class SecurityMiddleware:
 # ---------------------------------------------------------------------------
 
 _buckets: Dict[Tuple[str, str], Deque[float]] = defaultdict(deque)
+_windows: Dict[str, float] = {}  # rate limit name -> its window (the longest, if a name is used twice)
+_THROTTLES: "weakref.WeakSet[AuthThrottle]" = weakref.WeakSet()  # every middleware's, for reset_rate_limits
 
 
 def reset_rate_limits() -> None:
-    """Forget every rate-limit counter (process-wide). For tests, which make more calls than a limit allows."""
+    """Forget every rate-limit counter and every middleware's failed sign-in attempts (process-wide). For tests, which
+    make more calls than a limit allows."""
     _buckets.clear()
+    for throttle in list(_THROTTLES):
+        throttle.clear()
 
 
 def rate_limit(name: str, calls: int, per_seconds: float):
-    """FastAPI dependency: at most `calls` requests per `per_seconds` per client address."""
+    """FastAPI dependency: at most `calls` requests per `per_seconds` per client address. At most MAX_THROTTLE_KEYS
+    (name, address) pairs are remembered: pairs whose requests have all expired are dropped first, then the oldest
+    (so a flood from more addresses than that can make the limit forget some of them, never grow memory)."""
+    _windows[name] = max(_windows.get(name, 0.0), per_seconds)
 
     async def dependency(request: Request):
         key = (name, (request.client.host if request.client else "?"))
         now = time.monotonic()
-        q = _buckets[key]
-        while q and now - q[0] > per_seconds:
-            q.popleft()
+        q = _buckets.get(key)
+        if q is None:
+            _make_room(_buckets, lambda k: _windows.get(k[0], per_seconds), now, MAX_THROTTLE_KEYS)
+            q = _buckets[key] = deque()
+        _prune(q, now, per_seconds)
         if len(q) >= calls:
             retry = max(1, int(per_seconds - (now - q[0])))
             raise HTTPException(status_code=429, detail=f"Too many requests; try again in {retry}s.",

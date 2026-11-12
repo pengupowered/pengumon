@@ -11,7 +11,7 @@ import obs_helpers
 from icmp_fakes import FakeBackend, FakePath
 from obs_helpers import FakeTracer
 from discovery_fakes import discover, three_paths
-from pengumon.notify import notifier as notify_module
+from pengumon.notify import delivery as notify_module
 from pengumon.engine.discovery import engine as engine_module, traces as traces_module
 from pengumon.engine.mtr import MtrEngine
 from pengumon.observability import export
@@ -235,4 +235,57 @@ async def test_a_failed_ntfy_post_logs_the_error_type_and_status_but_not_the_top
     with caplog.at_level(logging.WARNING, logger="pengumon.notify"):
         assert await notifier._send_ntfy(_alert()) == "the server answered 403"
     assert "HTTPStatusError (HTTP 403)" in caplog.text and "SEKRET" not in caplog.text and "example.net" not in caplog.text
+    await notifier.aclose()
+
+
+class _Once(httpx.AsyncByteStream):
+    """A body handed over as the client reads it (httpx.Response(content=...) with a Content-Encoding inflates it at once)."""
+
+    def __init__(self, data):
+        self.data = data
+
+    async def __aiter__(self):
+        yield self.data
+
+
+async def test_an_ntfy_answer_is_read_bounded_and_asks_for_no_compression():
+    """A gzip bomb as ntfy's answer (a few hundred KB inflating to gigabytes) is cut at the reader's cap while it
+    is decoded, and the request says Accept-Encoding: identity."""
+    import tracemalloc
+    import zlib
+    from pengumon.notify.notifier import Notifier
+    z = zlib.compressobj(wbits=zlib.MAX_WBITS | 16)
+    bomb = b"".join([z.compress(bytes(1 << 20)) for _ in range(64)] + [z.flush()])
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=_Once(bomb))
+
+    notifier = Notifier("https://ntfy.example.net/t", client=_client(handler))
+    tracemalloc.start()
+    try:
+        assert await notifier._send_ntfy(_alert()) is None
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert seen[0].headers["accept-encoding"] == "identity"
+    assert peak < 8 * 1024 * 1024
+    await notifier.aclose()
+
+
+async def test_a_drip_fed_ntfy_answer_ends_at_the_total_deadline():
+    """An answer sent one byte inside each read timeout, for ever, does not hold the alert task."""
+    from pengumon.notify.notifier import Notifier
+
+    class Drip(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                await asyncio.sleep(0.02)
+                yield b"x"
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(0.05),
+                               transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=Drip())))
+    notifier = Notifier("https://ntfy.example.net/t", client=client)
+    assert await asyncio.wait_for(notifier._send_ntfy(_alert()), 5) == "timed out"
     await notifier.aclose()

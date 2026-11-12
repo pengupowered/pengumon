@@ -4,7 +4,9 @@
 // Like every list it is a draft until Save; the server checks each theme (pengumon.web.themes, custom rules).
 
 import { registerActions } from '../../../js/dispatch.js';
-import { copyText, escapeHtml, icon } from '../../../js/util.js';
+import { copyText } from '../../../js/clipboard.js';
+import { escapeHtml } from '../../../js/escape.js';
+import { icon } from '../../../js/dom.js';
 import { loadThemes } from '../../../js/themes.js';
 import { clone } from '../model.js';
 
@@ -25,6 +27,20 @@ const GROUPS = [
 ];
 const HEX6 = /^#[0-9a-f]{6}$/i;
 const COLOR = /^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+)\s*)?\))$/i;
+const MAX_FILE = 256 * 1024; // a theme file is a few KB; anything bigger is not one
+// A color the picker can show without changing it: #rgb, #rrggbb, an opaque #rrggbbff or rgb(r, g, b), as #rrggbb; else null
+// (a tint with an alpha, hsl(), a name), which gets its text field instead of a swatch that would be wrong.
+function pickerValue(value) {
+  const v = String(value || '').trim();
+  if (HEX6.test(v)) return v;
+  let m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(v);
+  if (m) return `#${m[1]}${m[1]}${m[2]}${m[2]}${m[3]}${m[3]}`;
+  m = /^(#[0-9a-f]{6})ff$/i.exec(v);
+  if (m) return m[1];
+  m = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i.exec(v);
+  if (m && [m[1], m[2], m[3]].every((n) => Number(n) <= 255)) return `#${[m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')}`;
+  return null;
+}
 const modeWords = (modes) => (modes.length === 2 ? 'dark and light' : `${modes[0]} only`);
 
 let items = [];
@@ -33,6 +49,7 @@ let ctx = null;
 let data = null; // GET /api/themes
 let errors = {}; // item index -> message
 let notes = []; // [{level, text}] the answer to an Import or a Duplicate
+let warned = []; // the server's readability warnings for the custom themes (messages), from warnings()
 let shown = null; // {name, text}: the Export box
 let exportUrl = '';
 const open = new Set();
@@ -77,8 +94,9 @@ const asFile = (t) => ({ id: t.id, name: t.name, description: t.description || '
 // ---------- drawing ----------
 function colorField(i, mode, name, label, value) {
   const id = `th-${i}-${mode}-${name.slice(2)}`;
-  if (HEX6.test(defaults()[mode]?.[name] || defaults().dark[name])) {
-    return `<label class="th-c" for="${id}" title="${escapeHtml(name)}"><input type="color" id="${id}" data-tc="${mode} ${name}" value="${escapeHtml(HEX6.test(value) ? value : '#000000')}"><span>${escapeHtml(label)}</span></label>`;
+  const picked = pickerValue(value);
+  if (HEX6.test(defaults()[mode]?.[name] || defaults().dark[name]) && (picked || !value)) {
+    return `<label class="th-c" for="${id}" title="${escapeHtml(name)}"><input type="color" id="${id}" data-tc="${mode} ${name}" value="${escapeHtml(picked || '#000000')}"><span>${escapeHtml(label)}</span></label>`;
   }
   // a translucent color (a tint, the dimming behind dialogs): its text, on a row of its own
   return `<label class="th-c th-text" for="${id}" title="${escapeHtml(name)}"><span>${escapeHtml(label)}</span><input class="input mono" type="text" id="${id}" data-tc="${mode} ${name}" value="${escapeHtml(value || '')}" spellcheck="false" autocomplete="off"></label>`;
@@ -116,6 +134,11 @@ function builtinHtml(t) {
     <button type="button" class="btn sm" data-action="themesAct" data-ta="duplicate-builtin" data-arg="${escapeHtml(t.id)}" data-needs-edit aria-label="Duplicate ${escapeHtml(t.name)}">${icon('copy')}Duplicate</button></span></li>`;
 }
 
+function releaseExport() {
+  if (exportUrl) URL.revokeObjectURL(exportUrl);
+  exportUrl = '';
+}
+
 function exportHtml() {
   if (!shown) return '';
   if (exportUrl) URL.revokeObjectURL(exportUrl);
@@ -130,6 +153,8 @@ function exportHtml() {
       <span class="fine" id="themeExportNote" role="status"></span></p></div>`;
 }
 
+const warnedHtml = () => warned.map((text) => `<div class="result st-warn" role="status" data-th-warn>${escapeHtml(text)}</div>`).join('');
+
 function draw() {
   if (!box) return;
   if (!data) { box.innerHTML = '<div class="set-list" data-list="themes"><h4 class="set-group-t">Themes</h4><p class="fine top">Loading…</p></div>'; return; }
@@ -139,6 +164,7 @@ function draw() {
     <p class="fine top">Every browser can pick any of these in the header's theme menu. To make your own, duplicate a theme and change its colors, or import a theme file. Your own themes have colors only: the shapes and animated effects stay with the built-in ones.</p>
     <ul class="th-list">${builtins.map(builtinHtml).join('')}</ul>
     <h5 class="set-sub">Your themes</h5>
+    <div data-th-warns>${warnedHtml()}</div>
     ${notes.map((n) => `<div class="result st-${n.level}" role="status">${escapeHtml(n.text)}</div>`).join('')}
     ${items.length ? items.map(cardHtml).join('') : '<p class="fine top set-empty">None yet.</p>'}
     <div class="th-add"><button type="button" class="btn sm outline" data-action="themesAct" data-ta="import" data-needs-edit>${icon('plus')}<span>Import a theme file</span></button>
@@ -170,6 +196,11 @@ async function importFile(input) {
   const file = input.files && input.files[0];
   input.value = '';
   if (!file) return;
+  if (file.size > MAX_FILE) {
+    notes = [{ level: 'crit', text: `${file.name} is not a theme file: it is ${Math.round(file.size / 1024)} KB, and a theme is a few.` }];
+    draw();
+    return;
+  }
   let raw;
   try {
     raw = JSON.parse(await file.text());
@@ -206,7 +237,7 @@ function act(b) {
   if (what === 'export') showExportOf(asFile(items[i]), items[i].name);
   else if (what === 'export-builtin' && builtin) showExportOf(builtin.theme, builtin.name);
   else if (what === 'copy') copyText(document.getElementById('themeExportText').value).then((done) => { document.getElementById('themeExportNote').textContent = done ? 'Copied' : 'Select the text and copy it'; });
-  else if (what === 'close-export') { shown = null; draw(); }
+  else if (what === 'close-export') { shown = null; releaseExport(); draw(); }
   else if (!ctx.canEdit()) return;
   else if (what === 'import') document.getElementById('themeImportFile').click();
   else if (what === 'duplicate-builtin' && builtin) duplicate(builtin.theme, builtin.name);
@@ -261,6 +292,7 @@ export default {
     errors = {};
     notes = [];
     shown = null;
+    releaseExport();
     wire();
     draw();
     if (!data) loadThemes().then((d) => { data = d; draw(); }).catch(() => { box.innerHTML = '<p class="fine">The themes could not be read. Close Settings and open it again.</p>'; });
@@ -285,6 +317,13 @@ export default {
       if (message) card.querySelector('summary').insertAdjacentHTML('beforeend', `<span class="set-card-e" role="alert">${escapeHtml(message)}</span>`);
       if (message) { card.open = true; open.add(card.dataset.id); }
     });
+  },
+  // the server's warnings for this list (the custom themes' readability: not errors, the colors are the owner's call),
+  // shown above the cards, in place like the errors
+  warnings(messages) {
+    warned = messages || [];
+    const slot = box && box.querySelector('[data-th-warns]');
+    if (slot) slot.innerHTML = warnedHtml();
   },
   redraw() { if (data) draw(); }
 };

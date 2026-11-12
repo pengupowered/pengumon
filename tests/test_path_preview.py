@@ -168,10 +168,10 @@ async def test_a_finished_preview_is_forgotten_after_a_while():
     now = [100.0]
     store = PreviewStore(clock=lambda: now[0], seconds=1, interval=0.0, stagger=0)
 
-    async def probe(address, family):
+    async def probe(spec):
         return {"kind": "reply", "rtt_ms": 1.0}
 
-    preview_id = await store.start("c", {"h": ("192.0.2.1", 4)}, probe)
+    preview_id = await store.start("c", {"h": "spec"}, probe)
     for _ in range(5):
         await asyncio.sleep(0)
     assert store.get(preview_id)["state"] == "done"
@@ -194,3 +194,54 @@ async def test_previews_are_rate_limited(preview_app):
     async with _client("192.0.2.20") as ac:
         codes = [(await ac.post("/api/path/preview", json={"hops": []})).status_code for _ in range(13)]
     assert codes[:12] == [200] * 12 and codes[12] == 429
+
+
+# --- TCP and HTTP hops ---------------------------------------------------------------------------------------------------
+
+def test_a_live_hop_whose_method_changed_is_previewed_and_an_unchanged_one_is_not():
+    from pengumon.api.path import preview_hops
+    tcp = PUB.model_copy(update={"probe": "tcp", "port": 443})
+    live = [GW, PUB]
+    assert preview_hops([GW, tcp], live) == {"pub": tcp}
+    assert preview_hops([GW, PUB], live) == {}
+    assert preview_hops([GW, tcp], [GW, tcp]) == {}
+    assert preview_hops([GW, tcp.model_copy(update={"port": 8443})], [GW, tcp]).keys() == {"pub"}
+    assert preview_hops([GW, tcp], [GW, tcp.model_copy(update={"enabled": False})]).keys() == {"pub"}
+
+
+def test_refused_and_the_failures_of_a_socket_hop_are_their_own_kinds_and_error_stays_unreachable():
+    tally = HopTally()
+    tally.add({"kind": "refused", "rtt_ms": None})
+    assert tally.kind == "refused"
+    for kind in ("tls", "http_error", "bad_answer", "not_allowed"):
+        tally.add({"kind": kind, "rtt_ms": None})
+        assert tally.kind == "failed"
+    for kind in ("error", "ttl_exceeded", "unreachable"):
+        tally.add({"kind": kind, "rtt_ms": None})
+        assert tally.kind == "unreachable"
+    assert tally.public()["sent"] == 8 and tally.public()["received"] == 0
+
+
+async def test_a_preview_of_a_draft_with_a_loopback_tcp_hop_is_refused_before_anything_is_probed(preview_app):
+    state, backend = preview_app
+    loop_hop = TargetConfig(id="lo", name="Loop", category="public", address="127.0.0.1", probe="tcp", port=443)
+    async with _client() as ac:
+        res = await ac.post("/api/path/preview", json={"hops": [_hop(loop_hop, 0)]})
+    assert res.status_code == 400 and "loopback address" in res.text
+    assert state.path.previews.running() == [] and backend.sent == []
+
+
+async def test_a_preview_probes_a_tcp_hop_through_the_prober(preview_app):
+    state, _ = preview_app
+    seen = []
+
+    async def attempt(target):
+        seen.append((target.id, target.probe, target.port))
+        return {"kind": "refused", "rtt_ms": None, "responder": None, "address": target.address, "error": "x"}
+    state.prober.socket_attempt = attempt
+    tcp = ISP.model_copy(update={"probe": "tcp", "port": 443})
+    async with _client() as ac:
+        res = await ac.post("/api/path/preview", json={"hops": [_hop(tcp, 0)]})
+        body = await _done(ac, res.json()["id"])
+    assert seen and set(seen) == {("isp_1", "tcp", 443)}
+    assert body["hops"]["isp_1"]["kind"] == "refused" and body["hops"]["isp_1"]["loss_pct"] == 100.0

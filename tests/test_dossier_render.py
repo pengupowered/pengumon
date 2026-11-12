@@ -287,3 +287,17 @@ def test_an_ongoing_or_overnight_outage_says_so_and_no_outages_adds_no_line():
     night = NOW - 22 * 3600           # 10:53 the day before; ends the next day
     assert "Oct 8 10:53-Oct 9 08:53, 1320 min, 2 drops" in render_dossier_markdown(facts(outages=[outage(night, NOW, 2, 0.0)]))
     assert "Outages" not in render_dossier_markdown(facts())
+
+
+def test_a_hop_probed_by_a_socket_is_named_in_the_table_and_the_probes_sentence_changes_only_then():
+    stats = [hop("router"), hop("web", lost=30)]
+    plain = render_dossier_markdown(facts(hop_stats=stats, names={"router": "Router", "web": "Web"}))
+    assert "Probes are ICMP/DNS requests sent about once per second" in plain and "probed by" not in plain
+    f = facts(hop_stats=stats, names={"router": "Router", "web": "Web"}, probes={"web": "TCP port 443"})
+    text = render_dossier_markdown(f)
+    assert "Probes are ICMP echo requests (TCP connections or HTTP requests for the hops noted) and DNS requests" in text
+    assert "| No material loss |" in text and "Elevated loss; probed by TCP port 443 |" in text
+    quiet = facts(hop_stats=stats, ignoring=frozenset({"web"}), probes={"web": "TCP port 443"})
+    assert hop_note(stats[1], None, quiet.ignoring, probe="TCP port 443") == \
+        "Ignores its probe (later hops answer, so traffic passes); not counted"
+    assert hop_note(stats[1], None, quiet.ignoring) == "Ignores ping (later hops answer, so traffic passes); not counted"

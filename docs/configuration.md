@@ -150,8 +150,16 @@ Other keys the first import reads (all optional, shown with example values; the 
 
 ```yaml
 database:
-  retention_days: 7              # raw probe samples, DOCSIS, router metrics
-  rollup_retention_days: 400     # per-minute rollups (history charts, report, dossier)
+  retention_days: 7              # raw probe samples, DOCSIS, router metrics (line-capacity learning and the rules preview need 7)
+  slot_retention_days: 7         # the 10-second rollups (the latency chart's 10 s buckets); at least retention_days (unset:
+                                 # 7 or retention_days, the longer), at most rollup_retention_days
+  rollup_retention_days: 90      # per-minute rollups (history charts, report, dossier at one-minute detail); 30-1000
+  long_rollup_retention_days: 400  # quarter-hour rollups (ranges older than the per-minute ones), speed tests and
+                                 # device events (router restarts, WAN link changes);
+                                 # 30-3650, at least rollup_retention_days (unset: 400 or rollup_retention_days, the longer)
+  traffic_retention_days: 400    # the router's traffic per client and hour, and its app windows (1-1000)
+  incident_retention_days: 0     # resolved incidents: 0 keeps them forever, else at least long_rollup_retention_days;
+                                 # an open incident is never deleted
 
 line:                            # internet line capacity; unset = learned from the router history
   down_mbps: 1000

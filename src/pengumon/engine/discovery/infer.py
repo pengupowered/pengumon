@@ -28,7 +28,7 @@ internet hops "public".
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from pengumon.engine.discovery.addresses import (
     CGNAT, CLASS_WORDS, LINK_LOCAL, PRIVATE, PUBLIC, SPECIAL, address_class, registrable_domain, same_subnet,
@@ -159,11 +159,43 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
     first_public = next((i for i in answered if cls[i] == PUBLIC), None)
     igd_at = {igd.address: igd for igd in facts.igds}
 
+    step, edge = _find_edge(facts, cls, answered, first_public, igd_at)
+    guesses: Dict[int, HopGuess] = {}
+    for i in answered:
+        h = hops[i]
+        guesses[i] = HopGuess(address=h.address, ttl=h.ttl, rtt_ms=h.rtt_ms)
+    _add_device_evidence(guesses, facts, igd_at, edge)
+    _add_step_evidence(guesses, step, edge)
+    _label_home_hops(guesses, answered, edge, cls, facts.gateway, igd_at)
+    _label_past_edge_hops(guesses, answered, edge, cls, first_public, facts)
+    silent_owners = _fill_from_neighbors(guesses, len(hops))
+
+    for i, g in guesses.items():
+        if g.owner == HOME:
+            pass
+        elif g.owner is not None:
+            g.category = OWNER_CATEGORY[g.owner]
+        g.confidence = _confidence(g.evidence, g.owner)
+
+    result = [guesses[i] for i in answered]
+    notes = []
+    _place_off_path(result, off_path)
+    if silent:
+        notes.append(f"{len(silent)} hop{'s' if len(silent) != 1 else ''} on the path did not answer the trace; "
+                     "a hop without an address cannot be probed, so it is not in the draft.")
+    return Inference(hops=result, edge=edge, step=step, silent=silent, silent_owners=silent_owners, notes=notes)
+
+
+def _find_edge(facts: Facts, cls: List[Optional[str]], answered: List[int], first_public: Optional[int],
+               igd_at: Dict[str, IgdInfo]) -> Tuple[Optional[Step], int]:
+    """Rule 1: the latency step of the home-to-provider region, and the index of the last home hop."""
+    path = facts.path
+    hops = path.hops
+
     def home_device(i: int) -> bool:
         a = hops[i].address
         return a in facts.pages or a in facts.snmp or a in igd_at
 
-    # 1. the edge of the home network
     lead_end = -1
     for i in answered:
         if cls[i] not in (PRIVATE, LINK_LOCAL):
@@ -185,13 +217,11 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         elif ext in (PRIVATE, LINK_LOCAL):
             following = [k for k in answered if i < k <= lead_end]
             edge = max(edge, following[0] if following else i)
+    return step, edge
 
-    guesses: Dict[int, HopGuess] = {}
-    for i in answered:
-        h = hops[i]
-        guesses[i] = HopGuess(address=h.address, ttl=h.ttl, rtt_ms=h.rtt_ms)
 
-    # evidence every hop can have: its name, its device checks
+def _add_device_evidence(guesses: Dict[int, HopGuess], facts: Facts, igd_at: Dict[str, IgdInfo], edge: int) -> None:
+    """Evidence every hop can have: its name, its device checks (page, SNMP, UPnP)."""
     for i, g in guesses.items():
         name = facts.names.get(g.address)
         if name and i <= edge:
@@ -211,24 +241,31 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
             g.evidence.append(Evidence("upnp", f"It {igd.describe()}.", HOME if i <= edge else None))
             g.suggested_driver = g.suggested_driver or "upnp_igd"
 
-    if step is not None:
-        if step.before in guesses:
-            guesses[step.before].evidence.append(Evidence(
-                "latency_step", f"The largest jump in round-trip time on the way out (+{step.ms:g} ms) comes right "
-                                f"after it: the access line is likely there.", HOME if step.before <= edge else None))
-        if step.after in guesses:
-            guesses[step.after].evidence.append(Evidence(
-                "latency_step", f"It comes right after the largest jump in round-trip time on the way out "
-                                f"(+{step.ms:g} ms): past the access line.", PROVIDER if step.after > edge else None))
 
-    # home hops
+def _add_step_evidence(guesses: Dict[int, HopGuess], step: Optional[Step], edge: int) -> None:
+    """The latency step, as evidence on the hop before it and the hop after it."""
+    if step is None:
+        return
+    if step.before in guesses:
+        guesses[step.before].evidence.append(Evidence(
+            "latency_step", f"The largest jump in round-trip time on the way out (+{step.ms:g} ms) comes right "
+                            f"after it: the access line is likely there.", HOME if step.before <= edge else None))
+    if step.after in guesses:
+        guesses[step.after].evidence.append(Evidence(
+            "latency_step", f"It comes right after the largest jump in round-trip time on the way out "
+                            f"(+{step.ms:g} ms): past the access line.", PROVIDER if step.after > edge else None))
+
+
+def _label_home_hops(guesses: Dict[int, HopGuess], answered: List[int], edge: int, cls: List[Optional[str]],
+                     gateway: Optional[str], igd_at: Dict[str, IgdInfo]) -> None:
+    """The hops up to the edge are the home's; the first is the router, a later one at the edge may be a gateway."""
     home = [i for i in answered if i <= edge]
     for n, i in enumerate(home):
         g = guesses[i]
         g.owner = HOME
         words = CLASS_WORDS.get(cls[i], "an address")
         text = f"It has {words}, before the first public hop: inside your network"
-        if facts.gateway and g.address == facts.gateway:
+        if gateway and g.address == gateway:
             text += ", and it is this host's default gateway"
         g.evidence.insert(0, Evidence("address_class", text + ".", HOME))  # home hops are private (edge <= lead_end)
         prev = guesses[home[n - 1]] if n else None
@@ -246,8 +283,13 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         else:
             g.category = "local"
 
-    # past the edge: provider or internet
-    past = [i for i in answered if i > edge]
+
+def _provider_anchors(past: List[int], first_public: Optional[int], facts: Facts
+                      ) -> Tuple[Optional[AsnInfo], Optional[str]]:
+    """The provider's AS (the first public hop's) and registrable domain (the first one seen past the edge,
+    preferring a hop in the provider's AS)."""
+    path = facts.path
+    hops = path.hops
     provider_asn = None
     if first_public is not None and hops[first_public].address in facts.asns:
         provider_asn = facts.asns[hops[first_public].address]
@@ -265,61 +307,76 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         if path.divergence is None or path.divergence < 0 or i <= path.divergence:
             provider_domain = domain
             break
-    split_known = path.divergence is not None
+    return provider_asn, provider_domain
+
+
+def _past_edge_evidence(g: HopGuess, i: int, c: Optional[str], first_public: Optional[int], facts: Facts,
+                        provider_asn: Optional[AsnInfo], provider_domain: Optional[str]) -> List[Evidence]:
+    """What a hop past the edge says about its owner: address class, AS, reverse-DNS domain, divergence point."""
+    path = facts.path
+    address = g.address
+    ev: List[Evidence] = []
+    if c == CGNAT:
+        ev.append(Evidence("address_class", "It has a carrier-grade NAT address (100.64.0.0/10), which providers "
+                                            "use inside their network: the provider's.", PROVIDER))
+    elif c in (PRIVATE, LINK_LOCAL):
+        ev.append(Evidence("address_class", f"It has {CLASS_WORDS[c]}, but it is past the end of your network "
+                                            "and before the first public hop: inside the provider's network "
+                                            "(providers use private addresses too).", PROVIDER))
+    elif c == SPECIAL:
+        ev.append(Evidence("address_class", f"It has {CLASS_WORDS[c]}, which no home network uses."))
+    elif i == first_public:
+        ev.append(Evidence("address_class", "It is the first public address on the path: usually the provider's "
+                                            "first router.", PROVIDER))
+    else:
+        ev.append(Evidence("address_class", "It has a public address."))
+    asn = facts.asns.get(address)
+    if asn is not None:
+        label = f"AS{asn.number}" + (f" ({asn.operator})" if asn.operator else "")
+        if i == first_public:
+            ev.append(Evidence("asn", f"It is in {label}: the provider's network (the first public hop's).",
+                               PROVIDER))
+        elif provider_asn is not None and asn.number == provider_asn.number:
+            ev.append(Evidence("asn", f"It is in {label}, the same network as the first public hop: the "
+                                      "provider's.", PROVIDER))
+        elif provider_asn is not None:
+            ev.append(Evidence("asn", f"It is in {label}, not the provider's AS{provider_asn.number}: another "
+                                      "network.", INTERNET))
+        else:
+            ev.append(Evidence("asn", f"It is in {label}."))
+    name = facts.names.get(address)
+    if name:
+        domain = registrable_domain(name)
+        if domain and provider_domain and domain == provider_domain:
+            ev.append(Evidence("rdns", f"Its name, {name}, is in {domain}, the provider's domain.", PROVIDER))
+        elif domain and provider_domain:
+            ev.append(Evidence("rdns", f"Its name, {name}, is in {domain}, not the provider's {provider_domain}: "
+                                       "another network.", INTERNET))
+        else:
+            ev.append(Evidence("rdns", f"Its name is {name}."))
+    if path.divergence is not None:
+        if i == path.divergence:
+            ev.append(Evidence("divergence", "The paths to the three public servers part right after it; it is "
+                                             "on the way to all of them: your connection's own way out.", PROVIDER))
+        elif i < path.divergence:
+            ev.append(Evidence("divergence", "It is on the way to all three public servers, before their paths "
+                                             "part: your connection's own way out.", PROVIDER))
+        else:
+            ev.append(Evidence("divergence", "It is past the point where the paths to the three public servers "
+                                             "part: out in the internet.", INTERNET))
+    return ev
+
+
+def _label_past_edge_hops(guesses: Dict[int, HopGuess], answered: List[int], edge: int, cls: List[Optional[str]],
+                          first_public: Optional[int], facts: Facts) -> None:
+    """Rule 2: past the edge each hop is the provider's or the internet's, by its strongest evidence; once the path
+    has left the provider it does not come back."""
+    past = [i for i in answered if i > edge]
+    provider_asn, provider_domain = _provider_anchors(past, first_public, facts)
     left_provider = False
     for i in past:
         g = guesses[i]
-        address = g.address
-        c = cls[i]
-        ev: List[Evidence] = []
-        if c == CGNAT:
-            ev.append(Evidence("address_class", "It has a carrier-grade NAT address (100.64.0.0/10), which providers "
-                                                "use inside their network: the provider's.", PROVIDER))
-        elif c in (PRIVATE, LINK_LOCAL):
-            ev.append(Evidence("address_class", f"It has {CLASS_WORDS[c]}, but it is past the end of your network "
-                                                "and before the first public hop: inside the provider's network "
-                                                "(providers use private addresses too).", PROVIDER))
-        elif c == SPECIAL:
-            ev.append(Evidence("address_class", f"It has {CLASS_WORDS[c]}, which no home network uses."))
-        elif i == first_public:
-            ev.append(Evidence("address_class", "It is the first public address on the path: usually the provider's "
-                                                "first router.", PROVIDER))
-        else:
-            ev.append(Evidence("address_class", "It has a public address."))
-        asn = facts.asns.get(address)
-        if asn is not None:
-            label = f"AS{asn.number}" + (f" ({asn.operator})" if asn.operator else "")
-            if i == first_public:
-                ev.append(Evidence("asn", f"It is in {label}: the provider's network (the first public hop's).",
-                                   PROVIDER))
-            elif provider_asn is not None and asn.number == provider_asn.number:
-                ev.append(Evidence("asn", f"It is in {label}, the same network as the first public hop: the "
-                                          "provider's.", PROVIDER))
-            elif provider_asn is not None:
-                ev.append(Evidence("asn", f"It is in {label}, not the provider's AS{provider_asn.number}: another "
-                                          "network.", INTERNET))
-            else:
-                ev.append(Evidence("asn", f"It is in {label}."))
-        name = facts.names.get(address)
-        if name:
-            domain = registrable_domain(name)
-            if domain and provider_domain and domain == provider_domain:
-                ev.append(Evidence("rdns", f"Its name, {name}, is in {domain}, the provider's domain.", PROVIDER))
-            elif domain and provider_domain:
-                ev.append(Evidence("rdns", f"Its name, {name}, is in {domain}, not the provider's {provider_domain}: "
-                                           "another network.", INTERNET))
-            else:
-                ev.append(Evidence("rdns", f"Its name is {name}."))
-        if split_known:
-            if i == path.divergence:
-                ev.append(Evidence("divergence", "The paths to the three public servers part right after it; it is "
-                                                 "on the way to all of them: your connection's own way out.", PROVIDER))
-            elif path.divergence is not None and i < path.divergence:
-                ev.append(Evidence("divergence", "It is on the way to all three public servers, before their paths "
-                                                 "part: your connection's own way out.", PROVIDER))
-            else:
-                ev.append(Evidence("divergence", "It is past the point where the paths to the three public servers "
-                                                 "part: out in the internet.", INTERNET))
+        ev = _past_edge_evidence(g, i, cls[i], first_public, facts, provider_asn, provider_domain)
         g.evidence.extend(ev)
         owner = _decide(g.evidence)
         if left_provider and owner == PROVIDER:
@@ -329,6 +386,8 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         g.owner = owner
         if owner == INTERNET:
             left_provider = True
+        name = facts.names.get(g.address)
+        asn = facts.asns.get(g.address)
         if provider_domain and owner == PROVIDER:
             g.operator = provider_domain
         elif owner == PROVIDER and provider_asn is not None:
@@ -336,11 +395,15 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         elif owner == INTERNET:
             g.operator = registrable_domain(name) or (asn.operator if asn else None)
 
-    # 3. neighbors: hops with no owner, and the silent ones
+
+def _fill_from_neighbors(guesses: Dict[int, HopGuess], hop_count: int) -> Dict[int, Optional[str]]:
+    """Rule 3: a hop with no owner takes its neighbors' when the hops either side agree. Returns the owners of the
+    silent hops (path index -> owner or None), found the same way."""
+
     def owner_at(k: int) -> Optional[str]:
         return guesses[k].owner if k in guesses else None
 
-    order = list(range(len(hops)))
+    order = list(range(hop_count))
     silent_owners: Dict[int, Optional[str]] = {}
     for i in order:
         if i in guesses and guesses[i].owner is not None:
@@ -361,17 +424,12 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
                                                      "not agree: unknown."))
             g.owner = None
             g.category = OWNER_CATEGORY.get(before or PROVIDER, "local")
+    return silent_owners
 
-    for i, g in guesses.items():
-        if g.owner == HOME:
-            pass
-        elif g.owner is not None:
-            g.category = OWNER_CATEGORY[g.owner]
-        g.confidence = _confidence(g.evidence, g.owner)
 
-    result = [guesses[i] for i in answered]
-    notes = []
-    # gateways off the path (a modem in bridge mode never shows in a trace): at the edge, after your network's hops
+def _place_off_path(result: List[HopGuess], off_path: Sequence[OffPathDevice]) -> None:
+    """Gateways off the path (a modem in bridge mode never shows in a trace) go into `result` at the edge, after
+    your network's hops."""
     at = sum(1 for g in result if g.owner == HOME)
     on_path = {g.address for g in result}
     for device in off_path:
@@ -393,10 +451,6 @@ def infer(facts: Facts, off_path: Sequence[OffPathDevice] = ()) -> Inference:
         result.insert(at, guess)
         at += 1
         on_path.add(device.address)
-    if silent:
-        notes.append(f"{len(silent)} hop{'s' if len(silent) != 1 else ''} on the path did not answer the trace; "
-                     "a hop without an address cannot be probed, so it is not in the draft.")
-    return Inference(hops=result, edge=edge, step=step, silent=silent, silent_owners=silent_owners, notes=notes)
 
 
 def _owner_words(owner: str) -> str:

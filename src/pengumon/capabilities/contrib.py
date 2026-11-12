@@ -192,11 +192,17 @@ def day_key(ts: float, tz_offset_minutes: int = 0, tz=None) -> str:
 
 def render_section(section: ModuleSection) -> str:
     """The section as the core writes it into the pack (Markdown), for sizing; day columns are not part of it."""
-    lines = [f"- {section.headline}"] if section.headline else []
-    lines += [f"- {f}" for f in section.findings]
+    def one_line(text) -> str:  # a value cannot start a new bullet or row
+        return " ".join(str(text).split())
+
+    def cell(text) -> str:
+        return one_line(text).replace("|", "\\|")
+
+    lines = [f"- {one_line(section.headline)}"] if section.headline else []
+    lines += [f"- {one_line(f)}" for f in section.findings]
     if section.table is not None:
         header, rows = section.table
-        lines.append("| " + " | ".join(header) + " |")
+        lines.append("| " + " | ".join(cell(h) for h in header) + " |")
         lines.append("|" + "---|" * len(header))
-        lines += ["| " + " | ".join(row) + " |" for row in rows]
+        lines += ["| " + " | ".join(cell(c) for c in row) + " |" for row in rows]
     return "\n".join(lines)

@@ -23,12 +23,12 @@
 
 import { registerActions } from './dispatch.js';
 import { applyChartTheme, token } from './chart-theme.js';
-import { escapeHtml } from './util.js';
+import { escapeHtml } from './escape.js';
 
 const LOOK_KEY = 'pengumon.look';
 const MODE_KEY = 'pengumon.theme';
 const FX_KEY = 'pengumon.effects';
-export const FPS = 15;
+const FPS = 15;
 // What a card's own colors set (Layout): the accent and the series colors; a theme's palette brings its accent fill,
 // the text on it and the focus ring too.
 export const CARD_TOKENS = ['--accent', '--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7', '--s8'];
@@ -57,8 +57,8 @@ let full = null; // GET /api/themes, once read (loadThemes)
 export const themeList = () => looks;
 export const lookInfo = (id) => looks.find((t) => t.id === id) || null;
 export const currentLook = () => root.dataset.look || 'default';
-export const defaultLook = () => root.dataset.lookDefault || 'default';
-export const isDark = () => (root.dataset.theme ? root.dataset.theme === 'dark' : systemDark.matches);
+const defaultLook = () => root.dataset.lookDefault || 'default';
+const isDark = () => (root.dataset.theme ? root.dataset.theme === 'dark' : systemDark.matches);
 const forcedMode = (look) => (look && look.modes.length === 1 ? look.modes[0] : '');
 
 // The full list (descriptions, the colors of each theme), read once; `fresh` reads it again (after a Save).
@@ -151,12 +151,12 @@ export function setLook(id) {
   apply();
 }
 
-export function setMode(mode) {
+function setMode(mode) {
   write(MODE_KEY, mode === 'light' || mode === 'dark' ? mode : '');
   apply();
 }
 
-export function setEffects(choice) {
+function setEffects(choice) {
   write(FX_KEY, choice === 'on' || choice === 'off' ? choice : '');
   runEffect();
 }
@@ -221,7 +221,7 @@ function onColor(hex) {
 }
 
 // The custom properties a card gets: none for the page theme's colors.
-export function cardVars(spec, data = full) {
+function cardVars(spec, data = full) {
   if (!spec) return {};
   if (spec.custom && Object.keys(spec.custom).length) {
     const vars = {};
@@ -304,7 +304,7 @@ function effectWanted(look) {
   return root.dataset.effects !== 'off' && look.effect_on !== false;
 }
 
-export const effectsOn = () => (read(FX_KEY) ? read(FX_KEY) === 'on' : root.dataset.effects !== 'off');
+const effectsOn = () => (read(FX_KEY) ? read(FX_KEY) === 'on' : root.dataset.effects !== 'off');
 
 function stopEffect() {
   fxSeq++;
@@ -347,7 +347,13 @@ async function runEffect() {
       return () => frames.delete(cb);
     }
   };
-  fx = { url, stop: mod.default.start(el, ctx) };
+  try {
+    fx = { url, stop: mod.default.start(el, ctx) };
+  } catch (e) { // an effect that throws in start() is stopped (what it set going is cleared); the theme itself carries on
+    console.error(`The theme's effect could not be started: ${e.message}`);
+    stopEffect();
+    return;
+  }
   el.dataset.fx = look.id;
   el.dataset.state = document.hidden ? 'paused' : 'running';
 }

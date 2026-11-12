@@ -36,8 +36,13 @@ export default {
       drops = Array.from({ length: Math.ceil(width / CELL) }, (_, i) => drops[i] || newDrop(height, true));
     };
     size();
-    window.addEventListener('resize', size);
+    // the canvas is resized by the next frame, once however many resize events came: dragging a window fires dozens, and each
+    // one reallocated the canvas
+    let stale = false;
+    const resized = () => { stale = true; };
+    window.addEventListener('resize', resized);
     const off = ctx.onFrame(() => {
+      if (stale) { stale = false; size(); }
       const tokens = ctx.tokens();
       const wanted = `${CELL - 4}px ${tokens['--mono']}`;
       if (font !== wanted) { g.font = wanted; font = wanted; }
@@ -59,7 +64,7 @@ export default {
     }, FPS);
     return () => {
       off();
-      window.removeEventListener('resize', size);
+      window.removeEventListener('resize', resized);
       canvas.remove();
     };
   }

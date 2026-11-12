@@ -5,6 +5,173 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-11
+### Added
+- **Device names in Pengumon.** A device whose router name is unhelpful (a game console the router calls "EXAMPLE
+  NETWORK TECHNOLOGY CO") can be given a name with the pencil in its traffic dialog. It is shown instead of the
+  router's name on the Internet use card, in the dialog, in Local network and in the incident inspector, wherever names
+  are shown (never when Settings > Privacy hides them, and never in the ISP dossier, the Ask AI pack or MCP). Schema v20
+  (`client_names`); `PUT /api/devices/{id}/clients/{key}/name`.
+- **Internet use: which devices used the internet, and for what.** On an ASUS router with its Traffic Analyzer on,
+  Pengumon reads the router's own counts of download and upload per device and hour, and per app over 24-hour windows
+  (the router keeps app figures no finer). A new **Internet use** card shows the last 24 hours or 7 days per hour, or
+  the last 30 whole days per day, the top devices with their main app ("mostly Sony PlayStation") and the top apps of
+  the same range (over 7 and 30 days, the sum of the router's count for each whole day, midnight to midnight, that
+  Pengumon read); a device opens to its own traffic over the same 24 hours, 7 days or 30 days (buttons for the others),
+  with its apps over that range and its apps day by day. Hours the router has not published yet (it publishes each hour shortly after it ends) are
+  marked as such, not drawn as zero. An incident's details say which devices were using the internet in its hours, so a
+  slow evening caused by a game download is told from a provider problem. The router is asked once an hour by default
+  (device option `traffic_interval_seconds`, from 60 s; a read that finds nothing new costs one request); Settings >
+  Retention > Keep router traffic for (400 days). `GET /api/devices/{id}/traffic`, `.../traffic/clients/{key}`, and an
+  MCP `traffic` tool. The ISP dossier, the Ask AI pack and MCP describe a device by its kind and maker only.
+- **Router uptime, CPU temperature and WAN link speed** on the router card and in its history (ASUS), with **router
+  events**: a restart (from the uptime) and a WAN link that changed speed or went down. Events are listed on the router
+  card and in the details of incidents around them (`GET /api/devices/{id}/events`). The client list says which app a
+  device mostly uses.
+- **SNMPv3** for the `snmp` driver, beside SNMPv2c: noAuthNoPriv, authNoPriv and authPriv with HMAC-SHA-1 or SHA-224 to
+  SHA-512 and AES-128 (no MD5 or DES). The privacy password is a new device secret (dashboard, environment or secret
+  file), never shown again. Tested against net-snmp 5.9. Adds the `cryptography` package, pinned to an exact version.
+- **Probe a hop by TCP or HTTP(S), not only ping.** For a server or router that drops ping, a hop's **Probe by** in the
+  path editor can be **TCP connect** (a handshake to a port, no data sent; judged like a ping hop) or an **HTTP(S)
+  request** (one `HEAD` or `GET`, only the status line is read; the hop is always **Other**, charted and never blamed
+  for an outage). Test and Preview use the hop's own method, Path health and Hop details say how each hop is probed,
+  changing a method is kept as an event on the hop's history, and the reports, the Ask AI pack, MCP and the metrics
+  (a new `probe` label) name the method. Limits: at most 8 such hops; no loopback, link-local or other special
+  destinations (checked again at every probe, so a name pointed at this computer is refused); ports on the browsers'
+  bad-port list are refused; TLS is always verified; no redirect is followed. docs/probing.md,
+  docs/security.md.
+- **Download a backup of the database** (Settings > About this install, `GET /api/backup`): a consistent copy of the
+  history and settings, without any password, token or webhook address. Only for someone who may change settings; two
+  in 10 minutes, one at a time.
+- **A read token for AI assistants and scripts** (Settings > Sign-in > Read token). It reads what a viewer may read
+  and may call the read-only MCP endpoint, and can change nothing. Make, replace and remove it with the current
+  password; it is shown once. Use it instead of the password in an assistant's configuration
+  (docs/mcp.md).
+- `database.incident_retention_days` (Settings > Retention > Keep resolved incidents for): resolved incidents can be
+  deleted after that many days; 0, the default, keeps them forever, and an open incident is never deleted.
+- `database.slot_retention_days` (Keep 10-second history for): the latency chart's 10-second history now has its own
+  setting, 7 days by default, instead of following the raw samples.
+- Every list in Settings has a longest length (50 devices, 100 host app checks, 20 webhooks, 50 DNS lookups, 30 custom
+  themes); more is refused with "too many".
+- `PENGUMON_TRUSTED_PROXIES` for a reverse proxy whose `X-Forwarded-For` should be believed (see Upgrade notes).
+### Changed
+- **Faster dashboard.** Opening the page fired a dozen reads that waited for each other on one database connection
+  (300-500 ms each behind the slowest); reads now run on up to three connections. Long ranges are read from new
+  10-second and quarter-hour summaries instead of minutes or raw samples: a 6-hour latency history answers in about a
+  fifth of the time, the 30-day report and loss grid in about a twentieth, and a year-long report stays fast as history
+  grows. The report, loss grid and uptime strips are also kept for the rest of the minute.
+- **The live stream sends only what changed**: each second's message to the dashboard carries the new probes, not the
+  last 60 of every target, so each message is much smaller, and the latency chart redraws less.
+- **History is kept at two levels**: per-minute history for 90 days by default (was 400) and quarter-hour history for
+  400 days (Settings > Retention > Keep quarter-hour history for); charts and reports older than the per-minute history
+  use 15-minute detail. A per-minute setting stored at the old default of 400 days goes to 90 at the upgrade (any other
+  stored value stays); nothing is deleted then. Speed tests follow the quarter-hour setting. A database ends up much smaller than it
+  would have after a year at the old default.
+- The upgrade builds the new summaries from what is stored, once: about half a minute for a week of samples, during
+  which the dashboard does not answer.
+- **Sign-in is stricter.** The password is stored as a scrypt hash, never as text, and the sign-in cookies are signed
+  with a random server secret. Changing or removing the password, making, replacing or removing the read token, and
+  turning on "Others may look, but not change anything" now ask for the current password (also when the password comes
+  from `PENGUMON_ACCESS_TOKEN`), so a browser left signed in cannot leave access behind. A new password or removing it
+  removes the read token. Failed sign-ins are counted per address (an IPv6 address by its /64) and for all addresses
+  together: 5 a minute from one address, 20 a minute from all, and an address that has signed in recently is exempt from
+  the 20 (docs/security.md). With HTTPS, every answer carries `Strict-Transport-Security`.
+- **Viewers and the read token see less.** The settings a viewer opens come without a device's user name and options, a
+  check's path and query, a webhook's headers and secret hosts; kept versions of the settings and of the path, and the
+  backup, need the password; alert channels come without their hosts, a device's address without its path, and a failed
+  device poll in fixed words instead of the device's own message.
+- **MCP tools show less.** Hops are named by role, not by name or address, and every text in a tool's answer is scanned
+  for home addresses, MAC addresses, home host names and passwords in addresses. The Ask AI pack's final scan finds a
+  MAC address in every written form, any host name at Anonymized, and secrets in address queries.
+- The incident dossier is limited to 20 a minute and one at a time, the incident inspector to 60 a minute, and the
+  backup to 2 in 10 minutes. The live connection takes at most 64 dashboards, and a page can send at most 4096 bytes on it.
+- The compose files drop every capability but `NET_RAW` and limit memory (512 MB) and processes (256). The image no
+  longer contains `libcap2-bin` (the tool that sets the raw-socket capability is installed and removed again in the build).
+- Everything a device, a discovery target, a host app check, ntfy, a webhook or a speed test server answers is read
+  with a size limit and a total time limit, with no compression asked for; a webhook redirected from `https` to `http`
+  is refused, and the cable modem driver follows redirects only on its own host.
+- A device's address and login name no longer appear in logs and traces that are exported (OpenTelemetry); the page
+  and the API still show the full error text.
+- **Faster dashboard start.** The page lists its start's modules for the browser to fetch together, the panels' and
+  dialogs' stylesheets come as one file, and text files are compressed once and kept: a cold load on localhost made 117
+  requests instead of 146. A large history answer is shaped off the main loop, a history read writes the sample buffer
+  only when its window reaches it, the retention cleanup and the deletion of a removed hop's history run in bounded
+  batches so the probes' writes get in between, and the DNS probe no longer reads the resolver configuration every time.
+- Dialogs, the Back button and Settings: every dialog (Settings and the path editor too) pushes one history entry that
+  is marked spent when the dialog closes, so Back never lands on a dead entry and a close followed by a reload or a
+  link is not undone.
+- Several built-in themes have more readable text; a custom theme with unreadable colors gets a warning in Settings
+  (never a refusal), and two custom themes cannot share an id.
+- A probe round in Settings must be above 0 and at most 60 seconds; Infinity and NaN are refused in settings, the
+  line capacity and the history time parameters; a URL with a port that is not a port is refused.
+- The install scripts keep the working program aside (as `venv.old`) while the new one is installed and put it back if
+  anything fails or you interrupt them; on Linux and macOS they refuse a data folder inside the program folder and, for a
+  system install, a program folder that is not owned by root or can be written by others. `scripts/deploy.sh`
+  names its rollback point to the second and refuses to reuse one. The release workflow puts the version and `latest`
+  tags on the image only after its provenance attestation exists.
+### Fixed
+- The latency chart no longer shows short gaps in the Router and Gateway lines after the page loads. The stored probes
+  it starts from were grouped by whole second, and a probe round (its probes 25 ms apart, drifting slowly against the
+  clock) put a target in the next second whenever its place crossed a half second; they are now grouped by probe
+  round, and a round only partly stored at either end of the window is left out.
+- Upstream and downstream DOCSIS channels with the same number no longer share an error baseline, which counted
+  the whole error history of a downstream channel as new errors.
+- ntfy alerts with a title that is not plain ASCII are delivered.
+- The uptime strips count a drop that began before the window and reaches into it.
+- An incident is stored before it is active, so a busy database no longer leaves an incident that was never recorded;
+  it starts at its first faulty round and never ends before it started.
+- A dashboard whose live connection died silently now notices and reconnects; a sign-in change no longer leaves a page
+  stuck after the server closes its connection.
+- Settings: a setting that applies live is no longer shown as failed; a failed save puts back the secrets it replaced;
+  the secrets of removed items are deleted only after the save succeeded; a value is stored as it is read, not as it was
+  sent; a list item of the wrong shape is refused with a message instead of an error; the focused field survives the
+  redraw after a sign-in change; and many smaller dialog problems (the generated password and typed passwords no longer
+  stay in a closed dialog, Escape clears the Add target form, an older, slower answer no longer replaces the dossier
+  window you picked, and others).
+- The MCP report's worst hours of the day were shown as 1970 dates; the incident inspector looked at only the first 10
+  seconds of an incident that was still open; the Ask AI pack and the MCP incident tool leave out a reverse host name
+  that is not shaped like a host name.
+- Discovery: an address that answers at two hop counts is one hop; a hop probed by TCP or HTTP is never reported as gone;
+  a route-change notice can be dismissed during a check; a clock set back no longer runs the daily check early.
+- A raw ICMP socket that keeps failing to read pauses its reader instead of spinning the event loop.
+- Speed test: a direction cut off at its time limit counts what it moved.
+- The ASUS driver keeps at most 2048 clients and 32 mesh nodes from one answer; the SNMPv2c driver drops a datagram that
+  does not decode instead of failing the request; UPnP control addresses longer than 100 characters are read whole.
+### Security
+- An SNMPv3 device whose settings were being changed could, for one poll, fall back to SNMPv2c and send its password in
+  clear text; a v3 device now never speaks v2c, and settings an agent would refuse (a password under 8 characters, a user
+  name over 32 bytes) are refused when saved.
+- A dashboard connection could make the server resend the full state to every open dashboard as fast as it asked; a
+  resync now goes to that connection only, at most once every 2 s.
+- Malformed datagrams from someone spoofing an SNMPv3 agent no longer fail a request; the report routes build at most
+  two answers at a time and are rate limited, so they cannot hold every database connection.
+- A broken or hostile router (or something answering in its place) could freeze Pengumon for seconds to minutes per
+  poll with a large, malformed answer: some of the ASUS driver's text patterns took time that grew with the square of
+  the answer's size. The router's answers are now read up to a size limit (4 MiB for the status
+  answer, 1 MiB for the other pages) and parsed in linear time; absurdly long numbers, deep nesting and impossible
+  uptimes are treated as no value instead of failing the poll or the event list.
+- Names a device reports can no longer put fake time markers into the Ask AI pack (braces in names become
+  parentheses).
+- Failed sign-ins are throttled, the password is stored only as a hash, cookies are signed with a server secret, a page
+  on another site can no longer submit sign-in guesses from your browser (`Origin` is checked on `POST /login`), and
+  `X-Forwarded-For` is ignored unless `PENGUMON_TRUSTED_PROXIES` names the proxy.
+- A device or other server that answered with a huge or endlessly slow reply, or a compressed answer that expands
+  enormously, could hold or exhaust Pengumon; every such answer is now bounded in size and in total time, and the parsers of the
+  Xfinity status page, the page titles discovery reads and the redaction rules take time in proportion to the text.
+- Path probes cannot be aimed at this computer's loopback or link-local addresses (a cloud metadata service, for
+  example), also through a name that resolves there, nor at NAT64 and IPv4-compatible forms of them.
+- The backup's temporary folder is opened without following a link, refused unless it is ours, and set to mode 0700.
+- Theme files: ASCII digits only in value patterns, a stricter lint with its limits stated.
+### Upgrade notes
+Everyone signs in once more after the upgrade (the cookies have a new format). At the first start the stored password
+is converted to a hash in `secrets.json`; to roll back to an earlier version afterwards, restore `secrets.json` from the
+backup taken before the upgrade, along with the database (the converted file holds a placeholder an older version
+cannot use, so it would keep the dashboard locked). Hops saved from now on carry the new probe keys (`probe`, `port`
+and, for HTTP, `http_scheme`, `http_path`, `http_verb`); an older version ignores them and probes the hop by ping.
+`X-Forwarded-For` is no longer trusted by default: behind a reverse proxy, set `PENGUMON_TRUSTED_PROXIES` to the
+proxy's address (in the compose files, in the `environment:` list of an override file) or every client counts as the
+proxy.
+
 ## [0.26.0] - 2026-11-08
 ### Added
 - **Outages: drops that belong together are one event.** A line that drops, comes back for a few minutes and drops again
@@ -576,7 +743,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/pengupowered/pengumon/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/pengupowered/pengumon/compare/v0.25.2...v0.26.0
 [0.25.2]: https://github.com/pengupowered/pengumon/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/pengupowered/pengumon/compare/v0.25.0...v0.25.1

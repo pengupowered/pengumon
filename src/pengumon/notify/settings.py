@@ -29,6 +29,12 @@ def http_url(value: str, what: str, *, allow_query: bool) -> str:
         raise ValueError(f"{what} must be an http or https URL with a host")
     if parts.username is not None or parts.password is not None:
         raise ValueError(f"{what} must not contain credentials (use headers for a token)")
+    try:
+        port = parts.port
+    except ValueError:
+        port = 0
+    if port == 0:
+        raise ValueError(f"{what} has a port that is not a valid port (1 to 65535)")
     if not allow_query and ("?" in value or "#" in value):
         raise ValueError(f"{what} must not have a query string")
     return value
@@ -74,6 +80,8 @@ class WebhookItem(BaseModel):
         value = (value or "").strip()
         if len(value) > 60:
             raise ValueError("name is at most 60 characters")
+        if any(not c.isprintable() for c in value):  # it reaches log lines: no line breaks or terminal escapes
+            raise ValueError("name must not contain control characters")
         return value or None
 
     @field_validator("headers")
@@ -100,11 +108,14 @@ class WebhookConfig(WebhookItem):
         return http_url(value, "url", allow_query=True)
 
 
+MAX_WEBHOOKS = 20  # a household has a handful; the cap bounds what one save or import costs
+
+
 class NotificationsConfig(BaseModel):
     model_config = ConfigDict(hide_input_in_errors=True)
 
     public_url: Optional[str] = None  # how people reach this dashboard; the "link" of a json webhook, a line in slack/discord
-    webhooks: List[WebhookConfig] = Field(default_factory=list)
+    webhooks: List[WebhookConfig] = Field(default_factory=list, max_length=MAX_WEBHOOKS)
 
     @field_validator("public_url")
     @classmethod

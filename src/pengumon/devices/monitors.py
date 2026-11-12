@@ -13,8 +13,11 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Dict, List, Optional
 
 from pengumon.capabilities import (
-    Capability, ClientsReading, DriverError, LineReading, MeshReading, PollResult, SystemReading, WanCounters,
+    Capability, ClientsReading, DriverError, LineReading, MeshReading, PollResult, SystemReading, TrafficReading,
+    WanCounters,
 )
+from pengumon.devices import traffic
+from pengumon.devices.events import EventTracker
 from pengumon.devices.levels import RouterLevelsConfig
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.devices.samples import device_sample, mesh_counts
@@ -29,6 +32,7 @@ from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.lines.docsis_model import DocsisSignalSnapshot
 from pengumon.observability import StateLog, get_logger
 from pengumon.observability.telemetry import line_errors, line_restarts, router_restarts
+from pengumon.timeofday import viewer_zone
 
 # The router levels (the Settings page's router_levels: section, pengumon.devices.levels) a monitor grades by until
 # watch_levels hands it the live config; never changed.
@@ -225,6 +229,16 @@ class RouterMonitor:
         self._load = None  # the LineLoad whose capacity the WAN rates are graded against (see watch_load)
         self._busy: Callable[[], float] = lambda: DEFAULT_BUSY_LOAD_PCT
         self._config = None  # the live config whose router_levels section it grades by (watch_levels)
+        self._repository = repository
+        # uptime, CPU temperature and WAN link speed as last read: (wall time of the reading, value)
+        self._extras: Dict[str, tuple] = {}
+        self._events = EventTracker(device_id) if device_id else None
+        self._event_log = StateLog(get_logger("pengumon.devices", **({"device": device_id} if device_id else {})),
+                                   "Storing device events or traffic")
+        # The traffic statistics (TRAFFIC_USAGE): why there are none, as the driver last said (None: no reason known),
+        # and when some were last stored.
+        self.traffic_reason: Optional[str] = None
+        self.traffic_read_at: Optional[float] = None
 
     def watch_levels(self, config) -> None:
         """Grades by `config.router_levels` as it is at each poll (the live config: a saved level applies at the next
@@ -278,6 +292,7 @@ class RouterMonitor:
         if counters is None and not isinstance(system, SystemReading):
             reasons = "; ".join(result.missing.values()) or "the router reported nothing"
             return await self.on_error(ts, DriverError("protocol", reasons))
+        fresh_system = system if isinstance(system, SystemReading) else None
         system = system if isinstance(system, SystemReading) else SystemReading()
         resets = self.wan.resets
         rx, tx = self.wan.update(ts, counters)
@@ -307,13 +322,72 @@ class RouterMonitor:
             cpu_usage_pct=system.cpu_pct,
             mem_usage_pct=system.mem_pct,
             client_count=system.client_count,
+            **self._latest_extras(ts, system),
             wan_rx_load_pct=rx_pct,
             wan_tx_load_pct=tx_pct,
             grades=grades,
             model_name=self._model or system.model,
             status="warning" if warning else "healthy",
         )
-        await self._store(self.latest_snapshot, clients=clients)
+        if fresh_system is not None:  # (before the row is stored: the first one after a start compares with the last)
+            await self._device_events(ts, fresh_system)
+        await self._store(self.latest_snapshot, clients=clients, system=fresh_system)
+        await self._traffic(result)
         if clients is not None and isinstance(mesh, MeshReading) and self.device_id:
             await self._store_mesh(mesh_counts(self.device_id, ts, mesh))
         return self.latest_snapshot
+
+    def _latest_extras(self, ts: float, system: SystemReading) -> Dict[str, object]:
+        """The uptime, CPU temperature and WAN link speed for the snapshot: this poll's, else the last ones read (the
+        uptime counted on from its reading)."""
+        for name in ("uptime_s", "cpu_temp_c", "wan_link_mbps"):
+            value = getattr(system, name)
+            if value is not None:
+                self._extras[name] = (ts, value)
+        out: Dict[str, object] = {}
+        for name, (at, value) in self._extras.items():
+            out[name] = int(value + max(0.0, ts - at)) if name == "uptime_s" else value
+        return out
+
+    async def _device_events(self, ts: float, system: SystemReading) -> None:
+        """Restarts and WAN link changes (devices/events.py), stored as they are found. A failure is logged by state."""
+        if self._events is None or (system.uptime_s is None and system.wan_link_mbps is None):
+            return
+        try:
+            if not self._events.restored and self._repository is not None:
+                self._events.restore(*await self._repository.get_latest_router_extras(self.device_id))
+            for event in self._events.check(ts, system.uptime_s, system.wan_link_mbps, system.uptime_wrap_s):
+                get_logger("pengumon.devices", device=self.device_id).info(
+                    f"{self.device_id}: {event.kind}", **{k: v for k, v in event.detail.items()})
+                if self._repository is not None:
+                    await self._repository.insert_device_event(self.device_id, event.ts, event.kind, event.detail)
+        except Exception as ex:
+            self._event_log.failure(f"{type(ex).__name__}: {ex}")
+        else:
+            self._event_log.success()
+
+    def _day_of(self, window_end: int) -> Optional[str]:
+        """The local day an app window is, when it ends exactly at a local midnight (it then covers that day, midnight to
+        midnight); None for any other window, which is kept only as the latest. In the zone set in Settings
+        (general.timezone). devices/traffic.py adds these days up for ranges longer than a day."""
+        return traffic.day_of_window(window_end, viewer_zone(self._config)[0])
+
+    async def _traffic(self, result: PollResult) -> None:
+        """Keeps why there is no traffic (said once by the driver, in `missing`) and stores what a poll read."""
+        if Capability.TRAFFIC_USAGE in result.missing:
+            self.traffic_reason = result.missing[Capability.TRAFFIC_USAGE]
+        reading = result.readings.get(Capability.TRAFFIC_USAGE)
+        if not isinstance(reading, TrafficReading):
+            return
+        self.traffic_reason = None
+        if self._repository is None or not self.device_id:
+            self.traffic_read_at = reading.read_at
+            return
+        try:
+            await self._repository.upsert_traffic_hours(self.device_id, reading.hours, reading.read_at)
+            await self._repository.store_traffic_apps(self.device_id, reading.apps, reading.read_at, self._day_of)
+        except Exception as ex:
+            self._event_log.failure(f"{type(ex).__name__}: {ex}")
+        else:
+            self.traffic_read_at = reading.read_at
+            self._event_log.success()

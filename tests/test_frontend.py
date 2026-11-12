@@ -230,7 +230,7 @@ def test_the_dashboard_names_no_vendor_and_no_fixed_host(path):
 
 
 def test_util_js_has_no_literal_target_ids():
-    text = (JS / "util.js").read_text(encoding="utf-8")
+    text = (JS / "targets.js").read_text(encoding="utf-8")
     assert re.search(r"_dns|_router|_gateway|_rur|_ibone", text) is None
     assert "canonicalTargetOrder = []" in text
 
@@ -286,6 +286,7 @@ PANEL_HELP = {
     "diagnosis": {"keys": {"diagnosis"}, "thresholds": lambda: ()},
     "incidents": {"keys": {"line.load"}, "thresholds": lambda: ()},
     "services": {"keys": {"service.status", "service.latency"}, "thresholds": lambda: ()},
+    "traffic": {"keys": {"traffic.use", "traffic.apps"}, "thresholds": lambda: ()},
     "line": {"keys": {"docsis.dspower", "docsis.snr", "docsis.uspower", "docsis.uncorr", "channel.heatmap"},
              "thresholds": lambda: _docsis_thresholds()},
     "router": {"keys": {"line.capacity", "router.cpu", "router.mem", "router.wan", "router.clients", "router.history",
@@ -408,8 +409,10 @@ async def test_the_page_includes_links_and_loads_every_discovered_folder():
         html = (await ac.get("/")).text
         for part in ui.panels:
             assert f'data-panel="{part.id}"' in html
-            for css in part.css:
-                assert f'href="/static/v/{ASSET_VERSION}/{css}"' in html
+            for css in part.css:  # their styles come in the one generated sheet (tests/test_page_load.py), not as a link each
+                assert f'href="/static/v/{ASSET_VERSION}/{css}"' not in html
+                assert f"/* {css} */" in (await ac.get(f"/static/v/{ASSET_VERSION}/panels.css")).text
+        assert f'href="/static/v/{ASSET_VERSION}/panels.css"' in html
         modules = json.loads(unescape(re.search(r"<body\b[^>]*\bdata-modules='([^']*)'", html).group(1)))
         assert modules["panels"] == [p.module for p in ui.panels]
         lazy = [entry["module"] for entry in modules["lazy"]]  # dialogs loaded the first time something opens them
@@ -450,10 +453,11 @@ async def test_the_page_carries_the_configured_default_layout_in_a_csp_safe_attr
 # The page's skeleton. These modules start the page, carry the live message, lay out and tab the panels; none of them
 # may name an optional panel, a device role or a vendor/technology: a panel is added, removed or missing without
 # touching them, and the page works (the smoke test's `bare` variant) with no devices at all.
-CORE_MODULES = ["main.js", "live.js", "bus.js", "layout.js", "tabs.js", "dispatch.js", "devices.js", "chrome.js", "session.js"]
+CORE_MODULES = ["main.js", "live.js", "live-delta.js", "bus.js", "layout.js", "tabs.js", "dispatch.js", "devices.js", "chrome.js", "session.js"]
 # what the core may import: itself, the shared helpers and the one list of panels
-CORE_IMPORTABLE = {*CORE_MODULES, "util.js", "state.js", "help.js", "chart-theme.js", "themes.js", "settings-values.js",
-                   "panels/index.js"}
+CORE_IMPORTABLE = {*CORE_MODULES, "state.js", "help.js", "chart-theme.js", "themes.js", "settings-values.js",
+                   "panels/index.js", "targets.js", "dom.js", "device-text.js", "clock.js", "format.js", "escape.js", "modal.js",
+                   "host.js", "password.js", "clipboard.js", "export-view.js", "view-only.js"}
 OPTIONAL_WORDS = re.compile(
     r"docsis|modem|router|mesh|grafana|topology|xfinity|asus|channel|dossier|inspector|incident|report|sparkline|"
     r"\bclients?\b|\bservices?\b|\bdiagnosis\b|\bmatrix\b|\blatency\b|\bline\b", re.IGNORECASE)
@@ -582,7 +586,7 @@ def test_templates_are_refused_whichever_separator_the_path_has():
     for path in ("panels/line/panel.html", "panels\\line\\panel.html", "dialogs\\trace\\dialog.html",
                  "panels\\line\\panel.json"):
         assert not_served(path), path
-    for path in ("panels/line/panel.js", "panels\\line\\panel.css", "js\\util.js"):
+    for path in ("panels/line/panel.js", "panels\\line\\panel.css", "js\\modal.js"):
         assert not not_served(path), path
 
 
@@ -644,7 +648,7 @@ def test_the_dispatcher_lets_the_real_handler_replace_a_lazy_stand_in():
 # ---------- colors come from the tokens (docs/themes.md, "Card colors") ----------
 # A color written into a card's or a dialog's styles, a card's markup or a card's code would stay the same in every theme
 # and under a card's own colors (Layout > Colors). Allowed: the made-up data of a card's fixture (fixture(), its
-# variants), the fallbacks util.js and layout.js document (a token that cannot be read yet), and the colors of targets,
+# variants), the fallbacks targets.js and layout.js document (a token that cannot be read yet), and the colors of targets,
 # which come from the configuration at run time.
 COLOR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(\s*[\d.]")
 CSS_NAMED_COLOR = re.compile(r"(?<![\w-])(?:white|black|red|green|blue|yellow|orange|purple|pink|gray|grey|silver|"

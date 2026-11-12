@@ -15,13 +15,17 @@ What goes out:
     attributes and the trace and span id of the span they were logged in.
 
 The content rule is the same as for the stdout log: identifiers, outcomes and measurements, never credentials,
-client names or addresses (the client inventory never reaches a log, a span or a metric label).
+login names or client names or addresses (the client inventory never reaches a log, a span or a metric label). A device's
+own address (the modem, the router) is not a client's, but the device log lines (devices/registry.py, the OpenWrt ACL
+warning), the device HTTP spans and the error text and traceback of a failed poll (devices/device.py `_for_export`)
+leave it out too: the device is named by its id. (The page still shows the original error text.)
 """
 
 import logging
 import os
 import threading
 import time
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
@@ -31,7 +35,7 @@ from opentelemetry.metrics import CallbackOptions, Observation
 
 from pengumon import __version__
 from pengumon.observability.gauges import GAUGES, Gauge
-from pengumon.observability.logs import CONTEXT_ATTR
+from pengumon.observability.logs import CONTEXT_ATTR, SecretHeaderFilter
 from pengumon.observability.telemetry import meter
 
 log = logging.getLogger("pengumon.telemetry")
@@ -58,6 +62,16 @@ def _endpoint(signal: str, env: Mapping[str, str]) -> Optional[str]:
     return env.get(f"OTEL_EXPORTER_OTLP_{signal.upper()}_ENDPOINT") or env.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None
 
 
+def _shown_endpoint(url: Optional[str]) -> str:
+    """scheme://host:port of an endpoint: credentials, path and query stay out of the log (and so out of the collector)."""
+    try:
+        parts = urlsplit(url or "")
+        host = f"[{parts.hostname}]" if parts.hostname and ":" in parts.hostname else (parts.hostname or "")
+        return f"{parts.scheme}://{host}" + (f":{parts.port}" if parts.port else "")
+    except ValueError:
+        return "(endpoint)"
+
+
 def _attribute(value: Any) -> Any:
     """A log attribute value: scalars as they are, anything else as short text."""
     if isinstance(value, (bool, int, float)):
@@ -72,6 +86,7 @@ class OtelLogHandler(logging.Handler):
 
     def __init__(self, provider: Any, level: int = logging.NOTSET):
         super().__init__(level)
+        self.addFilter(SecretHeaderFilter())  # a record from a child logger of uvicorn.error reaches this handler unfiltered
         self._logger = provider.get_logger("pengumon", __version__)
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -194,7 +209,7 @@ def setup_telemetry(environ: Optional[Mapping[str, str]] = None, *, set_global: 
             metrics.set_meter_provider(tel.meter_provider)
         if tel.logger_provider is not None:
             _logs.set_logger_provider(tel.logger_provider)
-    log.info(f"Exporting {', '.join(signals)} over OTLP to {_endpoint(signals[0], env)}",
+    log.info(f"Exporting {', '.join(signals)} over OTLP to {_shown_endpoint(_endpoint(signals[0], env))}",
              extra={CONTEXT_ATTR: {"signals": ",".join(signals), "service": resource.attributes.get("service.name")}})
     return tel
 

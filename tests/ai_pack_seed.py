@@ -9,12 +9,23 @@ import time
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
+from pengumon.db.schema import UPSERT_ROLLUP_10S_FROM_SAMPLES, UPSERT_ROLLUP_15M_FROM_1M
 from pengumon.engine.prober_settings import DnsProbeConfig
 from pengumon.incidents.model import Incident
 from pengumon.models.probes import ProbeSample
 
 DAY = 86400.0
 NORMAL_MS = {"local": 1.5, "gateway": 3.0, "isp": 10.0, "public": 18.0, "dns": 20.0}
+
+
+def derive_rollups(con, first_minute: int, end_minute: int, first_ts: Optional[float] = None,
+                   end_ts: Optional[float] = None) -> None:
+    """What the app's flush derives from what the seed writes straight into the file: the quarter-hour rollups of the
+    quarters of the minutes [first_minute, end_minute) from rollup_1m and, given [first_ts, end_ts), the 10-second
+    rollups of those seconds from the raw samples."""
+    con.execute(UPSERT_ROLLUP_15M_FROM_1M, (first_minute // 15 * 15, -(-end_minute // 15) * 15))
+    if first_ts is not None:
+        con.execute(UPSERT_ROLLUP_10S_FROM_SAMPLES, (int(first_ts // 10) * 10, -(-int(end_ts) // 10) * 10))
 
 
 def week_end() -> float:
@@ -61,8 +72,8 @@ async def seed(repo, config, end: float, *, slow: Tuple[Tuple[str, float, float,
     await repo.flush_samples()
     con = sqlite3.connect(repo.db_path)
     ids = dict(con.execute("SELECT key, id FROM targets"))
-    con.execute("DELETE FROM samples")
-    con.execute("DELETE FROM rollup_1m")
+    for table in ("samples", "rollup_1m", "rollup_10s", "rollup_15m"):
+        con.execute(f"DELETE FROM {table}")
     first, last = int((end - 7 * DAY) // 60), int(end // 60)
     rows = []
     for m in range(first, last):
@@ -77,6 +88,7 @@ async def seed(repo, config, end: float, *, slow: Tuple[Tuple[str, float, float,
             rows.append((m, ids[t.id], 60, 60, avg * 60, avg, avg, 0.3 * 60, 60, avg * 0.9, avg * 1.3))
     con.executemany("INSERT INTO rollup_1m (minute, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, "
                     "lat_p10, lat_p90) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+    derive_rollups(con, first, last)
     con.commit()
     con.close()
     return ids
@@ -105,6 +117,7 @@ async def add_incident(repo, config, ids: Dict[str, int], start: float, seconds:
         for t in lost:
             con.execute("UPDATE rollup_1m SET ok = n - ?, lat_sum = lat_sum * (n - ?) / n WHERE minute = ? AND target = ?",
                         (n_lost, n_lost, m, ids[t]))
+    derive_rollups(con, minutes[0], minutes[-1] + 1, *((s0, s1 + 1) if raw else ()))
     con.commit()
     con.close()
     iid = await repo.create_incident(incident_row(kind, start, seconds, expected, severity, cause_code, tuple(sorted(lost))))

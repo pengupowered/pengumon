@@ -1,13 +1,22 @@
-"""homeguard.db: one writer and one read-only reader connection for an aiosqlite database.
+"""homeguard.db: one writer and one or more read-only reader connections for an aiosqlite database.
 
 The usual alternatives are a connection per call, or one connection shared by reads and writes (where a reader can
-see another task's uncommitted rows). `Database` keeps exactly two
-long-lived connections:
+see another task's uncommitted rows). `Database` keeps long-lived connections, two by default:
 
 * the writer, used through `write()`: one transaction at a time (an asyncio.Lock), committed when the block
   ends and rolled back on any exception;
 * the reader (`PRAGMA query_only=ON`), used through `read()` / `reader()`: it never sees uncommitted rows of
   the writer, because it is a different connection.
+
+With the default `readers=1` every read session runs on that one reader connection (one thread), so reads queue
+behind each other. `Database(..., readers=N)` (1..8) allows up to N reader connections: `read()` checks one out for
+the whole session (a multi-statement read stays on one connection) and returns it at the end, also on an exception
+or a cancellation. Connections are opened lazily, only when every open one is busy; a session that finds all N busy
+waits its turn (first come, first served). A `read()` nested inside another in the same task reuses the connection that
+task already holds (with its own row_factory), so nesting cannot exhaust the pool; only the outermost session returns
+it. A child task started inside a session checks out its own connection. With `readers=1` there is no checkout and
+sessions share the connection. `reader()` is a shared session on the first connection, which `read()` may also hand
+out. In-memory databases always have the one connection, whatever `readers` says.
 
 A read session finishes every statement before it returns: the rows are fetched and the cursor is closed
 right away. An unfinished SELECT would keep a read transaction open on the long-lived reader, which would
@@ -23,12 +32,13 @@ instead of deadlocking), and do not start child tasks inside the block that call
 """
 
 import asyncio
+import collections
 import logging
 import re
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Iterable, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Callable, Deque, Iterable, List, Optional, Sequence, Union
 
 import aiosqlite
 
@@ -140,10 +150,14 @@ class Database:
         wal: bool = True,
         row_factory: Optional[Callable] = None,
         foreign_keys: bool = False,
+        readers: int = 1,
     ):
-        """`pragmas` ("name=value") are applied to both connections; `wal` switches file databases to
+        """`pragmas` ("name=value") are applied to every connection; `wal` switches file databases to
         journal_mode=WAL (in WAL, synchronous=NORMAL cannot corrupt the file on a crash); `row_factory` is set
-        on both connections; `foreign_keys` is for the writer. The default 5 s busy timeout is kept."""
+        on every connection; `foreign_keys` is for the writer; `readers` (1..8) is the most read-only connections
+        (see the module docstring; ignored for in-memory databases). The default 5 s busy timeout is kept."""
+        if isinstance(readers, bool) or not isinstance(readers, int) or not 1 <= readers <= 8:
+            raise ValueError(f"readers must be an integer from 1 to 8, not {readers!r}")
         for pragma in pragmas:
             if not _PRAGMA.match(pragma):
                 raise ValueError(f"not a 'name=value' pragma: {pragma!r}")
@@ -155,6 +169,12 @@ class Database:
         self._writer: Optional[aiosqlite.Connection] = None
         self._reader: Optional[aiosqlite.Connection] = None
         self._session: Optional[ReadSession] = None
+        self._max_readers = readers
+        self._readers: List[aiosqlite.Connection] = []  # every reader opened; the first is `_reader`
+        self._idle: Deque[aiosqlite.Connection] = collections.deque()  # open readers nobody holds
+        self._held: dict = {}  # asyncio task -> [reader it holds, depth of its read() sessions]
+        self._reader_slots = 0  # open readers plus those being opened
+        self._waiters: Deque[asyncio.Future] = collections.deque()  # sessions waiting for a reader, in order
         self._open_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._owner: Optional[asyncio.Task] = None
@@ -218,6 +238,10 @@ class Database:
             self._reader = reader
             self._session = ReadSession(reader)
             self._writer = writer
+            if reader is not writer:
+                self._readers = [reader]
+                self._idle.append(reader)
+                self._reader_slots = 1
 
     async def writer(self) -> aiosqlite.Connection:
         """The raw writer connection, without the lock or the commit/rollback: for migrations, maintenance
@@ -257,25 +281,104 @@ class Database:
 
     @asynccontextmanager
     async def read(self) -> AsyncIterator[ReadSession]:
-        """A fresh read session over the shared reader (its own row_factory)."""
+        """A fresh read session (its own row_factory). With `readers=1` (or in memory) it runs on the shared
+        reader; with more, it holds one reader connection until the block ends."""
         await self.open()
         assert self._reader is not None
-        yield ReadSession(self._reader)
+        if self._max_readers == 1 or self._reader is self._writer:
+            yield ReadSession(self._reader)
+            return
+        task = asyncio.current_task()
+        held = self._held.get(task) if task is not None else None
+        if held is not None:  # nested in a session of this same task: reuse its connection
+            held[1] += 1
+            try:
+                yield ReadSession(held[0])
+            finally:
+                held[1] -= 1
+            return
+        connection = await self._acquire_reader()
+        if task is not None:
+            self._held[task] = [connection, 1]
+        try:
+            yield ReadSession(connection)
+        finally:
+            if task is not None:
+                self._held.pop(task, None)
+            self._release_reader(connection)
+
+    async def _acquire_reader(self) -> aiosqlite.Connection:
+        """An idle reader, a new one if all are busy and fewer than `readers` exist, else wait in line."""
+        self._check_not_closed()
+        if self._idle:
+            return self._idle.popleft()
+        if self._reader_slots < self._max_readers:
+            self._reader_slots += 1  # the slot is ours while we open
+        else:
+            future = asyncio.get_running_loop().create_future()
+            self._waiters.append(future)
+            try:
+                connection = await future
+            except BaseException:
+                if future in self._waiters:
+                    self._waiters.remove(future)
+                elif future.done() and not future.cancelled() and future.exception() is None:
+                    self._hand_over(future.result())  # handed to us but we were cancelled: pass it on
+                raise
+            if connection is not None:
+                return connection
+            # None: a slot became free (another session failed to open its reader); it is ours now
+        try:
+            connection = await self._connect(read_only=True)
+        except BaseException:
+            self._hand_over(None)
+            raise
+        if self._closed:  # close() ran while we were opening
+            await connection.close()
+            raise RuntimeError(f"Database {self.path} is closed; create a new Database to use it again")
+        self._readers.append(connection)
+        return connection
+
+    def _hand_over(self, connection: Optional[aiosqlite.Connection]) -> None:
+        """Give a reader (or, for None, an open slot) to the first session waiting, else put it back."""
+        while self._waiters:
+            future = self._waiters.popleft()
+            if not future.done():
+                future.set_result(connection)
+                return
+        if connection is None:
+            self._reader_slots -= 1
+        elif not self._closed:
+            self._idle.append(connection)
+
+    def _release_reader(self, connection: aiosqlite.Connection) -> None:
+        self._hand_over(connection)
 
     async def close(self) -> None:
-        """Waits for the transaction in flight, then closes the reader and the writer (the last connection
-        to close checkpoints the WAL and removes it). Closing is final: any later use raises RuntimeError, so a
+        """Waits for the transaction in flight, then closes every reader (also those a session still holds: its
+        next statement fails, and one already running is finished first) and the writer (the last connection
+        to close checkpoints the WAL and removes it). Sessions waiting for a reader get a RuntimeError. Closing is final: any later use raises RuntimeError, so a
         task that outlives shutdown cannot silently reopen the database. Closing twice is fine."""
         if self._owner is not None and self._owner is asyncio.current_task():
             raise RuntimeError("Database.close() cannot be called inside a write() block")
         async with self._write_lock:
             async with self._open_lock:
                 self._closed = True
-                reader, writer = self._reader, self._writer
+                readers, writer = self._readers, self._writer
                 self._reader = self._writer = self._session = None
+                self._readers, self._reader_slots = [], 0
+                self._idle.clear()
+                self._held.clear()
+                while self._waiters:
+                    future = self._waiters.popleft()
+                    if not future.done():
+                        future.set_exception(RuntimeError(f"Database {self.path} is closed"))
                 try:
-                    if reader is not None and reader is not writer:
-                        await reader.close()
+                    for reader in readers:
+                        try:
+                            await reader.close()
+                        except Exception:
+                            logger.warning("closing a reader failed", exc_info=True)
                 finally:
                     if writer is not None:
                         await writer.close()

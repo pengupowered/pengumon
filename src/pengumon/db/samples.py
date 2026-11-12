@@ -37,6 +37,10 @@ class DeviceSample:
     clients_wifi_2g: Optional[int] = None
     clients_wifi_5g: Optional[int] = None
     clients_wifi_other: Optional[int] = None  # any other band
+    # router_system (schema v19), on the polls that read them (NULL on the others)
+    uptime_s: Optional[int] = None
+    cpu_temp_c: Optional[float] = None
+    wan_link_mbps: Optional[int] = None  # 0: no link on the WAN port
 
 
 @dataclass(frozen=True)

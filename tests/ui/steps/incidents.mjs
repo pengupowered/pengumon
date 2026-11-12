@@ -260,7 +260,7 @@ export const steps = [
     const r = await page.evaluate(async () => {
       const main = [...document.scripts].find((s) => s.type === "module").src;
       const m = await import(main.replace(/js\/main\.js$/, "panels/incidents/incidents.js"));
-      const api = await import(main.replace(/js\/main\.js$/, "js/path-api.js"));
+      const api = await import(main.replace(/js\/main\.js$/, "js/roles.js"));
       return { lanes: api.CAUSES.map(([k, w]) => `${k}=${w}`).join(","), words: ["router", "gateway", "line", "isp"].map((c) => m.causeOf({ cause: c })).join(">") };
     });
     eq("lane keys and words", r.lanes, "router=Router,gateway=Gateway,line=Line,isp=ISP,internet=Internet,dns=DNS,load=Load,service=Service,unknown=Other");
@@ -565,7 +565,7 @@ export const steps = [
       const back = now();
       return { tokyo, back, want: { when: at(first.start_time * 1000, "Asia/Tokyo"), read: at(read, "Asia/Tokyo") },
         before: { when: at(first.start_time * 1000, zone), read: at(read, zone) } };
-    }, await moduleUrl("util.js"), LINE);
+    }, await moduleUrl("clock.js"), LINE);
     ok(`Tokyo's clock differs from the page's here (${shown.want.when} / ${shown.before.when})`, shown.want.when !== shown.before.when);
     ok(`the first incident at once on Tokyo's clock (${shown.tokyo.when}, want ${shown.want.when})`, shown.tokyo.when.endsWith(shown.want.when));
     ok(`the line card's read time at once on Tokyo's clock (${shown.tokyo.read})`, shown.tokyo.read.startsWith(`read ${shown.want.read}`));
@@ -628,5 +628,35 @@ export const steps = [
     await waitText("#incidentCountBadge", /^500 recorded events$/);
     ok("no note when the list holds everything", await page.$eval("#incidentCapNote", (e) => e.hidden));
     await stubFetch(null);
+  }],
+
+  ["a Save made between the page render and the live connection re-reads the incident list: the panel starts from the revision the page was rendered at", async ({ eq, layoutMounted, nextMessages, ok, page, sleep, waitText }) => {
+    const reads = () => page.evaluate(() => performance.getEntriesByType("resource").filter((r) => /\/api\/incidents\?/.test(r.name)).length);
+    const live = await page.evaluate(async () => (await (await fetch("/api/settings/values", { cache: "no-store" })).json()).revision);
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await waitText("#wsText", /^Live/);
+    await nextMessages(3);
+    await sleep(500);
+    const plain = await reads();
+    ok(`the list was read at the start (${plain})`, plain >= 1);
+    // the page claims another revision than the server's, as after a Save between the render and the connection
+    const hook = await page.evaluateOnNewDocument((fake) => {
+      new MutationObserver((_, obs) => { if (document.body) { document.body.dataset.settingsRevision = String(fake); obs.disconnect(); } }).observe(document, { childList: true, subtree: true });
+    }, live + 1000);
+    try {
+      await page.reload({ waitUntil: "load" });
+      await layoutMounted();
+      eq("(the page claims a revision the server is not at)", await page.evaluate(() => document.body.dataset.settingsRevision), String(live + 1000));
+      await waitText("#wsText", /^Live/);
+      await nextMessages(3);
+      await sleep(500);
+      const after = await reads();
+      ok(`the first message's revision differed: the list was read again (${after} reads, ${plain} without a Save)`, after > plain);
+    } finally {
+      await page.removeScriptToEvaluateOnNewDocument(hook.identifier);
+      await page.reload({ waitUntil: "load" });
+      await layoutMounted();
+    }
   }],
 ];

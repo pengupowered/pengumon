@@ -2,11 +2,17 @@
 
 Every route that puts times in days or hours takes `tz` (the viewer's IANA zone) and `tz_offset_minutes` (minutes east
 of UTC, the fallback of older pages); the zone used is the one set in Settings, else `tz`, else the offset, else UTC
-(timeofday.viewer_zone), and days and hours follow its daylight saving."""
+(timeofday.viewer_zone), and days and hours follow its daylight saving.
 
-from typing import Annotated, Literal, Optional
+The report, the loss grid and the uptime strips are kept for the rest of the minute (reports/cache.py): the dashboard
+asks for all three at every page load, and they change slowly. A kept answer is dropped as soon as the path is applied
+(or a removed hop's history deleted), a setting is saved or an incident changes. Only a few are built at once (the
+cache's MAX_BUILDS), so that answers asked for with ever-changing parameters cannot take every database reader; and the
+answers that are not kept count against a rate limit per client (REPORTS_RATE; a kept one is free)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Annotated, Any, Awaitable, Callable, Hashable, Literal, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from pengumon.api.common import StateDep, json_response
 from pengumon.engine.path_rules import ignoring_ping_ids
@@ -20,6 +26,21 @@ from pengumon.timeofday import viewer_zone
 
 router = APIRouter(prefix="/api")
 
+# Answers built (not kept) for one client, in one bucket for the three routes: a page load asks for three, a minute
+# later three again, and once more after each saved setting or new incident.
+REPORTS_RATE = rate_limit("reports", 60, 60)
+
+
+async def _kept(state, request: Request, key: Hashable, build: Callable[[], Awaitable[Any]]) -> Any:
+    """state.answers.get with the stamp of what these answers depend on besides the clock and their parameters, and
+    the rate limit on a miss."""
+    repository, config = state.repository, state.config
+    stamp = (id(repository), repository.path_changes, repository.incidents_version,
+             getattr(state.settings, "revision", None),
+             tuple((t.id, t.name) for t in getattr(config, "targets", None) or ()))
+    return await state.answers.get(key, stamp, build, admit=lambda: REPORTS_RATE(request))
+
+
 TzOffset = Annotated[int, Query(ge=-840, le=840,
                                 description="minutes east of UTC: the fallback when Settings and `tz` name no zone")]
 TzName = Annotated[Optional[str], Query(max_length=64, pattern=r"^[A-Za-z0-9_+\-/]+$",
@@ -30,6 +51,7 @@ TzName = Annotated[Optional[str], Query(max_length=64, pattern=r"^[A-Za-z0-9_+\-
 @router.get("/report")
 async def get_reliability_report(
     state: StateDep,
+    request: Request,
     days: int = Query(30, ge=1, le=400),
     tz_offset_minutes: TzOffset = 0,
     tz: TzName = None,
@@ -38,13 +60,15 @@ async def get_reliability_report(
     hops that ignore ping and the hops removed from the path left out, as in the loss grid)."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
-    return await build_report(state.repository, state.config, days, tz=viewer_zone(state.config, tz, tz_offset_minutes)[0],
-                              ignoring=ignoring_ping_ids(state.prober))
+    zone, ignoring = viewer_zone(state.config, tz, tz_offset_minutes)[0], ignoring_ping_ids(state.prober)
+    return await _kept(state, request, ("report", days, zone, frozenset(ignoring)),
+                       lambda: build_report(state.repository, state.config, days, tz=zone, ignoring=ignoring))
 
 
 @router.get("/report/loss-grid")
 async def get_loss_grid(
     state: StateDep,
+    request: Request,
     days: int = Query(7, ge=1, le=31),
     tz_offset_minutes: TzOffset = 0,
     tz: TzName = None,
@@ -54,24 +78,27 @@ async def get_loss_grid(
     when each cell begins (day_starts, hour_starts) and the zone used."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
-    return await build_loss_grid(state.repository, days, tz=viewer_zone(state.config, tz, tz_offset_minutes)[0],
-                                 ignoring=ignoring_ping_ids(state.prober))
+    zone, ignoring = viewer_zone(state.config, tz, tz_offset_minutes)[0], ignoring_ping_ids(state.prober)
+    return await _kept(state, request, ("loss-grid", days, zone, frozenset(ignoring)),
+                       lambda: build_loss_grid(state.repository, days, tz=zone, ignoring=ignoring))
 
 
 @router.get("/uptime")
 async def get_uptime(
     state: StateDep,
+    request: Request,
     window: Literal["24h", "7d", "30d"] = Query("24h"),
     tz_offset_minutes: TzOffset = 0,
     tz: TzName = None,
 ):
     """Availability strips for every target in one answer: one status per block (24h: 96 blocks of 15 min; 7d, 30d:
     calendar days) of ok, degraded, outage, busy (explained by line load) or no_data, plus the availability over the
-    window. From the per-minute rollups; each block's start and end (bounds) and the zone used."""
+    window. From the rollups; each block's start and end (bounds) and the zone used."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
-    return await build_uptime(state.repository, state.config, window,
-                              tz=viewer_zone(state.config, tz, tz_offset_minutes)[0])
+    zone = viewer_zone(state.config, tz, tz_offset_minutes)[0]
+    return await _kept(state, request, ("uptime", window, zone),
+                       lambda: build_uptime(state.repository, state.config, window, tz=zone))
 
 
 

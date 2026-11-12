@@ -121,6 +121,48 @@ async def test_send_posts_json_with_headers():
     assert str(request.url) == HOOK_URL
 
 
+class _Once(httpx.AsyncByteStream):
+    """A body handed over as the client reads it (httpx.Response(content=...) with a Content-Encoding inflates it at once)."""
+
+    def __init__(self, data):
+        self.data = data
+
+    async def __aiter__(self):
+        yield self.data
+
+
+def _bomb():
+    """A few hundred KB of gzip that inflate to 64 MiB."""
+    import zlib
+    z = zlib.compressobj(wbits=zlib.MAX_WBITS | 16)
+    return b"".join([z.compress(bytes(1 << 20)) for _ in range(64)] + [z.flush()])
+
+
+@pytest.mark.parametrize("through_redirect", [False, True])
+async def test_a_webhooks_answer_is_read_bounded_and_asks_for_no_compression(through_redirect):
+    """A gzip bomb as the answer of the webhook (or of a redirect on the way) is cut at the reader's cap while it
+    is decoded, and the request says Accept-Encoding: identity. Redirect rules are the same as ever."""
+    import tracemalloc
+    bomb, seen = _bomb(), []
+
+    def handler(request):
+        seen.append(request)
+        if through_redirect and len(seen) == 1:
+            return httpx.Response(302, headers={"content-encoding": "gzip", "location": HOOK_URL + "/next"},
+                                  stream=_Once(bomb))
+        return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=_Once(bomb))
+
+    tracemalloc.start()
+    try:
+        assert await _sender().send(_client(handler), _alert()) is None
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert len(seen) == (2 if through_redirect else 1)
+    assert all(r.headers["accept-encoding"] == "identity" for r in seen)
+    assert peak < 8 * 1024 * 1024
+
+
 async def test_one_retry_on_a_server_error_then_success():
     codes = iter([503, 200])
     calls = []
@@ -188,6 +230,29 @@ async def test_redirect_within_the_host_is_followed_and_to_another_host_refused(
     away = _sender(url="https://hooks.example.com/away")
     assert (await away.send(_client(handler), _alert())).startswith("refused")
     assert seen == ["https://hooks.example.com/away"]  # the other host was never contacted
+
+
+async def test_redirect_from_https_to_plain_http_is_refused_but_http_to_https_is_followed():
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        if request.url.scheme == "https":
+            return httpx.Response(200)
+        return httpx.Response(301, headers={"Location": "https://hooks.example.com/up"})
+
+    down = _sender(url="https://hooks.example.com/start", headers={"Authorization": "x"})
+
+    def downgrade(request):
+        seen.append(str(request.url))
+        return httpx.Response(307, headers={"Location": "http://hooks.example.com/start"})
+
+    assert await down.send(_client(downgrade), _alert()) == "refused: redirect to plain HTTP"
+    assert seen == ["https://hooks.example.com/start"]  # the http address was never contacted
+    seen.clear()
+    up = _sender(url="http://hooks.example.com/start")
+    assert await up.send(_client(handler), _alert()) is None
+    assert seen == ["http://hooks.example.com/start", "https://hooks.example.com/up"]
 
 
 async def test_redirect_to_a_non_http_scheme_or_a_loop_is_refused():
@@ -378,3 +443,45 @@ async def test_endpoints_list_channels_and_send_a_test(api_state):
         tested = await ac.post("/api/notifications/test")
     assert tested.json() == {"channels": [{"name": "hook", "ok": True, "detail": None}]}
     assert json.loads(seen[0].content)["event"] == "test"
+
+
+async def test_a_viewer_or_the_read_token_gets_the_channels_without_their_hosts(api_state, monkeypatch):
+    """GET /api/settings keeps the host of a secret address from someone without the password; this list did
+    not. The names and kinds still say what is set up (the alerts dialog shows them)."""
+    from pengumon import security
+    api_state.notifier = _notifier([], [_sender()], ntfy=None)
+    monkeypatch.setattr(security_config, "access_token", "example-token")
+    monkeypatch.setattr(security_config, "view_without_token", True)
+    monkeypatch.setattr(security_config, "read_token_hash", security.read_token_digest("pgr_made-up-for-channels"))
+    async with _api() as ac:
+        viewer = (await ac.get("/api/notifications")).json()
+        reader = (await ac.get("/api/notifications", headers={"Authorization": "Bearer pgr_made-up-for-channels"})).json()
+        owner = (await ac.get("/api/notifications", headers={"Authorization": "Bearer example-token"})).json()
+    assert viewer == reader == {"channels": [{"name": "hook", "kind": "webhook", "format": "json", "host": None}]}
+    assert owner["channels"][0]["host"] == "hooks.example.com"
+
+
+@pytest.mark.parametrize("name", ["Home\nINFO forged line", "Home\x1b[31m", "Ho\rme", "a\x00b"])
+def test_a_webhook_name_with_control_characters_is_refused(name):
+    """The name is written to log lines; a line break or an escape forges or hides one."""
+    with pytest.raises(ValueError, match="control characters"):
+        WebhookConfig(url="http://a.example.com/", name=name)
+
+
+def test_a_webhook_name_with_accents_is_kept():
+    assert WebhookConfig(url="http://a.example.com/", name="Küche — Telefónica").name == "Küche — Telefónica"
+
+
+async def test_a_drip_fed_webhook_answer_ends_at_the_total_deadline():
+    """A server answering one byte inside each read timeout, for ever, must not hold the delivery."""
+    class Drip(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                await asyncio.sleep(0.02)
+                yield b"x"
+
+    cfg = WebhookConfig(url=HOOK_URL, name="hook", format="json", timeout_seconds=0.05)
+    sender = WebhookSender(cfg, {}, LINK, retry_delay=0.0)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=Drip())))
+    result = await asyncio.wait_for(sender.send(client, _alert()), 5)
+    assert result == "timed out"

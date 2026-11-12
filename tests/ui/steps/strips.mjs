@@ -161,7 +161,7 @@ export const steps = [
     });
   }],
 
-  ["a hop that ignores ping is neutral in Uptime and its history, says so as the path does, counts no outage and opens no incidents", async ({ click, eq, ok, page, text, until }) => {
+  ["a hop that ignores ping is neutral in Uptime and its history, says so as the path does, counts no outage and opens no incidents", async ({ click, eq, ok, page, showCard, text, until }) => {
     await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
     // the router stops answering while the line and the internet still do: the server flags it as ignoring ping
     await page.evaluate(() => {
@@ -169,6 +169,7 @@ export const steps = [
         if (t.target_id === "local_router") Object.assign(t, { status: "down", last_ms: null, recent_latencies: Array(30).fill(null), loss_pct: 100, loss_recent_pct: 100, ignores_ping: true });
       });
     });
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await until(() => document.querySelector("#pathChain .node[data-node^='Router'] .node-st")?.title === "Ignores ping");
     await until(() => document.querySelectorAll("#stripsBody .strip-quiet").length === 1);
     const row = await page.evaluate(() => {
@@ -201,6 +202,7 @@ export const steps = [
         if (t.target_id === "cloudflare_dns") Object.assign(t, { address: "2606:4700:4700::1111", status: "down", last_ms: null, recent_latencies: Array(30).fill(null), loss_pct: 100, loss_recent_pct: 100, ipv6_unavailable: true });
       });
     });
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await until(() => document.querySelector("#pathChain .node[data-node^='Internet'] .node-st")?.title === "IPv6 unavailable on this host");
     const node = await page.$eval("#pathChain .node[data-node^='Internet']", (n) => ({ cls: n.className, val: n.querySelector(".node-val").textContent,
       meta: n.querySelector(".node-meta").textContent, why: n.querySelector(".node-meta span").title }));
@@ -238,6 +240,7 @@ export const steps = [
           last_ms: down ? null : 10, recent_latencies: Array(30).fill(down ? null : 10), loss_pct: down ? 100 : 0, loss_recent_pct: down ? 100 : 0 });
       };
     }, status);
+    await showCard("diagnosis"); // back to Path health: the chain is not drawn while it is off screen
     await second("up");
     await until(() => /^10\.0ms$/.test(document.querySelector("#pathChain .node[data-node^='Internet'] .node-val")?.textContent ?? ""));
     eq("the unprobed target's stale 50 ms is no part of the Internet figure", await text("#pathChain .node[data-node^='Internet'] .node-val"), "10.0ms");

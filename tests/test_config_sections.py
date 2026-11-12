@@ -62,7 +62,7 @@ def test_only_the_app_imports_pengumon_config():
                  # the app, its command, and the settings store (it describes, imports and builds AppConfig)
                  if path.relative_to(SRC).as_posix() not in ("main.py", "cli.py", "settings/registry.py",
                                                               "settings/importer.py", "settings/manager.py",
-                                                              "settings/validate.py", "settings/check.py")]
+                                                              "settings/validate.py", "settings/check.py", "settings/candidate.py")]
     assert offenders == []
 
 
@@ -77,3 +77,14 @@ def test_each_settings_module_imports_first_without_a_cycle(module):
                                                             "LOCALAPPDATA", "APPDATA", "TEMP", "TMP")
                                  if k in os.environ}})
     assert run.returncode == 0, run.stderr[-2000:]
+
+
+@pytest.mark.parametrize("field", ["down_mbps", "up_mbps"])
+@pytest.mark.parametrize("value", [float("inf"), float("nan"), "inf", ".inf", ".nan"])
+def test_the_line_capacity_is_a_finite_number(field, value):
+    """Config.yaml and the environment reach LineConfig without the settings page's checks."""
+    from pydantic import ValidationError
+    from pengumon.engine.load_settings import LineConfig
+    with pytest.raises(ValidationError):
+        LineConfig(**{field: value})
+    assert getattr(LineConfig(**{field: 940}), field) == 940

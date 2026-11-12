@@ -7,9 +7,8 @@ Only the server and database sections, which belong to no single feature, are de
 part of the config (pengumon.secrets).
 """
 
-import os
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
@@ -26,7 +25,7 @@ from pengumon.engine.netinfo import default_dns_probes, default_targets, get_def
 from pengumon.engine.prober_settings import DnsProbeConfig, ProberConfig
 from pengumon.lines.levels import LineSignalConfig
 from pengumon.mcp.settings import McpConfig
-from pengumon.models.probes import TargetConfig
+from pengumon.models.probes import MAX_SOCKET_HOPS, TargetConfig
 from pengumon.notify.settings import AlertsConfig, NotificationsConfig
 from pengumon.observability import get_logger
 from pengumon.observability.logs import parse_levels
@@ -69,17 +68,56 @@ class ServerConfig(BaseModel):
         return value.strip()
 
 
+LONG_ROLLUP_RETENTION_DEFAULT = 400
+
+
 class DatabaseConfig(BaseModel):
     db_path: Optional[str] = None  # unset: <data directory>/pengumon.db; a relative path is relative to the cwd (legacy)
     retention_days: int = Field(7, ge=1, le=90)  # raw samples; line-capacity learning needs 7
-    rollup_retention_days: int = Field(400, ge=30, le=1000)  # per-minute rollups, at least retention_days
+    # the 10-second rollups (the latency chart's 10 s buckets), at least retention_days; when not set, the longer of 7
+    # and retention_days, so a raw retention stored before this existed keeps its 10-second rollups as long
+    slot_retention_days: int = Field(7, ge=1, le=90)
+    rollup_retention_days: int = Field(90, ge=30, le=1000)  # per-minute rollups, at least retention_days
+    # quarter-hour rollups (and speed tests), at least rollup_retention_days; when not set, the longer of its default
+    # and rollup_retention_days, so a longer per-minute setting stored before it existed stays valid
+    long_rollup_retention_days: int = Field(LONG_ROLLUP_RETENTION_DEFAULT, ge=30, le=3650)
+    # the router's traffic per client and hour and its app windows (devices/traffic.py)
+    traffic_retention_days: int = Field(400, ge=1, le=1000)
+    # resolved incidents (a few hundred rows a year); 0 keeps them forever, else at least long_rollup_retention_days
+    incident_retention_days: int = Field(0, ge=0, le=36500)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _long_follows_per_minute(cls, data):
+        if isinstance(data, dict) and data.get("slot_retention_days") is None:
+            raw_days = data.get("retention_days")
+            if isinstance(raw_days, int) and not isinstance(raw_days, bool) and 7 < raw_days <= 90:
+                data = {**data, "slot_retention_days": raw_days}
+        if isinstance(data, dict) and data.get("long_rollup_retention_days") is None:
+            minute_days = data.get("rollup_retention_days")
+            if isinstance(minute_days, int) and not isinstance(minute_days, bool) \
+                    and LONG_ROLLUP_RETENTION_DEFAULT < minute_days <= 3650:
+                data = {**data, "long_rollup_retention_days": minute_days}
+        return data
 
     @model_validator(mode="after")
     def _rollups_outlive_raw(self):
         if self.rollup_retention_days < self.retention_days:
             raise ValueError("rollup_retention_days must be at least retention_days")
+        if self.slot_retention_days < self.retention_days:
+            raise ValueError("slot_retention_days must be at least retention_days")
+        if self.rollup_retention_days < self.slot_retention_days:
+            raise ValueError("rollup_retention_days must be at least slot_retention_days")
+        if self.long_rollup_retention_days < self.rollup_retention_days:
+            raise ValueError("long_rollup_retention_days must be at least rollup_retention_days")
+        if self.incident_retention_days and self.incident_retention_days < self.long_rollup_retention_days:
+            raise ValueError("incident_retention_days must be 0 (keep forever) or at least long_rollup_retention_days")
         return self
 
+
+# The longest the lists may be: a household has a handful, and the cap bounds what one save, check or import costs.
+MAX_DEVICES = 50
+MAX_DNS_PROBES = 50
 
 # Models that may carry a credential (or a URL someone put one in) never echo their input in validation errors: the
 # error text ends up in the startup log and the crash output.
@@ -92,10 +130,10 @@ class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     prober: ProberConfig = Field(default_factory=ProberConfig)
     targets: List[TargetConfig] = Field(default_factory=list)
-    dns_probes: List[DnsProbeConfig] = Field(default_factory=list)
+    dns_probes: List[DnsProbeConfig] = Field(default_factory=list, max_length=MAX_DNS_PROBES)
     classifier: ClassifierConfig = Field(default_factory=ClassifierConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    devices: List[DeviceConfig] = Field(default_factory=list)  # the modems and routers to read; none by default
+    devices: List[DeviceConfig] = Field(default_factory=list, max_length=MAX_DEVICES)  # the modems and routers to read; none by default
     line: LineConfig = Field(default_factory=LineConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     access: AccessConfig = Field(default_factory=AccessConfig)
@@ -114,6 +152,14 @@ class AppConfig(BaseModel):
     speedtest: SpeedtestConfig = Field(default_factory=SpeedtestConfig)
     incidents: IncidentsConfig = Field(default_factory=IncidentsConfig)
     _targets_are_defaults: bool = PrivateAttr(default=False)  # load_config filled in default_targets()
+
+    @field_validator("targets")
+    @classmethod
+    def _few_socket_hops(cls, v):
+        # config.yaml's first import goes through PathManager.load without PathManager.check, so the cap is checked here too
+        if sum(1 for t in v if t.probe != "icmp") > MAX_SOCKET_HOPS:
+            raise ValueError(f"at most {MAX_SOCKET_HOPS} targets may be probed by TCP or HTTP (each opens a connection every second)")
+        return v
 
     @property
     def targets_from_file(self) -> bool:

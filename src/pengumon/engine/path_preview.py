@@ -2,7 +2,7 @@
 loss before the owner commits to them (POST /api/path/preview, api/path.py).
 
 A preview probes each hop it is given (the API leaves out the hops already probed live) once a second for
-PREVIEW_SECONDS, through the app's ICMP backend, and records nothing: no sample, no statistics of the prober. It is
+PREVIEW_SECONDS, through the app's prober (ICMP, or a TCP connection or HTTP request for a hop set to one), and records nothing: no sample, no statistics of the prober. It is
 single flight per client (a new preview from the same client stops its previous one), at most MAX_PREVIEWS run at
 once app-wide, and one stops early when the editor asks (DELETE) or closes. A finished preview is kept KEEP_SECONDS
 for its last read, then forgotten.
@@ -13,7 +13,7 @@ import secrets
 import statistics
 import time
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 PREVIEW_SECONDS = 30
 INTERVAL_SECONDS = 1.0
@@ -21,11 +21,15 @@ MAX_PREVIEWS = 2
 KEEP_SECONDS = 120.0
 STAGGER_SECONDS = 0.025  # between the hops of one round, as the prober staggers its probes
 
-# One probe of an address: (address, family) -> {"kind": reply|timeout|unreachable|ttl_exceeded|ipv6_unavailable|
-# error, "rtt_ms": float or None, ...} (api/path.probe_address).
-Probe = Callable[[str, int], Awaitable[dict]]
+# One probe of a hop's spec (what the API hands the store: the draft hop): spec -> {"kind": reply|timeout|refused|
+# unreachable|ttl_exceeded|ipv6_unavailable|tls|http_error|bad_answer|not_allowed|error, "rtt_ms": float or None, ...}
+# (api/path.probe_hop).
+Probe = Callable[[Any], Awaitable[dict]]
 
-_KINDS = {"reply": "reply", "timeout": "timeout", "ipv6_unavailable": "ipv6_unavailable"}
+# "refused" is its own kind (a closed port answers); the other failures of a TCP or HTTP hop are "failed" (the Test button
+# says why); "error" and "ttl_exceeded" stay "unreachable".
+_KINDS = {"reply": "reply", "timeout": "timeout", "ipv6_unavailable": "ipv6_unavailable", "refused": "refused",
+          "tls": "failed", "http_error": "failed", "bad_answer": "failed", "not_allowed": "failed"}
 
 
 class PreviewBusy(Exception):
@@ -65,7 +69,7 @@ class HopTally:
 class Preview:
     id: str
     client: str
-    hops: Dict[str, Tuple[str, int]]  # hop id -> (address, family)
+    hops: Dict[str, Any]  # hop id -> its spec, opaque here: what the probe function takes (the draft hop)
     started: float
     state: str = "running"  # running | done
     finished: Optional[float] = None
@@ -85,7 +89,7 @@ class PreviewStore:
     def running(self) -> List[Preview]:
         return [p for p in self._previews.values() if p.state == "running"]
 
-    async def start(self, client: str, hops: Dict[str, Tuple[str, int]], probe: Probe) -> str:
+    async def start(self, client: str, hops: Dict[str, Any], probe: Probe) -> str:
         """Starts probing `hops` for `client` and returns the preview's id. The client's previous preview, if one is
         running, is stopped first. Raises PreviewBusy when MAX_PREVIEWS others are running."""
         self._prune()
@@ -135,11 +139,11 @@ class PreviewStore:
         preview.task = None
 
     async def _run(self, preview: Preview, probe: Probe) -> None:
-        async def one(delay: float, hop_id: str, address: str, family: int) -> None:
+        async def one(delay: float, hop_id: str, spec: Any) -> None:
             if delay:
                 await asyncio.sleep(delay)
             try:
-                answer = await probe(address, family)
+                answer = await probe(spec)
             except Exception:  # a failing probe is an unanswered one; the preview goes on
                 answer = {"kind": "error", "rtt_ms": None}
             preview.tallies[hop_id].add(answer)
@@ -150,8 +154,8 @@ class PreviewStore:
                 wait = due - self._clock()
                 if wait > 0:
                     await asyncio.sleep(wait)
-                await asyncio.gather(*(one(k * self.stagger, hop_id, address, family)
-                                       for k, (hop_id, (address, family)) in enumerate(preview.hops.items())))
+                await asyncio.gather(*(one(k * self.stagger, hop_id, spec)
+                                       for k, (hop_id, spec) in enumerate(preview.hops.items())))
         finally:
             self._finish(preview)
 

@@ -8,6 +8,7 @@ const WIDTH = 80;
 const HEIGHT = 22;
 const SLOTS = 60; // x positions: the probe history window (the newest sample is at the right edge)
 import { chartStyle, token } from './chart-theme.js';
+import { has } from './values.js';
 
 const barsWanted = () => chartStyle()?.spark === 'bars';
 
@@ -86,7 +87,6 @@ const SPARK_COLOR = { good: 'var(--accent)', warn: 'var(--warn)', crit: 'var(--c
 
 export function sparkSvg(vals, level = 'good', { h = 30, w = 120, id: series = level } = {}) {
   const c = SPARK_COLOR[level] || SPARK_COLOR.good;
-  const has = (v) => v !== null && v !== undefined;
   if (!vals || !vals.some(has)) {
     const lost = vals && vals.length ? vals.map((_, i) => `<rect x="${(i * (w / vals.length)).toFixed(1)}" y="${h - 6}" width="1.4" height="6" fill="var(--crit)"/>`).join('') : '';
     return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="${w}" y1="${h / 2}" y2="${h / 2}" stroke="var(--line-strong)" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>${lost}</svg>`;

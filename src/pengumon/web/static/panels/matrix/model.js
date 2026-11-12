@@ -7,7 +7,9 @@
 
 import { bus } from '../../js/bus.js';
 import { createCard } from '../../js/cards.js';
-import { latestMs, STATUS, targetList } from '../../js/util.js';
+import { has, latestMs } from '../../js/values.js';
+import { STATUS } from '../../js/dom.js';
+import { targetList } from '../../js/targets.js';
 import { quietTargets, shortLabels } from '../../js/path.js';
 import standard from './view.js';
 
@@ -21,7 +23,6 @@ const lossLevel = (t, pct) => (t.status === 'down' ? 'crit' : pct > 0 ? 'warn' :
 // carry their IP in the name.
 const nameSaysAddress = (name, address) => !address || (name || '').includes(address.split(/[\s@]/)[0]);
 
-const has = (v) => v !== null && v !== undefined;
 const r2 = (v) => (has(v) ? +Number(v).toFixed(2) : v); // the server sends raw floats
 
 // The view model: { rows: [row...] } (a row: id, label, name, addr, sayAddr, labelTitle, subTitle, loss {level, text,
@@ -71,14 +72,15 @@ export function present(targets, labels, quiet) {
         name: t.name,
         addr: t.address,
         sayAddr,
-        subTitle: sayAddr ? `${t.name} · ${t.address}` : t.name,
+        probe: t.probe_label || '', // how a hop not probed by ping is probed ("TCP 443"); '' for a ping
+        subTitle: (sayAddr ? `${t.name} · ${t.address}` : t.name) + (t.probe_note ? ` · ${t.probe_note}` : ''),
         loss: {
           level,
           chip: recentLoss > 0 || level !== 'good', // a plain loss figure is not a colored chip
           icon: STATUS[level].icon,
-          text: unprobed ? 'no IPv6' : ignores ? 'no ping' : `${recentLoss}%`,
+          text: unprobed ? 'no IPv6' : ignores ? (t.probe && t.probe !== 'icmp' ? 'no answer' : 'no ping') : `${recentLoss}%`,
           title: unprobed ? quiet.get(t.target_id).why
-            : ignores ? 'Does not answer ping, but the hops after it do: traffic passes through it (many provider routers ignore ping)' : ''
+            : ignores ? (t.probe && t.probe !== 'icmp' ? quiet.get(t.target_id).why : 'Does not answer ping, but the hops after it do: traffic passes through it (many provider routers ignore ping)') : ''
         },
         range,
         last,
@@ -110,12 +112,14 @@ export function fixture() {
 // is off screen): a rolling window, read by the smoke test through window.__pengumonPerf (a plain object, nothing is
 // logged).
 const matrixCost = {
-  samples: [],
-  count: 0, // every message drawn so far
+  perf: { matrixMs: [], targets: 0, drawn: 0 }, // one object, updated in place (a copy a second is work for nothing)
   record(ms, rows) {
-    this.samples.push(ms);
-    if (this.samples.length > 120) this.samples.shift();
-    window.__pengumonPerf = { matrixMs: this.samples.slice(), targets: rows, drawn: ++this.count };
+    const { perf } = this;
+    perf.matrixMs.push(ms);
+    if (perf.matrixMs.length > 120) perf.matrixMs.shift();
+    perf.targets = rows;
+    perf.drawn += 1;
+    window.__pengumonPerf = perf;
   }
 };
 

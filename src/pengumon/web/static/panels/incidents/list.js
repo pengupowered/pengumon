@@ -8,7 +8,7 @@
 // the incidents loaded, with every load. A group of drops is shown whole or not at all, so a load that leaves an outage
 // with drops not loaded yet goes on loading older incidents until they are (or the cap, or the end of the list).
 
-export const PAGE = 50;
+const PAGE = 50;
 export const CAP = 500;
 
 let list = [];
@@ -62,7 +62,7 @@ export const isLoading = () => waiting > 0;
 export const totalCounts = () => totals;
 export const loadedOutages = () => outages;
 // Does an outage of 2 or more drops have a drop that is not loaded?
-export const incomplete = (loaded = list, found = outages) => {
+const incomplete = (loaded = list, found = outages) => {
   if (!found) return false;
   const have = new Set(loaded.map((i) => i.id));
   return found.some((o) => o.drops >= 2 && o.incident_ids.some((id) => !have.has(id)));
@@ -70,14 +70,26 @@ export const incomplete = (loaded = list, found = outages) => {
 export const oldestLoaded = () => (list.length ? list[list.length - 1].start_time : null);
 
 // The first load and every refresh: everything loaded so far, one page at least.
-export const reload = () => run(async () => {
+// A reload asked for while another one is queued and has not started gets that one: it will read the list after the
+// request, so queueing a second full read would only repeat it (a line that flaps asks for one every few seconds).
+let queuedReload = null;
+export const reload = () => {
+  if (queuedReload) return queuedReload;
+  queuedReload = run(async () => {
+    queuedReload = null; // started: a request from now on needs a read of its own
+    await readAll();
+  });
+  return queuedReload;
+};
+
+const readAll = async () => {
   const limit = Math.min(CAP, Math.max(PAGE, list.length));
   [list, totals] = await Promise.all([get(limit, 0), counts()]);
   exhausted = list.length < limit;
   outages = await readOutages();
   sink(list);
   await fill();
-});
+};
 
 const more = async (size) => {
   const limit = Math.min(size, CAP - list.length);

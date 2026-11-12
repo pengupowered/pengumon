@@ -10,6 +10,8 @@ export default makeListEditor({
   addLabel: 'Add a check',
   empty: 'No checks yet. Add one to watch an app on this network.',
   note: 'Each check fetches its address every interval and opens an incident after the failures set above. An id is fixed once the check is saved.',
+  noteView: 'Each check fetches its address every interval and opens an incident after the failures set above. Addresses are shown without their path.',
+  emptyView: 'No checks.',
   ordered: true,
   resetLabel: 'Remove all checks',
   fields: [
@@ -19,7 +21,7 @@ export default makeListEditor({
     { f: 'timeout_seconds', label: 'Timeout (seconds)', kind: 'number', required: false, hint: '0.5 to 60.' },
     { f: 'open_url', label: 'Link to open the app', kind: 'text', nullable: true, mono: true },
     { f: 'description', label: 'Description', kind: 'text', nullable: true },
-    { f: 'ca_file', label: 'CA file (for a private certificate)', kind: 'text', nullable: true, mono: true },
+    { f: 'ca_file', label: 'CA file (for a private certificate)', kind: 'text', nullable: true, mono: true, owner: true },
     { f: 'enabled', label: 'Checked', kind: 'bool' },
     { f: 'notify', label: 'Send an alert when it fails', kind: 'bool' }
   ],

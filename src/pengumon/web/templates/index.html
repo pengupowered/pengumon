@@ -16,7 +16,9 @@
   <link rel="stylesheet" href="/static/v/{{ v.tree }}/components.css">
   <link rel="stylesheet" href="/static/v/{{ v.tree }}/page.css">
   <link rel="stylesheet" href="/static/v/{{ v.tree }}/style.css">
-  {% for css in ui.css %}<link rel="stylesheet" href="/static/v/{{ v.tree }}/{{ css }}">
+  <link rel="stylesheet" href="/static/v/{{ v.tree }}/panels.css">
+  <!-- every module of the start, fetched together instead of one import level at a time (pengumon.web.preload) -->
+  {% for module in preload %}<link rel="modulepreload" href="/static/v/{{ v.tree }}/{{ module }}">
   {% endfor %}
   <!-- this browser's theme on <html> before anything is drawn, and that theme's stylesheet (its tokens, skin and card
        views' styles) linked here, after the page's own (docs/themes.md, "How the page applies a theme"); a classic
@@ -25,7 +27,7 @@
   <!-- Chart.js, vendored -->
   <script src="/static/v/{{ v.tree }}/vendor/chart.umd.min.js"></script>
 </head>
-<body data-layout='{{ layout|tojson }}' data-modules='{{ modules|tojson }}' data-settings='{{ (settings_values or {})|tojson }}' data-status="unknown">
+<body data-layout='{{ layout|tojson }}' data-modules='{{ modules|tojson }}' data-settings='{{ (settings_values or {})|tojson }}'{% if settings_revision is not none %} data-settings-revision="{{ settings_revision }}"{% endif %} data-status="unknown">
   <a class="skip" href="#panels">Skip to panels</a>
   <div class="glow" aria-hidden="true"></div>
   <!-- a theme's animated effect draws here, behind everything (js/themes.js) -->

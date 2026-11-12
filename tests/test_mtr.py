@@ -201,3 +201,20 @@ async def test_an_ipv6_trace_is_paced_so_a_policing_provider_still_answers():
     hops = await MtrEngine(target, max_hops=6, timeout=0.3, backend=FakeBackend(answer=policer.answer), family=6).run_trace()
     assert hops and hops[-1].ip == target
     assert [h.ip for h in hops[:3]] == ["2001:db8::a", "2001:db8::b", "2001:db8::c"]
+
+
+async def test_a_probe_that_fails_in_any_way_is_a_silent_probe_not_a_failed_trace_R4_L12():
+    def answer(address, ttl):
+        return RuntimeError("backend closed") if ttl == 2 else FakePath([R1, R2]).answer(address, ttl)
+
+    trace = await MtrEngine("192.0.2.80", max_hops=5, timeout=0.05, backend=FakeBackend(answer)).run_trace()
+    assert [(h.hop_number, h.ip) for h in trace] == [(1, R1), (2, None), (3, "192.0.2.80")]
+
+
+async def test_callers_with_other_known_targets_get_their_own_labels_R4_L12():
+    backend = FakeBackend(path=FakePath([R1, R2]), delay=0.05)
+    known = [TargetConfig(id="gw", name="My router", address=R1, category="local")]
+    plain, named = await asyncio.gather(
+        MtrEngine("192.0.2.80", max_hops=5, timeout=0.2, backend=backend).run_trace(),
+        MtrEngine("192.0.2.80", max_hops=5, timeout=0.2, backend=backend, known_targets=known).run_trace())
+    assert plain[0].label == "Hop 1 (private)" and named[0].label == "My router"

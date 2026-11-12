@@ -1,12 +1,28 @@
-"""Client and mesh-node counts (schema v10): aggregates only."""
+"""Client and mesh-node counts (schema v10): aggregates only; and the names given to clients in Pengumon (v20)."""
 
+import time
 from dataclasses import astuple
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from pengumon.db.samples import MeshCount
 
 
 class ClientQueries:
+    async def get_client_names(self) -> Dict[str, str]:
+        """MAC -> the name given to that client in Pengumon."""
+        async with self._db.read() as db:
+            async with db.execute("SELECT mac, name FROM client_names") as cursor:
+                return {mac: name for mac, name in await cursor.fetchall()}
+
+    async def set_client_name(self, mac: str, name: Optional[str]) -> None:
+        """Gives the client `name`, or (None) takes its name away: the router's is shown again."""
+        async with self._db.write() as db:
+            if name:
+                await db.execute("INSERT OR REPLACE INTO client_names (mac, name, updated_at) VALUES (?, ?, ?)",
+                                 (mac, name, time.time()))
+            else:
+                await db.execute("DELETE FROM client_names WHERE mac = ?", (mac,))
+
     async def insert_mesh_counts(self, counts: List[MeshCount]):
         """Stores the per-node client counts of one client-list reading."""
         if not counts:

@@ -316,3 +316,30 @@ async def test_the_first_run_dashboard_starts_discovery_once_per_server_process(
         api_state.discovery._jobs.clear()
         assert (await ac.post("/api/discovery", json={"first_run": True})).json() == {"id": None}
         assert len(gate.calls) == 2
+
+
+async def test_a_live_hop_probed_by_tcp_is_never_gone_and_never_pinged():
+    """The owner chose a socket probe because the hop does not answer ping: a trace or a ping not seeing it proves
+    nothing."""
+    live = [
+        {"id": "router", "name": "Router", "address": "192.168.1.1", "category": "local", "position": 0},
+        {"id": "bridge", "name": "Bridge", "address": "192.168.88.2", "category": "gateway", "position": 1,
+         "probe": "tcp", "port": 443},
+        {"id": "old_isp", "name": "Old", "address": "203.0.113.77", "category": "isp", "position": 2,
+         "probe": "tcp", "port": 443},
+        {"id": "plain_isp", "name": "Plain", "address": "203.0.113.78", "category": "isp", "position": 3},
+    ]
+    result = await discover(HOME_PATH, options=NO_ASN, live=live)
+    by_id = {h["id"]: h for h in result.hops}
+    assert [by_id[i]["status"] for i in ("router", "bridge", "old_isp", "plain_isp")] == [
+        "same", "same", "same", "gone"]
+    assert by_id["bridge"]["probe"] == "tcp" and by_id["bridge"]["port"] == 443  # the method survives Rediscover
+    assert "192.168.88.2" not in result.pinged
+
+
+def test_missing_home_hops_skips_a_hop_probed_by_a_socket():
+    from pengumon.engine.discovery.draft import missing_home_hops
+    live = [{"id": "a", "address": "192.168.88.2", "category": "gateway", "probe": "tcp"},
+            {"id": "b", "address": "192.168.88.3", "category": "gateway", "probe": "icmp"},
+            {"id": "c", "address": "192.168.88.4", "category": "local"}]
+    assert missing_home_hops([], live) == ["192.168.88.3", "192.168.88.4"]

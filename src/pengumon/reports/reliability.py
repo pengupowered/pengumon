@@ -5,8 +5,7 @@ from collections import defaultdict
 from datetime import timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional
 
-from pengumon.incidents.taxonomy import incident_cause
-from pengumon.reports.common import _canonical_order, _split_incidents, _targets
+from pengumon.reports.common import _canonical_order, _split_incidents, _targets, cause_totals, lasted
 from pengumon.reports.outages import outage_totals, outages_of
 from pengumon.reports.queries import daily_availability, hourly_loss
 from pengumon.timeofday import utc_offset
@@ -46,16 +45,7 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
     rows = await repository.get_incidents_since(start_time)
     incidents, excluded = _split_incidents(rows)
 
-    def lasted(r):  # an incident still open has no duration yet: it has lasted until now
-        return r["duration_seconds"] if r["duration_seconds"] is not None else max(0.0, now - r.get("start_time", now))
-
-    # by cause category (incidents.taxonomy: the incident lanes' words), from the kind where it says enough: a cause
-    # code alone can stand for more than one place (older rows, and access_line_drop for upstream latency)
-    causes: Dict[str, List[float]] = defaultdict(lambda: [0, 0.0])
-    for r in incidents:
-        cause = incident_cause(r.get("kind"), r["cause_code"], r.get("description"))
-        causes[cause][0] += 1
-        causes[cause][1] += lasted(r) / 60.0
+    causes = cause_totals(incidents, now)
     by_cause = [
         {"cause": c, "count": n, "minutes": round(m, 1)}
         for c, (n, m) in sorted(causes.items(), key=lambda kv: (-kv[1][0], kv[0]))
@@ -75,7 +65,7 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
         "availability": {"days": day_list, "hops": hops},
         "incidents": {
             "count": len(incidents),
-            "minutes": round(sum(lasted(r) for r in incidents) / 60.0, 1),
+            "minutes": round(sum(lasted(r, now) for r in incidents) / 60.0, 1),
             "by_cause": by_cause,
             "excluded_expected": excluded,
             # drops joined into outages (incidents.outages; the figures above stay per incident)

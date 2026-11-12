@@ -37,6 +37,11 @@ class FakeRepository:
     async def get_history(self, start_time, end_time, target_ids=None, bucket_seconds=None):
         return ROWS
 
+    async def get_history_answer(self, start_time, end_time, target_ids=None, bucket_seconds=None, compact=False):
+        if compact:
+            return {"fields": list(ROWS[0]), "rows": [list(r.values()) for r in ROWS]}, len(ROWS)
+        return ROWS, len(ROWS)
+
     async def get_device_samples(self, device_id, start_time, end_time, padding_seconds=0.0):
         return [DeviceSample(device_id=device_id, ts=100.0, wan_rx_mbps=12.5, status="healthy")]
 

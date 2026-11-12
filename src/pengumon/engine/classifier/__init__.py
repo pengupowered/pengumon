@@ -76,6 +76,7 @@ class ClassifierCore:
         `testing`: a speed test is running (or its probes are still in the judged window): a fault that is not a hard
         outage is "busy_speedtest", and the tracker holds still for that round (see below)."""
         config = self.config
+        previous_issue_ts = self.last_upstream_issue_ts
         if m.upstream_issue(config):
             self.last_upstream_issue_ts = ts
 
@@ -90,7 +91,9 @@ class ClassifierCore:
             if verdict.kind == "busy_speedtest":
                 # A round under the test's own load says nothing about the line either way, so the tracker does not
                 # see it: it neither builds toward an incident nor counts as a recovery (an incident already open
-                # stays open across the test instead of being resolved by it and opened again after).
+                # stays open across the test instead of being resolved by it and opened again after). Nor does the
+                # test's own load start the DNS cooldown, which would hide a real DNS fault that follows it.
+                self.last_upstream_issue_ts = previous_issue_ts
                 return StepResult(verdict, is_loss_or_outage, reading, TrackerOutcome())
         if verdict.is_fault and reading is not None:
             verdict = apply_load(verdict, m, reading, config, is_loss_or_outage)
@@ -135,10 +138,6 @@ class OutageClassifier:
     def config(self) -> ClassifierConfig:
         return self.core.config
 
-    @config.setter
-    def config(self, config: ClassifierConfig) -> None:
-        self.core.config = self.core.tracker.config = config
-
     @property
     def line(self) -> LineWording:
         return self.core.line
@@ -155,18 +154,10 @@ class OutageClassifier:
     def last_upstream_issue_ts(self) -> float:
         return self.core.last_upstream_issue_ts
 
-    @last_upstream_issue_ts.setter
-    def last_upstream_issue_ts(self, ts: float) -> None:
-        self.core.last_upstream_issue_ts = ts
-
     # State that lives in the tracker, under the names callers and tests have always used.
     @property
     def active_incident(self) -> Optional[Incident]:
         return self.tracker.active_incident
-
-    @active_incident.setter
-    def active_incident(self, incident: Optional[Incident]) -> None:
-        self.tracker.active_incident = incident
 
     @property
     def failure_counter(self) -> int:

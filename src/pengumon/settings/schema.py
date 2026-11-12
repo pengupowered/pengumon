@@ -13,10 +13,14 @@ from pengumon.settings import registry
 
 def item_field(name: str, info: FieldInfo) -> Dict[str, Any]:
     """One field of a list item or of a driver's options: {name, required, default, type, ...constraints}; a nested
-    model (a device's `tls`) has its own `fields`."""
+    model (a device's `tls`) has its own `fields`; a field shown only for some values of its siblings has
+    `shown_when` ({sibling: value}, from its json_schema_extra)."""
     spec: Dict[str, Any] = {"name": name, "required": info.is_required(),
                             "default": None if info.is_required() else _json(registry.field_default(info)),
                             **registry.field_constraints(info)}
+    extra = info.json_schema_extra if isinstance(info.json_schema_extra, dict) else {}
+    if extra.get("shown_when"):
+        spec["shown_when"] = dict(extra["shown_when"])
     inner = registry.unwrap_optional(info.annotation)[0]
     if isinstance(inner, type) and issubclass(inner, BaseModel):
         spec["fields"] = model_fields(inner)
@@ -48,6 +52,7 @@ def driver_spec(driver) -> Dict[str, Any]:
     return {"label": driver.label, "default_poll_seconds": driver.default_poll_seconds,
             "min_poll_seconds": getattr(driver, "min_poll_seconds", 0.0),
             "default_username": getattr(driver, "default_username", None) or "admin",
+            "username_hint": getattr(driver, "username_hint", None),
             "needs_sign_in": getattr(driver, "needs_sign_in", True),
             "url_schemes": list(getattr(driver, "url_schemes", ("http", "https"))),
             "options": model_fields(driver.options_model)}

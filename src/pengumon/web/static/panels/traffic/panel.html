@@ -1,0 +1,9 @@
+<!-- Internet use: the router's traffic per hour, per device and per app (the `traffic` feature; model.js, view.js). The body is empty here: view.js draws it from the view model. -->
+<section data-panel="traffic" aria-label="Internet use">
+  <article class="panel" data-size="8" id="trafficCard" data-status="unknown">
+    <header class="panel-h"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg><h2 class="panel-t">Internet use</h2><span class="panel-m" id="trafficSummary">loading...</span>
+      <div class="panel-tools"><button type="button" class="info" data-action="toggleHelp" data-help="traffic.use" aria-label="About internet use"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></div></header>
+    <div class="panel-b"><div class="trf" id="trafficBody"></div></div>
+    <footer class="panel-f"><svg class="i sm" aria-hidden="true"><use href="#i-clock"/></svg><span id="trafficFoot">waiting for the first reading</span></footer>
+  </article>
+</section>

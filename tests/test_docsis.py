@@ -213,6 +213,33 @@ def test_counters_that_go_backwards_after_a_modem_reboot_give_no_recent_errors_n
     assert after.uncorrectables_recent == 8 and after.channels[0].uncorrectables_recent == 8
 
 
+def test_upstream_channels_with_the_ids_of_downstream_ones_do_not_reset_their_error_baselines():
+    """Downstream and upstream channel ids are separate number spaces: a modem has downstream 1-32 and upstream 1-5.
+    The upstream rows (no codewords) must not become the baseline of the downstream channels with the same id."""
+    from pengumon.lines.docsis import DocsisErrorTracker, summarize
+    from pengumon.lines.docsis_model import DocsisChannel
+
+    def read(ts, ds1, ds2):
+        channels = [DocsisChannel(channel_id=1, direction="downstream", frequency_mhz=600.0, power_dbmv=1.0,
+                                  snr_db=38.0, uncorrectables=ds1, unerrored=10**6),
+                    DocsisChannel(channel_id=2, direction="downstream", frequency_mhz=606.0, power_dbmv=1.0,
+                                  snr_db=38.0, uncorrectables=ds2, unerrored=10**6),
+                    DocsisChannel(channel_id=1, direction="upstream", frequency_mhz=17.0, power_dbmv=44.0)]
+        return summarize(channels, ts)
+
+    for seeded in (False, True):
+        tracker = DocsisErrorTracker()
+        first = read(1000.0, 1000, 0)
+        if seeded:  # (the baseline from before a restart)
+            tracker.seed(tracker.apply(first))
+        else:
+            tracker.apply(first)
+        snap = tracker.apply(read(1010.0, 1000, 5))  # five new on channel 2, none on channel 1
+        assert [c.uncorrectables_recent for c in snap.channels] == [0, 5, 0]
+        assert snap.uncorrectables_recent == 5 and snap.errors_affected_channels == 1
+        assert snap.errors_span_mhz == [606.0, 606.0]
+
+
 def _codeword_page(with_unerrored):
     extra = '<tr><th class="row-label">Unerrored Codewords</th><td>1000</td><td>2000</td></tr>' if with_unerrored else ""
     return f"""<html><table>

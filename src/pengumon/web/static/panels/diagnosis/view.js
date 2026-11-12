@@ -6,7 +6,7 @@
 // hopFields, extraChips, blockTrace).
 
 import { kit } from '../../js/cards.js';
-import { setBadge, setText } from '../../js/util.js';
+import { setBadge, setClass, setText } from '../../js/dom.js';
 import { sparkSvg } from '../../js/sparkline.js';
 
 const { escapeHtml, icon } = kit;
@@ -79,13 +79,13 @@ function paintNode(el, link, n, painted) {
     if (n.group) el.dataset.group = n.group;
     else delete el.dataset.group;
   }
-  el.className = `node st-${n.level}${n.alert ? ' alert' : ''}`;
-  el.setAttribute('aria-label', n.aria);
+  setClass(el, `node st-${n.level}${n.alert ? ' alert' : ''}`);
+  if (el.getAttribute('aria-label') !== n.aria) el.setAttribute('aria-label', n.aria);
   setText(el.querySelector('.node-kind'), n.label);
   // the configured name is long ("Hop 3: <provider> ..."): one line under the short label, whole in the tooltip
   const name = el.querySelector('.node-name');
   setText(name, n.name);
-  name.title = n.nameTitle;
+  if (name.title !== n.nameTitle) name.title = n.nameTitle;
   const st = el.querySelector('.node-st');
   kit.status(st, n.level, n.word, { icon: n.statusIcon, wordClass: 'st-word' });
   if (st.title !== n.word) st.title = n.word;
@@ -98,10 +98,11 @@ function paintNode(el, link, n, painted) {
   if (last.meta !== meta) el.querySelector('.node-meta').innerHTML = meta;
   if (last.spark !== spark) el.querySelector('.node-spark').innerHTML = spark;
   painted.set(el, { val, meta, spark });
-  link.className = `link st-${n.link.level}${n.link.broken ? ' broken' : ''}`;
-  link.querySelector('.cut').hidden = !n.link.broken;
+  setClass(link, `link st-${n.link.level}${n.link.broken ? ' broken' : ''}`);
+  const cut = link.querySelector('.cut');
+  if (cut.hidden !== !n.link.broken) cut.hidden = !n.link.broken;
   const delta = link.querySelector('.delta');
-  delta.title = n.link.title;
+  if (delta.title !== n.link.title) delta.title = n.link.title;
   setText(delta, n.link.text);
 }
 
@@ -129,8 +130,9 @@ function chain(list) {
       list.innerHTML = hostNode(path.hostCount) + (nodes.length ? nodes.map(nodeShell).join('') : `<li class="chain-none" data-v="none">${escapeHtml(path.none)}</li>`);
     }
     // more than five nodes, or four in a medium hero: narrower links and padding, no node icons in a medium hero
-    list.dataset.dense = nodes.length + 1 > 5 || (nodes.length >= 4 && box.width < 1060) ? '1' : '0';
-    list.classList.add('is-live');
+    const dense = nodes.length + 1 > 5 || (nodes.length >= 4 && box.width < 1060) ? '1' : '0';
+    if (list.dataset.dense !== dense) list.dataset.dense = dense;
+    if (!list.classList.contains('is-live')) list.classList.add('is-live');
     setText(list.querySelector('[data-f=hostCount]'), String(path.hostCount));
     nodes.forEach((n) => {
       const el = list.querySelector(`[data-node="${CSS.escape(n.key)}"]`);
@@ -155,7 +157,7 @@ function extras(box) {
   const list = box.querySelector('.pe-list');
   return {
     update(items) {
-      box.hidden = !items.length;
+      if (box.hidden !== !items.length) box.hidden = !items.length;
       const html = items.map((t) => `<button type="button" class="pe st-${t.level}" data-item="${escapeHtml(t.id)}" data-st="${t.level}" data-action="openTargetHistory" data-arg="${escapeHtml(t.id)}" title="${escapeHtml(t.title)}">`
         + `${icon(t.icon, 'sm')}<span class="pe-n" data-v="name">${escapeHtml(t.name)}</span><b class="num" data-v="ms">${escapeHtml(t.ms)}</b></button>`).join('');
       if (list.dataset.html !== html) { list.dataset.html = html; list.innerHTML = html; }

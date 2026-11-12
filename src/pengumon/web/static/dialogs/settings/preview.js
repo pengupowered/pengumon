@@ -3,8 +3,10 @@
 // GET /api/settings/preview/{id}); the page shows its progress and its result, and marks the result stale once the draft
 // changes. Only classifier.*, line.down_mbps / line.up_mbps and alerts.* are rules the replay can judge.
 
-import { escapeHtml, localFormat } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { localFormat } from '../../js/clock.js';
 import { canon } from './model.js';
+import { detailText } from './problems.js';
 import { S, valueOf } from './store.js';
 
 const RULE_KEYS = /^(classifier\.|alerts\.|line\.(down|up)_mbps$)/;
@@ -12,7 +14,7 @@ const RULE_KEYS = /^(classifier\.|alerts\.|line\.(down|up)_mbps$)/;
 const P = { id: null, job: null, error: '', sent: null, timer: 0, days: null, running: false, seq: 0, canceled: false };
 
 // The draft's rule keys (a reset one is null).
-export function ruleValues() {
+function ruleValues() {
   return Object.fromEntries(Object.entries(S.draft.values).filter(([key]) => RULE_KEYS.test(key)));
 }
 export const hasRules = () => Object.keys(ruleValues()).length > 0;
@@ -26,7 +28,7 @@ const when = (ts) => localFormat(ts * 1000, { day: '2-digit', month: 'short', ho
 const span = (seconds) => (seconds >= 3600 ? `${Math.round(seconds / 360) / 10} h` : seconds >= 60 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)} s`);
 
 // "1 incident instead of 3", or "1 incident, the same as now" when the draft rules change nothing.
-const phrase = (noun, d, c) => `<b class="num">${d}</b> ${noun}${d === 1 ? '' : 's'} ${d === c ? '(unchanged)' : `instead of <b class="num">${c}</b>`}`;
+const phrase = (noun, d, c) => `<b class="num">${Number(d)}</b> ${noun}${d === 1 ? '' : 's'} ${d === c ? '(unchanged)' : `instead of <b class="num">${Number(c)}</b>`}`;
 
 // An alert channel is set up (ntfy, or a webhook with its URL): without one there is nobody to alert, so the counts are left out.
 const hasChannel = () => Object.entries((S.server && S.server.secrets) || {}).some(([slot, st]) => st.set && /^(ntfy\.url|webhook\..*\.url)$/.test(slot));
@@ -47,7 +49,7 @@ const alertsNote = (job) => (hasAlerts(job) ? '<p class="fine" data-alerts-note>
 // Said in the open, not in a tooltip: the stored count is not comparable with the two replayed ones.
 function recordedNote(job) {
   if (job.recorded === null || job.recorded === undefined) return '';
-  return `<p class="fine" data-recorded>Pengumon recorded ${job.recorded} incident${job.recorded === 1 ? '' : 's'} in that time. That number is not comparable with the two above: it was counted with the rules and the path of the time, the replay uses today's for both.</p>`;
+  return `<p class="fine" data-recorded>Pengumon recorded ${Number(job.recorded)} incident${job.recorded === 1 ? '' : 's'} in that time. That number is not comparable with the two above: it was counted with the rules and the path of the time, the replay uses today's for both.</p>`;
 }
 
 function changeList(job) {
@@ -82,7 +84,7 @@ export function previewHtml() {
   if (P.error) body = `<div class="result st-crit" id="settingsPreviewResult" role="status"><span>${escapeHtml(P.error)}</span></div>`;
   else if (P.running || (job && job.state === 'running')) {
     const p = Math.round(((job && job.progress) || 0) * 100);
-    body = `<div class="set-progress" id="settingsPreviewResult"><progress max="100" value="${p}" aria-label="Preview progress"></progress><span class="num">${p}%</span></div>`;
+    body = `<div class="set-progress" id="settingsPreviewResult"><progress max="100" value="${Number(p)}" aria-label="Preview progress"></progress><span class="num">${Number(p)}%</span></div>`;
   } else if (P.canceled) {
     body = '<p class="fine top" id="settingsPreviewResult" role="status">Preview canceled. Nothing was changed.</p>';
   } else if (job && job.state === 'done' && job.draft && job.current) {
@@ -107,8 +109,11 @@ async function poll(seq) {
     try {
       const res = await fetch(`/api/settings/preview/${P.id}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(String(res.status));
-      P.job = await res.json();
+      const job = await res.json();
+      if (seq !== P.seq) return; // stopped or run again while the answer came
+      P.job = job;
     } catch (e) {
+      if (seq !== P.seq) return;
       P.error = 'The preview could not be read.';
       P.running = false;
       break;
@@ -140,13 +145,20 @@ export async function runPreview(daysText) {
   render();
   try {
     const res = await fetch('/api/settings/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values, days }) });
+    if (seq !== P.seq) { // canceled while the job was being made: this run's answer is not wanted, and its job is dropped
+      if (res.ok) res.json().then((j) => fetch(`/api/settings/preview/${j.id}`, { method: 'DELETE' })).catch(() => {});
+      return;
+    }
     if (res.status === 429) throw new Error('Another preview is running. Try again in half a minute.');
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || `The preview was refused (${res.status}).`);
+      throw new Error(detailText(body.detail, `The preview was refused (${res.status}).`));
     }
-    P.id = (await res.json()).id;
+    const made = await res.json();
+    if (seq !== P.seq) { fetch(`/api/settings/preview/${made.id}`, { method: 'DELETE' }).catch(() => {}); return; }
+    P.id = made.id;
   } catch (e) {
+    if (seq !== P.seq) return;
     P.error = e.message || 'The preview could not be started.';
     P.running = false;
     render();

@@ -70,11 +70,13 @@ class DeviceQueries:
     async def get_device_samples_bucketed(self, device_id: str, start_time: float, end_time: float,
                                         bucket_seconds: int) -> List[tuple]:
         """The device's polls with start_time <= ts <= end_time, grouped into buckets of bucket_seconds: per bucket
-        (bucket start, then avg and max of rx Mbps, tx Mbps, CPU %, memory %, clients). NULLs (a poll that could not
+        (bucket start, then avg and max of rx Mbps, tx Mbps, CPU %, memory %, clients, CPU temperature, then the lowest
+        WAN link speed). NULLs (a poll that could not
         measure) are left out of both aggregates; a bucket with none gives NULL. Oldest first."""
         b = max(1, int(bucket_seconds))
         cols = ", ".join(f"AVG({c}), MAX({c})" for c in ("wan_rx_mbps", "wan_tx_mbps", "cpu_pct", "mem_pct",
                                                         "client_count"))
+        cols += ", AVG(cpu_temp_c), MAX(cpu_temp_c), MIN(wan_link_mbps)"
         async with self._db.read() as db:
             async with db.execute(
                 f"SELECT CAST(ts / ? AS INTEGER) * ? AS b, {cols} FROM device_samples "

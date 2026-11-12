@@ -139,6 +139,110 @@ def _identifiers(facts: DocsisFacts) -> Dict[str, str]:
     return dict(facts.identifiers)
 
 
+@dataclass
+class _Scan:
+    """What one pass over the window's stored readings found."""
+
+    counts: Dict[str, int]
+    events: List[ModuleEvent] = dataclasses.field(default_factory=list)
+    snr: List[float] = dataclasses.field(default_factory=list)       # the per-reading averages
+    dsp: List[float] = dataclasses.field(default_factory=list)
+    usp: List[float] = dataclasses.field(default_factory=list)
+    by_day: Dict[str, int] = dataclasses.field(default_factory=dict)
+    error_times: List[Tuple[float, float, int]] = dataclasses.field(default_factory=list)
+    last_good: Any = None   # the last row in the window with a reading
+
+
+def _since(earlier, ts: float, poll: float) -> float:
+    """Where an event of the reading at `ts` starts: the earlier reading, at most SPAN_POLLS polls back."""
+    floor = ts - SPAN_POLLS * poll
+    return max(earlier.ts, floor) if earlier is not None else ts - poll
+
+
+def _scan_readings(rows, ctx: ContribContext, poll: float, levels) -> _Scan:
+    """One pass over the stored rows (a row of padding on each side included, which tells whether the window's first
+    reading is a restart or a burst): the counts, the series and the events of the readings inside the window."""
+    scan = _Scan(counts=dict(readings=len([s for s in rows if ctx.start <= s.ts <= ctx.end]), good=0, unreachable=0,
+                             restarts=0, new_errors=0, error_readings=0))
+    prev = None  # the previous row with a reading
+    prev_row = None  # the previous row of any kind
+    for s in rows:
+        inside = ctx.start <= s.ts <= ctx.end
+        if s.status in NO_READING_STATUSES:
+            if inside and s.status == "error" and (s.error_kind is None or s.error_kind in _UNREACHABLE_KINDS):
+                scan.counts["unreachable"] += 1
+                scan.events.append(ModuleEvent("line.offline", _since(prev_row, s.ts, poll), s.ts, ROLE_LINE))
+            prev_row = s
+            continue
+        if prev is not None and s.errors_total is not None and prev.errors_total is not None \
+                and s.errors_total < prev.errors_total:
+            if inside:
+                scan.counts["restarts"] += 1
+                scan.events.append(ModuleEvent("line.restart", _since(prev, s.ts, poll), s.ts, ROLE_LINE))
+        if inside:
+            _count_reading(scan, s, prev, prev_row, ctx, poll, levels)
+            scan.last_good = s
+        prev = prev_row = s
+    return scan
+
+
+def _count_reading(scan: _Scan, s, prev, prev_row, ctx: ContribContext, poll: float, levels) -> None:
+    """Adds the reading `s` (inside the window; `prev` the reading before it, `prev_row` the row before it) to the
+    scan: counts, the summary's averages, the new uncorrectables with their burst or smaller event, and the signal
+    out of range."""
+    recent = s.errors_recent or 0
+    scan.counts["good"] += 1
+    summary = decode_summary(s.summary)
+    for values, key in ((scan.snr, "downstream_snr_avg"), (scan.dsp, "downstream_power_avg"),
+                        (scan.usp, "upstream_power_avg")):
+        if summary[key] is not None:
+            values.append(summary[key])
+    if recent > 0:
+        scan.counts["new_errors"] += recent
+        scan.counts["error_readings"] += 1
+        counted_from = prev.ts if prev is not None else s.ts - poll   # the counters' own interval
+        scan.error_times.append((counted_from, s.ts, int(recent)))
+        day = day_key(s.ts, ctx.tz_offset_minutes, ctx.tz)
+        scan.by_day[day] = scan.by_day.get(day, 0) + recent
+        interval = (s.ts - prev.ts) if prev is not None else None
+        recurring = prev is not None and (prev.errors_recent or 0) > 0
+        # The modem's error-free codeword counts are not stored, so the ratio is unknown here: the
+        # per-minute rule judges (judge_errors).
+        burst = judge_errors(recent, interval, None, recurring, levels)[0] != GOOD
+        scan.events.append(ModuleEvent("line.error_burst" if burst else "line.errors", counted_from, s.ts,
+                                       ROLE_LINE, float(recent)))
+    snapshot = grade_snapshot(snapshot_from_sample(dataclasses.replace(s, detail=None)), levels)
+    if any(snapshot.grades.get(k, GOOD) != GOOD for k in ("ds_power", "ds_snr", "us_power")):
+        worst = [c.snr_db for c in decode_channels(s.detail) if c.direction == "downstream"
+                 and c.snr_db is not None]
+        scan.events.append(ModuleEvent("line.signal_out_of_range", _since(prev_row, s.ts, poll), s.ts, ROLE_LINE,
+                                       min(worst) if worst else None))
+
+
+def _last_reading(last_good, in_window, levels) -> Tuple[Tuple[Tuple[Any, ...], ...], int, Tuple[str, ...]]:
+    """(the table rows of the last reading's degraded channels, how many there are, the channels at a healthy limit,
+    described) for the last reading with a value (None: no rows, none, none)."""
+    if last_good is None:
+        return (), 0, ()
+    shown = [_as_shown(c) for c in decode_channels(last_good.detail)]
+    bad = [c for c in shown if is_degraded(c, levels)]
+    limits = [(c, _limit(c, levels)) for c in shown if not is_degraded(c, levels)]
+    at_limit = _at_limit([(c, lim) for c, lim in limits if lim],
+                         [s for s in in_window if s.status not in NO_READING_STATUSES])
+    bad.sort(key=lambda c: (-c.uncorrectables_recent, c.snr_db if c.snr_db is not None else 99.0))
+    rows = tuple(
+        ("DS" if c.direction == "downstream" else "US", f"{c.frequency_mhz:g}", f"{c.power_dbmv:+.1f}",
+         f"{c.snr_db:.1f}" if c.snr_db is not None else "-", f"{c.uncorrectables_recent:,}",
+         _finding(c, levels)) for c in bad[:TABLE_ROWS])
+    return rows, len(bad), at_limit
+
+
+def _spacing(in_window) -> Optional[Tuple[float, float, float]]:
+    """Seconds between the window's readings: median, 10th and 90th percentile (None: fewer than two readings)."""
+    gaps = sorted(b.ts - a.ts for a, b in zip(in_window, in_window[1:]) if b.ts > a.ts)
+    return (median(gaps), gaps[int(0.1 * (len(gaps) - 1))], gaps[int(0.9 * (len(gaps) - 1))]) if gaps else None
+
+
 class DocsisContribution:
     id: ClassVar[str] = "docsis"
     title: ClassVar[str] = "Cable line (DOCSIS)"
@@ -218,84 +322,14 @@ class DocsisContribution:
         rows = [s for s in await ctx.repository.get_line_samples(cfg.id, ctx.start, ctx.end, padding_seconds=2 * poll)
                 if s.technology == TECHNOLOGY]
         facts: Dict[str, Any] = dict(identifiers=identifiers, poll_seconds=poll)
-        events: List[ModuleEvent] = []
-        snr, dsp, usp = [], [], []
-        by_day: Dict[str, int] = {}
-        error_times: List[Tuple[float, int]] = []
-        prev = None  # the previous row with a reading
-        prev_row = None  # the previous row of any kind
-
-        def since(earlier):
-            """Where an event of the reading at s.ts starts: the earlier reading, at most SPAN_POLLS polls back."""
-            floor = s.ts - SPAN_POLLS * poll
-            return max(earlier.ts, floor) if earlier is not None else s.ts - poll
         in_window = [s for s in rows if ctx.start <= s.ts <= ctx.end]
-        counts = dict(readings=len(in_window), good=0, unreachable=0, restarts=0, new_errors=0, error_readings=0)
-        last_good = None
-        for s in rows:
-            inside = ctx.start <= s.ts <= ctx.end
-            if s.status in NO_READING_STATUSES:
-                if inside and s.status == "error" and (s.error_kind is None or s.error_kind in _UNREACHABLE_KINDS):
-                    counts["unreachable"] += 1
-                    events.append(ModuleEvent("line.offline", since(prev_row), s.ts, ROLE_LINE))
-                prev_row = s
-                continue
-            recent = s.errors_recent or 0
-            if prev is not None and s.errors_total is not None and prev.errors_total is not None \
-                    and s.errors_total < prev.errors_total:
-                if inside:
-                    counts["restarts"] += 1
-                    events.append(ModuleEvent("line.restart", since(prev), s.ts, ROLE_LINE))
-            if inside:
-                counts["good"] += 1
-                summary = decode_summary(s.summary)
-                for values, key in ((snr, "downstream_snr_avg"), (dsp, "downstream_power_avg"),
-                                    (usp, "upstream_power_avg")):
-                    if summary[key] is not None:
-                        values.append(summary[key])
-                if recent > 0:
-                    counts["new_errors"] += recent
-                    counts["error_readings"] += 1
-                    counted_from = prev.ts if prev is not None else s.ts - poll   # the counters' own interval
-                    error_times.append((counted_from, s.ts, int(recent)))
-                    day = day_key(s.ts, ctx.tz_offset_minutes, ctx.tz)
-                    by_day[day] = by_day.get(day, 0) + recent
-                    interval = (s.ts - prev.ts) if prev is not None else None
-                    recurring = prev is not None and (prev.errors_recent or 0) > 0
-                    # The modem's error-free codeword counts are not stored, so the ratio is unknown here: the
-                    # per-minute rule judges (judge_errors).
-                    burst = judge_errors(recent, interval, None, recurring, levels)[0] != GOOD
-                    events.append(ModuleEvent("line.error_burst" if burst else "line.errors", counted_from, s.ts,
-                                              ROLE_LINE, float(recent)))
-                snapshot = grade_snapshot(snapshot_from_sample(dataclasses.replace(s, detail=None)), levels)
-                if any(snapshot.grades.get(k, GOOD) != GOOD for k in ("ds_power", "ds_snr", "us_power")):
-                    worst = [c.snr_db for c in decode_channels(s.detail) if c.direction == "downstream"
-                             and c.snr_db is not None]
-                    events.append(ModuleEvent("line.signal_out_of_range", since(prev_row), s.ts, ROLE_LINE,
-                                              min(worst) if worst else None))
-                last_good = s
-            prev = prev_row = s
-        degraded_rows: Tuple[Tuple[Any, ...], ...] = ()
-        degraded_count = 0
-        at_limit: Tuple[str, ...] = ()
-        if last_good is not None:
-            shown = [_as_shown(c) for c in decode_channels(last_good.detail)]
-            bad = [c for c in shown if is_degraded(c, levels)]
-            limits = [(c, _limit(c, levels)) for c in shown if not is_degraded(c, levels)]
-            at_limit = _at_limit([(c, lim) for c, lim in limits if lim],
-                                 [s for s in in_window if s.status not in NO_READING_STATUSES])
-            bad.sort(key=lambda c: (-c.uncorrectables_recent, c.snr_db if c.snr_db is not None else 99.0))
-            degraded_count = len(bad)
-            degraded_rows = tuple(
-                ("DS" if c.direction == "downstream" else "US", f"{c.frequency_mhz:g}", f"{c.power_dbmv:+.1f}",
-                 f"{c.snr_db:.1f}" if c.snr_db is not None else "-", f"{c.uncorrectables_recent:,}",
-                 _finding(c, levels)) for c in bad[:TABLE_ROWS])
+        scan = _scan_readings(rows, ctx, poll, levels)
+        degraded_rows, degraded_count, at_limit = _last_reading(scan.last_good, in_window, levels)
         last_row = in_window[-1] if in_window else None
+        snr, dsp, usp, last_good = scan.snr, scan.dsp, scan.usp, scan.last_good
         stat3 = (min(snr), median(snr), max(snr)) if snr else None
-        gaps = sorted(b.ts - a.ts for a, b in zip(in_window, in_window[1:]) if b.ts > a.ts)
-        spacing = (median(gaps), gaps[int(0.1 * (len(gaps) - 1))], gaps[int(0.9 * (len(gaps) - 1))]) if gaps else None
         return DocsisFacts(
-            **facts, **counts,
+            **facts, **scan.counts,
             ds_snr=stat3,
             ds_power=(min(dsp), max(dsp)) if dsp else None,
             us_power=(min(usp), max(usp)) if usp else None,
@@ -303,7 +337,8 @@ class DocsisContribution:
             last_poll_kind=(None if last_row is None or last_row.status not in NO_READING_STATUSES
                             else (last_row.error_kind or last_row.status)),
             degraded=degraded_rows, degraded_count=degraded_count, at_limit=at_limit,
-            events=tuple(events), errors_by_day=by_day, error_times=tuple(error_times), spacing=spacing,
+            events=tuple(scan.events), errors_by_day=scan.by_day, error_times=tuple(scan.error_times),
+            spacing=_spacing(in_window),
         )
 
     def emit(self, facts: Optional[DocsisFacts]) -> List[ModuleEvent]:

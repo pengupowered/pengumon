@@ -1,5 +1,7 @@
 """IncidentTracker: onset, escalation and recovery of incidents from per-round verdicts."""
 
+import pytest
+
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.classifier.tracker import IncidentTracker
 from pengumon.engine.classifier.verdict import NOMINAL, Verdict
@@ -189,3 +191,46 @@ async def test_recovery_is_independent_of_the_onset_count():
     await feed(tracker, LOSS, 5, clock)
     assert tracker.active_incident is not None
     assert (await feed(tracker, NOMINAL, 1, clock))[0].resolved is not None
+
+
+class FlakyRepository(FakeRepository):
+    def __init__(self):
+        super().__init__()
+        self.fail = True
+
+    async def create_incident(self, incident):
+        if self.fail:
+            raise RuntimeError("database is locked")
+        return await super().create_incident(incident)
+
+
+async def test_a_failed_create_leaves_no_unstored_incident_and_the_next_round_tries_again_R4_M5():
+    repo = FlakyRepository()
+    tracker = make(repo)
+    clock = Clock()
+    await feed(tracker, LOSS, 2, clock)
+    with pytest.raises(RuntimeError):
+        await feed(tracker, LOSS, 1, clock)
+    assert tracker.active_incident is None
+    repo.fail = False
+    outcome = (await feed(tracker, LOSS, 1, clock))[0]
+    assert outcome.started is not None and outcome.started.id == 7
+    assert tracker.active_incident is outcome.started
+    assert outcome.started.start_time == T0 + 1  # timed from the first faulty round, not from the retry
+
+
+async def test_an_incident_starts_at_its_first_faulty_round_even_when_rounds_were_held_still_R4_L6():
+    tracker = make(FakeRepository())
+    for ts in (T0 + 1, T0 + 2, T0 + 12):  # a speed test held the rounds between 2 and 12 (the tracker never saw them)
+        outcome = await tracker.observe(LOSS, is_loss_or_outage=True, reading=None, ts=ts)
+    assert outcome.started is not None and outcome.started.start_time == T0 + 1
+
+
+async def test_an_incident_never_ends_before_it_started_when_the_clock_steps_back_R4_L6():
+    tracker = make(FakeRepository())
+    for ts in (T0 + 1, T0 + 2, T0 + 3):
+        await tracker.observe(LOSS, is_loss_or_outage=True, reading=None, ts=ts)
+    tracker.last_failure_ts = T0 - 3600  # the clock stepped back an hour after the last faulty round
+    for ts in (T0 - 3599, T0 - 3598, T0 - 3597):
+        outcome = await tracker.observe(NOMINAL, is_loss_or_outage=False, reading=None, ts=ts)
+    assert outcome.resolved is not None and outcome.resolved.end_time >= outcome.resolved.start_time

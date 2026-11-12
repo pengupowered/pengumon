@@ -8,17 +8,29 @@
 // read time, footer buttons) and makes the view model every view of the card draws (view.js is the standard one;
 // docs/themes.md, "Drawing a card"). The view model has one part per capability, null when the device lacks it:
 //   { error, dim, notice, wan, system, clients, mesh }
+// `system` also carries the facts a router reports about itself (uptime, CPU temperature, WAN link speed) and its recent
+// events (a restart, the WAN link going down or changing speed: GET /api/devices/{id}/events).
 
-import { backhaulText, cloneTemplate, deviceName, setText } from '../../js/util.js';
+import { backhaulText, deviceName } from '../../js/device-text.js';
+import { cloneTemplate, setText } from '../../js/dom.js';
+import { formatClock, localFormat } from '../../js/clock.js';
 import { createCard } from '../../js/cards.js';
 import { watchDevice } from '../../js/device-feed.js';
-import { errorOf, paintCommon, partPusher, placeCard } from '../../js/device-panel.js';
+import { errorOf } from '../../js/device-status.js';
+import { paintCommon, partPusher, placeCard } from '../../js/device-panel.js';
 import { gradeOf, levelOfGrade } from '../../js/grades.js';
 import { clientsDevice, topologyOffered } from './topology.js';
+import { formatDuration } from './clients.js';
 import standard from './view.js';
+import { everyWhileVisible } from '../../js/timers.js';
+import { has } from '../../js/values.js';
 
-const has = (v) => v !== null && v !== undefined;
+const upper = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
 const REFRESH_MS = 60000;
+const USUAL_REFRESH_MS = 600000; // the usual WAN link speed (a week's history) changes slowly
+const USUAL_DAYS = 7;
+const EVENT_DAYS = 7;
+const EVENTS_SHOWN = 5;
 const providers = (ctx, feature) => {
   const f = ctx.features.find((x) => x.feature === feature);
   return f && f.available ? f.provided_by || [] : [];
@@ -71,10 +83,63 @@ const SYSTEM = [
   { key: 'mem', label: 'Memory', help: 'router.mem', about: 'About router memory', field: 'mem_usage_pct' }
 ];
 
-function systemOf(snap) {
+// A link speed in Mb/s as the router words it: "2.5 Gb/s", "1 Gb/s", "100 Mb/s"; 0 is no link.
+function linkText(mbps) {
+  if (!has(mbps)) return '–';
+  if (mbps <= 0) return 'down';
+  if (mbps >= 1000) return `${Math.round(mbps / 100) / 10} Gb/s`;
+  return `${Math.round(mbps)} Mb/s`;
+}
+
+// The speed the WAN link usually has: the middle one of the history's slowest readings per time slice (a drop to 1 Gb/s
+// for a day on a 2.5 Gb/s port is not "usual"). null without readings.
+function usualLink(values) {
+  const v = values.filter((x) => has(x) && x > 0).sort((a, b) => a - b);
+  return v.length ? v[Math.floor(v.length / 2)] : null;
+}
+
+// What the router reports about itself: [{key, label, value, sub, status}], only the facts the reading has. `events`: the
+// device events of the last week, oldest first; `usual`: the usual WAN link speed (Mb/s) or null; `now`: epoch seconds.
+function factsOf(snap, events, usual, now) {
+  const s = snap || {};
+  const out = [];
+  if (has(s.uptime_s)) {
+    const restart = events.filter((e) => e.kind === 'restarted').pop();
+    out.push({ key: 'uptime', label: 'Uptime', value: formatDuration(Math.round(s.uptime_s)),
+      sub: restart ? `restarted ${formatDuration(Math.max(0, Math.round(now - restart.ts)))} ago` : '', title: restart ? restart.text : '', status: null });
+  }
+  if (has(s.cpu_temp_c)) out.push({ key: 'temp', label: 'CPU temperature', value: `${Math.round(s.cpu_temp_c)} °C`, sub: '', title: '', status: null });
+  if (has(s.wan_link_mbps)) {
+    const down = s.wan_link_mbps <= 0;
+    const low = !down && usual && s.wan_link_mbps < usual * 0.95;
+    out.push({
+      key: 'link', label: 'WAN link', value: linkText(s.wan_link_mbps),
+      sub: down ? 'no link on the internet port' : low ? `usually ${linkText(usual)}` : '',
+      title: usual ? `The usual speed over the last ${USUAL_DAYS} days: ${linkText(usual)}` : '',
+      status: down ? { level: 'crit', word: 'No link', icon: 'warn' } : low ? { level: 'warn', word: 'Below usual', icon: 'warn' } : null
+    });
+  }
+  return out;
+}
+
+// The recent events, newest first: [{key, when, text, level}] and how many more there were.
+function eventsOf(events, now) {
+  const week = events.filter((e) => e.ts >= now - EVENT_DAYS * 86400).slice().reverse();
+  const level = (e) => (e.kind === 'wan_link' && e.detail && e.detail.new === 0 ? 'crit' : e.kind === 'restarted' ? 'warn' : 'unknown');
+  return {
+    list: week.slice(0, EVENTS_SHOWN).map((e) => ({
+      key: `${e.kind}-${e.ts}`, when: now - e.ts < 20 * 3600 ? formatClock(e.ts * 1000) : `${localFormat(e.ts * 1000, { weekday: 'short' })} ${formatClock(e.ts * 1000)}`,
+      text: upper(e.text), level: level(e)
+    })),
+    more: week.length > EVENTS_SHOWN ? week.length - EVENTS_SHOWN : 0
+  };
+}
+
+function systemOf(snap, events, usual, now) {
   const s = snap || {};
   const m = (d) => meter(d.key, d.label, null, { key: d.help, label: d.about }, has(s[d.field]) ? String(Math.round(s[d.field])) : '–', '%', s[d.field], gradeOf(s, d.key));
-  return { cpu: m(SYSTEM[0]), mem: m(SYSTEM[1]) };
+  const ev = eventsOf(events, now);
+  return { cpu: m(SYSTEM[0]), mem: m(SYSTEM[1]), facts: factsOf(snap, events, usual, now), events: ev.list, moreEvents: ev.more };
 }
 
 const BAND_COLORS = ['--s1', '--s2', '--s3', '--s4'];
@@ -117,14 +182,15 @@ function meshOf(snap) {
 
 // The view model's parts for a reading. `caps`: which parts the device offers {wan, sys, clients, mesh}; `snap`: the
 // device's snapshot; `line`: the live line capacity {down_mbps, up_mbps}; `history`: {points: [[time, Mbps]], cap} of the
-// last hour or null; `notice`: the sentence about the missing client list, or null. Reads only its arguments.
-export function present({ caps, snap, line, history, notice }) {
+// last hour or null; `notice`: the sentence about the missing client list, or null; `events`: the device events of the last
+// week, oldest first; `usual`: the usual WAN link speed (Mb/s) or null; `now`: epoch seconds. Reads only its arguments.
+export function present({ caps, snap, line, history, notice, events = [], usual = null, now = Date.now() / 1000 }) {
   return {
     error: null,
     dim: false,
     notice: notice || null,
     wan: caps.wan ? wanOf(snap, line, history) : null,
-    system: caps.sys ? systemOf(snap) : null,
+    system: caps.sys ? systemOf(snap, events, usual, now) : null,
     clients: caps.clients ? clientsOf(snap) : null,
     mesh: caps.mesh ? meshOf(snap) : null
   };
@@ -135,7 +201,7 @@ export function present({ caps, snap, line, history, notice }) {
 const FX_SNAP = {
   status: 'healthy', timestamp: 1767225600, wan_rx_rate_mbps: 123.4, wan_tx_rate_mbps: 5.2, wan_rx_load_pct: 12.3, wan_tx_load_pct: 10.4,
   cpu_usage_pct: 23.4, mem_usage_pct: 71.2, grades: { wan_rx: 'good', wan_tx: 'warn', cpu: 'good', mem: 'warn' },
-  client_count: 5,
+  client_count: 5, uptime_s: 93600, cpu_temp_c: 61.4, wan_link_mbps: 1000,
   clients: {
     online: 5, wired: 2, by_band: { '2.4 GHz': 1, '5 GHz': 2 }, by_node: { fx_main: 3, fx_hall: 2 },
     nodes: [{ id: 'fx_main', label: 'Example-Mesh Main', clients: 3, online: true, wired: 2 },
@@ -147,7 +213,10 @@ export function fixture() {
   const points = Array.from({ length: 12 }, (_, i) => [1767222000 + i * 300, i === 5 ? null : 20 + i * 8]);
   return present({
     caps: { wan: true, sys: true, clients: true, mesh: true }, snap: FX_SNAP, line: { down_mbps: 500, up_mbps: 50 },
-    history: { points, cap: 500 }, notice: null
+    history: { points, cap: 500 }, notice: null, now: 1767225600, usual: 2500,
+    events: [{ kind: 'restarted', ts: 1767225600 - 93700, text: 'Restarted', detail: {} },
+      { kind: 'wan_link', ts: 1767225600 - 7200, text: 'WAN link went down (was 2.5 Gb/s)', detail: { old: 2500, new: 0 } },
+      { kind: 'wan_link', ts: 1767225600 - 7140, text: 'WAN link came back at 1 Gb/s (was down)', detail: { old: 0, new: 1000 } }]
   });
 }
 
@@ -182,18 +251,20 @@ export function mountRouter(section, ctx, device) {
   let line = null; // the live line capacity {down_mbps, up_mbps}
   let snap = null;
   let history = null; // the last hour of WAN traffic {points, cap}
+  let events = []; // the device events of the last week, oldest first
+  let usual = null; // the WAN link speed it usually has
   let parts = null; // the view model of the last reading: kept while the device reports an error
   const pushed = partPusher(card);
   const push = () => pushed({ ...(parts || {}), error: errorOf(snap, device), dim: !!snap && snap.status === 'error' });
   let reading = true; // the snapshot holds a reading (not an error, not "not set up")
-  const rebuild = () => { if (reading) parts = present({ caps, snap, line, history, notice }); };
+  const rebuild = () => { if (reading) parts = present({ caps, snap, line, history, notice, events, usual }); };
   const paint = (s) => {
     snap = s;
     reading = paintCommon(root, refs, device, snap, null);
     rebuild();
     push();
   };
-  parts = present({ caps, snap: null, line, history, notice });
+  parts = present({ caps, snap: null, line, history, notice, events, usual });
   push();
   watchDevice(ctx.bus, device, paint);
   ctx.bus.subscribe('line', (l) => { line = l; if (snap) paint(snap); });
@@ -209,9 +280,35 @@ export function mountRouter(section, ctx, device) {
     rebuild();
     push();
   };
+  // The device's events of the last week (a restart, the WAN link going down): REST, refreshed every minute.
+  const loadEvents = async () => {
+    const end = Date.now() / 1000;
+    const res = await fetch(`/api/devices/${encodeURIComponent(device.id)}/events?start_time=${end - EVENT_DAYS * 86400}&end_time=${end}`);
+    if (!res.ok) return;
+    const body = await res.json();
+    events = Array.isArray(body.events) ? body.events : [];
+    rebuild();
+    push();
+  };
+  // The usual WAN link speed: the week's slowest readings per time slice (no new request more than every ten minutes).
+  const loadUsual = async () => {
+    const end = Date.now() / 1000;
+    const res = await fetch(`/api/devices/${encodeURIComponent(device.id)}/history?start_time=${end - USUAL_DAYS * 86400}&end_time=${end}&max_points=200`);
+    if (!res.ok) return;
+    const body = await res.json();
+    const i = body.fields.indexOf('link_min');
+    usual = i < 0 ? null : usualLink(body.rows.map((r) => r[i]));
+    rebuild();
+    push();
+  };
   const refresh = () => {
     if (caps.wan) loadWan().catch(() => {});
+    if (caps.sys) loadEvents().catch(() => {});
   };
   refresh();
-  setInterval(refresh, REFRESH_MS);
+  everyWhileVisible(refresh, REFRESH_MS);
+  if (caps.sys) {
+    loadUsual().catch(() => {});
+    everyWhileVisible(() => loadUsual().catch(() => {}), USUAL_REFRESH_MS);
+  }
 }

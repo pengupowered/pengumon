@@ -18,6 +18,8 @@ async def register(ctx: Context) -> Component:
                              notify_slow=ctx.notifier.notify_speed_slow if ctx.notifier is not None else None,
                              wan_reader=devices.read_wan_counters if devices is not None else None)
     ctx.state.speedtest = runner
+    if devices is not None:  # the router's statistics pages wait while a test runs
+        devices.speed_test_running = lambda: runner.running
     if ctx.state.classifier is not None:
         ctx.state.classifier.speedtest_active = runner.is_masking
 

@@ -5,6 +5,7 @@ fake wall clock and a fake scheduler: nothing here sleeps."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 
 from pengumon.incidents.model import Incident
@@ -399,14 +400,10 @@ async def test_the_test_alert_is_never_filtered_or_held():
     now = at(2026, 5, 4, 23, 0, BERLIN)
     n, t, _ = make(now, BERLIN, min_severity="critical", delay_seconds=600, quiet_hours={**QUIET, "critical_still": False})
 
-    async def post(url, content, headers):
-        sent.append(url)
-
-        class R:
-            def raise_for_status(self):
-                pass
-        return R()
-    n._client.post = post
+    def respond(request):
+        sent.append(str(request.url))
+        return httpx.Response(200)
+    n._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
     result = await n.send_test()
     assert sent == ["http://ntfy.test/t"] and result[0]["ok"] is True
     await n.aclose()

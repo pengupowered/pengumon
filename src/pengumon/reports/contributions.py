@@ -7,6 +7,7 @@ imports every implementation and the drivers at module level. The renderer (repo
 no clock, no network.
 """
 
+import asyncio
 import dataclasses
 import time
 from dataclasses import dataclass
@@ -20,12 +21,15 @@ from pengumon.capabilities.contrib import ContribContext, DriverNotes, duration_
 from pengumon.devices.contrib import CAPABILITY_CONTRIBUTIONS
 from pengumon.drivers import DRIVERS
 from pengumon.engine.discovery.addresses import registrable_domain
+from pengumon.engine.probe_tcp import KERNEL_TIMING
 from pengumon.lines import docsis
 from pengumon.lines.docsis_contrib import DocsisContribution
+from pengumon.models.probes import TargetConfig, probe_words
 from pengumon.reports.ai_findings import collect_pack_facts
-from pengumon.reports.ai_pack import AppFact, HopFact, ModuleInput, module_findings, render_pack, speed_fact, view_of
+from pengumon.reports.ai_pack import AppFact, HopFact, ModuleInput, render_pack
+from pengumon.reports.ai_pack_view import module_findings, speed_fact, view_of
 from pengumon.reports.queries import path_trace_names
-from pengumon.reports.redact import LEVELS
+from pengumon.reports.redact import LEVELS, Redactor
 from pengumon.timeofday import viewer_zone
 
 if TYPE_CHECKING:
@@ -134,29 +138,21 @@ def _live_device(live, capabilities) -> Optional[Any]:
     return None
 
 
-async def build_ai_pack(repository, config, *, scope: str, hours: int, incident_id: Optional[int], level: str,
-                        detail: str, devices, live, ignoring=frozenset(), tz_offset_minutes: int = 0,
-                        prober=None, tz_name: Optional[str] = None) -> Dict[str, Any]:
-    """The pack for the API: collects the modules' sections and the core's facts, renders at `level`. `detail`:
-    "short" or "detailed". `live`: the app's device registry, or None (no monitors: the live-only parts say so).
-    `prober`: the app's prober, for how pings are sent now (None: the environment says only what is stored).
-    `tz_name` (the viewer's IANA zone) and `tz_offset_minutes`: the fallbacks of timeofday.viewer_zone."""
-    if level not in LEVELS:
-        raise ValueError(f"unknown detail level {level!r}")
-    render_detail = "detailed" if detail == "detailed" else "compact"
-    now = time.time()
+async def _pack_window(repository, scope: str, hours: int, incident_id: Optional[int],
+                       now: float) -> Tuple[float, float]:
+    """The pack's window: the past `hours`, or an hour either side of the incident (not past now)."""
     if scope == "incident":
         inc = await repository.get_incident_by_id(incident_id)
         if inc is None:
             raise ValueError(f"no incident {incident_id}")
-        start, end = inc.start_time - 3600, min(now, (inc.end_time or inc.start_time) + 3600)
-    else:
-        start, end = now - hours * 3600, now
-    tz, zone_kind, zone_name = viewer_zone(config, tz_name, tz_offset_minutes)
+        return inc.start_time - 3600, min(now, (inc.end_time or inc.start_time) + 3600)
+    return now - hours * 3600, now
 
-    act = activate(config)
-    caps_of = {cls: caps for caps, cls in capability_contributions()}
-    tech_of = {cls: tech for tech, cls in technology_contributions().items()}
+
+async def _collect_contributions(act, caps_of, repository, config, start: float, end: float, devices, live,
+                                 tz_offset_minutes: int, tz: tzinfo):
+    """Each active contribution's data, read once; with the events they emit and the event kinds they and the drivers'
+    notes declare."""
     cache: Dict[Any, Any] = {}
     events, kinds, loaded = [], [], []
     for c in act.contributions:
@@ -169,9 +165,13 @@ async def build_ai_pack(repository, config, *, scope: str, hours: int, incident_
         loaded.append((c, data))
     for _, notes in act.notes:
         kinds += list(notes.extra_events)
-    facts = await collect_pack_facts(repository, config, start=start, end=end, events=events, event_kinds=kinds,
-                                     ignoring=ignoring, detail=render_detail, scope=scope, incident_id=incident_id,
-                                     tz_offset_minutes=tz_offset_minutes, now=now, tz=tz)
+    return events, kinds, loaded
+
+
+def _module_inputs(act, loaded, caps_of, facts, config, level: str) -> List[ModuleInput]:
+    """One ModuleInput per contribution: its section for `level`, the core's findings about its events and, for the
+    one section each driver's notes close, those notes."""
+    tech_of = {cls: tech for tech, cls in technology_contributions().items()}
 
     # A driver's notes close one section only: its line technology's, else the router's, else the first it feeds.
     def feeds(driver, c) -> bool:
@@ -199,9 +199,36 @@ async def build_ai_pack(repository, config, *, scope: str, hours: int, incident_
                                    c.section(data, level), note, _mesh_labels(identifiers), identifiers,
                                    c.redaction.field_values(data),
                                    core_findings=tuple(module_findings(facts, [e.code for e in c.events]))))
+    return modules
+
+
+async def build_ai_pack(repository, config, *, scope: str, hours: int, incident_id: Optional[int], level: str,
+                        detail: str, devices, live, ignoring=frozenset(), tz_offset_minutes: int = 0,
+                        prober=None, tz_name: Optional[str] = None) -> Dict[str, Any]:
+    """The pack for the API: collects the modules' sections and the core's facts, renders at `level`. `detail`:
+    "short" or "detailed". `live`: the app's device registry, or None (no monitors: the live-only parts say so).
+    `prober`: the app's prober, for how pings are sent now (None: the environment says only what is stored).
+    `tz_name` (the viewer's IANA zone) and `tz_offset_minutes`: the fallbacks of timeofday.viewer_zone."""
+    if level not in LEVELS:
+        raise ValueError(f"unknown detail level {level!r}")
+    render_detail = "detailed" if detail == "detailed" else "compact"
+    now = time.time()
+    start, end = await _pack_window(repository, scope, hours, incident_id, now)
+    tz, zone_kind, zone_name = viewer_zone(config, tz_name, tz_offset_minutes)
+
+    act = activate(config)
+    caps_of = {cls: caps for caps, cls in capability_contributions()}
+    events, kinds, loaded = await _collect_contributions(act, caps_of, repository, config, start, end, devices, live,
+                                                         tz_offset_minutes, tz)
+    facts = await collect_pack_facts(repository, config, start=start, end=end, events=events, event_kinds=kinds,
+                                     ignoring=ignoring, detail=render_detail, scope=scope, incident_id=incident_id,
+                                     tz_offset_minutes=tz_offset_minutes, now=now, tz=tz)
+
+    modules = _module_inputs(act, loaded, caps_of, facts, config, level)
 
     names = await path_trace_names(repository)
-    identity = {t.id: SimpleNamespace(name=t.name, address=_address(t), rdns=names.get(_address(t), ""))
+    identity = {t.id: SimpleNamespace(name=t.name, address=_address(t), rdns=names.get(_address(t), ""),
+                                      probe=probe_words(t) if isinstance(t, TargetConfig) else "")
                 for t in list(config.targets) + list(config.dns_probes)}
     provider, source = _provider(config, identity)
     line = getattr(config, "line", None)
@@ -211,7 +238,8 @@ async def build_ai_pack(repository, config, *, scope: str, hours: int, incident_
                    apps=_apps(config, facts), environment=_environment(config, facts, prober, tz),
                    provider_source=source, zone=zone_name, zone_kind=zone_kind, speed=speed)
     view = dataclasses.replace(view, known_hops=await _known_hops(repository, config))
-    pack = render_pack(view, level, render_detail)
+    # pure, and a second or so of regexes for a long window: off the event loop, so the probes keep their timing
+    pack = await asyncio.to_thread(render_pack, view, level, render_detail)
     return {"markdown": pack.markdown, "modules": pack.modules, "roles": pack.roles, "level": level, "scope": scope,
             "detail": detail, "chars": pack.chars, "tokens_estimate": pack.tokens, "trimmed": pack.trimmed,
             "redactions": {**pack.swept, **{f"scan:{k}": v for k, v in pack.hits.items()}}}
@@ -260,6 +288,14 @@ def _environment(config, facts, prober, tz: tzinfo) -> List[str]:
                        else "IPv6: probed.")
         else:
             out.append("IPv6: no IPv6 hop is set up; only IPv4 is measured.")
+    tcp = sum(1 for t in config.targets if getattr(t, "probe", "icmp") == "tcp" and getattr(t, "enabled", True))
+    http = sum(1 for t in config.targets if getattr(t, "probe", "icmp") == "http" and getattr(t, "enabled", True))
+    if tcp:
+        out.append(f"{tcp} hop{'s' if tcp != 1 else ''} {'are' if tcp != 1 else 'is'} probed by a TCP connection "
+                   f"instead of a ping ({'timed by the kernel' if KERNEL_TIMING else 'timed by Pengumon'}).")
+    if http:
+        out.append(f"{http} {'are' if http != 1 else 'is'} probed by an HTTP request (the time to the server's "
+                   "answer, not a round trip).")
     gaps = list(getattr(facts, "no_data", None) or ())
     if gaps:
         shown = ", ".join(f"{{when:{a:.0f}}} to {{when:{b:.0f}}}" for a, b in gaps[:5])
@@ -272,6 +308,21 @@ def _environment(config, facts, prober, tz: tzinfo) -> List[str]:
 def _address(target) -> str:
     """A target's address; a DNS probe's is its name server (or, with the system resolver, the name it looks up)."""
     return getattr(target, "address", None) or getattr(target, "nameserver", None) or getattr(target, "domain", "") or ""
+
+
+async def hop_redactor(repository, config, level: str) -> Redactor:
+    """A redactor that knows only the path's hops (configured, switched off, removed, earlier versions), for free text
+    outside the pack: the MCP tools pass the classifier's titles and descriptions through it at Vague, so a home hop's
+    name, id, address and reverse name become its role word ("Router", "Gateway") and the scan's patterns remove any
+    other home address, MAC or home host name. No modules: their identifiers are the pack's. `repository` may be None
+    (the app still starting): the configured hops only."""
+    targets = list(getattr(config, "targets", None) or ()) + list(getattr(config, "dns_probes", None) or ())
+    names = await path_trace_names(repository) if repository is not None else {}
+    hops = [HopFact(t.id, getattr(t, "category", "dns"), t.name or "", _address(t), rdns=names.get(_address(t), ""))
+            for t in targets if getattr(t, "enabled", True)]
+    known = await _known_hops(repository, config) if repository is not None and config is not None else ()
+    provider = _provider(config, {h.id: h for h in hops})[0] if config is not None else ""
+    return Redactor(level, hops=hops, provider=provider, known_hops=known)
 
 
 async def _known_hops(repository, config) -> Tuple[HopFact, ...]:

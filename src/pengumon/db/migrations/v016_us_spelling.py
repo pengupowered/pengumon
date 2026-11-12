@@ -33,7 +33,10 @@ async def migrate(db: aiosqlite.Connection):
     async with db.execute("SELECT revision, document FROM settings_versions") as cursor:
         rows = await cursor.fetchall()
     for revision, raw in rows:
-        document = json.loads(raw)
+        try:
+            document = json.loads(raw)
+        except (TypeError, ValueError):  # a saved version that cannot be read stays as it is
+            continue
         values = document.get("values") if isinstance(document, dict) else None
         if not isinstance(values, dict) or not any(old in values for old in _SETTING_KEYS):
             continue

@@ -660,6 +660,49 @@ async def test_an_interrupted_test_counts_the_bytes_it_moved_toward_the_monthly_
     assert await runner.month_used_bytes() == 3_000_000
 
 
+@pytest.mark.parametrize("how", ["cut off", "provider bug"])
+async def test_a_direction_cut_off_or_ended_by_a_provider_bug_counts_what_it_moved(repo, clock, monkeypatch, how):
+    monkeypatch.setattr(runner_module, "STOP_CHECK_SECONDS", 0.01)
+    monkeypatch.setattr(runner_module, "PHASE_LIMIT_SECONDS", 0.05)
+
+    class Moves(FakeProvider):
+        def moved(self):
+            return 2_000_000                       # what the download had moved when it ended
+
+        async def download(self, cap, limit, target_s=None):
+            if how == "cut off":
+                await asyncio.sleep(3600)
+            raise KeyError("a bug")
+
+    runner = SpeedTestRunner(make_config(), repo, clock=clock, provider_factory=lambda cfg: Moves(clock))
+    await runner.run_now()
+    await asyncio.wait_for(settle(runner), 5)
+    (row,) = await tests_in(repo)
+    assert row["status"] == "partial" and row["bytes_down"] == 2_000_000  # (the upload worked)
+    assert await runner.month_used_bytes() >= 2_000_000
+
+
+async def test_a_direction_that_fails_before_it_counts_does_not_count_the_previous_ones_bytes(repo, clock):
+    class Meters(FakeProvider):
+        meter = None
+
+        def moved(self):
+            return self.meter
+
+        async def download(self, cap, limit, target_s=None):
+            self.meter = 5_000_000                 # (a provider's meter: the download's)
+            return await super().download(cap, limit, target_s)
+
+        async def upload(self, cap, limit, target_s=None):
+            raise KeyError("a bug before the upload's meter exists")
+
+    runner = SpeedTestRunner(make_config(), repo, clock=clock, provider_factory=lambda cfg: Meters(clock))
+    await runner.run_now()
+    await asyncio.wait_for(settle(runner), 5)
+    (row,) = await tests_in(repo)
+    assert row["bytes_up"] == 0
+
+
 async def test_turning_the_test_off_while_one_runs_stops_it(repo, clock, monkeypatch):
     monkeypatch.setattr(runner_module, "STOP_CHECK_SECONDS", 0.01)
     started = asyncio.Event()

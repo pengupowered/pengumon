@@ -49,7 +49,7 @@ class HopStatusConfig(BaseModel):
 
 
 class ProberConfig(BaseModel):
-    interval_seconds: float = 1.0  # bootstrap: the probe round (config.yaml only)
+    interval_seconds: float = Field(1.0, gt=0, le=60)  # bootstrap: the probe round (config.yaml only)
     timeout_seconds: float = Field(1.0, ge=0.2, le=1.0)  # a ping (and, unless dns_timeout_seconds, a lookup) is lost after
     dns_timeout_seconds: Optional[float] = Field(None, ge=0.2, le=5)  # None: timeout_seconds
     ping_count_per_probe: int = 1  # read nowhere; the settings import drops it

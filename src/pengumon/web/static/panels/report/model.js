@@ -10,10 +10,14 @@
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';
 import { createCard } from '../../js/cards.js';
-import { median, percentText, targetList, zoneParams } from '../../js/util.js';
+import { percentText } from '../../js/format.js';
+import { median } from '../../js/values.js';
+import { targetList } from '../../js/targets.js';
+import { zoneParams } from '../../js/clock.js';
 import { quietKey, quietTargets, shortLabels } from '../../js/path.js';
-import { CAUSE_LONG } from '../../js/path-api.js';
+import { CAUSE_LONG } from '../../js/roles.js';
 import standard from './view.js';
+import { everyWhileVisible } from '../../js/timers.js';
 
 let card = null;
 let root = null;
@@ -24,7 +28,7 @@ let seq = 0;
 // A hop that ignores ping (path.js quietTargets, from the live `targets` topic) is listed with those words instead of an
 // availability that is only its unanswered pings, and never stands in for the internet figure; so is an IPv6 target
 // while this host has no IPv6, with its own words.
-export function followQuietHops() {
+function followQuietHops() {
   return bus.subscribe('targets', (targets) => {
     const next = quietTargets(targets);
     if (quietKey(next) === quietKey(quiet)) return;
@@ -151,14 +155,16 @@ function draw({ report }) {
 }
 
 // Reliability report (/api/report)
-export async function loadReport(days) {
+let range = 7; // the days asked for
+async function loadReport(days, refresh = false) {
   if (!card) return;
+  range = days;
   const mine = ++seq;
   document.querySelectorAll('#reportRangeButtons button').forEach((b) => {
     b.classList.toggle('active', b.dataset.arg === String(days));
     b.setAttribute('aria-pressed', String(b.dataset.arg === String(days)));
   });
-  card.update({ state: 'loading' });
+  if (!refresh) card.update({ state: 'loading' }); // (a refresh of what is shown keeps showing it)
   try {
     // Day and hour buckets are cut server-side, in the Settings zone, else this browser's.
     const res = await fetch(`/api/report?days=${days}&${zoneParams()}`);
@@ -168,7 +174,7 @@ export async function loadReport(days) {
     shown = { report };
     draw(shown);
   } catch (err) {
-    if (mine === seq) card.update({ state: 'error', error: `Error generating report: ${err.message}` });
+    if (mine === seq && !(refresh && shown)) card.update({ state: 'error', error: `Error generating report: ${err.message}` });
   }
 }
 
@@ -177,6 +183,16 @@ export function initReport(section) {
   card = createCard({ panel: 'report', root, standard, fixture });
   loadReport(7);
   followQuietHops();
+  // the headline, downtime and incident count follow the line: read again when an incident opens, ends or changes, when
+  // the zone changes (the buckets are cut in it), and now and then
+  const again = () => loadReport(range, true);
+  let version;
+  bus.subscribe('incidents_version', (v) => {
+    const first = version === undefined;
+    if (v !== version) { version = v; if (!first) again(); }
+  });
+  document.addEventListener('zonechange', again);
+  everyWhileVisible(again, 300000);
 }
 
 // The actions this card's markup names (see dispatch.js).

@@ -44,7 +44,7 @@ MAX_CUSTOM = 30
 
 _HEX = re.compile(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
 HEX6 = re.compile(r"#[0-9a-fA-F]{6}")
-_RGB = re.compile(r"rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*(0|1|0?\.\d+|1\.0+)\s*)?\)")
+_RGB = re.compile(r"rgba?\(\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*(?:,\s*(0|1|0?\.[0-9]+|1\.0+)\s*)?\)", re.ASCII)
 
 
 def parse_color(text: str) -> Optional[Tuple[float, float, float, float]]:
@@ -127,11 +127,11 @@ def hex_only(name: str) -> bool:
 
 # The other tokens a theme may set, by kind: (pattern, (min, max) for the number, or None). Custom themes may set
 # the colors and the `CUSTOM_SIZES` only.
-_PX = re.compile(r"(\d{1,4}(?:\.\d{1,2})?)px")
-_MS = re.compile(r"(\d{1,4})ms")
-_INT = re.compile(r"(\d{3})")
+_PX = re.compile(r"([0-9]{1,4}(?:\.[0-9]{1,2})?)px", re.ASCII)
+_MS = re.compile(r"([0-9]{1,4})ms", re.ASCII)
+_INT = re.compile(r"([0-9]{3})", re.ASCII)
 _FONT = re.compile(r"[A-Za-z0-9 ,'\"-]{1,300}")
-_EASE = re.compile(r"cubic-bezier\(\s*-?[\d.]+\s*,\s*-?[\d.]+\s*,\s*-?[\d.]+\s*,\s*-?[\d.]+\s*\)")
+_EASE = re.compile(r"cubic-bezier\(\s*-?[0-9.]+\s*,\s*-?[0-9.]+\s*,\s*-?[0-9.]+\s*,\s*-?[0-9.]+\s*\)", re.ASCII)
 _SHADOW = re.compile(r"[A-Za-z0-9 #.,%()\-]{1,400}")  # built-in only: no ; { } < > \ or url()
 
 SIZE_RANGES: Dict[str, Tuple[float, float]] = {
@@ -336,8 +336,22 @@ def check_theme(raw: Any, *, custom: bool, folder: Optional[Path] = None) -> Tup
 
 # ---------- skins ----------
 
+def _unescape_css(text: str) -> str:
+    """`text` with its CSS escapes decoded (`\\72` and `\\r` both read `r`), for the lint's word searches."""
+    def one(m: "re.Match[str]") -> str:
+        if m.group(1):
+            try:
+                return chr(int(m.group(1), 16))
+            except (ValueError, OverflowError):
+                return "\ufffd"
+        return m.group(2)
+    return re.sub(r"\\(?:([0-9a-fA-F]{1,6})\s?|(.))", one, text, flags=re.DOTALL)
+
+
 def skin_problems(theme_id: str, css: str, card: str = "") -> List[str]:
-    """A skin may only style its own theme: every selector starts with :root[data-look="<id>"] (inside @media and
+    """A lint for the theme folders that ship in the repo, not a security boundary (custom themes take values only,
+    never a skin; docs/themes.md, "What the lint does not catch"). A skin may only style its own theme: every selector
+    starts with :root[data-look="<id>"] (inside @media and
     @supports too); @keyframes are allowed; no @import, @font-face or url() to anywhere but the theme's folder. With a
     `card` (a card's stylesheet) every selector is also scoped to that card: :root[data-look="<id>"] [data-panel="<card>"],
     so a card's rules never reach another card."""
@@ -346,9 +360,10 @@ def skin_problems(theme_id: str, css: str, card: str = "") -> List[str]:
         scope += f' [data-panel="{card}"]'
     problems: List[str] = []
     text = _strip_comments(css)
-    if re.search(r"@import|@font-face", text, re.IGNORECASE):
+    plain = _unescape_css(text)  # the words as CSS reads them (`u\72l(` is `url(`)
+    if re.search(r"@import|@font-face", plain, re.IGNORECASE):
         problems.append("skin.css: no @import or @font-face (themes use the system's fonts)")
-    if re.search(r"url\(\s*['\"]?\s*(?:[a-z]+:|//)", text, re.IGNORECASE):
+    if re.search(r"(?:url|src|image|(?:-webkit-)?image-set)\(\s*['\"]?\s*(?:[a-z]+:|//)", plain, re.IGNORECASE):
         problems.append("skin.css: url() only to files of the theme's own folder")
 
     def walk(body: str) -> None:
@@ -371,6 +386,8 @@ def skin_problems(theme_id: str, css: str, card: str = "") -> List[str]:
                 elif not re.match(r"@(-webkit-)?keyframes\b", prelude):
                     problems.append(f"skin.css: {prelude.split()[0]} is not allowed")
             else:
+                if "{" in inner:  # CSS nesting: `body & {}` inside a scoped rule would escape the scope
+                    problems.append(f"skin.css: no nested rules (in {prelude[:60]!r})")
                 for selector in (s.strip() for s in prelude.split(",")):
                     if not selector.startswith(scope):
                         problems.append(f"skin.css: {selector[:60]!r} is not under {scope}")
@@ -384,7 +401,7 @@ def skin_problems(theme_id: str, css: str, card: str = "") -> List[str]:
 
 # What a view module may not do: it draws from the view model; fetching, timers and storage are the model's.
 _VIEW_FORBIDDEN = ("fetch(", "XMLHttpRequest", "WebSocket", "setInterval", "requestAnimationFrame", "localStorage",
-                   "sessionStorage", "eval(", "new Function")
+                   "sessionStorage", "eval(", "new Function", "import(", "importScripts")
 
 
 def view_problems(theme_id: str, folder: Path) -> List[str]:
@@ -407,7 +424,7 @@ def view_problems(theme_id: str, folder: Path) -> List[str]:
         text = path.read_text(encoding="utf-8")
         if path.suffix == ".css":
             problems.extend(p.replace("skin.css", name) for p in skin_problems(theme_id, text, path.stem))
-            if re.search(r"url\(", _strip_comments(text), re.IGNORECASE):
+            if re.search(r"url\(", _unescape_css(_strip_comments(text)), re.IGNORECASE):
                 problems.append(f"{name}: no url()")
             continue
         if not re.search(r"export default\s*\{[\s\S]*\bmount\s*\(", text):

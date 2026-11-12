@@ -9,7 +9,7 @@ const sectionTitle = (id) => ((S.schema.sections.find((s) => s.id === id) || {})
 
 // "Busy line from", "Quiet hours: From", and with the section ("Alerts: Quiet hours: From") when another setting would
 // read the same.
-export function settingName(key) {
+function settingName(key) {
   const spec = S.spec[key];
   if (!spec) return key;
   const inGroup = (s) => (s.group && !s.label.toLowerCase().includes(s.group.split(' ')[0].toLowerCase()) ? `${s.group}: ${s.label}` : s.label);
@@ -19,10 +19,10 @@ export function settingName(key) {
   return alike && section ? `${section}: ${name}` : name;
 }
 
-export const listLabel = (name) => ((S.schema.lists[name] || {}).label || name);
+const listLabel = (name) => ((S.schema.lists[name] || {}).label || name);
 
 // The name of item `i` of list `name` in the draft, else the id, else its place.
-export function itemName(name, i) {
+function itemName(name, i) {
   const item = listItems(name)[i] || {};
   return String(item.name || item.id || `item ${Number(i) + 1}`);
 }
@@ -87,4 +87,14 @@ export function problemSummary(list) {
   const shown = list.slice(0, 3).map((p) => `${p.name}: ${String(p.message).replace(/[.\s]+$/, '')}`);
   const more = list.length > 3 ? `; and ${list.length - 3} more` : '';
   return `${list.length === 1 ? '1 problem' : `${list.length} problems`}: ${shown.join('; ')}${more}.`;
+}
+
+// A FastAPI `detail` as one sentence: a string as it is, a 422 list as its messages, else the fallback.
+export function detailText(detail, fallback) {
+  if (typeof detail === 'string' && detail) return detail;
+  if (Array.isArray(detail)) {
+    const text = detail.map((d) => String((d && d.msg) || '').replace(/^Value error, /, '')).filter(Boolean).join(' · ');
+    if (text) return text;
+  }
+  return fallback;
 }

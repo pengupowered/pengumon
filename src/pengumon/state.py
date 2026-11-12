@@ -9,10 +9,13 @@ A part that is None is not initialized (the app is starting, or a test left it o
 503, as they always have.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from starlette.requests import HTTPConnection
+
+from pengumon.clients.names import ClientNames
+from pengumon.reports.cache import AnswerCache
 
 if TYPE_CHECKING:
     from pengumon.access.manager import AccessManager
@@ -54,6 +57,8 @@ class AppState:
     preview: Optional["PreviewJobs"] = None  # the outage-rules preview jobs (settings/preview.py)
     access: Optional["AccessManager"] = None  # the sign-in password and the first-run question (access/manager.py)
     speedtest: Optional["SpeedTestRunner"] = None  # the scheduled speed test (speedtest/runner.py)
+    answers: AnswerCache = field(default_factory=AnswerCache)  # the report, loss grid and uptime answers (api/reports.py)
+    client_names: ClientNames = field(default_factory=ClientNames)  # names given to connected devices (clients/names.py)
 
 
 def get_state(connection: HTTPConnection) -> AppState:

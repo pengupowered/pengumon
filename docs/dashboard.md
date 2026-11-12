@@ -51,6 +51,10 @@ One card group per panel, each in its own folder. What a panel needs, and what i
   - Tab: Network
   - Needs: a device offering `wan_counters` or `router_system` (one card per such device); the client and mesh blocks need the `clients` / `mesh` features
   - Without it: no card; a missing client list shows one muted line saying why
+- Internet use (`traffic`)
+  - Tab: Network
+  - Needs: a device offering `traffic_usage` (the `traffic` feature: an ASUS router with its Traffic Analyzer switched on); one card, for the first such device
+  - Without it: no card, with the reason in the Layout dialog; a router whose Traffic Analyzer gives nothing keeps the card and says why on it
 - Host services (`services`)
   - Tab: Network
   - Needs: the `host_services` feature (the Host app checks setting)
@@ -86,6 +90,37 @@ tooltip, while the test is off, one is running, or the monthly limit is reached;
 marked view only. The card polls once a minute, and every 3 seconds while a test runs. Run now's progress is "Testing
 download, then upload...": the server does not report which direction it is in. The card's status is good while the newest
 test worked and unknown otherwise: a test that failed raises no warning dot on the Network tab.
+
+**Internet use** is the router's own Traffic Analyzer, kept by Pengumon ([api.md](api.md), "Router traffic"), so that page
+is no longer needed. It shows, for the last 24 hours or 7 days, the WAN's download and upload for each clock hour as bars
+(upload quieter), or for the last 30 days a bar per day (the 30 whole days up to the last midnight, in the zone set in
+Settings: today is in the 24 hour view), the sums and the busiest hour or day, the devices that used the most (name, kind and
+maker, download over upload with a bar, and the app most of its traffic was: "mostly Sony PlayStation" when one recognized
+app was at least 80 % of it; each device is a button that opens its dialog) and the top apps. The router gives apps only as
+a total of 24 hours, so over 24 hours the apps are its latest such total ("apps over the 24 h to 14:00"), and over 7 and 30
+days the sum of the whole days (midnight to midnight) up to the last midnight: Pengumon keeps the router's total of each day
+it reads just after that midnight. A day it was not reading then has no app figures (the help says so; the list is headed
+by the range, "last 7 days", as the devices are). Sizes are
+in decimal units ("75 GB"), as the router writes them. The router publishes an hour a few minutes after it ends, so the newest
+hour is drawn as a hatched bar and said in words under the chart ("The newest hour (14:00-15:00) is not published by the router
+yet."), never as 0 bytes; an hour Pengumon was not reading is hatched more quietly and counted ("131 hours in this range were
+not stored"). When the router gives no figures the card says why (the answer's `reason`: the Traffic Analyzer is switched off,
+the device is disabled, ...), and the footer says when it was last read and how often ("read 14:05 · every 60 min"). A
+**device's dialog** opens in the card's range and has its own 24 h, 7 d and 30 d buttons: the device's traffic per hour (per
+day over 30 days), its totals and busiest hour or day, its main app and its apps over the range (counted as the card counts
+them) and the apps of each day (the router's 24-hour total of each whole day, midnight to midnight); Back, Escape and Done
+close it. The pencil by its name (where names are shown) gives it a name in Pengumon ("PS5" for a console the router calls
+"EXAMPLE NETWORK TECHNOLOGY CO"), shown instead of the router's on the card, in the dialog, in Local network and in the
+incident inspector; the dialog then also says what the router calls it, and "Use the router's name" takes the name away.
+What a device is called follows
+Settings > Privacy (names and MACs, or the maker and the last four digits of the MAC), as in the Local network dialog. The
+**incident inspector** adds an *Internet use* block (per clock hour the incident touches, at most the six busiest: the WAN's
+download and upload and the top devices with their share; an hour the router has not published yet says "not yet available",
+one that was never stored "no data") and a *Router events* block (a restart or a WAN link change within five minutes of the
+incident). The **router** card shows the uptime (and "restarted 1h 56m ago" after a restart event), the CPU temperature and the
+WAN link speed (marked *Below usual* against the week's usual speed, or *No link*) when the router reports them, and its events
+of the last 7 days (up to five, newest first); the History dialog has a CPU temperature chart. The Local network dialog shows
+each device's traffic hint next to its name.
 
 **Path health** is the hero. It shows the verdict, then the chain this host, router, line, every ISP hop, internet,
 built from the configured targets' categories (DNS probes stand in when there is no public target). Each node has a
@@ -138,11 +173,12 @@ configured name is the secondary text.
 **Latency** draws three path series by default: Router (worst local target), Gateway (worst gateway target) and Internet
 (median of the public servers of the IPv4 group; DNS lookups stand in when there is none). When discovery or the path editor put IPv6 servers in their own group (`internet_v6`), they are a fourth line, "Internet (IPv6)", as Path health shows them as their own node. The legend names each series' targets, the
 tooltip gives every member's own value, and a note says what the view leaves out. **Each target** draws one thin line
-per pinged target (ISP hops included, DNS lookups not: they time a lookup, not a round trip) in the colors Hop details
+per probed target (ISP hops included, DNS lookups not: they time a lookup, not a round trip) in the colors Hop details
 uses (a target's configured `color`, else the next of eight validated series colors in path order, then the first one no other target of its category has, so the members of one group always differ; gray past eight in one category); the choice is kept per browser. Under the chart a thin loss lane shows the worst target's loss and names it in
 the tooltip. The chart takes the height its row gives the card.
 
-**Hop details**: every figure covers the last 60 probes except "Lost since start". Jitter is the median change from one
+**Hop details**: every figure covers the last 60 probes except "Lost since start". A hop probed by TCP or HTTP rather
+than ping says how after its address ("TCP 443", "HTTPS HEAD /health"; [probing.md](probing.md#tcp-and-http-probes)). Jitter is the median change from one
 answered probe to the next, so one slow probe does not lift it. A hop's dot judges its loss over the probes the
 outage rules judge (Settings, Outage rules, "Judge each hop by its last"; 10 by default). Click a row for the target's
 history. Sparklines are drawn by `static/js/sparkline.js` (SVG, not Chart.js); a lost probe is a red tick and a gap.
@@ -247,12 +283,12 @@ Wider than 720 px there is no bar and every shown panel appears.
 ## Dialogs
 
 - Owned by a panel (extra `*.html` in its folder): **Local network** (SVG topology, filter chips, clients table) and
-  **Router history** (router), **Channels** with a per-channel history (line, DOCSIS only), **Inspector** (incidents).
+  **Router history** (router), **Device traffic** (traffic: one device's week, apps and apps by day), **Channels** with a per-channel history (line, DOCSIS only), **Inspector** (incidents).
 - Standalone (`static/dialogs/<id>/`): **add-target**, **ai-pack**, **alerts**, **device-setup** (credentials and a test poll for a
   device), **dossier** (outage dossier, with its own markdown renderer), **layout**, **settings**, **path-editor** (the probe path:
   Path health's Edit, first-run review, Rediscover, Export / Import), **sign-out**, **target-history**, **trace**.
 
-Dialogs are `div.modal` toggled by `.active` (`openModal` in `util.js`); on a phone they open as a bottom sheet. Their
+Dialogs are `div.modal` toggled by `.active` (`openModal` in `modal.js`); on a phone they open as a bottom sheet. Their
 help texts and labels live in their own folder.
 
 A standalone dialog loads its code when it is first opened (all but **alerts**, which watches the diagnosis from the
@@ -268,10 +304,16 @@ When the history has more than 500, the card says so: its count stays the server
 the 500 listed and points to the ISP dossier, the reliability report and the API for older ones, and the footer says its
 total is of the newest 500.
 
-**Back and dialogs.** A dialog opened with `openModal` (`js/util.js`) gets a history entry, so the browser's or phone's
-Back closes the top dialog and stays on the page; a second Back leaves as before. Closing a dialog by its button or
-Escape takes the entry away again, so no Back press is dead. Settings (the `#settings` route), the path editor (its draft
-guard) and the first-run question keep their own handling.
+**Back and dialogs.** Every dialog, Settings and the path editor included, is opened with `openModal` (`js/modal.js`), which
+pushes one history entry, so the browser's or phone's Back closes the top dialog and stays on the page; a second Back leaves
+as before. Closing a dialog by its button, Escape or Save moves nothing in the history (no `history.go()`, no timer): its
+entry is marked spent (`replaceState` to the page's own state and address), the next dialog takes a spent entry over, and a
+Back that lands on a spent entry, or starts from one, goes on past it, so no Back press is dead and a hash set, a push or a
+reload in the same task as a close is never undone. A Forward onto a spent entry opens nothing. A dialog with unsaved changes
+(Settings, the path editor) registers a hook (`onModalBack`): Back asks instead of closing, and the entry is put back.
+`#settings` at the end of the address opens Settings on load, on the entry the link made. The first-run question cannot be
+dismissed and has no entry. The Navigation API (`currententrychange`) tells a traversal from a push, since setting a hash fires
+`popstate` too.
 
 **The incidents card and outages.** Drops of the line that belong together ([diagnosis.md](diagnosis.md#outages)) are
 one row: the status word (**Outage** when a drop was critical, else **Degraded**, with its icon), the outage's title, when
@@ -330,13 +372,21 @@ All under `src/pengumon/web/static/`:
 - `page.css`, `style.css`: page layout (header, grid, banners), and the app layer (panel groups, modal behavior).
 - `js/`: the core and shared library: `main.js` (entry), `live.js` (the socket; one bus topic per key of each
   message), `bus.js`, `layout.js`, `tabs.js`, `chrome.js` (menus), `themes.js` and `theme-boot.js` (themes), `dispatch.js` (delegated actions),
-  `devices.js` and `device-feed.js` (devices and features), `device-panel.js`, `help.js`, `settings-values.js` (the live
-  settings values for help texts), `util.js`, `state.js`,
-  `grades.js`, `path.js`, `path-api.js` (the path and discovery API calls), `session.js` (sends a page whose sign-in ended to the
+  `devices.js` and `device-feed.js` (devices and features), `device-panel.js` (the frame every device card shares),
+  `device-status.js` (a snapshot's status, error block and one-line summary: pure), `help.js`, `settings-values.js` (the live
+  settings values for help texts), `state.js`, and the helpers, each named for what it holds: `targets.js` (the target
+  table), `dom.js` (icons, badges, text and class setters), `clock.js` (the page's time zone and times), `format.js`
+  (numbers as text), `values.js` (reading numbers out of answers), `escape.js`, `modal.js` (dialogs, Back and their
+  keyboard), `view-only.js`, `export-view.js`, `clipboard.js`, `host.js`, `password.js`, `device-text.js`,
+  `roles.js` (the role and cause words),
+  `grades.js`, `path.js`, `path-api.js` (the path and discovery API calls: requests only), `session.js` (sends a page whose sign-in ended to the
   sign-in page), `sparkline.js`, `chart-theme.js`.
 - `panels/<id>/`, `dialogs/<id>/`: the features.
 - `vendor/`: Chart.js. The page is served from `/static/v/<hash>/` where the hash covers the whole tree, so all modules
-  are cache-busted together and cached for a year.
+  are cache-busted together and cached for a year. To load fast cold, the page lists every module of its start as
+  `<link rel="modulepreload">` (found by reading the static `import`s: `pengumon.web.preload`; lazy dialogs are not
+  followed), the panels' and dialogs' `*.css` come as one generated sheet (`panels.css`, in link order), and the text
+  assets are gzipped once and kept (`pengumon.web.assets`).
 
 Event handlers are delegated: markup carries `data-action`, `data-input`, `data-change` or `data-submit`, and modules
 register the handler with `registerActions`, which keeps the CSP.
@@ -357,7 +407,7 @@ modules find it by discovery in `pengumon/web/ui.py`). Files:
   prepare?(ctx), mount?(section, ctx) }`. `id` is the folder name; `tab` is `live`, `network`, `line` or `incidents`;
   `available` must exist. Subscribe to the live data with `ctx.bus`.
 - `help.js`: its `registerHelp({...})` texts.
-- `*.css`: its styles, linked automatically; tokens only.
+- `*.css`: its styles, linked automatically (joined into `panels.css`, so no `url()` or `@import` in them); tokens only.
 
 The folder name becomes a valid `dashboard:` id on its own. Rules enforced by `tests/test_frontend.py`: every folder has
 the three files and one section with its own id, and module ids match folder names; core modules name no optional panel

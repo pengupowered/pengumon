@@ -167,7 +167,7 @@ check "no ping or traceroute program in the image" bash -c \
 check "the app's own prober sees its targets alive" wait_for 30 bash -c \
     "$CT exec $ID curl -s -m 3 http://127.0.0.1:8000/api/health | grep -q '\"status\":\"ok\"'"
 check "a versioned static asset is served (/static/v/<hash>/)" bash -c \
-    "h=\$($CT exec $ID curl -s -m 3 http://127.0.0.1:8000/ | grep -o '/static/v/[0-9a-f]*/' | head -1); [ -n \"\$h\" ] && $CT exec $ID curl -sf -m 3 -o /dev/null \"http://127.0.0.1:8000\${h}js/util.js\""
+    "h=\$($CT exec $ID curl -s -m 3 http://127.0.0.1:8000/ | grep -o '/static/v/[0-9a-f]*/' | sed -n 1p); [ -n \"\$h\" ] && $CT exec $ID curl -sf -m 3 -o /dev/null \"http://127.0.0.1:8000\${h}js/main.js\""
 stray="$("$CT" diff "$ID" | grep -Ev '^. /(etc|tmp|app/data)(/|$)|^. /app$')"
 if [ -z "$stray" ]; then pass "nothing was written outside /app/data and /tmp"; else bad "files written outside /app/data and /tmp: $stray"; fi
 

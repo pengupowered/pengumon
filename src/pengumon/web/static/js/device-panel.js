@@ -2,8 +2,11 @@
 // error block with what to do, the "reading N min old" chip when the readings stop, and when it was read. Used by
 // panels/line.js and panels/router.js; nothing here knows a technology or a vendor.
 
-import { formatClock, icon, setBadge, setText } from './util.js';
+import { formatClock } from './clock.js';
+import { icon, setBadge, setText } from './dom.js';
 import { relayout } from './layout.js';
+import { everyWhileVisible } from './timers.js';
+import { statusOf } from './device-status.js';
 
 const STALE_FACTOR = 3; // a reading older than three poll intervals (at least 2 min) is stale
 
@@ -15,50 +18,23 @@ function ago(seconds) {
   return `${(seconds / 3600).toFixed(1)} h`;
 }
 
-// What a snapshot's status means on the card: [level, word]; `okWord` is the word for a healthy device (null: no badge).
-export function statusOf(snap, okWord) {
-  switch (snap && snap.status) {
-    case 'healthy': return ['good', okWord];
-    case 'warning': return ['warn', 'Warning'];
-    case 'critical': return ['crit', 'Critical'];
-    case 'error': return ['crit', 'No reading'];
-    case 'unconfigured': return ['unknown', 'Not set up'];
-    default: return ['unknown', 'Waiting'];
-  }
-}
-
-// What a snapshot's error or missing set-up says, as the view model's `error` part (null: nothing to say): {tone:
-// 'unset' | 'crit', icon, title, text, setup: the fix as an action descriptor or null}. The card's views draw it with
-// js/device-view.js (errorPart); the body behind it stays, dimmed.
-export function errorOf(snap, device) {
-  if (!snap || (snap.status !== 'error' && snap.status !== 'unconfigured')) return null;
-  const unset = snap.status === 'unconfigured';
-  return {
-    tone: unset ? 'unset' : 'crit',
-    icon: unset ? 'lock' : 'warn',
-    title: unset ? 'Not set up yet' : `No reading from ${device.host || device.id}`,
-    text: snap.error_message || (unset ? 'Enter the admin password to start reading this device.' : 'The device did not answer.'),
-    setup: device.needs_sign_in === false ? null
-      : { action: 'openDeviceSetup', arg: device.id, needsEdit: true, label: unset ? 'Set up' : 'Check the sign-in', icon: 'settings', primary: unset }
-  };
-}
-
 // Paints the shared frame (the badge, the stale chip, the read time, the card's status); returns true when the snapshot
 // holds a reading the body can show. The error block and the dimmed body are the card's view model (errorOf).
 export function paintCommon(card, refs, device, snap, okWord) {
   const [level, word] = statusOf(snap, okWord);
-  card.dataset.status = level;
+  if (card.dataset.status !== level) card.dataset.status = level; // (a write of the same value still wakes the tab-dot observer)
   refs.badge.hidden = !word;
   if (word) setBadge(refs.badge, level, word);
   const reading = !!snap && snap.status !== 'error' && snap.status !== 'unconfigured' && snap.status !== undefined;
   card.classList.toggle('is-error', !!snap && snap.status === 'error');
-  card.dataset.readAt = snap && snap.timestamp ? String(snap.timestamp) : '';
+  const readAt = snap && snap.timestamp ? String(snap.timestamp) : '';
+  if (card.dataset.readAt !== readAt) card.dataset.readAt = readAt;
   paintAge(card, refs, device);
   return reading;
 }
 
 // The read time and the stale chip (also re-checked every 30 s, as no new reading means no new snapshot).
-export function paintAge(card, refs, device) {
+function paintAge(card, refs, device) {
   const ts = Number(card.dataset.readAt);
   if (!ts) {
     setText(refs.read, 'waiting for the first reading');
@@ -103,7 +79,7 @@ export function placeCard(section, card, refs, device) {
   refs.setup.setAttribute('aria-label', `Set up ${device.host || device.id}`);
   section.appendChild(card);
   const age = () => paintAge(card, refs, device);
-  setInterval(age, 30000);
+  everyWhileVisible(age, 30000);
   document.addEventListener('zonechange', age); // "read 14:02" is on the page's clock
   relayout();
 }

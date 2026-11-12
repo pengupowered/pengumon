@@ -84,19 +84,20 @@ class _Sample(NamedTuple):
 
 class _Target:
     """What the classifier reads of a TargetStats: the last `keep` probes (`recent_latencies`, None for a lost one), the
-    path flags and the identity, and the "down" status. `add` is NetworkProber._update_target_stats reduced to that:
-    the window holds latency or None (a probe that succeeded without a latency counts as lost). `judge` sets the status
-    over a rule set's window: "down" when more than `down_fraction` of its last probes is lost, else "up" (the
-    prober's "degraded" is not "down" either, which is all `ignoring_ping` asks)."""
+    path flags, the probe method and the identity, and the "down" status. `add` is NetworkProber._update_target_stats
+    reduced to that: the window holds latency or None (a probe that succeeded without a latency counts as lost). `judge`
+    sets the status over a rule set's window: "down" when more than `down_fraction` of its last probes is lost, else
+    "up" (the prober's "degraded" is not "down" either, which is all `ignoring_ping` asks)."""
 
     __slots__ = ("target_id", "name", "category", "address", "enabled", "recent_latencies", "status", "ignores_ping",
-                 "ipv6_unavailable", "hot", "calm_below", "keep")
+                 "ipv6_unavailable", "hot", "calm_below", "keep", "probe")
 
     def __init__(self, stat, calm_below: float = 0.0, keep: int = DEFAULT_WINDOW_PROBES):
         self.calm_below = calm_below
         self.keep = keep  # the longest window a rule set judges
         self.target_id, self.name, self.category = stat.target_id, stat.name, stat.category
         self.address, self.enabled = stat.address, stat.enabled
+        self.probe = stat.probe  # round_metrics leaves a slow HTTP answer out of the affected targets
         self.recent_latencies: List[Optional[float]] = []
         self.status = "up"
         self.ignores_ping = False
@@ -405,6 +406,26 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
     # how drops are joined into outages (the running config's `incidents` section; left out: grouping off, as before outages)
     incidents = IncidentsConfig.model_validate(spec["incidents"]) if spec.get("incidents") else None
 
+    rule_sets, capacity_known = _open_rule_sets(spec, conn, start, end)
+    runner = _RoundRunner(rule_sets, targets, dns_probes, hop_status, start)
+    await _feed_rounds(conn, runner, start, end, half_round, emit)
+
+    current, draft = rule_sets
+    last_ts = runner.last_ts
+    notes = _notes(conn, start, end, tz, runner.rounds, rule_sets, capacity_known)
+    return {
+        "window": {"start": start, "end": end, "rounds": runner.rounds, "gaps": runner.gaps},
+        "current": _counts(current, last_ts, spec.get("timezone"), incidents),
+        "draft": _counts(draft, last_ts, spec.get("timezone"), incidents),
+        "recorded": _recorded(conn, start, end),
+        "changes": _changes(current, draft), "notes": notes,
+    }, rule_sets
+
+
+def _open_rule_sets(spec: Dict[str, Any], conn: sqlite3.Connection, start: float, end: float
+                    ) -> Tuple[List[_RuleSet], bool]:
+    """The two rule sets with the stored WAN rates and speed tests of the window, and whether either knows the line's
+    capacity."""
     rates = _read_rates(conn, spec.get("wan_device_id"), start, end)
     rule_sets = [
         _RuleSet(name, ClassifierConfig.model_validate(spec["rules"][name]["classifier"]),
@@ -417,92 +438,122 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
         rule_set.speed_mask = SpeedMask(speed_tests, mask_tail_seconds(rule_set.config.window_probes,
                                                                        float(spec.get("round_seconds", 1.0))))
     capacity_known = any(r.load._line.down_mbps and r.load._line.up_mbps for r in rule_sets)
+    return rule_sets, capacity_known
 
-    down_fraction = hop_status.down_loss_fraction
-    levels = [_calm_below(r.config) for r in rule_sets]
-    calm_below = {c: min(level[c] for level in levels) - CALM_MARGIN_MS for c in levels[0]}
-    keep = max(r.config.window_probes for r in rule_sets)
-    windows = sorted({r.config.window_probes for r in rule_sets})
 
-    def new_stats() -> Dict[str, _Target]:
-        prober = NetworkProber(status_thresholds=hop_status)
-        for target in targets:
+class _RoundRunner:
+    """The replay's state across rounds: the targets' windows, the ping-ignoring flags found, the gaps seen, and the
+    two rule sets each round is classified by (`run_round`)."""
+
+    def __init__(self, rule_sets: List[_RuleSet], targets: List[TargetConfig], dns_probes: List[DnsProbeConfig],
+                 hop_status: HopStatusConfig, start: float):
+        self.rule_sets = rule_sets
+        self.targets = targets
+        self.dns_probes = dns_probes
+        self.hop_status = hop_status
+        self.down_fraction = hop_status.down_loss_fraction
+        levels = [_calm_below(r.config) for r in rule_sets]
+        self.calm_below = {c: min(level[c] for level in levels) - CALM_MARGIN_MS for c in levels[0]}
+        self.keep = max(r.config.window_probes for r in rule_sets)
+        self.windows = sorted({r.config.window_probes for r in rule_sets})
+        for rule_set in rule_sets:
+            rule_set.reset()
+        self.rounds = 0
+        self.prev_ts: Optional[float] = None
+        self.last_ts = start  # the time of the latest round (the window's start when there is none)
+        self.stats = self.new_stats()
+        self.flagged: set = set()  # per window, whether a target was found ignoring ping in the last round that looked
+        self.gaps: List[Dict[str, float]] = []
+
+    def new_stats(self) -> Dict[str, _Target]:
+        prober = NetworkProber(status_thresholds=self.hop_status)
+        for target in self.targets:
             prober.register_target(target)
-        for probe in dns_probes:
+        for probe in self.dns_probes:
             prober.register_dns_target(probe)
-        return {tid: _Target(stat, calm_below.get(stat.category, float('inf')), keep)
+        return {tid: _Target(stat, self.calm_below.get(stat.category, float('inf')), self.keep)
                 for tid, stat in prober.stats.items()}
 
-    for rule_set in rule_sets:
-        rule_set.reset()
-    keys = {row[0]: row[1] for row in conn.execute("SELECT id, key FROM targets")}
+    def _restart_after_gap(self, prev: float, ts: float) -> None:
+        """More than GAP_SECONDS between two rounds: the app was down. An open incident ends at its last bad round and
+        the windows start empty, as after a restart."""
+        self.gaps.append({"start": prev, "end": ts})
+        for rule_set in self.rule_sets:
+            rule_set.close_open()
+            rule_set.reset()
+        self.stats, self.flagged = self.new_stats(), set()
 
-    # flagged: per window, whether a target was found ignoring ping in the last round that looked
-    state = {"rounds": 0, "prev_ts": None, "last_ts": start, "stats": new_stats(), "flagged": set()}
-    gaps: List[Dict[str, float]] = []
+    def _ignoring_ping(self, hot: bool) -> Dict[int, set]:
+        """The targets ignoring ping per window (NetworkProber.update_path_flags): they only change while a target is
+        down (hot) or one is flagged."""
+        quiet: Dict[int, set] = {}
+        for window in self.windows:
+            quiet[window] = set()
+            if hot or window in self.flagged:
+                for target in self.stats.values():
+                    target.judge(window, self.down_fraction)
+                quiet[window] = ignoring_ping(self.stats.values())
+                self.flagged.discard(window)
+                if quiet[window]:
+                    self.flagged.add(window)
+        return quiet
 
-    async def run_round(samples: List[_Sample]) -> None:
+    async def _step(self, rule_set: _RuleSet, metrics: Dict[int, Any], quiet: Dict[int, set],
+                    samples: List[_Sample], ts: float, calm: bool) -> None:
+        """One round through one rule set's classifier, and what it started, escalated or made busy."""
+        reading = rule_set.load.current(ts)
+        if reading is None:
+            rule_set.rounds_without_load += 1
+        if calm:
+            tracker = rule_set.core.tracker
+            if (tracker.active_incident is None and not tracker.failure_counter
+                    and not tracker.loss_failure_counter and not tracker.latency_failure_counter):
+                rule_set.in_busy = False
+                return
+        window = rule_set.config.window_probes
+        if window not in metrics:
+            for tid, target in self.stats.items():
+                target.ignores_ping = tid in quiet[window]
+            metrics[window] = round_metrics(self.stats, samples, window)
+        result = await rule_set.core.step(metrics[window], ts, reading, testing=rule_set.speed_mask.covers(ts))
+        if result.verdict.status == "busy":
+            if not rule_set.in_busy:
+                rule_set.busy_runs += 1
+            rule_set.in_busy = True
+        else:
+            rule_set.in_busy = False
+        if result.outcome.started is not None:
+            rule_set.incidents.append(result.outcome.started)
+            rule_set.first_severity[id(result.outcome.started)] = result.outcome.started.severity
+        if result.outcome.escalated is not None:
+            rule_set.escalated_at.setdefault(id(result.outcome.escalated), ts)
+
+    async def run_round(self, samples: List[_Sample]) -> None:
         ts = max(s.timestamp for s in samples)
-        prev = state["prev_ts"]
+        prev = self.prev_ts
         if prev is not None and ts - prev > GAP_SECONDS:
-            gaps.append({"start": prev, "end": ts})
-            for rule_set in rule_sets:
-                rule_set.close_open()
-                rule_set.reset()
-            state["stats"], state["flagged"] = new_stats(), set()
-        state["prev_ts"] = state["last_ts"] = ts
-        state["rounds"] += 1
-        stats = state["stats"]
+            self._restart_after_gap(prev, ts)
+        self.prev_ts = self.last_ts = ts
+        self.rounds += 1
         for sample in samples:
-            target = stats.get(sample.target_id)
+            target = self.stats.get(sample.target_id)
             if target is not None:
                 target.add(sample.latency_ms if sample.success else None)
         # A target is hot while one of its last `keep` probes was lost or slow. With none hot, a round cannot be a fault
         # (_calm_below), nobody is down, and `observe` of a healthy round changes nothing in a tracker that has no
         # incident open and no failures counted, which is then the whole step.
-        hot = any(t.hot for t in stats.values())
+        hot = any(t.hot for t in self.stats.values())
         calm = SKIP_CALM_ROUNDS and not hot
-        # the flags (NetworkProber.update_path_flags), per window: they only change while a target is down (hot) or one
-        # is flagged
-        quiet: Dict[int, set] = {}
-        for window in windows:
-            quiet[window] = set()
-            if hot or window in state["flagged"]:
-                for target in stats.values():
-                    target.judge(window, down_fraction)
-                quiet[window] = ignoring_ping(stats.values())
-                state["flagged"].discard(window)
-                if quiet[window]:
-                    state["flagged"].add(window)
+        quiet = self._ignoring_ping(hot)
         metrics: Dict[int, Any] = {}  # by window
-        for rule_set in rule_sets:
-            reading = rule_set.load.current(ts)
-            if reading is None:
-                rule_set.rounds_without_load += 1
-            if calm:
-                tracker = rule_set.core.tracker
-                if (tracker.active_incident is None and not tracker.failure_counter
-                        and not tracker.loss_failure_counter and not tracker.latency_failure_counter):
-                    rule_set.in_busy = False
-                    continue
-            window = rule_set.config.window_probes
-            if window not in metrics:
-                for tid, target in stats.items():
-                    target.ignores_ping = tid in quiet[window]
-                metrics[window] = round_metrics(stats, samples, window)
-            result = await rule_set.core.step(metrics[window], ts, reading, testing=rule_set.speed_mask.covers(ts))
-            if result.verdict.status == "busy":
-                if not rule_set.in_busy:
-                    rule_set.busy_runs += 1
-                rule_set.in_busy = True
-            else:
-                rule_set.in_busy = False
-            if result.outcome.started is not None:
-                rule_set.incidents.append(result.outcome.started)
-                rule_set.first_severity[id(result.outcome.started)] = result.outcome.started.severity
-            if result.outcome.escalated is not None:
-                rule_set.escalated_at.setdefault(id(result.outcome.escalated), ts)
+        for rule_set in self.rule_sets:
+            await self._step(rule_set, metrics, quiet, samples, ts, calm)
 
+
+async def _feed_rounds(conn: sqlite3.Connection, runner: _RoundRunner, start: float, end: float, half_round: float,
+                       emit: Callable[[Dict[str, Any]], None]) -> None:
+    """Reads the samples one hour at a time, cuts them into rounds and hands each round to `runner`."""
+    keys = {row[0]: row[1] for row in conn.execute("SELECT id, key FROM targets")}
     pending: List[_Sample] = []
     pending_ids: set = set()
     last_sample_ts = 0.0
@@ -519,7 +570,7 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
                 continue
             sample = _Sample(key, ts, bool(ok), latency)
             if pending and (key in pending_ids or ts - last_sample_ts > half_round):
-                await run_round(pending)
+                await runner.run_round(pending)
                 pending, pending_ids = [], set()
             pending.append(sample)
             pending_ids.add(key)
@@ -527,12 +578,14 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
         chunk_start = chunk_end
         emit({"progress": round(min(1.0, (chunk_start - start) / max(1.0, end - start)), 3)})
     if pending:
-        await run_round(pending)
+        await runner.run_round(pending)
 
-    current, draft = rule_sets
-    last_ts = state["last_ts"]
+
+def _notes(conn: sqlite3.Connection, start: float, end: float, tz, rounds: int, rule_sets: List[_RuleSet],
+           capacity_known: bool) -> List[str]:
+    """What the answer should say about the window: path changes, a line capacity or load readings that were missing,
+    no samples."""
     notes = _path_notes(conn, start, end, tz)
-    rounds = state["rounds"]
     if rounds and not capacity_known:
         notes.append("The line capacity isn't known yet (set it, or wait for it to be learned), so the replay could not "
                      "take the line load into account.")
@@ -542,13 +595,7 @@ async def replay(spec: Dict[str, Any], conn: sqlite3.Connection,
                      f"recognized there.")
     if not rounds:
         notes.append("No probe samples are stored for this window.")
-    return {
-        "window": {"start": start, "end": end, "rounds": rounds, "gaps": gaps},
-        "current": _counts(current, last_ts, spec.get("timezone"), incidents),
-        "draft": _counts(draft, last_ts, spec.get("timezone"), incidents),
-        "recorded": _recorded(conn, start, end),
-        "changes": _changes(current, draft), "notes": notes,
-    }, rule_sets
+    return notes
 
 
 def _watch_parent() -> None:

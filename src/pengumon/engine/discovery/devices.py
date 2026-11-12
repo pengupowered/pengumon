@@ -40,7 +40,8 @@ SNMP_TIMEOUT_S = 1.0
 CABLE_MODEM_ADDRESS = "192.168.100.1"  # where DOCSIS cable modems answer with their status page
 USER_AGENT = "pengumon-discovery"
 
-_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+SCAN_MAX = 16 * 1024  # how much of a page is searched for the title
+TITLE_MAX = 600  # how far past <title> its closing tag is looked for
 
 
 @dataclass(frozen=True)
@@ -117,8 +118,27 @@ def _text(headers: httpx.Headers, body: bytes) -> str:
     match = re.search(r"charset=([A-Za-z0-9_.:-]+)", headers.get("content-type", ""))
     try:
         return body.decode(match.group(1) if match else "utf-8", "replace")
-    except LookupError:
+    except (LookupError, UnicodeError, ValueError, TypeError):  # an odd charset (idna, undefined, punycode...)
         return body.decode("utf-8", "replace")
+
+
+def _find_title(body: str) -> Optional[str]:
+    """The text of the first <title>, found without backtracking (a regex with a lazy `.*?` was quadratic on a page
+    of many `<title>` starts and no end). Only the first SCAN_MAX characters are searched."""
+    text = body[:SCAN_MAX]
+    low = text.lower()
+    if len(low) != len(text):  # a few letters change length when lowered: keep the offsets true
+        low = "".join(c.lower() if c.isascii() else c for c in text)
+    start = low.find("<title")
+    if start < 0:
+        return None
+    open_end = low.find(">", start)
+    if open_end < 0:
+        return None
+    close = low.find("</title", open_end + 1, open_end + 1 + TITLE_MAX)
+    if close < 0:
+        return None
+    return text[open_end + 1:close]
 
 
 async def _get(client: httpx.AsyncClient, url: str):
@@ -155,9 +175,9 @@ async def fetch_page(address: str, client: httpx.AsyncClient, *, budget: int = 1
                 url = target
                 status, headers, body = await _get(client, url)
         except httpx.HTTPError:
-            continue  # nothing on this port, a reset, a timeout: try the next scheme
-        match = _TITLE.search(body)
-        title = clean_text(html.unescape(match.group(1)), limit=80) if match else None
+            continue  # nothing on this port, a reset, a timeout, a bad Location: try the next scheme
+        raw_title = _find_title(body)
+        title = clean_text(html.unescape(raw_title), limit=80) if raw_title is not None else None
         return PageInfo(address=address, scheme=urlsplit(url).scheme, status=status, title=title,
                         server=clean_text(headers.get("server"), limit=60),
                         fingerprint=fingerprint(body, title, " ".join(locations)), off_host_redirect=off_host)

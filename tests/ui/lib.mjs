@@ -9,7 +9,7 @@ import path from "node:path";
 
 export const LINE = "[data-panel=line] .panel[data-device=modem]";
 export const ROUTER = "[data-panel=router] .panel[data-device=router]";
-export const USUAL_PANELS = ["diagnosis", "latency", "line", "speed", "router", "services", "strips", "heat", "incidents", "report", "matrix"];
+export const USUAL_PANELS = ["diagnosis", "latency", "line", "speed", "router", "traffic", "services", "strips", "heat", "incidents", "report", "matrix"];
 export const PHONE = { width: 390, height: 844, isMobile: true, hasTouch: true };
 export const DESKTOP = { width: 1400, height: 1000 };
 export const ALL_VARIANTS = ["full", "bare", "tworouters", "unknownline"];
@@ -23,7 +23,8 @@ export const SHOTS = process.env.PENGUMON_SMOKE_SHOTS === "1";
 
 // The bus step subscribes a function that throws on purpose; the bus logs it (and must go on). The second: the states
 // steps refuse the socket on purpose.
-const KNOWN_CONSOLE_ERRORS = [/^bus: subscriber of "targets" threw: smoke-boom$/, /^WebSocket connection to .*\/ws-dead.* failed/];
+const KNOWN_CONSOLE_ERRORS = [/^bus: subscriber of "targets" threw: smoke-boom$/, /^WebSocket connection to .*\/ws-dead.* failed/,
+  /^The theme's effect could not be started: smoke-effect-boom$/]; // (the effects step makes an effect throw on purpose)
 
 export async function createContext({ base, outDir, variant }) {
   const require = createRequire(path.join(process.env.PGBROWSER, "package.json"));
@@ -64,7 +65,7 @@ export async function createContext({ base, outDir, variant }) {
     window.__smokeSockets = [];
     window.WebSocket = class extends Native {
       constructor(url, ...rest) {
-        super(sessionStorage.getItem("smokeWs") === "dead" ? url + "-dead" : url, ...rest);
+        super(sessionStorage.getItem("smokeWs") === "dead" ? String(url).replace(/(\?|$)/, "-dead$1") : url, ...rest);
         window.__smokeSockets.push(this);
       }
       set onmessage(fn) {
@@ -122,7 +123,7 @@ export async function createContext({ base, outDir, variant }) {
   // steps refuse on purpose; Chromium reports neither here.
   page.on("requestfailed", (r) => {
     const why = r.failure()?.errorText;
-    if (firefox && (why === "NS_BINDING_ABORTED" || r.url().endsWith("/ws-dead"))) return;
+    if (firefox && (why === "NS_BINDING_ABORTED" || /\/ws-dead(\?|$)/.test(r.url()))) return;
     problems.push(`requestfailed: ${r.url()} ${why}`);
   });
   page.on("response", (r) => {
@@ -139,15 +140,6 @@ export async function createContext({ base, outDir, variant }) {
 
   // ---- waiting and reading ----
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  // A closed dialog gives its history entry back a moment later (js/util.js: history.go(-1)); a reload sent while that
-  // traversal is still under way is cancelled by it (the reload never finishes). No person reloads within those
-  // milliseconds, but the steps do (close, then reload at once), so every reload of the harness first waits, at most 3 s,
-  // for the history to settle. (core.mjs has a step that reloads in the same task on purpose, through location.reload.)
-  // settled: no dialog's entry is the current one, or a dialog is open (then the entry is its own, nothing is pending)
-  const settleHistory = () => page.waitForFunction(() => !history.state?.pgModal || !!document.querySelector(".modal.active"),
-    { timeout: 3000 }).catch(() => {});
-  const rawReload = page.reload.bind(page);
-  page.reload = async (opts) => { await settleHistory(); return rawReload(opts); };
   const until = (fn, ...a) => page.waitForFunction(fn, { timeout: 15000 }, ...a).catch((e) => {
     throw new Error(`${e.message} while waiting for ${String(fn).slice(0, 160)} with ${JSON.stringify(a)}`);
   });
@@ -403,7 +395,16 @@ export async function createContext({ base, outDir, variant }) {
   async function resetPage() {
     if (!firefox) await page.emulateMediaFeatures([]); // CDP only
     await page.setViewport(DESKTOP);
-    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); window.__smokeMutate = null; });
+    const clearState = () => page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); window.__smokeMutate = null; });
+    try {
+      await clearState();
+    } catch (e) {
+      // The page has no origin that allows storage right now (localStorage "Access is denied": an error page, a blank
+      // document, one being replaced). Go to the app first, then clear; the text is printed, not swallowed.
+      console.log(`resetPage: storage was not available (${String(e.message ?? e).split("\n")[0]}); going back to the app first`);
+      await page.goto(base + "/", { waitUntil: "load" });
+      await clearState();
+    }
     await page.reload({ waitUntil: "load" });
     await waitText("#wsText", /^Live/);
     await layoutMounted();

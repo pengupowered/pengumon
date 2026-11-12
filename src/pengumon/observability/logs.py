@@ -139,6 +139,27 @@ class SecretHeaderFilter(logging.Filter):
         return True
 
 
+class UrlPathFilter(logging.Filter):
+    """Cuts every http(s) address in a line down to scheme://host[:port]. httpx logs "HTTP Request: POST <url>" for every
+    request once its level is info (the log_levels setting): the address of a webhook, of the ntfy topic or of a
+    host-app check holds its token in the path or the query, and the log goes to Loki."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        cut = _URL.sub(r"\1/[path hidden]", message)
+        if cut != message:
+            record.msg, record.args = cut, ()
+        return True
+
+
+_URL = re.compile(r"(https?://[^/\s\"'?#<>]+)[^\s\"'<>]*")
+URL_LOGGERS = ("httpx", "httpcore")
+for _name in URL_LOGGERS:
+    logging.getLogger(_name).addFilter(UrlPathFilter())
+
 _SECRET_HEADERS = SecretHeaderFilter()
 for _name in SECRET_HEADER_LOGGERS:  # when this module is imported (by the app itself): before any server starts
     logging.getLogger(_name).addFilter(_SECRET_HEADERS)
@@ -192,6 +213,7 @@ def setup_logging(level: Optional[str] = None, *, levels: Optional[str] = None, 
     handler.set_name(HANDLER_NAME)
     handler.setFormatter(JsonFormatter() if fmt == "json" else TextFormatter())
     handler.addFilter(TraceContextFilter())
+    handler.addFilter(SecretHeaderFilter())  # on the handler too: a child logger of the filtered ones is not covered
 
     root = logging.getLogger()
     for existing in [h for h in root.handlers if h.get_name() == HANDLER_NAME]:
@@ -215,9 +237,10 @@ def apply_levels(level: Optional[str], levels: Optional[str]) -> None:
     """Applies the effective server.log_level and server.log_levels (the Settings, PENGUMON_LOG_LEVEL /
     PENGUMON_LOG_LEVELS already folded in): the root level, then each named logger. A logger the previous spec named
     and this one does not goes back to its default (DEFAULT_LEVELS, else inherited)."""
-    if level:
-        logging.getLogger().setLevel(_level(level))
-    spec = parse_levels(levels)
+    new_root = _level(level) if level else None
+    spec = parse_levels(levels)  # both parsed before anything changes: a bad spec leaves the levels as they were
+    if new_root:
+        logging.getLogger().setLevel(new_root)
     for name in _applied:
         if name not in spec:
             logging.getLogger(name).setLevel(DEFAULT_LEVELS.get(name, logging.NOTSET))

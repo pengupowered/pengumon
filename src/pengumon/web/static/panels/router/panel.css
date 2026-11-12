@@ -26,3 +26,20 @@ button.big-count { border: 0; background: none; padding: 0; color: inherit; font
 button.big-count:disabled { cursor: default; }
 button.big-count:not(:disabled):hover b { color: var(--accent); }
 button.n-c { border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; width: 76px; }
+/* what the router says about itself, and its recent events (in the System block) */
+.sysfacts { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--sp-2) var(--sp-3); margin: 0; padding: 0; }
+.sysfacts li { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: var(--surface-2); }
+.sysfacts li.st-warn, .sysfacts li.st-crit { background: var(--st-bg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st) 40%, transparent); }
+.sf-l { font-size: var(--fs-xs); color: var(--ink-3); }
+.sf-v { font-size: var(--fs-md); font-weight: var(--fw-bold); color: var(--ink-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sf-s { font-size: var(--fs-xs); color: var(--ink-3); }
+.sf-s:empty { display: none; }
+.sf-st { display: inline-flex; align-items: center; gap: 4px; color: var(--st); font-weight: var(--fw-semi); }
+.sysevents { display: flex; flex-direction: column; gap: var(--sp-1); }
+.sysevents ul { list-style: none; display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; }
+.sysevents li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: var(--sp-2); font-size: var(--fs-xs); color: var(--ink-2); }
+.sysevents li.st-crit .ev-x, .sysevents li.st-warn .ev-x { color: var(--st); }
+.ev-w { color: var(--ink-3); }
+.ev-x { min-width: 0; overflow-wrap: anywhere; }
+.rb-s { font-size: var(--fs-xs); color: var(--ink-3); font-weight: var(--fw-semi); }
+.rb-s .muted { font-weight: 400; }

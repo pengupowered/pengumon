@@ -394,3 +394,22 @@ async def test_only_an_error_reading_inside_the_window_is_evidence_for_offline(t
     repo = await with_snapshots(tmp_path / "in", start + 30.0, status="error")
     corr = (await inspect_modem(repo, an_incident(start))).docsis_correlation
     assert corr.gateway_offline is True and corr.status == "error"
+
+
+async def test_an_open_incident_is_inspected_up_to_now(tmp_path):
+    """An open incident has no end and no duration yet: the inspection covered its first 10 seconds, however long it had
+    been going on."""
+    repo = DatabaseRepository(db_path=str(tmp_path / "open.db"))
+    await repo.initialize()
+    now = float(int(time.time()))
+    start = now - 600.0
+    for tid in TARGET_IDS:
+        await repo.insert_samples(probes(tid, start - 45.0, now, (lambda t: True) if tid == "isp" else (lambda t: False)))
+    incident = Incident(start_time=start, cause_code="unknown_outage", title="t", description="d", severity="critical",
+                        resolved=False)
+    incident.id = await repo.create_incident(incident)
+    inspection = await inspect_incident(repo, TARGETS, incident)
+    await repo.close()
+    assert inspection.event_end >= now and inspection.window_end >= now + 45.0
+    isp = next(h for h in inspection.hop_impact if h.target_id == "isp")
+    assert isp.sent >= 600 and isp.loss_pct == 100.0

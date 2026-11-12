@@ -3,13 +3,20 @@
 
 import { bus } from '../../js/bus.js';
 import { watchDevice } from '../../js/device-feed.js';
-import { cleanName, DEVICE_ROLES, deviceLabel, deviceStatus, ROLE_EFFECT, ROLE_HINT, ROLE_WORD, ROLES } from '../../js/path-api.js';
-import { IGNORES_PING, IGNORES_PING_WHY, NO_IPV6, NO_IPV6_WHY, NO_PINGS_WHY, shortLabels } from '../../js/path.js';
+import { cleanName } from '../../js/path.js';
+import { DEVICE_ROLES, ROLE_EFFECT, ROLE_HINT, ROLE_WORD, ROLES } from '../../js/roles.js';
+import { deviceLabel } from '../../js/device-text.js';
+import { deviceStatus } from '../../js/device-status.js';
+import { IGNORES_PING, IGNORES_PING_WHY, IGNORES_PROBE, NO_IPV6, NO_IPV6_WHY, NO_PINGS_WHY, shortLabels } from '../../js/path.js';
 import { settingsValues, val } from '../../js/settings-values.js';
 import { state } from '../../js/state.js';
-import { canEdit, escapeHtml, formatMs, icon, median, STATUS } from '../../js/util.js';
+import { canEdit } from '../../js/view-only.js';
+import { escapeHtml } from '../../js/escape.js';
+import { formatMs } from '../../js/format.js';
+import { has, median } from '../../js/values.js';
+import { icon, STATUS } from '../../js/dom.js';
 import { $, chainRuns, familyOf, isName, liveTwin, MERGEABLE, ONE_NODE, pe } from './draft.js';
-import { guardBack } from './guard.js';
+import { probeBlock, probeKey, probeLabel, probeOf } from './probe.js';
 
 const CONFIDENCE = { high: ['good', 'Sure'], likely: ['unknown', 'Likely'], unknown: ['warn', 'Unsure'] };
 const STATUS_CHIP = { new: ['good', 'New'], changed: ['warn', 'Changed'], gone: ['crit', 'Not found by discovery'] };
@@ -19,9 +26,10 @@ const DEVICE_WHY = 'Pengumon also reads this device directly; its details are in
 const NO_DEVICE_WHY = 'Connect a configured device to see its status here; Pengumon reads it directly and shows its details in the Router or Line panel.';
 const ADDRESS_WHY = 'The hop keeps its id and its history (for a router your provider renumbered); its live figures start over at the new address.';
 export const PREVIEW_S = 30;
+const PROBE_WHY = { tcp: 'Probed by a TCP connection to this port: the time of the handshake, judged like a ping.', http: 'Probed by an HTTP(S) request: the time to the server\'s answer, charted but never judged as a stage of the path.' };
+const HTTP_ROLE_WHY = 'An HTTP hop is always Other: its time includes the server\'s own, so it is charted but never judged as a stage of the path';
 
 // ---------- the measurement (Path health's figures and words) ----------
-const has = (v) => v !== null && v !== undefined;
 const fmtLoss = (v) => `${+(+v || 0).toFixed(1)}%`;
 const LAST_MINUTE = '<span class="muted">(last minute)</span>';
 
@@ -40,6 +48,9 @@ function measurement(h) {
     const t = pe.live.get(twin);
     if (t.enabled !== false && t.probing_unavailable === true) return { level: 'unknown', html: 'Not probed · pings are not allowed', title: NO_PINGS_WHY, word: 'Not probed' };
     if (t.enabled !== false && t.ipv6_unavailable === true) return { level: 'unknown', html: escapeHtml(NO_IPV6), title: NO_IPV6_WHY, word: 'Not probed' };
+    if (t.enabled !== false && t.ignores_ping === true && probeOf(h) !== 'icmp') {
+      return { level: 'unknown', html: `No reply · ${escapeHtml(IGNORES_PROBE.word.toLowerCase())} (not counted as an outage)`, title: IGNORES_PROBE.why, word: 'No reply' };
+    }
     if (t.enabled !== false && t.ignores_ping === true) {
       return { level: 'unknown', html: `No reply · ${escapeHtml(IGNORES_PING.toLowerCase())} (not counted as an outage)`, title: IGNORES_PING_WHY, word: 'No reply' };
     }
@@ -51,13 +62,15 @@ function measurement(h) {
     const level = LEVEL[t.status] || 'unknown';
     return { level, html: `<b class="num">${formatMs(ms)} ms</b> · <span class="num">${fmtLoss(loss)}</span> loss ${LAST_MINUTE}`, ms };
   }
-  const p = pe.preview && pe.preview.hops[h.id] && pe.preview.addresses[h.id] === h.address ? pe.preview.hops[h.id] : null;
+  const p = pe.preview && pe.preview.hops[h.id] && pe.preview.addresses[h.id] === `${h.address}|${probeKey(h)}` ? pe.preview.hops[h.id] : null;
   if (p) {
     const when = pe.preview.state === 'done' ? `<span class="muted">(preview, ${PREVIEW_S} s)</span>` : `<span class="muted">(previewing, ${Math.round(pe.preview.elapsed || 0)} s)</span>`;
     if (p.kind === 'ipv6_unavailable') return { level: 'unknown', html: `${escapeHtml(NO_IPV6)} ${when}`, title: NO_IPV6_WHY, word: 'Not probed' };
     if (!p.received) {
+      if (p.kind === 'refused') return { level: 'crit', html: `<b>Refused</b> ${when}`, title: 'The port answered that nothing listens there. A closed port counts as a lost probe.', word: 'Refused' };
+      if (p.kind === 'failed') return { level: 'crit', html: `<b>Failed</b> ${when}`, title: 'Test says why.', word: 'Failed' };
       if (p.kind === 'unreachable') return { level: 'crit', html: `<b>Unreachable</b> ${when}`, title: 'A router on the way says this address cannot be reached.', word: 'Unreachable' };
-      return { level: p.sent ? 'warn' : 'unknown', html: `${p.sent ? 'No reply' : 'Starting'} ${when}`, title: p.sent ? 'No answer yet: it may ignore ping, or be down. Once it is on the path, Pengumon tells the two apart.' : '', word: 'No reply' };
+      return { level: p.sent ? 'warn' : 'unknown', html: `${p.sent ? 'No reply' : 'Starting'} ${when}`, title: p.sent ? (probeOf(h) === 'icmp' ? 'No answer yet: it may ignore ping, or be down. Once it is on the path, Pengumon tells the two apart.' : 'No answer yet to its TCP or HTTP probe: it may be down, or a firewall may drop it.') : '', word: 'No reply' };
     }
     const level = p.loss_pct > 0 ? 'warn' : 'good';
     return { level, html: `<b class="num">${formatMs(p.median_ms)} ms</b> · <span class="num">${fmtLoss(p.loss_pct)}</span> loss ${when}`, ms: p.median_ms };
@@ -211,6 +224,7 @@ function card(h, i, hops) {
   if (h.addressFrom) chips.push(`<span class="chip st st-warn" title="${escapeHtml(`Was ${h.addressFrom}; the history stays with the hop`)}">New address</span>`);
   if (h.enabled === false) chips.push('<span class="chip">Paused</span>');
   if (familyOf(h) === 6) chips.push('<span class="chip">IPv6</span>');
+  if (probeOf(h) !== 'icmp') chips.push(`<span class="chip" data-probe-chip="${id}" title="${escapeHtml(PROBE_WHY[probeOf(h)])}">${escapeHtml(probeLabel(h))}</span>`);
   const run = chainRuns(hops).find((r) => r.includes(h));
   const node = run.length > 1 ? `<span class="pe-hint">one node with ${escapeHtml(run.filter((o) => o !== h).map((o) => o.name).join(', '))}</span>` : '';
   const evidence = (h.evidence || []).length
@@ -224,8 +238,9 @@ function card(h, i, hops) {
       <span class="pe-hint">${escapeHtml(ROLE_WORD[h.category] || h.category)}: ${escapeHtml(ROLE_HINT[h.category] || '')}</span>${node}${chips.join('')}</div>
     ${addressForm(h)}
     <div class="pe-hop-b">
-      <label class="field"><span>Role</span><select class="input" data-change="editPathHop" data-field="category" data-arg="${id}" aria-label="Role of hop ${n}" aria-describedby="peFx-${id}">${options(ROLES, h.category)}</select></label>
+      <label class="field"><span>Role</span><select class="input" data-change="editPathHop" data-field="category" data-arg="${id}" aria-label="Role of hop ${n}" aria-describedby="peFx-${id}"${probeOf(h) === 'http' ? ` disabled title="${escapeHtml(HTTP_ROLE_WHY)}"` : ''}>${options(ROLES, h.category)}</select></label>
       ${isName(h.address) ? `<label class="field"><span>Probe the name's</span><select class="input" data-change="editPathHop" data-field="family" data-arg="${id}" aria-label="Address family of hop ${n}">${options([['4', 'IPv4 address'], ['6', 'IPv6 address']], String(h.family || 4))}</select></label>` : ''}
+      ${probeBlock(h, n)}
       <div class="pe-hop-f">
         <button type="button" class="btn icon sm" data-action="movePathHop" data-needs-edit data-arg="${id}" data-dir="-1" aria-label="Move hop ${n} up"${i === 0 ? ' disabled' : ''}>${icon('up')}</button>
         <button type="button" class="btn icon sm pe-down" data-action="movePathHop" data-needs-edit data-arg="${id}" data-dir="1" aria-label="Move hop ${n} down"${i === hops.length - 1 ? ' disabled' : ''}>${icon('up')}</button>
@@ -255,7 +270,6 @@ export function renderClean() {
 
 export function render(focus) {
   const hops = pe.draft.hops;
-  guardBack();
   renderChain();
   renderClean();
   $('pathEditorHops').innerHTML = hops.length ? hops.map((h, i) => card(h, i, hops)).join('')
@@ -283,7 +297,7 @@ export function render(focus) {
 export function permissions() {
   const ok = canEdit();
   $('pathEditorReadOnly').hidden = ok;
-  // the tooltip and the blocked click are js/util.js's (data-needs-edit); these are off outright as well
+  // the tooltip and the blocked click are js/view-only.js's (data-needs-edit); these are off outright as well
   ['btnApplyPath', 'btnRediscover', 'btnPreviewPath'].forEach((b) => { $(b).disabled = !ok || (b === 'btnApplyPath' && pe.applying); });
   document.querySelectorAll('#pathVersionList [data-action=loadPathVersion]').forEach((b) => { b.disabled = !ok; });
 }

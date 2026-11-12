@@ -84,6 +84,35 @@ async def test_a_block_explained_by_load_is_busy_unless_a_fault_overlaps_it(tmp_
     await repo.close()
 
 
+async def test_a_fault_from_before_the_window_keeps_its_first_block_from_being_busy(tmp_path):
+    """The first block is explained by load and also reached by a drop that began before the window."""
+    repo = await make_repo(tmp_path)
+    window_start = block_start(95)
+    await repo.insert_samples(minute_samples("a", window_start, 10, 5))
+    explained = await repo.create_incident(Incident(
+        start_time=window_start + 30, end_time=window_start + 60, cause_code="load_induced_latency", title="t",
+        description="d", severity="info", affected_targets=[], kind="busy_latency"))
+    await repo.set_incident_load(explained, 90.0, expected=True)
+    await repo.create_incident(Incident(start_time=window_start - 300, end_time=window_start + 120, cause_code="access_line_drop",
+                                        title="t", description="d", severity="warning", affected_targets=[], kind="isp_loss"))
+    cells = (await build_uptime(repo, None, "24h", now=NOW))["targets"][0]["cells"]
+    assert cells[0] == "degraded"
+    await repo.close()
+
+
+async def test_an_explained_incident_from_before_the_window_makes_its_first_block_busy(tmp_path):
+    repo = await make_repo(tmp_path)
+    window_start = block_start(95)
+    await repo.insert_samples(minute_samples("a", window_start, 10, 5))
+    explained = await repo.create_incident(Incident(
+        start_time=window_start - 600, end_time=window_start + 60, cause_code="load_induced_latency", title="t",
+        description="d", severity="info", affected_targets=[], kind="busy_latency"))
+    await repo.set_incident_load(explained, 90.0, expected=True)
+    cells = (await build_uptime(repo, None, "24h", now=NOW))["targets"][0]["cells"]
+    assert cells[0] == "busy"
+    await repo.close()
+
+
 async def test_daily_windows_follow_the_time_zone(tmp_path):
     repo = await make_repo(tmp_path)
     await repo.insert_samples(minute_samples("a", NOW - 3 * 86400, 60, 3))  # three dead minutes at 12:07 UTC, 3 days ago

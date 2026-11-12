@@ -115,6 +115,67 @@ How the answers are read:
 Every answer is matched to its request by echo id, sequence and destination (compared as addresses, so
 `2001:DB8::1` is `2001:db8::1`), so other programs' pings on the same host are ignored.
 
+## TCP and HTTP probes
+
+A hop that does not answer ping (a server or a router that drops ICMP) can be probed another way: set its **Probe by**
+in the path editor to **TCP connect** or **HTTP(S) request**. Ping stays the default and nothing changes for a hop
+that does not ask for it.
+
+- **TCP connect** opens a connection to the hop's port and closes it at once, with no data sent (a FIN, not a reset: a
+  reset every second looks like a port scan to a firewall). The reading is the time of the handshake, one round trip
+  like a ping, so a TCP hop can have any role and is judged exactly like a ping hop. Only a completed handshake counts:
+  a refused port is a lost probe (it comes as easily from a firewall in front of the host as from the host).
+- **HTTP(S) request** sends one `HEAD` or `GET` to a fixed path and reads only the status line (at most 1024 bytes),
+  then drops the connection: no headers, no body. The request is exactly `Host`, `User-Agent: Pengumon/<version> (path
+  probe)`, `Accept` and `Connection: close`: no cookies, no credentials, no query string, no proxy, no redirect followed
+  (a 3xx is an answer), no connection reused, and TLS is always verified against the system certificate store (a
+  self-signed device needs TCP or plain `http`). A status below 500 is an answer; 500 and above is a lost probe. The
+  reading is the time to the server's answer, which includes the connection, TLS and the server's own work, so it is
+  not a round trip: **an HTTP hop always has the role Other**, charted and never blamed for an outage.
+
+How exact the reading is:
+
+| Reading | Accuracy |
+|---|---|
+| TCP on Linux | The kernel's own handshake time (`TCP_INFO`, microseconds): unaffected by how late the program wakes up. Under rootless Podman (pasta) or slirp4netns the relay's time is included, as it is for ping there. |
+| TCP on macOS and Windows | Timed by Pengumon: never below the true handshake, higher by however long the program was busy when the answer arrived (usually under 1 ms, tens of ms while a report or a TLS handshake runs). |
+| HTTP, everywhere | Timed by Pengumon, from just before the connection starts to the status line. The name lookup is not included. |
+
+The path health pages say the same under each hop (its "probe note"). An answer that arrives in time while the program
+is blocked past the deadline is counted as lost; ping has the same limit.
+
+Limits (docs/security.md has the reasons):
+
+- At most 8 hops per path use TCP or HTTP: each opens a connection every second.
+- Loopback, link-local and special-purpose addresses (`127.0.0.1`, `169.254.169.254`, `::ffff:127.0.0.1`, multicast,
+  `localhost`) are refused when the path is edited and again on the address a name resolves to at every probe. This
+  host's own apps are watched by Service checks (Settings), not by the path.
+- Ports on the Fetch standard's list of bad ports (mail, login, file sharing, IRC; also 22 and 53) are refused. Probe a
+  resolver on 443 or 853, not 53.
+- A probe has the same deadline as a ping (`prober.timeout_seconds`, at most 1 s), name lookup included.
+
+What a lost TCP or HTTP probe says (the text stored with the sample and shown by Test):
+
+| Situation | Text |
+|---|---|
+| Closed port | `Connection refused on port N` (on Windows the system answers a closed port only after about two seconds, so with a probe timeout shorter than that it can read as "no answer in time" instead) |
+| No SYN-ACK | `No answer in time (TCP handshake)` |
+| TLS too slow | `No answer in time (TLS handshake)` |
+| No status line | `No answer in time (waiting for the HTTP answer)` |
+| Expired certificate | `TLS: certificate expired` |
+| Certificate for another name | `TLS: certificate is for another name` |
+| Any other certificate problem | `TLS: certificate not trusted` |
+| Other TLS failure | `TLS handshake failed: <reason>` |
+| Not HTTP | `Not an HTTP answer` (with `(no status line in the first 1024 bytes)` when it is too long) |
+| Closed without answering | `The server closed the connection without answering` |
+| 5xx | `HTTP 503 from the server` |
+| Refused by the policy | `Not probed: <address> is a loopback address (TCP and HTTP probes never connect there)` |
+| No route | `Host unreachable`, `Network unreachable` |
+
+Without any ICMP hop on the path the dashboard does not say "pings are not allowed": TCP and HTTP hops are still
+probed and judged. With a mix, and pings not allowed, the verdict stays "Not probing" (the ping hops have no evidence),
+while the TCP and HTTP hops are still probed and recorded.
+
 ## The default gateway
 
 When no probe path is stored yet, Pengumon probes the default gateway and two public resolvers. On Linux the gateway

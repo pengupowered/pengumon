@@ -39,7 +39,7 @@
   /* Categorical series, fixed order (dataviz validator: dark surface #10151c, 3 slots pass all-pairs, all 8 pass
      adjacent; light #ffffff: 8 pass adjacent, slots 3-5 under 3:1 so they always come with a legend and Hop details).
      Charts where lines cross use at most 3; a 4th only with direct labels. Slots 1-8 also color targets that have no
-     color of their own (util.js), in path order. */
+     color of their own (js/targets.js), in path order. */
   --s1: #3987e5;  /* blue    */
   --s2: #d95926;  /* orange  */
   --s3: #199e70;  /* aqua    */

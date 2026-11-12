@@ -2,7 +2,8 @@
 // the address (slot webhook.<id>.url) and each header's value (slot webhook_header.<name>; the item keeps the reference
 // "secret:<name>"). A webhook without an address is "URL needed" and cannot be saved. Applies without a restart.
 
-import { escapeHtml } from '../../../js/util.js';
+import { canEdit } from '../../../js/view-only.js';
+import { escapeHtml } from '../../../js/escape.js';
 import { S, setSecret } from '../store.js';
 import { rememberSlot, slotHtml, slotState } from '../secrets.js';
 import { makeListEditor, freshId } from './kit.js';
@@ -35,6 +36,8 @@ const editor = makeListEditor({
   addLabel: 'Add a webhook',
   empty: 'No webhooks. Add one to send alerts to Slack, Discord or any service that takes a JSON post.',
   note: 'The address and header values are secrets: you can replace or remove them, but they are never shown again or exported.',
+  noteView: 'The address and header values are secrets and are never shown.',
+  emptyView: 'No webhooks.',
   resetLabel: 'Remove all webhooks',
   fields: [
     { f: 'name', label: 'Name', kind: 'text', required: true },
@@ -55,24 +58,32 @@ const editor = makeListEditor({
   chips: (item) => (hasUrl(item.id) ? '' : '<span class="chip st st-crit" data-chip="url">URL needed</span>'),
   extra: (item) => {
     rememberSlot(urlSlot(item.id), urlSpec);
+    if (!canEdit()) return `<h5 class="set-sub">Address</h5>${slotHtml(urlSlot(item.id), urlSpec)}<p class="fine top">Header names and values are shown to the signed-in owner only.</p>`;
     const headers = Object.entries(item.headers || {}).map(([name, ref]) => {
       const slot = headerSlot(ref);
-      rememberSlot(slot, { label: name, kind: 'token', env: null });
-      return `<div class="set-hdr"><div class="set-hdr-row">${slotHtml(slot, { label: `Header ${name}`, kind: 'token', env: null })}
+      const spec = { label: `Header ${name}`, kind: 'token', env: null }; // the same label at the first drawing and at every later one
+      rememberSlot(slot, spec);
+      return `<div class="set-hdr"><div class="set-hdr-row">${slotHtml(slot, spec)}
         <button type="button" class="btn sm" data-action="settingsListAct" data-arg="webhooks" data-la="header-remove" data-hdr="${escapeHtml(name)}" data-needs-edit>Remove header</button></div></div>`;
     }).join('');
     return `<h5 class="set-sub">Address</h5>${slotHtml(urlSlot(item.id), urlSpec)}
       <h5 class="set-sub">Headers</h5>${headers || '<p class="fine top">No headers.</p>'}
       <div class="set-hdr-add"><input class="input" type="text" data-hdr-name placeholder="Header name, e.g. Authorization" maxlength="100" aria-label="New header name">
-        <button type="button" class="btn sm" data-action="settingsListAct" data-arg="webhooks" data-la="header-add" data-needs-edit>Add header</button></div>`;
+        <button type="button" class="btn sm" data-action="settingsListAct" data-arg="webhooks" data-la="header-add" data-needs-edit>Add header</button></div>
+      <p class="fine top" data-hdr-msg role="alert"></p>`;
   },
   action: (act, button, items, ctx, { draw }) => {
     const card = button.closest('.set-card');
     const item = items[Number(card.dataset.i)];
     if (act === 'header-add') {
       const name = card.querySelector('[data-hdr-name]').value.trim();
-      if (!name || item.headers[name]) return true;
-      item.headers[name] = `${SECRET}${freshId(`${item.id}_${name}`, Object.values(item.headers).map((r) => r.slice(SECRET.length)))}`;
+      const msg = card.querySelector('[data-hdr-msg]');
+      const say = (text) => { if (msg) msg.textContent = text; };
+      if (!name) { say('Type the header\'s name first.'); return true; }
+      if (name === '__proto__' || Object.hasOwn(item.headers, name)) { say(name === '__proto__' ? 'That name cannot be used.' : `This webhook has a ${name} header already.`); return true; }
+      // the stored name is shared by every webhook, so it must differ from every header's of every webhook
+      const taken = items.flatMap((w) => Object.values(w.headers || {})).map((r) => r.slice(SECRET.length));
+      item.headers[name] = `${SECRET}${freshId(`${item.id}_${name}`, taken)}`;
       ctx.markDirty();
       draw();
       return true;

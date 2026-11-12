@@ -112,7 +112,10 @@ line:
 database:
   # The database file is <data directory>/pengumon.db (`pengumon paths` shows where); db_path is only for moving it.
   retention_days: 7          # raw 1 s samples, DOCSIS and router telemetry
-  rollup_retention_days: 400 # per-minute probe rollups (long-range charts)
+  slot_retention_days: 7     # 10 s probe rollups (the latency chart's 10 s buckets); >= retention_days
+  rollup_retention_days: 90  # per-minute probe rollups (charts, report and uptime at one-minute detail)
+  long_rollup_retention_days: 400  # quarter-hour probe rollups (older ranges), speed tests, device events; >= rollup_retention_days
+  incident_retention_days: 0 # resolved incidents: 0 keeps them forever, else >= long_rollup_retention_days
 
 # Other apps on this host: each health endpoint is fetched every interval_seconds; failures_for_incident failed
 # checks in a row open a "not responding" incident (kind service_down), the next good answer resolves it. With
@@ -169,7 +172,8 @@ notifications:
 #   asn_lookup: false
 
 # What the API tells about the devices on your network. client_details: "token" (default) shows connected clients'
-# names, IP and MAC addresses only when PENGUMON_ACCESS_TOKEN is set; "full" always shows them; "masked" never does
+# names, IP and MAC addresses only to someone signed in with the password (set under Settings > Sign-in, or
+# PENGUMON_ACCESS_TOKEN; with no password set they are masked); "full" always shows them; "masked" never does
 # (vendor and the last four hex digits of the MAC instead). Counts are always shown. More in docs/clients.md.
 privacy:
   client_details: token
@@ -204,7 +208,9 @@ privacy:
 #     options:
 #       wan_interface: wan              # the logical interface carrying internet traffic (default "wan")
 #       clientlist_interval_seconds: 60
-#   # Any SNMPv2c device (a router, a switch's uplink, a NAS): the community string is its password.
+#   # Any SNMPv2c or SNMPv3 device (a router, a switch's uplink, a NAS). SNMPv2c: the community string is its password.
+#   # SNMPv3 (version "3"): the username is the SNMPv3 user, the password the authentication password, and authPriv also
+#   # needs the privacy password (PENGUMON_DEVICE_<ID>_PRIVACY_PASSWORD or the setup dialog; docs/devices.md).
 #   - id: switch
 #     driver: snmp
 #     url: "snmp://192.168.1.2"         # UDP 161; snmp://host:port for another port
@@ -212,6 +218,9 @@ privacy:
 #       wan_interface: "eth1"           # ifName or ifDescr; unset: the interface of the default route
 #       timeout_seconds: 2
 #       retries: 1
+#       # version: "3"                  # SNMPv3 (default "2c")
+#       # security_level: authPriv      # authPriv (default), authNoPriv or noAuthNoPriv
+#       # auth_protocol: SHA-256        # SHA (default), SHA-224, SHA-256, SHA-384 or SHA-512
 
 # The cards of the dashboard, for every browser: which come first and which are hidden. The ids are the panel folder
 # names (docs/dashboard.md); an unknown id is refused on the Settings page with a message that lists the valid ones (in

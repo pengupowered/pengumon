@@ -18,12 +18,12 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Type
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from pengumon.config import AppConfig
+from pengumon.config import MAX_DEVICES, MAX_DNS_PROBES, AppConfig
 from pengumon.devices.settings import DeviceConfig
 from pengumon.engine.netinfo import default_dns_probes
 from pengumon.engine.prober_settings import DnsProbeConfig
-from pengumon.notify.settings import WebhookItem
-from pengumon.services.settings import ServiceCheckConfig
+from pengumon.notify.settings import MAX_WEBHOOKS, WebhookItem
+from pengumon.services.settings import MAX_SERVICES, ServiceCheckConfig
 from pengumon.settings import env as settings_env
 from pengumon.web import themes as theme_rules
 from pengumon.web.settings import ThemeItem
@@ -339,9 +339,24 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("database.retention_days", "Keep raw samples for",
            "1-second samples, line, router and mesh readings. Line-capacity learning needs 7 days. Older ones are deleted "
            "at the next hourly cleanup.", unit="days"),
+        _s("database.slot_retention_days", "Keep 10-second history for",
+           "The latency chart's 10-second buckets, up to a day wide. At least as long as the raw samples, at most as "
+           "long as the per-minute history. Older ones are deleted at the next hourly cleanup.", unit="days"),
         _s("database.rollup_retention_days", "Keep per-minute history for",
-           "Long-range charts, uptime strips, the report and the dossier. Older ones are deleted at the next hourly "
-           "cleanup.", unit="days"),
+           "Long-range charts, uptime strips, the report and the dossier at one-minute detail; older ranges use "
+           "quarter-hour detail. Older ones are deleted at the next hourly cleanup.", unit="days"),
+        _s("database.long_rollup_retention_days", "Keep quarter-hour history for",
+           "Charts, uptime strips and reports of ranges older than the per-minute history, in 15-minute steps, and the "
+           "speed tests and the router's restarts and WAN link changes. At least as long as the per-minute history. Older ones "
+           "are deleted at the next hourly cleanup.",
+           unit="days"),
+        _s("database.traffic_retention_days", "Keep router traffic for",
+           "Which clients and apps used the internet, per hour and per day, as the router counted them. Older ones are "
+           "deleted at the next hourly cleanup.", unit="days"),
+        _s("database.incident_retention_days", "Keep resolved incidents for",
+           "The incident list and everything built on it. 0: keep them forever. Otherwise at least as long as the "
+           "quarter-hour history. An incident that is still open is never deleted. Older ones are deleted at the next "
+           "hourly cleanup.", unit="days"),
     ])
     + _entries("access", [
         # the section's password controls are the page's own (dialogs/settings/access.js): they apply at once
@@ -350,7 +365,7 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "No effect without a password.", "Without the password", env="PENGUMON_VIEW_WITHOUT_TOKEN"),
         _s("mcp.enabled", "Allow AI assistants to read (MCP)",
            "Opens /mcp, a read-only endpoint an AI assistant can ask about the network (status, incidents, reports). "
-           "It uses the same sign-in as the dashboard and changes nothing.", "AI assistants (MCP)"),
+           "It needs the dashboard password or, better, a read token (Settings > Sign-in), and changes nothing.", "AI assistants (MCP)"),
     ])
     + _entries("privacy", [
         _s("privacy.client_details", "Show connected clients' names and addresses",
@@ -487,6 +502,10 @@ LISTS: Dict[str, ListSpec] = {spec.name: spec for spec in (
     ListSpec("dns_probes", "dns_probes", "probing", "DNS lookups", DnsProbeConfig, default_dns_probes),
     ListSpec("themes", "display.themes", "display", "Custom themes", ThemeItem, list),
 )}
+
+# The most items each list may hold (the section models enforce the same numbers).
+LIST_MAX: Dict[str, int] = {"devices": MAX_DEVICES, "services": MAX_SERVICES, "webhooks": MAX_WEBHOOKS,
+                            "dns_probes": MAX_DNS_PROBES, "themes": theme_rules.MAX_CUSTOM}
 
 SECRET_SLOTS: Tuple[SecretSlot, ...] = (
     SecretSlot("ntfy.url", "ntfy topic address", "url", "alerts", env=settings_env.SECRET_ENV["ntfy.url"]),

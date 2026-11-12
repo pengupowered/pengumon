@@ -33,6 +33,7 @@ from pengumon.notify.settings import AlertsConfig
 from pengumon.observability import get_logger
 from pengumon.observability.telemetry import preview_duration, preview_rounds, preview_runs, tracer
 from pengumon.settings import registry
+from pengumon.settings.dotted import set_dotted
 
 if TYPE_CHECKING:
     from pengumon.state import AppState
@@ -278,6 +279,10 @@ class PreviewJobs:
                         await self._end(job, "failed", CAP_ERROR)
                     elif now - job.last_polled > self.poll_timeout:
                         await self._end(job, "canceled")
+                if job.state == "running" and reader.done() and not reader.cancelled() and reader.exception():
+                    # the reader broke (a line over the limit): nobody reads the output any more, so the replay could
+                    # block on a full pipe for ever
+                    await self._end(job, "failed", "The preview failed")
             finally:
                 if job.state != "running":
                     await self._kill(job)
@@ -286,7 +291,11 @@ class PreviewJobs:
                 await asyncio.gather(reader, drain, return_exceptions=True)
             if job.state != "running":
                 return
-            code = await proc.wait()
+            try:
+                code = await asyncio.wait_for(proc.wait(), max(1.0, self.cap_seconds - (self.clock() - job.started)))
+            except asyncio.TimeoutError:  # the output ended and the process did not
+                await self._end(job, "failed", CAP_ERROR)
+                return
             job.finished = self.clock()
             if job.result is not None and code == 0:
                 job.state, job.progress = "done", 1.0
@@ -322,7 +331,10 @@ class PreviewJobs:
             if not isinstance(message, dict):
                 continue
             if "progress" in message:
-                job.progress = max(0.0, min(1.0, float(message["progress"])))
+                try:
+                    job.progress = max(0.0, min(1.0, float(message["progress"])))
+                except (TypeError, ValueError):
+                    continue
             elif "result" in message:
                 job.result = message["result"]
             elif "error" in message:
@@ -342,13 +354,6 @@ class PreviewJobs:
 
 
 # --- the request -----------------------------------------------------------------------------------------------
-
-def _set(tree: Dict[str, Any], dotted: str, value: Any) -> None:
-    parts = dotted.split(".")
-    for part in parts[:-1]:
-        tree = tree.setdefault(part, {})
-    tree[parts[-1]] = value
-
 
 def _message(error: Dict[str, Any]) -> str:
     return str(error.get("msg", "invalid")).removeprefix("Value error, ")
@@ -371,7 +376,7 @@ def draft_rules(config, values: Dict[str, Any]) -> Dict[str, Any]:
         if value is None:
             value = registry.get(key).default()
             value = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
-        _set(trees, key, value)
+        set_dotted(trees, key, value)
     models = {"classifier": ClassifierConfig, "line": LineConfig, "alerts": AlertsConfig}
     for name, model in models.items():
         try:

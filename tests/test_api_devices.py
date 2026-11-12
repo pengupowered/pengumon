@@ -105,8 +105,8 @@ async def test_the_device_list_describes_each_device_and_its_last_poll(app_state
     assert listed[1] == {
         "id": "wifi", "driver": "asuswrt", "host": "192.168.1.1", "url": "http://192.168.1.1", "model": "RT-AX88U",
         "label": "ASUS router · RT-AX88U", "kind": "ASUS router", "enabled": True,
-        "offers": ["client_inventory", "mesh", "router_system", "wan_counters"], "line_technology": None, "poll_interval_seconds": 10.0,
-        "has_credentials": True, "needs_sign_in": True, "status": "healthy", "last_poll": 123.0,
+        "offers": ["client_inventory", "mesh", "router_system", "traffic_usage", "wan_counters"], "line_technology": None, "poll_interval_seconds": 10.0,
+        "has_credentials": True, "needs_sign_in": True, "sign_in": None, "status": "healthy", "last_poll": 123.0,
     }
     assert listed[0]["id"] == "cable" and listed[0]["line_technology"] == "docsis"
     assert listed[0]["label"] == "Xfinity gateway · cable"  # no model: its id, never only an address
@@ -126,6 +126,60 @@ async def test_an_error_snapshot_carries_its_kind_in_the_list(app_state):
     assert snapshot["status"] == "error" and "error_kind" not in snapshot  # the snapshot itself never sends it
     assert entry["error_kind"] == "unreachable"
     assert entry["error_message"] == "Failed to communicate with modem: refused"
+
+
+class _OneFailedPoll:
+    """A repository whose router history is one failed poll, with the driver's own words."""
+
+    async def get_device_samples(self, device_id, start_time, end_time, padding_seconds=0.0):
+        from pengumon.db.samples import DeviceSample
+        return [DeviceSample(device_id=device_id, ts=100.0, status="error", error_kind="auth",
+                             error_message="Router at 192.168.1.1 refused the login of 'admin'")]
+
+
+@pytest.mark.parametrize("who", ["viewer", "reader"])
+async def test_a_viewer_or_the_read_token_gets_no_url_path_nor_the_drivers_own_error_text(app_state, monkeypatch, who):
+    """As /api/settings does for them, the list keeps a device's URL path to the owner, and a failed poll is told
+    in fixed words (the driver's text can name the login it tried), in the list and the snapshot. (The history never
+    carries a poll's message: devices/samples.router_snapshot.)"""
+    read_token = "pgr_made-up-read-token-for-devices"
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    monkeypatch.setattr(security_config, "view_without_token", who == "viewer")
+    monkeypatch.setattr(security_config, "read_token_hash", security.read_token_digest(read_token))
+    router = build_router(password="pw", url="http://192.168.1.1:8443/cgi-bin/luci")
+    router.monitor.latest_snapshot = RouterMetricsSnapshot(
+        timestamp=123.0, status="error", error_kind="auth", error_message="Router at 192.168.1.1 refused the login of 'admin'")
+    app_state.devices = DeviceRegistry([router])
+    app_state.repository = _OneFailedPoll()
+    them = {"Authorization": f"Bearer {read_token}"} if who == "reader" else {}
+    owner = {"Authorization": f"Bearer {TOKEN}"}
+    async with _client() as ac:
+        theirs = [await ac.get(path, headers=them) for path in
+                  ("/api/devices", "/api/devices/router", "/api/devices/router/history?start_time=10&end_time=200")]
+        mine = [await ac.get(path, headers=owner) for path in
+                ("/api/devices", "/api/devices/router", "/api/devices/router/history?start_time=10&end_time=200")]
+    assert [r.status_code for r in theirs + mine] == [200] * 6
+    for res in theirs:
+        assert "admin" not in res.text and "cgi-bin" not in res.text, res.request.url
+    for res in theirs[:2]:
+        assert "refused Pengumon's sign-in" in res.text and "Sign in to see the device's own message" in res.text
+    listed = theirs[0].json()[0]
+    assert (listed["url"], listed["host"], listed["error_kind"]) == ("http://192.168.1.1:8443", "192.168.1.1", "auth")
+    for res in mine[:2]:  # the owner gets the device's own words and the whole address
+        assert "refused the login of 'admin'" in res.text
+    assert mine[0].json()[0]["url"] == "http://192.168.1.1:8443/cgi-bin/luci"
+
+
+async def test_a_viewer_keeps_the_messages_of_a_device_that_is_not_set_up(app_state, monkeypatch):
+    """Pengumon's own words for a device without a password name the device id only: a viewer gets them as they are."""
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    monkeypatch.setattr(security_config, "view_without_token", True)
+    app_state.devices = _generic_registry()
+    async with _client() as ac:
+        snapshot = (await ac.get("/api/devices/cable")).json()
+        listed = (await ac.get("/api/devices")).json()
+    assert snapshot["error_message"].startswith("Password for cable not configured")
+    assert listed[0]["error_message"].startswith("Password for cable not configured")
 
 
 async def test_a_device_snapshot_is_the_latest_one_and_never_a_poll(app_state):
@@ -176,6 +230,76 @@ async def test_a_device_with_no_password_takes_none(app_state):
         res = await ac.post("/api/devices/gw/credentials", json={"password": "pw"})
     assert (listed["needs_sign_in"], listed["has_credentials"]) == (False, True)
     assert res.status_code == 400 and written == []
+
+
+def _snmp_device(device_id, port, **options):
+    cfg = DeviceConfig(id=device_id, driver="snmp", url=f"snmp://127.0.0.1:{port}", username="monitor",
+                       options={"timeout_seconds": 0.3, "retries": 0, **options})
+    return build_device(cfg, secrets=CredentialSources(env={}, secrets_dir=None, store={}))
+
+
+async def test_an_snmpv3_device_takes_and_stores_a_privacy_password(app_state):
+    from test_snmp import router_mib
+    from test_snmp_v3 import AUTH_PW, PRIV_PW, User, start_v3_agent
+    agent, port = await start_v3_agent(router_mib(), users={"monitor": User("authPriv", "SHA-256")})
+    v3 = _snmp_device("core-sw", port, version="3", auth_protocol="SHA-256")
+    v2c = _snmp_device("edge-sw", port)
+    app_state.devices = DeviceRegistry([v3, v2c, *_generic_registry().all()])
+    async with _client() as ac:
+        await ac.get("/api/devices/core-sw")  # no privacy password yet: says what to set, without a poll
+        listed = {d["id"]: d for d in (await ac.get("/api/devices")).json()}
+        res = await ac.post("/api/devices/core-sw/credentials",
+                            json={"username": "monitor", "password": AUTH_PW, "privacy_password": PRIV_PW})
+        again = await ac.post("/api/devices/core-sw/credentials", json={"username": "monitor", "password": AUTH_PW})
+        refused = [await ac.post(f"/api/devices/{device}/credentials",
+                                 json={"password": "community-1", "privacy_password": "private-1"})
+                   for device in ("edge-sw", "wifi")]
+    assert listed["core-sw"]["sign_in"] == {"username": "SNMPv3 user name", "password": "Authentication password",
+                                            "privacy_password": "Privacy password"}
+    assert listed["edge-sw"]["sign_in"]["password"] == "Community string"
+    assert listed["core-sw"]["error_message"].startswith("Password or privacy password for core-sw not configured")
+    body = res.json()
+    assert res.status_code == 200 and body["success"] is True and body["snapshot"]["status"] == "healthy"
+    assert AUTH_PW not in res.text and PRIV_PW not in res.text
+    assert again.json()["success"] is True  # left out: the stored privacy password stays
+    stored = json.loads(secrets_module.SECRETS_PATH.read_text())["devices"]
+    assert stored == {"core-sw": {"username": "monitor", "password": AUTH_PW, "privacy_password": PRIV_PW}}
+    assert [r.status_code for r in refused] == [400, 400] and "privacy password" in refused[0].json()["detail"]
+    agent.transport.close()
+
+
+@pytest.mark.parametrize("value", ["", "Echo-Me-" * 40, 987654321])
+async def test_an_invalid_privacy_password_is_refused_and_not_echoed(app_state, value):
+    written = []
+    app_state.secret_store = RecordingStore(written)
+    app_state.devices = DeviceRegistry([_snmp_device("core-sw", 161, version="3")])
+    async with _client() as ac:
+        res = await ac.post("/api/devices/core-sw/credentials", json={"password": "auth-pw-1",
+                                                                      "privacy_password": value})
+    assert res.status_code == 422 and written == []
+    assert res.json()["detail"][0]["loc"] == ["body", "privacy_password"]
+    assert (value == "" or str(value) not in res.text) and "auth-pw-1" not in res.text
+
+
+@pytest.mark.parametrize("body, why", [
+    ({"username": "monitor", "password": "Echo-Me-1", "privacy_password": "Seven-7"}, "privacy password is shorter"),
+    ({"username": "monitor", "password": "Seven-7", "privacy_password": "Echo-Me-1"}, "authentication password is"),
+    ({"username": "monitor", "password": "Seven-7"}, "authentication password is shorter"),
+    ({"username": "Echo-Me-" * 4 + "x", "password": "Echo-Me-1", "privacy_password": "Echo-Me-2"}, "1 to 32 bytes"),
+])
+async def test_snmpv3_credentials_an_agent_would_refuse_are_not_saved_nor_echoed(app_state, body, why):
+    # saved, they left the device's SNMPv3 configuration incomplete while a poll could be under way
+    written = []
+    app_state.secret_store = RecordingStore(written)
+    device = _snmp_device("core-sw", 161, version="3")
+    device.set_credentials("monitor", "stored-auth-1", privacy_password="stored-priv-1")
+    keys = device.driver.snmp.security
+    app_state.devices = DeviceRegistry([device])
+    async with _client() as ac:
+        res = await ac.post("/api/devices/core-sw/credentials", json=body)
+    assert res.status_code == 400 and why in res.json()["detail"] and written == []
+    assert "Echo-Me" not in res.text and "Seven-7" not in res.text
+    assert device.driver.snmp.security is keys and device.driver._community == "stored-auth-1"  # nothing changed
 
 
 async def test_a_failed_credential_test_says_so(app_state):
@@ -257,6 +381,8 @@ async def test_features_endpoint(app_state):
          "reason": "router (asuswrt) provides client_inventory but is not configured: no password"},
         {"feature": "mesh", "available": False, "reason_kind": "not_configured", "provided_by": [],
          "reason": "router (asuswrt) provides mesh but is not configured: no password"},
+        {"feature": "traffic", "available": False, "reason_kind": "not_configured", "provided_by": [],
+         "reason": "router (asuswrt) provides traffic_usage but is not configured: no password"},
         {"feature": "host_services", "available": False, "reason_kind": "none", "provided_by": [],
          "reason": "no service_checks.services are configured"},
     ]

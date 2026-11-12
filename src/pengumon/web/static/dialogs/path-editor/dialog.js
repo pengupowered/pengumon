@@ -16,12 +16,16 @@
 
 import { bus } from '../../js/bus.js';
 import { registerActions } from '../../js/dispatch.js';
-import { errorText, fetchPath, ROLE_EFFECT, startDiscovery, waitDiscovery } from '../../js/path-api.js';
+import { errorText, fetchPath, startDiscovery, waitDiscovery } from '../../js/path-api.js';
+import { ROLE_EFFECT } from '../../js/roles.js';
 import { settingsValues, val } from '../../js/settings-values.js';
-import { canEdit, closeModal, confirmReplaceDraft, copyExport, escapeHtml, keepKeyboard, openModal, showExport } from '../../js/util.js';
+import { canEdit } from '../../js/view-only.js';
+import { closeModal, keepKeyboard, openModal } from '../../js/modal.js';
+import { confirmReplaceDraft, copyExport, showExport } from '../../js/export-view.js';
+import { escapeHtml } from '../../js/escape.js';
 import { $, changed, edited, hopById, note, payload, pe, startDraft } from './draft.js';
 import { addHop, cancelAddress, cleanNames, connect, edit, focusHop, merge, move, pickDevice, remove, replaceAddress, startAddress, test, toggleChooser, undo } from './edits.js';
-import { installGuard, releaseGuard } from './guard.js';
+import { installGuard } from './guard.js';
 import { runPreview, stopRunningPreview } from './preview.js';
 import { onTargets, render, unwatchDevices } from './render.js';
 import { loadVersions, toggleExport, versionDraft } from './versions.js';
@@ -37,7 +41,7 @@ function load(path, hops, source, options) {
 }
 
 // Loading an earlier path or a file replaces the draft: with edits in it that are not applied, ask first (as Settings
-// does, util.confirmReplaceDraft), in the note line, with the question's two answers.
+// does, confirmReplaceDraft in js/export-view.js), in the note line, with the question's two answers.
 function replaceDraft(text, replace) {
   confirmReplaceDraft(edited(), text, replace, (question, yes, go) => {
     pe.pendingReplace = go;
@@ -63,7 +67,9 @@ function replaceNow() {
 }
 
 // ---------- opening and closing ----------
+let openSeq = 0; // the newest open(); one overtaken by another open() or by a close stops after its await
 async function open(arg = '') {
+  const mine = ++openSeq;
   note('', '');
   pe.opener = document.activeElement instanceof HTMLElement && !$('pathEditorModal').contains(document.activeElement) ? document.activeElement : pe.opener;
   $('pathDiscAsn').checked = !!val(settingsValues(), 'discovery.asn_lookup', false); // as Settings says, off unless the owner turned it on
@@ -74,14 +80,18 @@ async function open(arg = '') {
   $('pathEditorHops').innerHTML = '<li class="skel-stack" aria-busy="true"><div class="skel line" style="width:90%"></div><div class="skel line" style="width:70%"></div></li>';
   try {
     const path = await fetchPath();
+    if (mine !== openSeq || !$('pathEditorModal').classList.contains('active')) return;
     if (arg.startsWith('discovery:')) {
       const res = await fetch(`/api/discovery/${encodeURIComponent(arg.slice(10))}`);
       if (!res.ok) throw new Error(await errorText(res));
-      showDiscovery(path, await res.json());
+      const found = await res.json();
+      if (mine !== openSeq || !$('pathEditorModal').classList.contains('active')) return;
+      showDiscovery(path, found);
     } else {
       load(path, path.hops, 'live', { matches: path.device_matches || {} });
     }
   } catch (e) {
+    if (mine !== openSeq) return;
     note('crit', `<b>The path could not be loaded.</b> ${escapeHtml(e.message)}`);
   }
   const first = $('pathEditorHops').querySelector('.pe-name');
@@ -90,7 +100,7 @@ async function open(arg = '') {
 }
 
 function closed() {
-  releaseGuard();
+  openSeq += 1;
   pe.pendingReplace = null;
   if (pe.opener && pe.opener.isConnected) pe.opener.focus({ preventScroll: true });
   pe.opener = null;
@@ -170,7 +180,11 @@ async function apply() {
       const del = await fetch(`/api/path/history/${encodeURIComponent(r.hop.id)}`, { method: 'DELETE' });
       if (!del.ok) failed.push(r.hop.name);
     }
-    if (failed.length) { note('warn', `<b>Applied</b>, but the history of ${escapeHtml(failed.join(', '))} could not be deleted.`); return; }
+    if (failed.length) { // the path is applied: read it again, or the next Apply is a 409 the person did not cause
+      await open('');
+      note('warn', `<b>Applied</b>, but the history of ${escapeHtml(failed.join(', '))} could not be deleted.`);
+      return;
+    }
     pe.draft.opened = JSON.stringify(payload()); // applied: nothing left to lose, so the reload below does not ask
     note('good', '<b>Applied.</b> The new path is probed from now on; the dashboard reloads to show it.');
     setTimeout(() => location.reload(), 600); // every panel then draws the new path from the start
@@ -262,6 +276,13 @@ registerActions('input', { editPathHop: (el, ev) => edit(el, ev) });
 registerActions('change', {
   editPathHop: (el, ev) => edit(el, ev),
   pickPathDevice: (el) => pickDevice(el),
+  pathAddProbeChanged: (el) => {
+    $('pathAddPortField').hidden = el.value === 'icmp';
+    $('pathAddPort').placeholder = el.value === 'http' ? '443 or 80' : '';
+    if (el.value === 'http') $('pathAddRole').value = 'custom'; // an HTTP hop is always Other
+    $('pathAddRole').disabled = el.value === 'http';
+    $('pathAddRoleFx').textContent = ROLE_EFFECT[$('pathAddRole').value] || '';
+  },
   pathAddRoleChanged: (el) => { $('pathAddRoleFx').textContent = ROLE_EFFECT[el.value] || ''; },
   togglePathHistory: (el) => { const r = pe.removed.find((x) => x.hop.id === el.dataset.arg); if (r) r.deleteHistory = el.checked; },
   importPathFile: (el) => importFile(el)
@@ -271,7 +292,7 @@ registerActions('submit', {
   replacePathAddress: (el, ev) => replaceAddress(el, ev)
 });
 
-// Keyboard (util.keepKeyboard): focus moves into the dialog when it opens, Tab stays inside it and Escape closes it (or
+// Keyboard (keepKeyboard in js/modal.js): focus moves into the dialog when it opens, Tab stays inside it and Escape closes it (or
 // leaves the address being replaced, or the question about replacing the draft). Closing, by any way, lets go of the live data and
 // stops a running preview.
 

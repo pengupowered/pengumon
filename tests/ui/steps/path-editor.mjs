@@ -87,7 +87,7 @@ export const steps = [
     await click("#pathEditorNote [data-action=discardPathEditor]");
   }],
 
-  ["path editor: the live path as cards; rename, remove with undo, add at a position, reorder, merge in the chain, test, apply goes live", async ({ click, count, eq, modalOpen, ok, page, shots, text, until, waitText }) => {
+  ["path editor: the live path as cards; rename, remove with undo, add at a position, reorder, merge in the chain, test, apply goes live", async ({ click, count, eq, modalOpen, ok, page, shots, showCard, text, until, waitText }) => {
     const before = await livePath(page);
     ok("a stored path", before.revision >= 1 && before.hops.length >= 3);
     await openEditor({ click, until });
@@ -153,12 +153,13 @@ export const steps = [
     const live = await page.evaluate(async () => (await (await fetch("/api/targets")).json()).map((t) => t.target_id));
     ok("the added hops are probed", live.includes("isp_127_0_0_1") && live.includes("isp_localhost"));
     ok("the removed hop is not", !live.includes(last));
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await until(() => [...document.querySelectorAll("#pathChain .node-kind")].some((e) => e.textContent === "ISP hop 1 · 2"));
     eq("one ISP node for the group", await count('#pathChain .node[data-node^="ISP:"]'), 1);
     ok("the new name on Path health", /Home router/.test(await text("#pathChain")));
   }],
 
-  ["path editor: a device line only on home hops, with human labels; Connect and Change; a hop at a device's address is linked by itself", async ({ click, count, eq, ok, page, text, until, waitText }) => {
+  ["path editor: a device line only on home hops, with human labels; Connect and Change; a hop at a device's address is linked by itself", async ({ click, count, eq, ok, page, showCard, text, until, waitText }) => {
     await openEditor({ click, until });
     const devs = await page.$$eval("#pathEditorHops .pe-hop", (els) => els.filter((e) => e.querySelector(".pe-dev")).map((e) => e.dataset.hop));
     eq("only the router and the gateway", devs.join(), "local_router,isp_gateway");
@@ -205,6 +206,7 @@ export const steps = [
     eq("the one set to none is not", hops.local_router.device_id, null);
     eq("and stays so: no automatic link", hops.local_router.device_unlinked, true);
     // Path health's Router node names the device in its tooltip
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await until(() => /Readings from: ASUS router · Example Router · Healthy/.test(document.querySelector('#pathChain .node[data-node^="Router"] .node-name')?.title || ""));
     // the server's proposal (it resolves names) for a home hop with no device, when the editor opens
     const path = await livePath(page);
@@ -316,7 +318,7 @@ export const steps = [
     await click("[data-action=cancelPathEditor]");
     ok("Cancel asks and the editor stays open", await page.$eval("[data-action=discardPathEditor]", () => document.getElementById("pathEditorModal").classList.contains("active")));
     await page.evaluate(() => history.back());
-    await until(() => /not applied/.test(document.getElementById("pathEditorNote").textContent) && history.state && history.state.pathEditor && !history.state.here);
+    await until(() => /not applied/.test(document.getElementById("pathEditorNote").textContent) && history.state && history.state.pgModal !== undefined && !history.state.here); // (the editor's own entry, put back)
     ok("Back kept the draft", await page.evaluate(() => document.getElementById("pathEditorModal").classList.contains("active")));
     ok("a reload would ask", await page.evaluate(() => { const ev = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(ev); return ev.defaultPrevented; }));
     await click("[data-action=discardPathEditor]");
@@ -445,7 +447,7 @@ export const steps = [
     });
   }],
 
-  ["path editor: IPv6: a literal and a host name probed as IPv6, the family applied, an unavailable IPv6 hop tested neutral, the IPv6 servers their own node", async ({ click, eq, ok, page, text, until, waitText }) => {
+  ["path editor: IPv6: a literal and a host name probed as IPv6, the family applied, an unavailable IPv6 hop tested neutral, the IPv6 servers their own node", async ({ click, eq, ok, page, showCard, text, until, waitText }) => {
     await openEditor({ click, until });
     for (const [address, family] of [["2001:db8::5", "4"], ["v6.example.com", "6"]]) {
       await page.type("#pathAddAddress", address);
@@ -469,6 +471,7 @@ export const steps = [
     await Promise.all([page.waitForNavigation({ waitUntil: "load" }), click("#btnApplyPath")]);
     const hops = (await livePath(page)).hops;
     eq("families applied", JSON.stringify(hops.filter((h) => [lit, name].includes(h.id)).map((h) => [h.id, h.family, h.group])), JSON.stringify([[lit, 4, "internet_v6"], [name, 6, "internet_v6"]]));
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await until(() => [...document.querySelectorAll("#pathChain .node-kind")].some((e) => e.textContent === "Internet (IPv6) · 2"));
     ok("the IPv4 servers keep their own Internet node", [...await page.$$eval("#pathChain .node-kind", (els) => els.map((e) => e.textContent))].some((t) => /^Internet( ·|$)/.test(t)));
   }],
@@ -565,5 +568,79 @@ export const steps = [
     await Promise.all([page.waitForNavigation({ waitUntil: "load" }), click("#btnApplyPath")]);
     await until(() => document.querySelector("[data-panel=report]")?.dataset.layoutHidden !== undefined);
     eq("cleared", (await livePath(page)).hops.find((h) => h.id === hop).warn_latency_ms ?? null, null);
+  }],
+  ["path editor: a hop can be probed by TCP or HTTP; the server refuses loopback, blocked ports and query strings; the matrix and target history name the method", async ({ click, eq, expectStatus, ok, page, text, until, waitText }) => {
+    const card = (id) => `#pathEditorHops [data-hop="${id}"]`;
+    // Apply that must succeed: the dashboard reloads; a refusal is reported with the editor's own words
+    const applyAndReload = async () => {
+      const nav = page.waitForNavigation({ waitUntil: "load" }).then(() => "reloaded");
+      await page.evaluate(() => { document.getElementById("pathEditorNote").innerHTML = ""; }); // an earlier refusal is not this Apply's
+      await click("#btnApplyPath");
+      const how = await Promise.race([nav, until(() => /Nothing was applied/.test(document.getElementById("pathEditorNote").textContent)).then(() => "refused")]);
+      if (how !== "reloaded") {
+        const sent = await page.evaluate(() => (window.__calls || []).filter(([k]) => k === "PUT /api/path").map(([, b]) => b).pop());
+        throw new Error(`Apply did not apply: ${await text("#pathEditorNote")} (sent ${String(sent).slice(0, 6000)})`);
+      }
+      await until(() => document.querySelector("[data-panel=report]")?.dataset.layoutHidden !== undefined);
+    };
+    await openEditor({ click, until });
+    await answerFetch(page, {}); // passes every call through and keeps them in window.__calls
+    expectStatus(400, 422); // the server refuses three Applies below, for real (a 400 and two 422s)
+    // 1. loopback: the server refuses it (cloudflare_dns is at 127.0.0.1 in this seed) and the live path stays as it is
+    await page.select(`${card("cloudflare_dns")} select[data-field=probe]`, "tcp");
+    await page.type(`${card("cloudflare_dns")} input[data-field=port]`, "443");
+    await page.keyboard.press("Tab"); // leaves the field: its change is committed before the method is switched back
+    await click("#btnApplyPath");
+    await waitText("#pathEditorNote", /Nothing was applied\..*loopback address/);
+    eq("the live hop is still pinged", (await livePath(page)).hops.find((h) => h.id === "cloudflare_dns").probe, "icmp");
+    await page.select(`${card("cloudflare_dns")} select[data-field=probe]`, "icmp");
+    eq("the port field goes with the method", await page.$$eval(`${card("cloudflare_dns")} input[data-field=port]`, (e) => e.length), 0);
+    // 2. a blocked port
+    await page.type("#pathAddAddress", "192.0.2.10");
+    await page.select("#pathAddProbe", "tcp");
+    await page.select("#pathAddRole", "public");
+    await page.type("#pathAddPort", "25");
+    await page.evaluate(() => document.querySelector("#pathAddForm button[type=submit]").click());
+    const id = "public_192_0_2_10";
+    await until((sel) => document.querySelector(sel), card(id));
+    await click("#btnApplyPath");
+    await waitText("#pathEditorNote", /Nothing was applied\..*port 25 is refused/);
+    // 3. port 443: Test answers, Apply makes it live
+    const port = `${card(id)} input[data-field=port]`;
+    await page.$eval(port, (i) => { i.focus(); i.select(); });
+    await page.type(port, "443");
+    ok("a TCP hop's chip", /TCP 443/.test(await text(card(id))));
+    await click(`${card(id)} [data-action=testPathHop]`);
+    await waitText(`${card(id)} [data-live="${id}"]`, /^Connected in 1\.5 ms/);
+    await applyAndReload();
+    const tcp = (await livePath(page)).hops.find((h) => h.id === id);
+    ok("live as a TCP hop", tcp.probe === "tcp" && tcp.port === 443);
+    // 4. the matrix row names the method, and so does the target history
+    await until((sel) => document.querySelector(sel)?.textContent === "TCP 443", `#hopMatrixBody tr[data-arg="${id}"] [data-f=probe]`);
+    await click(`#hopMatrixBody tr[data-arg="${id}"]`);
+    await waitText("#targetHistMeta", /TCP 443/);
+    await click("[data-action=closeModal][data-arg=targetHistModal]");
+    // 5. an HTTP hop is always Other
+    await openEditor({ click, until });
+    await page.type("#pathAddAddress", "example.com");
+    await page.select("#pathAddProbe", "http");
+    eq("the Add form's role is Other and cannot be changed", await page.$eval("#pathAddRole", (s) => `${s.value}:${s.disabled}`), "custom:true");
+    await page.evaluate(() => document.querySelector("#pathAddForm button[type=submit]").click());
+    const site = "custom_example_com";
+    await until((sel) => document.querySelector(sel), card(site));
+    eq("the card's role", await page.$eval(`${card(site)} select[data-field=category]`, (s) => `${s.value}:${s.disabled}`), "custom:true");
+    // 6. a query string is refused by the server; a clean path is applied
+    const path = `${card(site)} input[data-field=http_path]`;
+    await page.$eval(path, (i) => { i.focus(); i.select(); });
+    await page.type(path, "/health?x=1");
+    await click("#btnApplyPath");
+    await waitText("#pathEditorNote", /Nothing was applied\..*query string/);
+    await page.$eval(path, (i) => { i.focus(); i.select(); });
+    await page.type(path, "/health");
+    eq("the address it will request", await text(`${card(site)} .pe-url`), "https://example.com/health");
+    await applyAndReload();
+    const http = (await livePath(page)).hops.find((h) => h.id === site);
+    expectStatus();
+    ok("live as an HTTP hop", http.probe === "http" && http.http_path === "/health" && http.category === "custom");
   }],
 ];

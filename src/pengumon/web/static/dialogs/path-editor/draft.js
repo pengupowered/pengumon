@@ -1,9 +1,12 @@
 // The path editor's draft: the hops being edited, the state around them, and the rules that turn them into what is
 // applied (runs, groups, the payload). Draws nothing but the note line.
 
-import { DEVICE_ROLES, deviceHost } from '../../js/path-api.js';
+import { DEVICE_ROLES } from '../../js/roles.js';
+import { deviceHost } from '../../js/device-text.js';
 import { state } from '../../js/state.js';
-import { icon, slug } from '../../js/util.js';
+import { icon } from '../../js/dom.js';
+import { slug } from '../../js/format.js';
+import { probeKey } from './probe.js';
 
 export const $ = (id) => document.getElementById(id);
 const UI_FIELDS = ['joined', 'added', 'evidence', 'confidence', 'suggested_driver', 'status', 'addressFrom', 'autoLinked', 'moreOpen'];
@@ -22,7 +25,6 @@ export const pe = {
   deviceWatch: new Map(), // device id -> unsubscribe from its readings (js/device-feed.js), while the editor is open
   applying: false,
   leaveArmed: false,
-  backGuard: false,
   opener: null, // what had the focus when the editor opened: it gets it back on closing
   pendingReplace: null // the load that waits for "Replace the draft" (confirmReplaceDraft)
 };
@@ -149,7 +151,7 @@ export const familyOf = (h) => (h.address.includes(':') ? 6 : isName(h.address) 
 // The live hop the prober measures this draft hop as: the same id at the same address and family, else any live hop at
 // that address and family (a draft from discovery or a file may name it otherwise); null for a hop not probed yet.
 export function liveTwin(h) {
-  const same = (o) => o && o.address === h.address && familyOf(o) === familyOf(h) && o.enabled !== false && pe.live.has(o.id);
+  const same = (o) => o && o.address === h.address && familyOf(o) === familyOf(h) && probeKey(o) === probeKey(h) && o.enabled !== false && pe.live.has(o.id);
   const was = pe.liveHops.get(h.id);
   if (same(was)) return was.id;
   const other = [...pe.liveHops.values()].find(same);

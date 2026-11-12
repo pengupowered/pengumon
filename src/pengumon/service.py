@@ -320,6 +320,8 @@ def _env_for(host: Optional[str], port: Optional[int]) -> Dict[str, str]:
     if host:
         env["PENGUMON_HOST"] = _no_control(host, "--host")
     if port:
+        if not 1 <= int(port) <= 65535:
+            raise ServiceError("--port must be between 1 and 65535")
         env["PENGUMON_PORT"] = str(int(port))
     return env
 
@@ -405,6 +407,15 @@ def _exe(python: Optional[str], windows: bool) -> str:
     return _no_control(str(pure(python).parent / name), "The path of pengumon")
 
 
+def _system_program(exe: str) -> str:
+    """The program a system service runs must not sit in a home folder: the sandbox hides it (status 203/EXEC in a
+    loop), and the user who owns it would control code that runs as the service. install.sh puts it in /opt or /usr/local."""
+    if exe.startswith(("/home/", "/root/", "/Users/")):
+        raise ServiceError(f"{exe} is in a home folder, which a system service cannot use (and must not trust). "
+                           "Install with install.sh (it uses /opt/pengumon), or use --user.")
+    return exe
+
+
 def plan_install(
     kind: str, scope: str, *, python: Optional[str] = None, home: Optional[Path] = None, host: Optional[str] = None,
     port: Optional[int] = None, account: Optional[str] = None, env: Optional[Dict[str, str]] = None,
@@ -416,7 +427,7 @@ def plan_install(
     home = home or Path.home()
     extra = _env_for(host, port)
     if kind == "linux" and scope == SYSTEM:
-        exe = _exe(python, False)
+        exe = _system_program(_exe(python, False))
         text = render_systemd_system(exe, extra)
         return Plan("systemd-system", [
             Step("write", str(SYSTEM_UNIT_PATH), text, 0o644),
@@ -443,7 +454,7 @@ def plan_install(
             Step("run", argv=["systemctl", "--user", "restart", UNIT]),
         ], notes, {str(unit): text})
     if kind == "macos" and scope == SYSTEM:
-        exe = _exe(python, False)
+        exe = _system_program(_exe(python, False))
         data = MAC_DAEMON_DATA_DIR
         log = f"{data}/pengumon.log"
         text = render_launchd(exe, {"PENGUMON_DATA": data, **extra}, log, MAC_USER)
@@ -541,7 +552,7 @@ def default_runner(argv: Sequence[str]) -> "subprocess.CompletedProcess[str]":
 def _write(path: Path, text: str, mode: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # the file is created with its final mode, never world-readable for a moment
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), mode)  # never through a link
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
     os.chmod(path, mode)
@@ -551,7 +562,9 @@ def _ensure_mac_user(run: Runner) -> None:
     if run(["dscl", ".", "-read", f"/Users/{MAC_USER}", "UniqueID"]).returncode == 0:
         return
     listing = run(["dscl", ".", "-list", "/Users", "UniqueID"]).stdout
-    used = {int(parts[1]) for parts in (line.split() for line in listing.splitlines()) if len(parts) == 2 and parts[1].isdigit()}
+    groups = run(["dscl", ".", "-list", "/Groups", "PrimaryGroupID"]).stdout  # the group gets the same number
+    used = {int(parts[1]) for parts in (line.split() for line in (listing + "\n" + groups).splitlines())
+            if len(parts) == 2 and parts[1].isdigit()}
     uid = next((n for n in range(450, 500) if n not in used), None)  # the range Apple's service accounts use
     if uid is None:
         raise ServiceError(f"no free user id between 450 and 499 for the account {MAC_USER}")
@@ -626,7 +639,8 @@ def health_body(host: str, port: int, timeout: float = 3.0) -> Optional[dict]:
 
     shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
     try:
-        with urllib.request.urlopen(f"http://{shown}:{port}/api/health", timeout=timeout) as reply:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # loopback never goes to a proxy
+        with opener.open(f"http://{shown}:{port}/api/health", timeout=timeout) as reply:
             body = json.loads(reply.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError):
         return None
@@ -750,14 +764,18 @@ def _token_is_set(kind: str, scope: str, home: Path) -> bool:
 
 
 def _password_stored(kind: str, scope: str) -> bool:
-    """Whether the service's secrets.json holds a password set on the page (`access_token`, pengumon.access). Read
-    only: never converted or rewritten here (as root, a rewrite would leave a file the service cannot read)."""
+    """Whether the service's secrets.json holds a password set on the page (`access_hash`, or the `access_token` of
+    older versions, pengumon.access). Read only: never converted or rewritten here (as root, a rewrite would leave a
+    file the service cannot read)."""
     folder = Path(service_data_dir(kind)) if scope == SYSTEM else paths.default_data_dir()
     try:
         data = json.loads((folder / "secrets.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return isinstance(data, dict) and isinstance(data.get("access_token"), str) and bool(data["access_token"])
+    if not isinstance(data, dict):
+        return False
+    return (isinstance(data.get("access_hash"), dict) and bool(data["access_hash"])) or (
+        isinstance(data.get("access_token"), str) and bool(data["access_token"]))
 
 
 def _other_devices_lines(port: int, has_token: bool) -> List[str]:

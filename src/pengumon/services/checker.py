@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from pengumon.drivers.http import CappedBody
 from pengumon.services.settings import ServiceCheckConfig, ServiceChecksConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.incidents.taxonomy import Kind, register_kind
@@ -35,6 +36,9 @@ SERVICE_KIND = "service_down"
 register_kind(Kind(SERVICE_KIND, "service", scope="service"))  # an app on this host, not the network
 
 ErrorKind = str  # timeout, refused, tls, dns, unreachable, http, config
+
+MAX_BODY_BYTES = 64 * 1024  # a health answer is read this far and no further (a stream or a download must not fill memory)
+DEADLINE_FACTOR = 2  # a whole check (connect, headers, body) gets this many times timeout_seconds
 
 
 @dataclass(frozen=True)
@@ -79,7 +83,7 @@ def _tls_message(err: ssl.SSLError) -> str:
 def classify_error(exc: BaseException) -> ServiceError:
     """What a failed check means, in words. An exception with an empty message (httpx's ConnectError often has one)
     is described by its type, like devices.device.classify."""
-    detail = str(exc) or type(exc).__name__
+    detail = " ".join(str(exc).split())[:200] or type(exc).__name__  # one line: the text can come from the remote side
     if isinstance(exc, httpx.TimeoutException):
         return ServiceError("timeout", f"no answer in time ({type(exc).__name__})")
     tls = _ssl_cause(exc)
@@ -111,7 +115,7 @@ class ServiceStatus:
 def _client_for(service: ServiceCheckConfig) -> httpx.AsyncClient:
     """Verifies TLS against the service's own CA file when it has one, else the system store."""
     verify = ssl.create_default_context(cafile=service.ca_file) if service.ca_file else True
-    return httpx.AsyncClient(timeout=service.timeout_seconds, verify=verify, follow_redirects=False)
+    return httpx.AsyncClient(timeout=service.timeout_seconds, verify=verify, follow_redirects=False, trust_env=False)
 
 
 def display_url(url: str) -> str:
@@ -120,7 +124,10 @@ def display_url(url: str) -> str:
     host = parts.hostname or ""
     if ":" in host:
         host = f"[{host}]"
-    port = f":{parts.port}" if parts.port else ""
+    try:
+        port = f":{parts.port}" if parts.port else ""
+    except ValueError:  # a port above 65535: show the host only
+        port = ""
     return f"{host}{port}{parts.path}"
 
 
@@ -182,7 +189,9 @@ class ServiceChecker:
                 await self.repository.resolve_incident(st.incident_id, now)
         for sid in list(self.status):
             if sid not in current:
-                self.status.pop(sid)  # a service that was already disabled: its status is stale too
+                st = self.status.pop(sid)  # a service that was already disabled: its status is stale too
+                if st.incident_id is not None:
+                    await self.repository.resolve_incident(st.incident_id, now)
         self._applied = current
         return reset
 
@@ -197,7 +206,11 @@ class ServiceChecker:
 
     async def poll(self, force: bool = False) -> None:
         """Checks every enabled service once, side by side (signature shared with the other collectors)."""
-        await asyncio.gather(*(self._check_and_track(s) for s in self.services))
+        services = self.services
+        results = await asyncio.gather(*(self._check_and_track(s) for s in services), return_exceptions=True)
+        for service, result in zip(services, results):  # one failing service must not stop the others
+            if isinstance(result, BaseException):
+                logger.error(f"Service {service.id}: the check failed unexpectedly: {type(result).__name__}: {result}")
 
     async def _check(self, service: ServiceCheckConfig) -> tuple:
         """(error, status code, latency in ms): error is None when the service answered 2xx. Latency is None
@@ -219,16 +232,30 @@ class ServiceChecker:
                 return ServiceError("config", message), None, None
         started = self._timer()
         try:
-            response = await client.get(service.url)
+            status_code = await asyncio.wait_for(self._fetch(client, service.url),
+                                                 timeout=service.timeout_seconds * DEADLINE_FACTOR)
+        except asyncio.TimeoutError:
+            return ServiceError("timeout", "no complete answer in time (the whole check ran over its deadline)"), None, None
         except Exception as e:
             return classify_error(e), None, None
         latency_ms = (self._timer() - started) * 1000.0
-        if not response.is_success:
-            return ServiceError("http", f"HTTP {response.status_code}"), response.status_code, latency_ms
-        return None, response.status_code, latency_ms
+        if not 200 <= status_code < 300:
+            return ServiceError("http", f"HTTP {status_code}"), status_code, latency_ms
+        return None, status_code, latency_ms
+
+    @staticmethod
+    async def _fetch(client: httpx.AsyncClient, url: str) -> int:
+        """The status code, reading at most MAX_BODY_BYTES of the body, counted after decoding and decoded only that far
+        (drivers.http.CappedBody; the request asks for no compression, but the host may send some anyway); the rest
+        is dropped with the connection."""
+        async with client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as response:
+            await CappedBody(response, MAX_BODY_BYTES).read()
+            return response.status_code
 
     async def _check_and_track(self, service: ServiceCheckConfig) -> None:
         error, code, latency_ms = await self._check(service)
+        if not any(s.id == service.id for s in self.services):  # removed or disabled while in flight: drop it
+            return
         st = self.status.setdefault(service.id, ServiceStatus())
         now = self.clock()
         ok = error is None

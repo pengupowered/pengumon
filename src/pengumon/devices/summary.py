@@ -21,7 +21,40 @@ _LINE_FIELDS = ("downstream_power_avg", "downstream_snr_avg", "upstream_power_av
                 "uncorrectables_recent", "uncorrectables_interval_seconds", "uncorrectables_ratio",
                 "errors_affected_channels", "errors_span_mhz", "errors_note", "errors_probe_loss")
 _ROUTER_FIELDS = ("wan_rx_rate_mbps", "wan_tx_rate_mbps", "wan_rx_load_pct", "wan_tx_load_pct", "cpu_usage_pct", "mem_usage_pct",
-                  "client_count", "model_name")
+                  "client_count", "model_name", "uptime_s", "cpu_temp_c", "wan_link_mbps")
+
+
+# A failed poll's message is the driver's own words, which can name the device's host, the login it tried (OpenWrt:
+# "refused the login of 'admin'") or the address a socket dialed. Whoever may not edit (a viewer, the MCP tools, the
+# read token) gets a fixed sentence by the kind of failure instead. The messages of a device that is not set up
+# ("unconfigured") are Pengumon's own, with the device id only, and stay.
+POLL_FAILURES = {
+    "auth": "The device refused Pengumon's sign-in: check its username and password in Settings.",
+    "unreachable": "The device could not be reached.",
+    "timeout": "The device did not answer in time.",
+    "protocol": "The device answered, but not in a way Pengumon understands.",
+    "unsupported": "The device does not offer what Pengumon reads from it.",
+    "internal": "Pengumon failed while reading the device; see its log.",
+}
+POLL_FAILED = "The last poll of the device failed."
+SIGN_IN_FOR_MORE = " Sign in to see the device's own message."
+
+
+def viewer_error(status: Optional[str], kind: Optional[str], message: Optional[str]) -> Optional[str]:
+    """A failed poll's message as a viewer gets it: fixed words by its kind (POLL_FAILURES)."""
+    if not message or status == "unconfigured":
+        return message
+    return POLL_FAILURES.get(kind, POLL_FAILED) + SIGN_IN_FOR_MORE
+
+
+def viewer_devices(devices: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """The live message's `devices` as a connection that may not edit gets it: each failed poll's message in fixed
+    words (viewer_error). The same dict when no device has one (the usual case); else a copy, the entries that change
+    copied too."""
+    if not any(d.get("error_message") for d in devices.values()):
+        return devices
+    return {i: ({**d, "error_message": viewer_error(d.get("status"), d.get("error_kind"), d["error_message"])}
+                if d.get("error_message") else d) for i, d in devices.items()}
 
 
 def device_label(device: Any) -> str:
@@ -46,6 +79,7 @@ def summarize_snapshot(snapshot: Any) -> Dict[str, Any]:
                            "grades": dict(snapshot.grades)}
     if snapshot.error_message:
         out["error_message"] = snapshot.error_message
+        out["error_kind"] = snapshot.error_kind  # what kind of failure (viewer_devices words the message by it)
     out.update({name: getattr(snapshot, name) for name in fields})
     if kind == "line":
         out["channel_count"] = len(snapshot.channels)

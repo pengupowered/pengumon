@@ -3,6 +3,8 @@
 // min, good_low, good_high, max, critical_low, critical_high) for drawing the range gauges. A metric without a grade
 // is shown neutral.
 
+import { has } from './values.js';
+
 export const rangeOf = (device, metric) => (device && device.ranges && device.ranges[metric]) || null;
 
 export const gradeOf = (snapshot, metric) => (snapshot && snapshot.grades && snapshot.grades[metric]) || null;
@@ -21,7 +23,6 @@ export function worstGrade(grades) {
 // warn). No threshold is written here.
 export function gradeByRange(range, v) {
   if (!range || v === null || v === undefined) return null;
-  const has = (x) => x !== null && x !== undefined;
   if ((has(range.critical_low) && v < range.critical_low) || (has(range.critical_high) && v > range.critical_high)) return 'critical';
   if ((has(range.good_low) && v < range.good_low) || (has(range.good_high) && v > range.good_high)) return 'warn';
   return 'good';

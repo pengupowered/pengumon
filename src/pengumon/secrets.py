@@ -7,7 +7,9 @@ Sources, highest first (the first one that has a value wins, separately for the 
   2. file /run/secrets/pengumon_<id>_password       2. data/secrets.json devices.<id>.username
   3. data/secrets.json devices.<id>.password        3. `username` in the device's config (default "admin")
 
-<ID> is the id upper-cased with '-' as '_'. Everything is read once, at startup (SecretStore keeps secrets.json; the
+<ID> is the id upper-cased with '-' as '_'. An SNMPv3 device with security level authPriv also has a privacy password,
+from the same kinds of sources: env PENGUMON_DEVICE_<ID>_PRIVACY_PASSWORD, file /run/secrets/pengumon_<id>_privacy_password,
+data/secrets.json devices.<id>.privacy_password. Everything is read once, at startup (SecretStore keeps secrets.json; the
 secret files are read when a device's credentials are resolved). Credentials entered in the dashboard are written
 under devices.<id>.
 
@@ -25,7 +27,6 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple, Union
 
 from pengumon import paths
 from pengumon.devices.settings import DeviceConfig, credential_env_name
-from pengumon.db.migrations import LEGACY_MODEM_ID, LEGACY_ROUTER_ID
 from pengumon.observability import get_logger
 
 _log = get_logger("pengumon.secrets")
@@ -45,6 +46,14 @@ def username_env_var(device_id: str) -> str:
 
 def secret_file_name(device_id: str) -> str:
     return f"pengumon_{device_id}_password"
+
+
+def privacy_password_env_var(device_id: str) -> str:
+    return f"PENGUMON_DEVICE_{credential_env_name(device_id)}_PRIVACY_PASSWORD"
+
+
+def privacy_secret_file_name(device_id: str) -> str:
+    return f"pengumon_{device_id}_privacy_password"
 
 
 def webhook_secret_env_var(name: str) -> str:
@@ -76,6 +85,9 @@ class Credentials:
     password: Optional[str] = field(repr=False)
     username_source: str = "config"
     password_source: Optional[str] = None
+    # SNMPv3 authPriv only (every device has the sources; only the snmp driver reads it)
+    privacy_password: Optional[str] = field(default=None, repr=False)
+    privacy_password_source: Optional[str] = None
 
     @property
     def has_password(self) -> bool:
@@ -90,38 +102,13 @@ class Credentials:
         return f"password from {self.password_source}, username from {self.username_source}"
 
 
-def credential_updates(device_id: str, username: str, password: str) -> dict:
-    """What SecretStore.write merges in for new credentials."""
-    return {"devices": {device_id: {"username": username, "password": password}}}
-
-
-# One-shot conversion of the flat keys the builds before `devices:` wrote (modem_username, modem_password,
-# router_username, router_password) to devices.modem / devices.router. Remove after the owner's first start.
-FLAT_KEYS: Mapping[str, str] = {
-    f"{device_id}_{key}": (device_id, key)
-    for device_id in (LEGACY_MODEM_ID, LEGACY_ROUTER_ID) for key in ("username", "password")
-}
-
-
-def convert_flat_keys(data: dict) -> Optional[dict]:
-    """`data` with the flat keys moved under devices.<id> (a value already there wins) and removed; None when it
-    has none. Remove after the owner's first start."""
-    if not any(key in data for key in FLAT_KEYS):
-        return None
-    converted = {k: v for k, v in data.items() if k not in FLAT_KEYS}
-    devices = converted.get("devices")
-    devices = dict(devices) if isinstance(devices, dict) else {}
-    for flat, (device_id, key) in FLAT_KEYS.items():
-        value = _text(data.get(flat))
-        if value is None:
-            continue
-        entry = devices.get(device_id)
-        entry = dict(entry) if isinstance(entry, dict) else {}
-        if not _text(entry.get(key)):
-            entry[key] = value
-        devices[device_id] = entry
-    converted["devices"] = devices
-    return converted
+def credential_updates(device_id: str, username: str, password: str, privacy_password: Optional[str] = None) -> dict:
+    """What SecretStore.write merges in for new credentials (a privacy password only when one is given: the stored
+    one is kept otherwise)."""
+    entry = {"username": username, "password": password}
+    if privacy_password is not None:
+        entry["privacy_password"] = privacy_password
+    return {"devices": {device_id: entry}}
 
 
 class SecretStore:
@@ -139,8 +126,7 @@ class SecretStore:
     def data(self) -> dict:
         """The parsed file, read on first use; {} when it is missing or unusable (logged, without its content)."""
         if self._data is None:
-            data, self._problem = _read_store(self.path)
-            self._data = self._convert(data)
+            self._data, self._problem = _read_store(self.path)
         return self._data
 
     @property
@@ -150,25 +136,10 @@ class SecretStore:
         self.data()
         return self._problem
 
-    def _convert(self, data: dict) -> dict:
-        """Remove after the owner's first start: the flat keys moved under devices.<id> and the file rewritten."""
-        converted = convert_flat_keys(data)
-        if converted is None:
-            return data
-        moved = ", ".join(key for key in FLAT_KEYS if key in data)
-        try:
-            write_secrets(converted, self.path)
-        except OSError as e:
-            _log.warning("Credentials file could not be rewritten with its flat keys under devices.<id>; using them "
-                         "from memory", path=str(self.path), error=type(e).__name__)
-            return converted
-        _log.info(f"Moved {moved} in {self.path} under devices.modem / devices.router", path=str(self.path))
-        return converted
-
     def write(self, updates: dict) -> None:
         """Merges `updates` into the file and into what data() returns. Raises SecretsFileUnusable (nothing
         written) when the file on disk cannot be read or parsed."""
-        self.data()  # converted before the merge, so the write never brings back what the conversion removed
+        self.data()
         update_secrets(updates, self.path)
         _merge(self.data(), json.loads(json.dumps(updates)))
 
@@ -220,7 +191,7 @@ class CredentialSources:
             self.store = store
         else:
             self.store = SecretStore(secrets_file, data=store)
-        self._files: Dict[str, Optional[Tuple[str, str]]] = {}  # device id -> (password, source): read once
+        self._files: Dict[str, Optional[Tuple[str, str]]] = {}  # secret file name -> (secret, source): read once
 
     @classmethod
     def none(cls) -> "CredentialSources":
@@ -233,27 +204,36 @@ class CredentialSources:
                                      or self._stored(device.id, "username"))
         if not username:
             username, username_source = device.username, "config"
+        privacy, privacy_source = (self._privacy_above_store(device.id)
+                                   or self._stored(device.id, "privacy_password"))
         return Credentials(username=username, password=password, username_source=username_source,
-                           password_source=password_source)
+                           password_source=password_source, privacy_password=privacy,
+                           privacy_password_source=privacy_source)
 
     def outranking(self, device: DeviceConfig) -> Optional[str]:
-        """The source that ranks above secrets.json and supplies the password (else the username) of `device`: when
-        there is one, credentials saved to the store are overridden by it at the next start."""
-        found = self._password_above_store(device.id) or self._from_env(username_env_var(device.id))
+        """The source that ranks above secrets.json and supplies the password (else the username, else the privacy
+        password) of `device`: when there is one, credentials saved to the store are overridden by it at the next
+        start."""
+        found = (self._password_above_store(device.id) or self._from_env(username_env_var(device.id))
+                 or self._privacy_above_store(device.id))
         return found[1] if found is not None else None
 
     def _from_env(self, name: str) -> Optional[Tuple[str, str]]:
         return (self._env[name], f"environment {name}") if self._env.get(name) else None
 
     def _password_above_store(self, device_id: str) -> Optional[Tuple[str, str]]:
-        return self._from_env(password_env_var(device_id)) or self._secret_file(device_id)
+        return self._from_env(password_env_var(device_id)) or self._secret_file(device_id, secret_file_name(device_id))
 
-    def _secret_file(self, device_id: str) -> Optional[Tuple[str, str]]:
+    def _privacy_above_store(self, device_id: str) -> Optional[Tuple[str, str]]:
+        return (self._from_env(privacy_password_env_var(device_id))
+                or self._secret_file(device_id, privacy_secret_file_name(device_id)))
+
+    def _secret_file(self, device_id: str, name: str) -> Optional[Tuple[str, str]]:
         if self._dir is None:
             return None
-        if device_id not in self._files:
-            self._files[device_id] = _read_secret_file(self._dir / secret_file_name(device_id), device_id)
-        return self._files[device_id]
+        if name not in self._files:
+            self._files[name] = _read_secret_file(self._dir / name, device_id)
+        return self._files[name]
 
     def _stored(self, device_id: str, key: str) -> Tuple[Optional[str], Optional[str]]:
         devices = self.store.data().get("devices")

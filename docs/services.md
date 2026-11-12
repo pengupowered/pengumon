@@ -13,6 +13,10 @@ the `service_checks.services` setting lists one: with none, nothing about servic
 checked and since when it has been up or failing, the reason when it is not up, the check address with a copy button,
 a History toggle with its last five outages, and an **Open** link when `open_url` is set.
 
+A check is bounded: it reads at most 64 KiB of the answer (decoded only that far), the whole check (connect, headers and
+body) is cut at twice its `timeout_seconds`, no redirect is followed and the environment's proxy variables are ignored.
+At most 100 checks can be listed.
+
 ```yaml
 service_checks:
   notify_after_seconds: 300         # ntfy hears of an outage only after this long of failing checks

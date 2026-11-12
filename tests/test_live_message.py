@@ -48,6 +48,18 @@ def test_a_summary_has_status_grades_and_headlines_but_no_channels():
     assert summaries["wifi"]["grades"] == {"cpu": "good"}
 
 
+def test_a_router_summary_carries_the_uptime_the_temperature_and_the_wan_link():
+    """The router card draws them from the live message (the card paints every summary): a summary without them would
+    blank them a second after the first full reading."""
+    reg, modem, router = registry()
+    router.monitor.latest_snapshot = RouterMetricsSnapshot(timestamp=101.0, status="healthy", uptime_s=7234, cpu_temp_c=64.1,
+                                                           wan_link_mbps=2500)
+    summary = LiveSummaries(reg).current()["wifi"]
+    assert (summary["uptime_s"], summary["cpu_temp_c"], summary["wan_link_mbps"]) == (7234, 64.1, 2500)
+    router.monitor.latest_snapshot = RouterMetricsSnapshot(timestamp=111.0, status="healthy", wan_link_mbps=0)
+    assert LiveSummaries(reg).current()["wifi"]["wan_link_mbps"] == 0  # 0 is "no link", not "not reported"
+
+
 def test_a_summary_is_rebuilt_only_when_the_snapshot_changes():
     reg, modem, router = registry()
     live = LiveSummaries(reg)

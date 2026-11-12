@@ -15,7 +15,8 @@
 
 import { applyTabs } from './tabs.js';
 import { registerActions } from './dispatch.js';
-import { icon, keepKeyboard, openModal } from './util.js';
+import { icon } from './dom.js';
+import { keepKeyboard, openModal } from './modal.js';
 import { showMenu, closeMenus, toast } from './chrome.js';
 import { CARD_TOKENS, setCardColors, themeList } from './themes.js';
 import { token } from './chart-theme.js';

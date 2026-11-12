@@ -8,7 +8,8 @@ default names), color, device, "ignores ping" choice, enabled state, group and e
 proposes only its role and its place. Its status is "same" when both are unchanged, else "changed". A hop discovery
 did not find is "new". A live hop of the path (local, gateway, isp or public) that discovery did not see is "gone",
 listed after the hop it followed, except a home hop (local, gateway) that still answers a ping: a device in the home
-can be off the traced path (a cable modem in bridge mode), so it stays ("same") where it was; live DNS and custom targets are not on the traced path and are carried as they are
+can be off the traced path (a cable modem in bridge mode), so it stays ("same") where it was, as does any live hop the
+owner probes by TCP or HTTP (it does not answer ping by their own choice: a trace not seeing it proves nothing); live DNS and custom targets are not on the traced path and are carried as they are
 ("same"), after the path. A hop removed from the path earlier (its history kept, hidden) is not proposed again unless
 discovery finds its address: then it is "new" with its old id and the owner's fields, so applying it brings its
 history back; no new hop ever takes a removed hop's id.
@@ -113,6 +114,11 @@ def proposed_hops(guesses: Sequence[HopGuess], reached: Optional[Dict[str, bool]
     """The discovered hops and the public servers, in path order, before the diff. `ipv6` is None when this host
     has no IPv6 (no IPv6 group), else (hops of the IPv6 trace or None when it got nothing, whether it reached
     the first server)."""
+    # One hop per address: a router that answers at two TTLs (ECMP, MPLS) is one probe target, not two with one id.
+    first = {}
+    for g in guesses:
+        first.setdefault(address_key(g.address), g)
+    guesses = [g for g in guesses if first[address_key(g.address)] is g]
     name_hops(guesses)
     hops = [_guess_hop(g) for g in guesses]
     taken = {address_key(h["address"]) for h in hops}
@@ -136,10 +142,11 @@ def _rank(keys: List[str], among: set) -> Dict[str, int]:
 
 def missing_home_hops(proposed: Sequence[dict], live: Sequence[dict]) -> List[str]:
     """The addresses of live home hops (local, gateway) that discovery did not find: worth a ping before calling them
-    gone, since a device in the home can be off the traced path (a modem in bridge mode)."""
+    gone, since a device in the home can be off the traced path (a modem in bridge mode). A hop the owner set to a TCP or
+    HTTP probe is not asked: it does not answer ping by the owner's own choice (see diff_against)."""
     found = {address_key(h["address"]) for h in proposed}
     return [h["address"] for h in live if h.get("category") in HOME_CATEGORIES and h.get("address")
-            and address_key(h["address"]) not in found]
+            and h.get("probe", "icmp") == "icmp" and address_key(h["address"]) not in found]
 
 
 def diff_against(proposed: List[dict], live: Sequence[dict], answering: Iterable[str] = (),
@@ -155,6 +162,23 @@ def diff_against(proposed: List[dict], live: Sequence[dict], answering: Iterable
         live_by_key.setdefault(address_key(h.get("address")), h)
     proposed_keys = [address_key(h["address"]) for h in proposed]
     matched = set(proposed_keys) & set(live_by_key)
+    draft = _match_proposed(proposed, proposed_keys, live_sorted, live_by_key, matched, removed)
+    gone_after, others = _unseen_live_hops(live_sorted, matched, answering_keys)
+    out: List[dict] = list(gone_after.get(None, []))
+    for hop in draft:
+        out.append(hop)
+        if address_key(hop["address"]) in matched:
+            out.extend(gone_after.get(address_key(hop["address"]), []))
+    out.extend(others)
+    for position, hop in enumerate(out):
+        hop["position"] = position
+    return out
+
+
+def _match_proposed(proposed: List[dict], proposed_keys: List[str], live_sorted: List[dict],
+                    live_by_key: Dict[str, dict], matched: set, removed: Sequence[dict]) -> List[dict]:
+    """Each proposed hop with its status: "same"/"changed" against the live hop at its address, "new" otherwise (a hop
+    removed earlier comes back with its id and the owner's fields; a new one gets an id no live or removed hop has)."""
     live_rank = _rank([address_key(h.get("address")) for h in live_sorted], matched)
     draft_rank = _rank(proposed_keys, matched)
 
@@ -197,8 +221,13 @@ def diff_against(proposed: List[dict], live: Sequence[dict], answering: Iterable
         if merged.get("group") is None and hop.get("group"):
             merged["group"] = hop["group"]
         draft.append(merged)
+    return draft
 
-    # live path hops discovery did not see: after the hop they followed
+
+def _unseen_live_hops(live_sorted: List[dict], matched: set, answering_keys: set
+                      ) -> Tuple[Dict[Optional[str], List[dict]], List[dict]]:
+    """The live path hops discovery did not see: (those kept after the hop they followed, by that hop's address key
+    (None: first), and the other kinds of hop, which go last)."""
     previous: Optional[str] = None
     gone_after: Dict[Optional[str], List[dict]] = {}
     others: List[dict] = []
@@ -210,7 +239,12 @@ def diff_against(proposed: List[dict], live: Sequence[dict], answering: Iterable
         hop = {k: v for k, v in h.items() if k not in DRAFT_ONLY and k != "position"}
         for k in OWNER_FIELDS:
             hop.setdefault(k, None)
-        if h.get("category") in HOME_CATEGORIES and key in answering_keys:
+        if h.get("probe", "icmp") != "icmp":
+            # The owner probes this hop by TCP or HTTP because it does not answer ping, so a trace or a ping that does
+            # not see it is no evidence it is gone (it would otherwise be drift's false "gone")
+            hop.update(evidence=[], confidence=UNKNOWN, suggested_driver=None, status="same")
+            gone_after.setdefault(previous, []).append(hop)
+        elif h.get("category") in HOME_CATEGORIES and key in answering_keys:
             hop.update(evidence=[], confidence=UNKNOWN, suggested_driver=None, status="same")
             gone_after.setdefault(previous, []).append(hop)
         elif h.get("category") in PATH_CATEGORIES:
@@ -219,15 +253,7 @@ def diff_against(proposed: List[dict], live: Sequence[dict], answering: Iterable
         else:
             hop.update(evidence=[], confidence=UNKNOWN, suggested_driver=None, status="same")
             others.append(hop)
-    out: List[dict] = list(gone_after.get(None, []))
-    for hop in draft:
-        out.append(hop)
-        if address_key(hop["address"]) in matched:
-            out.extend(gone_after.get(address_key(hop["address"]), []))
-    out.extend(others)
-    for position, hop in enumerate(out):
-        hop["position"] = position
-    return out
+    return gone_after, others
 
 
 def trim(draft: List[dict], limit: int = MAX_HOPS) -> List[dict]:

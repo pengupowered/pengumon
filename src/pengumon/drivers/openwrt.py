@@ -20,8 +20,8 @@ from pengumon.capabilities import (
     BAND_2G, BAND_5G, BAND_6G, BAND_OTHER, Capability, Client, ClientsReading, DriverError, PollResult, SystemReading,
     WanCounters,
 )
-from pengumon.drivers.common import CpuMeter, clean_text, normal_mac, proc_stat_cpu
-from pengumon.drivers.http import DeviceHttp, Verify, device_verify
+from pengumon.drivers.common import MAX_CLIENTS, CpuMeter, clean_text, normal_mac, proc_stat_cpu
+from pengumon.drivers.http import DeviceHttp, Verify, device_verify, new_client
 from pengumon.observability import get_logger
 
 if TYPE_CHECKING:
@@ -98,7 +98,8 @@ def _answer(call: Call, response: object) -> Answer:
             return Answer(problem=f"{name}: access denied", denied=True, session_refused=True)
         if code == RPC_OBJECT_NOT_FOUND:
             return Answer(problem=f"{name}: not available on this router (object not found)")
-        return Answer(problem=f"{name}: JSON-RPC error {code!r} {clean_text(error.get('message')) or ''}".rstrip())
+        return Answer(problem=f"{name}: JSON-RPC error {clean_text(repr(code), 20)} "
+                              f"{clean_text(error.get('message')) or ''}".rstrip())
     result = response.get("result")
     if not isinstance(result, list) or not result or not isinstance(result[0], int) or isinstance(result[0], bool):
         return Answer(problem=f"{name}: the router's answer had no result")
@@ -230,7 +231,8 @@ def build_clients(leases: Optional[dict], stations: Dict[str, Tuple[Optional[str
     not be read, always (OpenWrt cannot then tell a wired client from a Wi-Fi one that left before its lease ran
     out). Names and addresses come from the leases."""
     by_mac: Dict[str, dict] = {}
-    for lease in (leases or {}).get("dhcp_leases") or []:
+    lease_list = (leases or {}).get("dhcp_leases")
+    for lease in lease_list if isinstance(lease_list, list) else []:
         if isinstance(lease, dict):
             mac = normal_mac(lease.get("macaddr"))
             if mac:
@@ -258,7 +260,7 @@ def build_clients(leases: Optional[dict], stations: Dict[str, Tuple[Optional[str
         clients.append(Client(key=mac, label_parts=(hostname,) if hostname and hostname != "*" else (),
                               ip=clean_text(lease.get("ipaddr")), mac=mac, connection="wired",
                               online=arp.get(mac, False) if arp is not None else True))
-    return ClientsReading(tuple(clients))
+    return ClientsReading(tuple(clients[:MAX_CLIENTS]))
 
 
 class OpenWrtDriver:
@@ -283,7 +285,7 @@ class OpenWrtDriver:
         self._session: Optional[str] = None
         self._request_id = 0
         self.http = DeviceHttp(url, self._new_client, driver=self.name, client=client)
-        self._log = get_logger("pengumon.drivers.openwrt", host=self.http.host)
+        self._log = get_logger("pengumon.drivers.openwrt")
         self._cpu = CpuMeter(clock)
         self._clients_read_at: Optional[float] = None
         self._client_count: Optional[int] = None
@@ -303,7 +305,12 @@ class OpenWrtDriver:
                    verify=device_verify(cfg), **clocks)
 
     def _new_client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=6.0, verify=self._verify)
+        return new_client(self._verify)
+
+    @property
+    def login_name(self) -> str:
+        """The login the driver signs in as: its error texts name it (the page shows them), the log records must not."""
+        return self._username
 
     @property
     def host(self) -> str:
@@ -336,7 +343,7 @@ class OpenWrtDriver:
                                           "or LuCI, which brings it)")
         try:
             return json.loads(res.text)
-        except ValueError:
+        except (ValueError, RecursionError):  # (a nesting deeper than the recursion limit)
             raise DriverError("protocol", f"OpenWrt at {self.host} answered /ubus with HTTP {res.status_code} and "
                                           "no JSON") from None
 
@@ -367,7 +374,8 @@ class OpenWrtDriver:
             if not isinstance(body, list):
                 raise DriverError("protocol", f"OpenWrt at {self.host} did not answer a batch of ubus calls with a "
                                               "list")
-            by_id = {r.get("id"): r for r in body if isinstance(r, dict)}
+            by_id = {r["id"]: r for r in body  # (only the ids asked for: a list or an object as id is unhashable)
+                     if isinstance(r, dict) and isinstance(r.get("id"), int) and not isinstance(r["id"], bool)}
             answers = [_answer(call, by_id.get(req["id"])) for call, req in zip(calls, requests)]
             for call, answer in zip(calls, answers):
                 name = _call_name(call)
@@ -500,5 +508,5 @@ class OpenWrtDriver:
         for name, answer in answers.items():
             if answer.denied and name not in self._denied_logged:
                 self._denied_logged.add(name)
-                self._log.warning(f"OpenWrt at {self.host} refused {name} for {self._username!r}; the readings that "
+                self._log.warning(f"The OpenWrt router refused {name}; the readings that "
                                   "need it are left out (docs/devices.md has the rpcd ACL)", call=name)

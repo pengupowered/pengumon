@@ -9,7 +9,9 @@
 //   a change waits for DEBOUNCE_MS of quiet before it asks.
 
 import { registerActions } from '../../js/dispatch.js';
-import { copyText, keepKeyboard, openModal, zoneParams } from '../../js/util.js';
+import { copyText } from '../../js/clipboard.js';
+import { keepKeyboard, openModal } from '../../js/modal.js';
+import { zoneParams } from '../../js/clock.js';
 
 const AI_PACK_URL = '/api/ai-pack';
 const DEBOUNCE_MS = 600;

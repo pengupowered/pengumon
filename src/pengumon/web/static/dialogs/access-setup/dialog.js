@@ -9,7 +9,9 @@ import { registerActions } from '../../js/dispatch.js';
 import { fetchNetworkInfo, toast } from '../../js/chrome.js';
 import { holdSignIn } from '../../js/session.js';
 import { state } from '../../js/state.js';
-import { closeModal, copyText, keepKeyboard, openModal, suggestPassword } from '../../js/util.js';
+import { closeModal, keepKeyboard, openModal } from '../../js/modal.js';
+import { copyText } from '../../js/clipboard.js';
+import { suggestPassword } from '../../js/password.js';
 
 const MODAL = 'accessSetupModal';
 const $ = (id) => document.getElementById(id);
@@ -49,7 +51,12 @@ function showDone(password) {
 
 async function submit(ev) {
   ev.preventDefault();
-  if (done) { closeModal(MODAL); return; }
+  if (done) { // the generated password does not stay in the closed dialog
+    $('accessSetupShown').textContent = '';
+    $('accessSetupPw').value = '';
+    closeModal(MODAL);
+    return;
+  }
   if (busy) return;
   const body = { choice: choice() };
   if (body.choice === 'password') {
@@ -63,7 +70,7 @@ async function submit(ev) {
     const res = await holdSignIn(() => fetch('/api/access/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
     const data = await res.json().catch(() => ({}));
     if (res.status === 409) showError('Someone else answered this a moment ago. Reload the page to see what they chose.');
-    else if (!res.ok) showError(data.detail || `The server answered ${res.status}. Try again.`);
+    else if (!res.ok) showError(typeof data.detail === 'string' && data.detail ? data.detail : `The server answered ${res.status}. Try again.`);
     else if (data.mode === 'open') finishOpen();
     else {
       showDone(data.password);

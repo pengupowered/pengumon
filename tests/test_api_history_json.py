@@ -26,6 +26,12 @@ class FakeRepository:
         self.calls.append((start_time, end_time, target_ids, bucket_seconds))
         return ROWS
 
+    async def get_history_answer(self, start_time, end_time, target_ids=None, bucket_seconds=None, compact=False):
+        rows = await self.get_history(start_time, end_time, target_ids, bucket_seconds)
+        if compact:
+            return {"fields": list(rows[0]) if rows else [], "rows": [list(r.values()) for r in rows]}, len(rows)
+        return rows, len(rows)
+
     async def get_device_samples(self, device_id, start_time, end_time, padding_seconds=0.0):
         self.calls.append((device_id, start_time, end_time, padding_seconds))
         return [DeviceSample(device_id=device_id, ts=100.0, wan_rx_mbps=12.5, status="healthy")]
@@ -104,7 +110,7 @@ async def test_compact_history_lists_fields_once_and_values_per_row(fake_repo):
 async def test_compact_history_without_rows(fake_repo, monkeypatch):
     async def empty(*args, **kwargs):
         return []
-    monkeypatch.setattr(fake_repo, "get_history", empty)
+    monkeypatch.setattr(fake_repo, "get_history", empty)  # get_history_answer asks it
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get("/api/history?compact=true")
     assert res.json() == {"fields": [], "rows": []}
@@ -135,3 +141,26 @@ async def test_history_is_rate_limited(fake_repo):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         codes = [(await ac.get("/api/history?start_time=10&end_time=20")).status_code for _ in range(61)]
     assert codes[:60] == [200] * 60 and codes[60] == 429
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan"])
+@pytest.mark.parametrize("name", ["start_time", "end_time"])
+@pytest.mark.parametrize("path", ["/api/devices/router/history?max_points=100&", "/api/devices/router/history?",
+                                  "/api/devices/router/channels/history?"])
+async def test_device_history_refuses_a_time_that_is_not_a_finite_number(fake_repo, path, name, value):
+    """An infinite end_time reached math.ceil(inf) when the answer was bucketed: a 500 with a traceback."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(f"{path}{name}={value}")
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan"])
+@pytest.mark.parametrize("name", ["start_time", "end_time"])
+async def test_history_refuses_a_time_that_is_not_a_finite_number(fake_repo, name, value):
+    """For /api/history itself: the bucketing of an infinite window is a 500 without this."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(f"/api/history?{name}={value}")
+    assert res.status_code == 422
+    assert fake_repo.calls == []

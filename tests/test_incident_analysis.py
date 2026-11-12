@@ -222,7 +222,7 @@ def test_to_response_keeps_models_and_the_key_order():
         docsis_correlation=correlate(snapshots=[nearest]), router_snapshots=[])
     out = inspection.to_response()
     assert list(out) == ["incident", "window_start", "window_end", "event_start", "event_end", "hop_impact", "samples",
-                         "docsis_snapshots", "docsis_correlation", "router_snapshots"]
+                         "docsis_snapshots", "docsis_correlation", "router_snapshots", "device_events", "traffic"]
     assert isinstance(out["incident"], Incident) and isinstance(out["docsis_snapshots"][0], DocsisSignalSnapshot)
     corr = out["docsis_correlation"]
     assert isinstance(corr, dict) and list(corr) == [

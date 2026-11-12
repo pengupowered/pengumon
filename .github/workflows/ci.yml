@@ -276,7 +276,7 @@ jobs:
           curl -sf -m 5 http://127.0.0.1:8000/api/info | python -c "import json, sys; p = json.load(sys.stdin)['probe']; print(p); sys.exit(0 if p['backend'] else 1)"
           curl -sf -m 5 http://127.0.0.1:8000/ > index.html
           grep -q '/static/v/' index.html
-          asset="$(grep -o '/static/v/[0-9a-f]*/[^"]*\.js' index.html | head -n1)"
+          asset="$(grep -o '/static/v/[0-9a-f]*/[^"]*\.js' index.html | sed -n 1p)"  # sed reads to the end: head would close the pipe on grep (the page lists about a hundred modules)
           curl -sf -m 5 -o /dev/null "http://127.0.0.1:8000$asset"
 
   # What a release attaches, assembled once from the wheel and sdist above (scripts/release-assets.sh): the wheel, the

@@ -112,15 +112,19 @@ def test_build_devices_logs_one_line_per_device_without_secrets(caplog):
     assert [d.id for d in registry] == ["wifi", "cable", "old"]
     lines = [r.getMessage() for r in caplog.records]
     assert lines == [
-        "Device wifi: asuswrt at 192.168.1.1 every 10 s, offers client_inventory,mesh,router_system,wan_counters; "
-        "password from environment PENGUMON_DEVICE_WIFI_PASSWORD",
-        "Device cable: xfinity_xb at 192.168.100.1 every 1800 s, offers access_line; no password configured",
-        "Device old (asuswrt at 192.168.2.1) is disabled in configuration",
+        "Device wifi: asuswrt every 10 s, offers client_inventory,mesh,router_system,traffic_usage,"
+        "wan_counters; password from environment PENGUMON_DEVICE_WIFI_PASSWORD",
+        "Device cable: xfinity_xb every 1800 s, offers access_line; no password configured",
+        "Device old (asuswrt) is disabled in configuration",
     ]
     contexts = [getattr(r, "pengumon_context") for r in caplog.records]
     assert contexts[0]["device"] == "wifi" and contexts[0]["credentials"] == "environment PENGUMON_DEVICE_WIFI_PASSWORD"
     assert contexts[1]["credentials"] == "none" and contexts[0]["interval_s"] == 10.0
     assert SECRET not in caplog.text
+    for record in caplog.records:  # exported over OTLP with the other logs: no LAN address in the line or its context
+        shown = record.getMessage() + repr(record.pengumon_context)
+        assert not any(a in shown for a in ("192.168.1.1", "192.168.100.1", "192.168.2.1")), shown
+        assert "host" not in record.pengumon_context
 
 
 def test_the_supervisor_logs_each_built_device_with_the_same_line(caplog):
@@ -245,7 +249,8 @@ def _features(registry):
 def test_the_declared_features():
     assert dict(FEATURES) == {"line_load": {Capability.WAN_COUNTERS}, "line_health": {Capability.ACCESS_LINE},
                               "router_system": {Capability.ROUTER_SYSTEM},
-                              "clients": {Capability.CLIENT_INVENTORY}, "mesh": {Capability.MESH}}
+                              "clients": {Capability.CLIENT_INVENTORY}, "mesh": {Capability.MESH},
+                              "traffic": {Capability.TRAFFIC_USAGE}}
 
 
 def test_features_of_a_fully_configured_installation():
@@ -256,6 +261,7 @@ def test_features_of_a_fully_configured_installation():
         "router_system": FeatureStatus("router_system", True, "available", None, ("router",)),
         "clients": FeatureStatus("clients", True, "available", None, ("router",)),
         "mesh": FeatureStatus("mesh", True, "available", None, ("router",)),
+        "traffic": FeatureStatus("traffic", True, "available", None, ("router",)),
     }
 
 
@@ -277,7 +283,7 @@ def test_features_without_any_device_or_with_a_disabled_one():
     assert [s.reason for s in feature_status(_registry())] == [
         "no enabled device provides wan_counters", "no enabled device provides access_line",
         "no enabled device provides router_system", "no enabled device provides client_inventory",
-        "no enabled device provides mesh"]
+        "no enabled device provides mesh", "no enabled device provides traffic_usage"]
 
 
 def test_a_feature_needing_several_capabilities_lists_every_gap():

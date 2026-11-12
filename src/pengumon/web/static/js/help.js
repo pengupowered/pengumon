@@ -8,7 +8,7 @@ import { settingsValues } from './settings-values.js';
 // The texts, by key; each panel adds its own (registerHelp in its folder's help.js), so a panel's help lives with it.
 // A text is a string, or a function of the settings values (js/settings-values.js) for a text that quotes a threshold:
 // it is called each time the text is shown, so it always says what the settings say.
-export const HELP = {};
+const HELP = {};
 
 export function registerHelp(texts) {
   for (const key of Object.keys(texts)) {
@@ -46,7 +46,7 @@ function place(button) {
   pop.style.top = `${Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin))}px`;
 }
 
-export function closeHelp() {
+function closeHelp() {
   if (anchor) {
     anchor.setAttribute('aria-expanded', 'false');
     anchor.removeAttribute('aria-describedby');
@@ -55,7 +55,7 @@ export function closeHelp() {
   if (popover) popover.hidden = true;
 }
 
-export function toggleHelp(button) {
+function toggleHelp(button) {
   if (anchor === button) {
     closeHelp();
     return;

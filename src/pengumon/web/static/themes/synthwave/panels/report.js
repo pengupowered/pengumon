@@ -33,10 +33,10 @@ export default {
           + `<div class="sw-reads">${readout('downtime', vm.downtime)}${readout('incidents', vm.incidents)}</div>`);
         const l = vm.lost;
         html(built.days, `<h3 class="sw-t">${esc(l.title)}</h3>`
-          + `<div class="sw-cols" style="grid-template-columns: repeat(${l.columns}, 1fr)" role="img" aria-label="${esc(l.aria)}">${l.bars.map((b) => `<div class="sw-col${b.nodata ? ' nodata' : ''}" data-item="day-${esc(b.id)}" data-v="tip" aria-label="${esc(b.tip)}" title="${esc(b.tip)}"><i style="height:${b.height.toFixed(0)}%"></i><span>${esc(b.letter)}</span></div>`).join('')}</div>`
+          + `<div class="sw-cols" style="grid-template-columns: repeat(${Number(l.columns)}, 1fr)" role="img" aria-label="${esc(l.aria)}">${l.bars.map((b) => `<div class="sw-col${b.nodata ? ' nodata' : ''}" data-item="day-${esc(b.id)}" data-v="tip" aria-label="${esc(b.tip)}" title="${esc(b.tip)}"><i style="height:${Number(b.height).toFixed(0)}%"></i><span>${esc(b.letter)}</span></div>`).join('')}</div>`
           + `<p class="sw-note" data-v="worstDay">${esc(l.note)}</p>`);
         const c = vm.causes;
-        html(built.causes, `<h3 class="sw-t">${esc(c.title)}</h3><ul class="sw-meters">${c.items.map((i) => `<li title="${esc(i.title)}" data-item="cause-${esc(i.id)}"><span class="sw-mn" data-v="cause">${esc(i.label)}</span><b class="sw-mp num" data-v="share">${esc(i.shareText)}</b><span class="sw-bar"><i style="width:${i.share}%"></i></span></li>`).join('')
+        html(built.causes, `<h3 class="sw-t">${esc(c.title)}</h3><ul class="sw-meters">${c.items.map((i) => `<li title="${esc(i.title)}" data-item="cause-${esc(i.id)}"><span class="sw-mn" data-v="cause">${esc(i.label)}</span><b class="sw-mp num" data-v="share">${esc(i.shareText)}</b><span class="sw-bar"><i style="width:${Number(i.share)}%"></i></span></li>`).join('')
           || `<li class="sw-muted" data-v="none">${esc(c.empty)}</li>`}</ul>`);
         built.excl.hidden = !vm.excluded;
         text(built.excl, vm.excluded || '');

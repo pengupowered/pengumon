@@ -50,4 +50,14 @@ export const steps = [
     eq("cleared", await page.$eval("#targetName", (i) => i.value), "");
     eq("no stale messages", await count("#addTargetForm .field.invalid"), 0);
   }],
+
+  ["add target dialog: Escape clears the form like Cancel", async ({ click, count, eq, page, until }) => {
+    await click("[data-action=openModal][data-arg=addTargetModal]");
+    await page.type("#targetName", "Typed then escaped");
+    await page.evaluate(() => document.querySelector("#addTargetForm button[type=submit]").click()); // a banner or messages to clear too
+    await page.keyboard.press("Escape");
+    await until(() => !document.getElementById("addTargetModal").classList.contains("active"));
+    eq("the name is gone", await page.$eval("#targetName", (i) => i.value), "");
+    eq("no stale messages", await count("#addTargetForm .field.invalid"), 0);
+  }],
 ];

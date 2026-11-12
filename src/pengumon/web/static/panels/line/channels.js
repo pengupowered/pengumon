@@ -5,18 +5,20 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { badge, escapeHtml, keepKeyboard, openModal } from '../../js/util.js';
+import { badge } from '../../js/dom.js';
+import { escapeHtml, numText } from '../../js/escape.js';
+import { keepKeyboard, openModal } from '../../js/modal.js';
 import { levelOfGrade, rangeOf, worstGrade } from '../../js/grades.js';
 import { DEFAULT_TITLE, errorsText, gaugeMarkup, goodText, spreadOf } from './docsis.js';
 import { barChartMarkup } from './channel-charts.js';
 import { initChannelHistory, setChannelDevice, showChannelsTab } from './channel-history.js';
+import { has } from '../../js/values.js';
 
 const REFRESH_MS = 30000;
 let device = null;
 let timer = 0;
 let seq = 0;
 let lastSnap = null;
-const has = (v) => v !== null && v !== undefined;
 const isOpen = () => document.getElementById('channelsModal').classList.contains('active');
 const ink = (grade) => (grade === 'critical' ? 'ink-crit' : grade === 'warn' ? 'ink-warn' : '');
 
@@ -27,10 +29,10 @@ function row(c) {
   const word = recent > 0 ? `+${recent.toLocaleString()} errors` : worst === 'good' || !worst ? 'Locked' : 'Out of range';
   const down = c.direction === 'downstream';
   return `<tr${recent > 0 ? ' class="has-errors"' : ''}>
-    <td class="lead"><span class="primary">${down ? 'Down' : 'Up'} ${c.channel_id}</span><span class="sub">${has(c.frequency_mhz) ? `${c.frequency_mhz} MHz` : '-'}${c.modulation ? ` · ${escapeHtml(c.modulation)}` : ''}</span></td>
+    <td class="lead"><span class="primary">${down ? 'Down' : 'Up'} ${numText(c.channel_id)}</span><span class="sub">${has(c.frequency_mhz) ? `${numText(c.frequency_mhz)} MHz` : '-'}${c.modulation ? ` · ${escapeHtml(c.modulation)}` : ''}</span></td>
     <td class="aside">${badge(levelOfGrade(worst || 'good'), word, 'quiet')}</td>
-    <td data-l="Power" class="r num ${ink(g.power)}">${has(c.power_dbmv) ? `${c.power_dbmv} dBmV` : '-'}</td>
-    <td data-l="SNR" class="r num ${ink(g.snr)}">${has(c.snr_db) ? `${c.snr_db} dB` : '-'}</td>
+    <td data-l="Power" class="r num ${ink(g.power)}">${has(c.power_dbmv) ? `${numText(c.power_dbmv)} dBmV` : '-'}</td>
+    <td data-l="SNR" class="r num ${ink(g.snr)}">${has(c.snr_db) ? `${numText(c.snr_db)} dB` : '-'}</td>
     <td data-l="Corrected" class="r num hide-narrow">${(c.correcteds || 0).toLocaleString()}</td>
     <td data-l="New" class="r num ${ink(recent > 0 ? g.uncorrectables : null)}">${recent > 0 ? `+${recent.toLocaleString()}` : '0'}</td>
     <td data-l="Since boot" class="r num">${(c.uncorrectables || 0).toLocaleString()}</td></tr>`;

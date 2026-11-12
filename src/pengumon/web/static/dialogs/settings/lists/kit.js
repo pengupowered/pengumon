@@ -2,9 +2,13 @@
 // field the server's validation names, and unique ids. An editor is
 //   { id, render(container, items, ctx), collect() -> items, problems(errors) }
 // ctx: { schema, listName, heading ('group' | 'sub' | 'none'), savedIds(), markDirty(), canEdit(), openDeviceSetup(id) }.
+// A viewer (someone who may look but not change: canEdit() false) gets the list without the controls that change it (Add, Remove,
+// Move, the reset link) and without the fields marked `owner: true`, which the server blanks for them (a CA file path).
 
 import { registerActions } from '../../../js/dispatch.js';
-import { escapeHtml, icon, slug } from '../../../js/util.js';
+import { escapeHtml } from '../../../js/escape.js';
+import { icon } from '../../../js/dom.js';
+import { slug } from '../../../js/format.js';
 import { clone } from '../model.js';
 
 export { slug };
@@ -24,7 +28,7 @@ export function freshId(base, taken) {
 
 // One labeled input of a card. `cfg`: {f, label, kind: text|number|bool|choice|id, choices, labels (choice -> words),
 // nullable, hint, placeholder}.
-export function fieldHtml(cfg, item, index, locked) {
+function fieldHtml(cfg, item, index, locked) {
   const id = `lf-${cfg.list}-${index}-${cfg.f}`;
   const v = item[cfg.f];
   const attrs = `id="${id}" data-f="${cfg.f}" data-kind="${cfg.kind}"${cfg.nullable ? ' data-nullable' : ''}`;
@@ -44,7 +48,7 @@ export function fieldHtml(cfg, item, index, locked) {
 }
 
 // What a card's input holds as the item's value.
-export function readField(el) {
+function readField(el) {
   const kind = el.dataset.kind;
   if (kind === 'bool') return el.checked;
   const text = el.value.trim();
@@ -75,20 +79,21 @@ export function makeListEditor(cfg) {
 
   function cardHtml(item, i) {
     const locked = saved(item) && cfg.idLocked !== false;
-    const fields = cfg.fields.map((f) => fieldHtml({ ...f, list: cfg.id }, item, i, f.f === 'id' && locked)).join('');
+    const edit = ctx.canEdit();
+    const fields = cfg.fields.filter((f) => edit || !f.owner).map((f) => fieldHtml({ ...f, list: cfg.id }, item, i, f.f === 'id' && locked)).join('');
     const isOpen = open.has(item.id);
     const off = item.enabled === false ? '<span class="chip">Paused</span>' : '';
-    const bad = Object.keys(errors).some((k) => k.startsWith(`${i}.`)) ? '<span class="chip st st-crit">Needs a fix</span>' : '';
+    const bad = Object.keys(errors).some((k) => k.startsWith(`${i}.`)) ? '<span class="chip st st-crit" data-chip="fix">Needs a fix</span>' : '';
     const flags = (cfg.chips ? cfg.chips(item, i) : '');
     return `<details class="set-card" data-i="${i}" data-id="${escapeHtml(item.id)}"${isOpen ? ' open' : ''}>
       <summary>${icon('chevron', 'set-chev')}<span class="set-card-t">${escapeHtml(cfg.title(item) || item.id || 'New')}</span><span class="set-card-s">${escapeHtml(cfg.summary(item) || '')}</span>${off}${flags}${bad}${errorLine(i)}</summary>
       <div class="set-card-b">
         <div class="set-grid">${fields}</div>${cfg.extra ? cfg.extra(item, i, ctx) : ''}
-        <div class="set-card-f">
+        ${edit ? `<div class="set-card-f">
           ${cfg.ordered ? `<button type="button" class="btn icon sm" data-action="settingsListAct" data-arg="${cfg.id}" data-la="up" data-i="${i}" data-needs-edit aria-label="Move ${escapeHtml(item.name || item.id)} up"${i === 0 ? ' disabled' : ''}>${icon('up')}</button>
           <button type="button" class="btn icon sm set-down" data-action="settingsListAct" data-arg="${cfg.id}" data-la="down" data-i="${i}" data-needs-edit aria-label="Move ${escapeHtml(item.name || item.id)} down"${i === items.length - 1 ? ' disabled' : ''}>${icon('up')}</button>` : ''}
           <button type="button" class="btn sm danger" data-action="settingsListAct" data-arg="${cfg.id}" data-la="remove" data-i="${i}" data-needs-edit>${icon('close')}Remove</button>
-        </div>
+        </div>` : ''}
       </div></details>`;
   }
 
@@ -99,11 +104,12 @@ export function makeListEditor(cfg) {
   }
 
   function draw() {
+    const edit = ctx.canEdit();
     box.innerHTML = `<div class="set-list" data-list="${cfg.id}">
-      <div class="set-list-h">${heading()}${ctx.listIsSet() && cfg.resetLabel ? `<button type="button" class="set-lnk" data-action="settingsListAct" data-arg="${cfg.id}" data-la="reset" data-needs-edit>${escapeHtml(cfg.resetLabel)}</button>` : ''}</div>
-      ${cfg.note ? `<p class="fine top">${escapeHtml(cfg.note)}</p>` : ''}
-      ${items.length ? items.map(cardHtml).join('') : `<p class="fine top set-empty">${escapeHtml(cfg.empty)}</p>`}
-      <div><button type="button" class="btn sm outline" data-action="settingsListAct" data-arg="${cfg.id}" data-la="add" data-needs-edit>${icon('plus')}<span>${escapeHtml(cfg.addLabel || `Add ${cfg.noun}`)}</span></button></div></div>`;
+      <div class="set-list-h">${heading()}${edit && ctx.listIsSet() && cfg.resetLabel ? `<button type="button" class="set-lnk" data-action="settingsListAct" data-arg="${cfg.id}" data-la="reset" data-needs-edit>${escapeHtml(cfg.resetLabel)}</button>` : ''}</div>
+      ${(edit ? cfg.note : cfg.noteView ?? cfg.note) ? `<p class="fine top">${escapeHtml(edit ? cfg.note : cfg.noteView ?? cfg.note)}</p>` : ''}
+      ${items.length ? items.map(cardHtml).join('') : `<p class="fine top set-empty">${escapeHtml(edit ? cfg.empty : cfg.emptyView ?? cfg.empty)}</p>`}
+      ${edit ? `<div><button type="button" class="btn sm outline" data-action="settingsListAct" data-arg="${cfg.id}" data-la="add" data-needs-edit>${icon('plus')}<span>${escapeHtml(cfg.addLabel || `Add ${cfg.noun}`)}</span></button></div>` : ''}</div>`;
     showErrors();
   }
 
@@ -184,9 +190,9 @@ export function makeListEditor(cfg) {
       if (box) { showErrors(); box.querySelectorAll('.set-card').forEach((c) => {
         const bad = Object.keys(errors).some((k) => k.startsWith(`${c.dataset.i}.`));
         const sum = c.querySelector('summary');
-        const chip = sum.querySelector('.st-crit');
-        if (bad && !chip) sum.insertAdjacentHTML('beforeend', '<span class="chip st st-crit">Needs a fix</span>');
-        if (!bad && chip && chip.textContent === 'Needs a fix') chip.remove();
+        const chip = sum.querySelector('[data-chip=fix]'); // not '.st-crit': the webhooks' "URL needed" chip has that too
+        if (bad && !chip) sum.insertAdjacentHTML('beforeend', '<span class="chip st st-crit" data-chip="fix">Needs a fix</span>');
+        if (!bad && chip) chip.remove();
         sum.querySelector('.set-card-e')?.remove();
         if (bad) sum.insertAdjacentHTML('beforeend', errorLine(c.dataset.i));
         if (bad) c.open = true;

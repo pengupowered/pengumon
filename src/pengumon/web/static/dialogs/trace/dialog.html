@@ -9,7 +9,8 @@
         <div class="field"><label for="traceFamily">Use IPv4 or IPv6 for a host name</label><select class="input" id="traceFamily" title="An address is traced as it is; a host name is looked up as an IPv4 or an IPv6 address"><option value="4" selected>IPv4</option><option value="6">IPv6</option></select></div>
         <button type="submit" class="btn primary" id="btnRunTrace"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span>Run trace</span></button>
       </form>
-      <div id="tracerouteResults" role="status" aria-live="polite">
+      <span class="sr-only" id="traceStatus" role="status"></span>
+      <div id="tracerouteResults" aria-busy="false">
         <div class="empty trace-empty">
           <svg class="trace-art" viewBox="0 0 300 44" aria-hidden="true"><path d="M14 22H286" stroke="var(--line-strong)" stroke-dasharray="4 5"/><circle cx="14" cy="22" r="9" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="82" cy="22" r="6" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="150" cy="22" r="6" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="218" cy="22" r="6" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/><circle cx="286" cy="22" r="9" fill="var(--surface-3)" stroke="var(--ink-3)" stroke-width="1.5"/></svg>
           <div><b>See every hop between this host and a destination</b>A trace sends probes with rising time-to-live and lists who answers, from your PC through the router and the modem to the destination. Use it to find the ISP hops worth monitoring; each one can be added as a target with one click. Usually 5 to 15 s, up to about 45 s when hops do not answer.</div>

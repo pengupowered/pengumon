@@ -3,6 +3,11 @@
 The dashboard reads the device list and the features first, then talks to each device by its id.
 
 Credentials are written to data/secrets.json (the app's secrets.SecretStore) and never returned or logged.
+
+Someone who may not change settings (a viewer, the read token) gets a device's address without its path, and a failed
+poll in fixed words instead of the driver's own message, which can name the login it tried ("refused the login of
+'admin'") or the address a socket dialed: the same words the MCP `devices` tool uses (mcp/tools.py), as
+GET /api/settings keeps the user name and the URL path from them.
 Every route here is under /api, so the security middleware's guards apply (same-origin for POST, the token, the
 body limit), and every path ending in /credentials is left out of telemetry (observability.telemetry).
 """
@@ -11,10 +16,11 @@ import time
 from dataclasses import asdict
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import TypeAdapter
 
 from pengumon.api.common import StateDep, device_or_404, record_answer, record_capped
+from pengumon.api.settings import url_origin
 from pengumon.state import AppState
 from pengumon.capabilities import Capability
 from pengumon.capabilities.features import feature_status, host_services_status
@@ -24,10 +30,10 @@ from pengumon.devices.device import Device
 from pengumon.devices.samples import BUCKET_FIELDS, MAX_POINTS_LIMIT, RouterHistory, bucket_width, bucketed_router_history
 from pengumon.api.payloads import CredentialsRequest
 from pengumon.devices.snapshots import RouterMetricsSnapshot
-from pengumon.devices.summary import device_label
+from pengumon.devices.summary import device_label, viewer_error
 from pengumon.observability import get_logger
 from pengumon.secrets import SECRETS_FILE_DAMAGED, SecretsFileUnusable, SecretStore, credential_updates
-from pengumon.security import rate_limit
+from pengumon.security import can_edit, rate_limit
 
 router = APIRouter(prefix="/api")
 _log = get_logger("pengumon.api")
@@ -45,6 +51,14 @@ async def _latest(device: Device):
     return await device.current()
 
 
+def _for_viewer(snapshot):
+    """A snapshot (or None) with its error message in fixed words (viewer_error)."""
+    if snapshot is None or not getattr(snapshot, "error_message", None):
+        return snapshot
+    shown = viewer_error(snapshot.status, snapshot.error_kind, snapshot.error_message)
+    return snapshot if shown == snapshot.error_message else snapshot.model_copy(update={"error_message": shown})
+
+
 async def _set_credentials(state: AppState, device: Device, payload: CredentialsRequest) -> Dict[str, Any]:
     """Persists the credentials, hands them to the device and polls it once to test them. When a source that ranks
     above secrets.json (the environment, a secret file) supplies this device's credentials, the saved ones are used
@@ -52,12 +66,22 @@ async def _set_credentials(state: AppState, device: Device, payload: Credentials
     device_id = device.id
     if not device.needs_sign_in:
         raise HTTPException(status_code=400, detail="This device has no sign-in: there is no password to set.")
+    if payload.privacy_password is not None and not getattr(device.driver, "takes_privacy_password", False):
+        raise HTTPException(status_code=400, detail="This device takes no privacy password (only an SNMPv3 device "
+                                                    "with security level authPriv does).")
+    # what the driver itself refuses (SNMPv3: a user name over 32 bytes, a password under 8 characters): said without
+    # echoing anything that was sent
+    problem = getattr(device.driver, "credentials_problem", None)
+    why = problem(payload.username, payload.password, payload.privacy_password) if problem else None
+    if why:
+        raise HTTPException(status_code=400, detail=f"Not saved: {why}.")
     store = state.secret_store or SecretStore()
     try:
-        store.write(credential_updates(device_id, payload.username, payload.password))
+        store.write(credential_updates(device_id, payload.username, payload.password, payload.privacy_password))
     except SecretsFileUnusable:  # logged by the store, with what to do
         raise HTTPException(status_code=500, detail=SECRETS_FILE_DAMAGED) from None
-    device.set_credentials(payload.username, payload.password, source=f"{store.path} (set in the dashboard)")
+    device.set_credentials(payload.username, payload.password, source=f"{store.path} (set in the dashboard)",
+                           privacy_password=payload.privacy_password)
     snapshot = await device.poll(force=True, bypass_gate=True)
     success = snapshot.status not in ("error", "unconfigured")
     _log.info(f"Credentials for {device_id} saved; test poll {'succeeded' if success else 'failed'}",
@@ -84,15 +108,17 @@ def device_ranges(device: Device) -> Dict[str, Dict[str, Any]]:
     return {name: r.as_dict() for name, r in ranges.items()} if ranges else {}
 
 
-def device_summary(device: Device) -> Dict[str, Any]:
-    """A device as /api/devices lists it: what it is and how its last poll went. Never a credential."""
-    snapshot = device.latest_snapshot
+def device_summary(device: Device, editor: bool = True) -> Dict[str, Any]:
+    """A device as /api/devices lists it: what it is and how its last poll went. Never a credential. Not for an
+    `editor`: the address without its path and a failed poll in fixed words (module docstring)."""
+    snapshot = device.latest_snapshot if editor else _for_viewer(device.latest_snapshot)
+    url = getattr(device.config, "url", None)
     offers = device.driver.offers
     entry: Dict[str, Any] = {
         "id": device.id,
         "driver": device.driver.name,
         "host": device.driver.host,
-        "url": getattr(device.config, "url", None),  # validated to carry no credentials
+        "url": url if editor or not url else url_origin(url),  # validated to carry no credentials
         "model": getattr(device.config, "model", None),
         "label": device_label(device),
         "kind": getattr(device.driver, "label", None) or device.driver.name,  # what it is: "ASUS router"
@@ -102,6 +128,9 @@ def device_summary(device: Device) -> Dict[str, Any]:
         "poll_interval_seconds": device.interval_seconds,
         "has_credentials": device.has_credentials,
         "needs_sign_in": device.needs_sign_in,
+        # what the setup dialog asks for, when the driver says (snmp: community string, or the SNMPv3 fields); labels
+        # only, never a value
+        "sign_in": getattr(device.driver, "sign_in", None),
         "status": snapshot.status if snapshot else None,  # None: not polled yet
         "last_poll": snapshot.timestamp if snapshot else None,
         "ranges": device_ranges(device),
@@ -117,17 +146,19 @@ def device_summary(device: Device) -> Dict[str, Any]:
 # --- generic --------------------------------------------------------------------------------------------------------
 
 @router.get("/devices")
-async def list_devices(state: StateDep):
+async def list_devices(request: Request, state: StateDep):
     """Every configured device, in config order, with the state of its last poll."""
     if state.devices is None:
         raise HTTPException(status_code=503, detail="Devices not initialized")
-    return [device_summary(d) for d in state.devices.all()]
+    editor = can_edit(request)
+    return [device_summary(d, editor) for d in state.devices.all()]
 
 
 @router.get("/devices/{device_id}")
-async def get_device(device_id: str, state: StateDep):
+async def get_device(device_id: str, request: Request, state: StateDep):
     """The device's latest snapshot (never polls the device)."""
-    return await _latest(device_or_404(state, device_id))
+    snapshot = await _latest(device_or_404(state, device_id))
+    return snapshot if can_edit(request) else _for_viewer(snapshot)
 
 
 @router.post("/devices/{device_id}/credentials", dependencies=[Depends(_CREDENTIALS_RATE)])
@@ -148,8 +179,8 @@ async def get_features(state: StateDep):
 async def get_device_history(
     device_id: str,
     state: StateDep,
-    start_time: Optional[float] = Query(None),
-    end_time: Optional[float] = Query(None),
+    start_time: Optional[float] = Query(None, allow_inf_nan=False),
+    end_time: Optional[float] = Query(None, allow_inf_nan=False),
     bucket_seconds: Optional[int] = Query(None, ge=1),
     max_points: Optional[int] = Query(None, ge=2, le=MAX_POINTS_LIMIT),
 ):
@@ -159,9 +190,9 @@ async def get_device_history(
     is cut to its newest 48 h: every poll is one row (a week is 55 000 of them).
 
     With bucket_seconds and/or max_points the answer is instead bucketed: {"bucket_seconds", "start_time",
-    "end_time", "fields", "rows", "capacity"}, rows in field order (avg and max of WAN rx/tx Mbps, CPU %, memory %
-    and clients per bucket, no padding). The width is at least bucket_seconds and large enough for max_points
-    (default 400) buckets; the range is clipped to the retention. `capacity` is the line capacity in Mbps
+    "end_time", "fields", "rows", "capacity"}, rows in field order (avg and max of WAN rx/tx Mbps, CPU %, memory %,
+    clients and CPU temperature per bucket, then the lowest WAN link speed; no padding). The width is at least
+    bucket_seconds and large enough for max_points (default 400) buckets; the range is clipped to the retention. `capacity` is the line capacity in Mbps
     ({"down_mbps", "up_mbps"}, null where unknown), for a reference line."""
     device = device_or_404(state, device_id)
     if not device.driver.offers & _HISTORY_CAPABILITIES:
@@ -192,8 +223,8 @@ async def get_device_history(
 async def get_device_channels_history(
     device_id: str,
     state: StateDep,
-    start_time: Optional[float] = Query(None),
-    end_time: Optional[float] = Query(None),
+    start_time: Optional[float] = Query(None, allow_inf_nan=False),
+    end_time: Optional[float] = Query(None, allow_inf_nan=False),
     channel_id: Optional[int] = Query(None),
     direction: Optional[Literal["downstream", "upstream"]] = Query(None),
 ):

@@ -8,13 +8,17 @@
 let leaving = false;
 let held = 0; // changes of the sign-in in flight (holdSignIn)
 
+// Returns whether the page is going to the sign-in page (false while a sign-in change is held: the caller must then
+// carry on, e.g. the live socket reconnects).
 export function sessionEnded() {
-  if (leaving || held) return;
+  if (held) return false;
+  if (leaving) return true;
   leaving = true;
   window.location.assign('/login');
+  return true;
 }
 
-export const refusedSignIn = (res) => res.status === 401 && /^Bearer realm=/i.test(res.headers.get('www-authenticate') || '');
+const refusedSignIn = (res) => res.status === 401 && /^Bearer realm=/i.test(res.headers.get('www-authenticate') || '');
 
 const nativeFetch = window.fetch.bind(window);
 window.fetch = async (...args) => {

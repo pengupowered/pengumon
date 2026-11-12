@@ -8,8 +8,9 @@
 // "Drawing a card").
 
 import { createCard } from '../../js/cards.js';
-import { zoneParams } from '../../js/util.js';
+import { zoneParams } from '../../js/clock.js';
 import standard from './view.js';
+import { everyWhileVisible } from '../../js/timers.js';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const hh = (h) => `${String(h % 24).padStart(2, '0')}:00`;
@@ -93,7 +94,9 @@ export function fixture() {
 }
 
 // Draws an answer.
+let shownGrid = null;
 function renderHeat(grid) {
+  shownGrid = grid;
   if (card) card.update(present(grid, Date.now() / 1000));
 }
 
@@ -110,5 +113,7 @@ async function load() {
 export function initHeat(section) {
   card = createCard({ panel: 'heat', root: section.querySelector('.panel-b'), standard, fixture });
   load();
-  setInterval(load, 900000);
+  everyWhileVisible(load, 900000);
+  everyWhileVisible(() => { if (shownGrid) renderHeat(shownGrid); }, 60000); // an hour that has begun becomes a button
+  document.addEventListener('zonechange', load);
 }

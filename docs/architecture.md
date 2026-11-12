@@ -47,7 +47,7 @@ its own rows. The services gauges stay in the table so that the order of `/metri
   `main.py` imports `api` (tests/test_module_layout.py). What the routes and the lower layers share lives below it: the
   app state in `state.py` (`AppState`, `get_state`), the live stream's broadcaster in `live/ws.py`, the preview job's
   answer in `settings/preview.py`, and what the MCP tools share with the routes in the feature packages
-  (`devices/summary.py`, `services/summary.py`, the AI pack lock in `reports/common.py`). `api/__init__.py` holds only its docstring, so importing one route module loads only what that
+  (`devices/summary.py`, `services/summary.py`, the router's traffic figures and events in `devices/traffic.py` and `devices/events.py`, the AI pack lock in `reports/common.py`). `api/__init__.py` holds only its docstring, so importing one route module loads only what that
   module needs.
 - **Outages.** The joining rule is one implementation, `incidents/outages.py` (`OutageBuilder`: pure, no I/O, told the
   time), with its settings in `incidents/settings.py` (`incidents:`). `incidents/outage_read.py` reads the incidents an
@@ -60,17 +60,58 @@ its own rows. The services gauges stay in the table so that the order of `/metri
   value formatted) and its standard view (`view.js`: the DOM of its body). A built-in theme may add its own view of a
   card, `web/static/themes/<theme>/panels/<id>.js` (+ `.css`), found by `web/themes.py`, or restyle the standard view
   with a stylesheet alone (`<id>.css`, through the hooks each standard part documents); `web/static/js/cards.js`
-  mounts the right view, swaps it on a theme change and falls back to the standard one. The contract and the
+  mounts the right view, swaps it on a theme change and falls back to the standard one. The helpers the cards share are
+  small modules named for what they hold (`js/targets.js`, `dom.js`, `clock.js`, `format.js`, `escape.js`, `modal.js`, ...:
+  [dashboard.md](dashboard.md)); the two large dialogs are folders of modules too (`dialogs/settings/`: sections, fields,
+  render, validation, save, transfer, versions; `dialogs/target-history/`: state, build, charts, figures, strips, load).
+  Every dialog is opened through `js/modal.js`, which owns the browser history entry that Back closes
+  ([dashboard.md, "Back and dialogs"](dashboard.md)). The contract and the
   conversion guide are in [themes.md, "Drawing a card"](themes.md#drawing-a-card) and
   ["Restyling a card"](themes.md#restyling-a-card).
+
+- **Storage reads.** `db/core.py` opens the database with one writer connection and `READERS` (3) read-only ones (the
+  vendored homeguard `Database(readers=...)`), so a slow report never holds up the page's other reads. The rollup reads
+  (`db/rollups.py`: whole quarters from `rollup_15m`, the edges from `rollup_1m`) and the kept answers of the report,
+  loss grid and uptime strips (`reports/cache.py`, at most two builds at once, fewer than the readers) are described in
+  [storage.md](storage.md#rollups-and-retention-schema-v18).
+- **Router traffic.** The ASUS driver's Traffic Analyzer reads are `drivers/asuswrt_traffic.py`; the SNMPv3 session is
+  `drivers/snmp_v3.py` (with `drivers/snmp_ber.py`); the stored figures are read and explained by `devices/traffic.py`,
+  the restart and WAN link events are `devices/events.py`, and both are served by `api/traffic.py`
+  ([devices.md](devices.md#asuswrt-traffic-uptime-wan-link-and-temperature)). The dashboard side is the `traffic` card
+  (`web/static/panels/traffic/`) and `web/static/js/live-delta.js` puts the live stream's deltas back together
+  ([api.md](api.md): `WS /ws`).
+
+- **Probes.** A hop is probed by ping (`engine/icmp_*.py`), by a TCP handshake (`engine/probe_tcp.py`) or by an HTTP(S)
+  request (`engine/probe_http.py`); `engine/probe_rules.py` is the policy for the last two (no loopback, link-local or
+  special-purpose destination, at most `MAX_SOCKET_HOPS` of them) and `engine/prober.py` calls the right one for each
+  target. The policy is in [security.md](security.md#what-the-paths-tcp-and-http-probes-can-reach).
+- **Settings.** `settings/manager.py` keeps the document and the environment; the rest is in modules of one job each:
+  `registry.py` (every key, its range and text, the lists and their maximum lengths), `validate.py` (validation, with a
+  `ValidationContext` the steps share), `candidate.py` (a document as a config), `transfer.py` (export and import as
+  YAML), `describe.py` (the version line of a change), `dotted.py` (dotted paths into mappings), `importer.py` (the one-time import of config.yaml),
+  `check.py` (`pengumon settings check-import`) and `preview.py` (the outage-rules preview).
+- **Alerts.** `notify/notifier.py` keeps the decisions (which incident or outage alerts, and when); `scheduler.py` has
+  the timers, `messages.py` the alert texts, `delivery.py` the ntfy delivery, `webhook.py` the webhook delivery and
+  `channels.py` builds the channels from the settings.
+- **Drivers.** The pure parsers of the ASUS router's answers are `drivers/asuswrt_parse.py`; every driver that speaks HTTP
+  gets its client from `drivers/http.py` (`new_client`) and reads answers through that module's reader, which limits their size and total time.
+- **Reports.** The Ask AI pack is built in steps: `reports/ai_findings.py` collects the facts from the stored data,
+  `reports/ai_pack_view.py` turns them into the view (the sentences Pengumon writes), and `reports/ai_pack.py` renders
+  that view as Markdown at one of three levels through the redactor in `reports/redact.py` (which also holds the final
+  scan's rules); `reports/contributions.py` (`build_ai_pack`) ties them together with the device modules. The dossier
+  and the reliability report (`reports/dossier.py`, `reliability.py`) share their per-cause totals.
+- **Backup.** `GET /api/backup` is `api/backup.py`; the copy is made by `db/snapshot.py` (`VACUUM INTO`) in a private
+  temporary folder that `db/backup_temp.py` opens, checks and empties.
+- **The page's files.** `web/preload.py` lists the start's modules for `modulepreload`, and `web/assets.py` joins the
+  panels' and dialogs' stylesheets into `panels.css` and keeps the gzipped text assets ([dashboard.md](dashboard.md)).
 
 ## The order, and why
 
 - **1. storage** (`db/storage.py`). Opens (migrates) the database. The settings live in it, every later component may use it, and their `stop` runs before its own, which closes it.
-- **2. settings** (`settings/component.py`). The settings store: the one-time import of config.yaml on the first start, then the stored settings (the environment overrides on top) copied into the live config, so every later component is built from them. Creates the one `SecretStore`, puts the hub on `ctx.settings` (components subscribe their appliers for live changes there) and sets the repository's retention days before the start-up cleanup. Puts the sign-in in force (`access/manager.py`: the password from secrets.json or `PENGUMON_ACCESS_TOKEN`, and the viewers setting, into the app's one `SecurityConfig`) before the app answers its first request.
+- **2. settings** (`settings/component.py`). The settings store: the one-time import of config.yaml on the first start, then the stored settings (the environment overrides on top) copied into the live config, so every later component is built from them. Creates the one `SecretStore`, puts the hub on `ctx.settings` (components subscribe their appliers for live changes there) and sets the repository's retention days before the start-up cleanup. Puts the sign-in in force (`access/manager.py`: the password from secrets.json (its hash, and the session secret) or `PENGUMON_ACCESS_TOKEN`, the read token and the viewers setting, into the app's one `SecurityConfig`) before the app answers its first request.
 - **3. devices** (`devices/component.py`). Built from the stored devices. A device that cannot run (a missing CA file, say) is logged and left out; the start goes on. Warns about stored history of devices that are not in the settings.
 - **4. probing** (`engine/probing.py`). Loads the probe path from the database (`engine/path.py`: the one-time import of config.yaml's targets and the custom targets on a first start), then builds the prober. Line load and the classifier need the complete target list; a path edit later replaces `config.targets` in place, so they keep seeing the live one.
-- **5. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history.
+- **5. retention** (`db/retention.py`). The start-up cleanup, before the load backfills read the stored history (it finishes first, as before: the cleanup deletes in batches of `PRUNE_BATCH_ROWS` rows, each its own write transaction, so the probe loop's sample flush gets in between them; it is not run in the background).
 - **6. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
 - **7. notify** (`notify/component.py`). The notifier: ntfy and webhooks (`notify/notifier.py`, `notify/webhook.py`), for the classifier and the service checks. It sends one alert per outage, not per incident ([webhooks.md](webhooks.md)), and follows `incidents:` changes live.
 - **8. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
@@ -130,6 +171,9 @@ The probe loop (`engine/loop.py`) builds the message from the round itself and t
   - `devices` (summaries, from the devices component);
   - `line` (load and capacity, from line_load);
   - `incidents_version` (from storage).
+
+A `/ws?delta=1` connection (the dashboard) gets each target's `recent_latencies` window in full only in its first message and
+when it asks again, and otherwise the probes since its last message (`latency_tail`, `live/ws.py` `latency_delta`).
 
 The message is built only while a dashboard is connected, and `ws.publish` only stores it for the broadcaster task.
 A part must name a field of `LiveStreamMessage` that the round does not fill, and only one part may fill each field.

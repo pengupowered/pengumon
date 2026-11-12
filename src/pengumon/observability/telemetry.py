@@ -11,7 +11,7 @@ low-cardinality: device and target ids from the config, categories, outcomes, er
 addresses or query strings.
 """
 
-from typing import Any, Iterable, Mapping, MutableMapping
+from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 from opentelemetry import metrics, trace
 
@@ -58,6 +58,15 @@ api_rate_limited = meter.create_counter(
 ai_pack_exports = meter.create_counter(
     "pengumon.ai_pack.exports", unit="{pack}",
     description="AI troubleshooting packs built through the API, by detail level and scope")
+db_backups = meter.create_counter(
+    "pengumon.db.backups", unit="{backup}",
+    description="Database backups asked for through GET /api/backup, by outcome (ok, no_space, failed)")
+db_backup_size = meter.create_histogram(
+    "pengumon.db.backup.size", unit="By", description="Bytes of a database backup made through GET /api/backup",
+    explicit_bucket_boundaries_advisory=[1e6, 1e7, 5e7, 1e8, 2.5e8, 5e8, 1e9, 2.5e9, 5e9])
+db_backup_duration = meter.create_histogram(
+    "pengumon.db.backup.duration", unit="s", description="Time VACUUM INTO took to write a backup made through GET /api/backup",
+    explicit_bucket_boundaries_advisory=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0])
 mcp_calls = meter.create_counter(
     "pengumon.mcp.calls", unit="{call}",
     description="MCP tool calls (POST /mcp), by tool and outcome (ok; error: the tool answered with an error; "
@@ -188,11 +197,15 @@ speedtest_bytes = meter.create_counter(
     description="Bytes the speed tests moved, by direction (download, upload): the data the feature uses")
 
 
-def record_probes(samples: Iterable[Any], categories: Mapping[str, str]) -> None:
+def record_probes(samples: Iterable[Any], categories: Mapping[str, str],
+                  probes_by_target: Optional[Mapping[str, str]] = None) -> None:
     """One probe round: each sample's result and, when answered, its latency. `categories` maps target id to its
-    category (the prober's stats)."""
+    category (the prober's stats). `probes_by_target` (target id -> icmp, tcp, http or dns) adds the "probe" attribute:
+    four values, so the series stay few."""
     for sample in samples:
         attributes = {"target": sample.target_id, "category": categories.get(sample.target_id, "unknown")}
+        if probes_by_target is not None:
+            attributes["probe"] = probes_by_target.get(sample.target_id, "dns")
         answered = sample.success and sample.latency_ms is not None
         probes.add(1, {**attributes, "result": "answered" if answered else "lost"})
         if answered:

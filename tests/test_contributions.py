@@ -41,7 +41,8 @@ ADDRESS = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b|\b(?:[0-9a-f]{2}:){5}[0-9a-f]
 
 EXPECTED_CODES = {
     "line.offline", "line.restart", "line.error_burst", "line.errors", "line.signal_out_of_range", "wan.busy", "wan.stall",
-    "router.restart", "router.unreachable", "router.cpu_high", "router.memory_high", "clients.drop",
+    "router.restart", "router.unreachable", "router.cpu_high", "router.memory_high", "router.booted", "router.wan_link",
+    "clients.drop",
     "mesh.node_empty",
 }
 # The contribution whose budget also pays for a driver note (design 6.2): DOCSIS + the gateway's, Router + the router's.
@@ -105,6 +106,10 @@ async def seed(repo) -> None:
     for ts, empty in clients_at:
         await repo.insert_mesh_counts([MeshCount(ROUTER_ID, ts, NODE_A, 9), MeshCount(ROUTER_ID, ts, NODE_B,
                                                                                     0 if empty else 5)])
+    # the device events (devices/events.py): a restart the uptime shows, and the WAN port link going down and back
+    await repo.insert_device_event(ROUTER_ID, T0 + 3005, "restarted", {"boot_at": T0 + 2990, "uptime_s": 15})
+    await repo.insert_device_event(ROUTER_ID, T0 + 4000, "wan_link", {"old": 2500, "new": 0})
+    await repo.insert_device_event(ROUTER_ID, T0 + 4060, "wan_link", {"old": 0, "new": 2500})
 
 
 def live_monitor():
@@ -437,3 +442,23 @@ def test_the_modem_itself_supports_the_gateway_and_its_codewords_the_line():
     assert {k.code: set(k.supports) for k in DocsisContribution.events} == {
         "line.offline": {"gateway"}, "line.restart": {"gateway"}, "line.error_burst": {"line"},
         "line.errors": set(), "line.signal_out_of_range": {"line"}}
+
+
+async def test_the_pack_is_rendered_off_the_event_loop(tmp_path, monkeypatch):
+    """Rendering is pure and takes a second or so for a long window: on the event loop it held up the probes."""
+    import threading
+
+    from ai_pack_helpers import built_pack
+    from pengumon.reports import contributions
+
+    threads = []
+    render = contributions.render_pack
+
+    def recording(*args, **kwargs):
+        threads.append(threading.current_thread())
+        return render(*args, **kwargs)
+
+    monkeypatch.setattr(contributions, "render_pack", recording)
+    loop_thread = threading.current_thread()
+    assert (await built_pack(tmp_path, monkeypatch, "vague"))["markdown"].startswith("# ")
+    assert threads and all(t is not loop_thread for t in threads)

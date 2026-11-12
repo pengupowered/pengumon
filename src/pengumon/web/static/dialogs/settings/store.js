@@ -5,7 +5,7 @@
 
 import { clone, same, sameItems } from './model.js';
 
-export const emptyDraft = () => ({ values: {}, lists: {}, secrets: {} });
+const emptyDraft = () => ({ values: {}, lists: {}, secrets: {} });
 
 export const S = {
   schema: null,

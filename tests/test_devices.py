@@ -30,6 +30,7 @@ class FakeSpan:
         self.name, self.attributes = name, dict(attributes or {})
         self.status = None
         self.exceptions = []
+        self.events = []
 
     def set_attribute(self, key, value):
         self.attributes[key] = value
@@ -39,6 +40,9 @@ class FakeSpan:
 
     def record_exception(self, exc):
         self.exceptions.append(exc)
+
+    def add_event(self, name, attributes=None):
+        self.events.append((name, dict(attributes or {})))
 
 
 class FakeTracer:
@@ -148,6 +152,15 @@ def test_classify(exc, kind, transport):
     assert error.message.endswith(str(exc))
 
 
+def test_classify_bounds_the_message_whatever_the_exception_carries():
+    for exc in (ValueError("x" * 100_000), httpx.RemoteProtocolError("y" * 100_000),
+                DriverError("protocol", "z" * 100_000, transport=True)):
+        error = classify(exc)
+        assert len(error.message) <= device_module.MESSAGE_MAX and error.message.endswith("...")
+        assert error.kind == classify(type(exc)("short") if not isinstance(exc, DriverError) else exc).kind
+    assert classify(DriverError("protocol", "z" * 100_000, transport=True)).transport
+
+
 def test_classify_keeps_driver_errors_and_names_empty_exceptions():
     original = DriverError("auth", "refused")
     assert classify(original) is original
@@ -196,8 +209,8 @@ async def test_errors_are_classified_and_logged_by_state(telemetry, caplog):
     visible = [(r.levelname, r.getMessage()) for r in caplog.records
                if r.name == "pengumon.devices" and r.levelno > logging.DEBUG]
     assert visible == [
-        ("WARNING", "Polling router (fake at 192.0.2.1) failing: timeout: timed out"),
-        ("INFO", "Polling router (fake at 192.0.2.1) recovered after 30 s (3 failed attempts)"),
+        ("WARNING", "Polling router (fake) failing: timeout: timed out"),
+        ("INFO", "Polling router (fake) recovered after 30 s (3 failed attempts)"),
     ]
     assert tracer.spans[0].attributes["error.type"] == "timeout" and tracer.spans[0].status is not None
     assert [c[1]["outcome"] for c in polls.calls] == ["error", "error", "error", "ok"]
@@ -211,8 +224,11 @@ async def test_an_unexpected_exception_is_logged_with_its_traceback(telemetry, c
         await device.poll(force=True)
     assert device.monitor.events == [("error", "internal", "KeyError: 'netdev'", False)]
     record = next(r for r in caplog.records if r.getMessage() == "driver raised an unexpected exception")
-    assert record.exc_info is not None
-    assert isinstance(tracer.spans[0].exceptions[0], KeyError)
+    context = getattr(record, "pengumon_context")
+    assert "KeyError" in context["traceback"] and "Traceback (most recent call last)" in context["traceback"]
+    name, attributes = tracer.spans[0].events[0]
+    assert name == "exception" and attributes["exception.type"] == "KeyError"
+    assert "KeyError" in attributes["exception.stacktrace"]
 
 
 async def test_missing_capabilities_are_logged_by_state(telemetry, caplog):
@@ -598,7 +614,8 @@ async def test_the_traceback_of_an_unexpected_exception_is_logged_only_when_the_
 
     def tracebacks():
         return [r for r in caplog.records if r.getMessage() == "driver raised an unexpected exception"
-                and r.levelno >= logging.ERROR and r.exc_info]
+                and r.levelno >= logging.ERROR
+                and getattr(r, "pengumon_context", {}).get("traceback")]
 
     with caplog.at_level(logging.DEBUG, logger="pengumon.devices"):
         await device.poll(force=True)
@@ -608,7 +625,8 @@ async def test_the_traceback_of_an_unexpected_exception_is_logged_only_when_the_
             await device.poll(force=True)
         assert len(tracebacks()) == 1  # repeats within 15 minutes: no new traceback at ERROR
         repeats = [r for r in caplog.records if r.getMessage() == "driver raised an unexpected exception"][1:]
-        assert [r.levelno for r in repeats] == [logging.DEBUG] * 3 and not any(r.exc_info for r in repeats)
+        assert [r.levelno for r in repeats] == [logging.DEBUG] * 3
+        assert not any(getattr(r, "pengumon_context", {}).get("traceback") for r in repeats)
         clock.now += 900  # the state log reminds again
         await device.poll(force=True)
         assert len(tracebacks()) == 2
@@ -625,7 +643,7 @@ async def test_alternating_errors_of_one_kind_produce_one_warning(telemetry, cap
     assert [e[1] for e in device.monitor.events] == ["timeout"] * 6
     warnings = [r for r in caplog.records if r.name == "pengumon.devices" and r.levelno == logging.WARNING]
     assert len(warnings) == 1
-    assert warnings[0].getMessage() == "Polling router (fake at 192.0.2.1) failing: timeout: connect timed out"
+    assert warnings[0].getMessage() == "Polling router (fake) failing: timeout: connect timed out"
 
 
 # --- monitors: edge cases ---------------------------------------------------------------------------------------------
@@ -681,3 +699,17 @@ async def test_the_wait_survives_thousands_of_failures_in_a_row(telemetry):
     for failures in (1023, 1024, 100_000):  # 10 s * 2 ** 1024 overflows a float
         device._failures = failures
         assert device._wait() == 3600.0
+
+
+async def test_the_traceback_of_an_unexpected_exception_names_the_device_by_id_not_by_address(telemetry, caplog):
+    """The log line and the span event are exported over OTLP: the exception text may hold the device's address."""
+    tracer, _, _ = telemetry
+    device = _device(FakeDriver([KeyError("no field in the answer of 192.0.2.1")]))
+    with caplog.at_level(logging.ERROR, logger="pengumon.devices"):
+        await device.poll(force=True)
+    record = next(r for r in caplog.records if r.getMessage() == "driver raised an unexpected exception")
+    text = getattr(record, "pengumon_context")["traceback"]
+    assert "192.0.2.1" not in text and "answer of router" in text
+    _, attributes = tracer.spans[0].events[0]
+    assert "192.0.2.1" not in attributes["exception.stacktrace"] + attributes["exception.message"]
+    assert "answer of router" in attributes["exception.message"]

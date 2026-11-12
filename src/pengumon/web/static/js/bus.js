@@ -5,6 +5,7 @@
 
 const subscribers = new Map(); // topic -> Set of callbacks
 const lastValues = new Map(); // topic -> last published value
+const signatures = new Map(); // topic -> JSON of what publishIfChanged last published
 const every = new Map(); // topic -> how many subscribers need every change of it, also while the tab is hidden
 
 function deliver(topic, fn, value) {
@@ -35,9 +36,22 @@ export const bus = {
   },
 
   publish(topic, value) {
+    signatures.delete(topic); // (a plain publish makes the next publishIfChanged compare against nothing)
     lastValues.set(topic, value);
     // a copy, so a callback that (un)subscribes does not change who gets this message
     [...(subscribers.get(topic) || [])].forEach((fn) => deliver(topic, fn, value));
+  },
+
+  // Publishes only when the value differs from what this method published last (compared as JSON): the live message
+  // repeats most of its objects every second as they were, and a subscriber should not repaint for an unchanged one.
+  // Returns whether it published.
+  // `skip`: top-level keys that do not count (a timestamp that moves every second).
+  publishIfChanged(topic, value, skip = []) {
+    const sig = JSON.stringify(skip.length && value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([k]) => !skip.includes(k))) : value);
+    if (signatures.get(topic) === sig && lastValues.has(topic)) return false;
+    this.publish(topic, value);
+    signatures.set(topic, sig); // (after: a plain publish forgets it)
+    return true;
   },
 
   // The last value of a topic, or undefined before the first publish.

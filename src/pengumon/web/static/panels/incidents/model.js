@@ -8,12 +8,15 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { createCard } from '../../js/cards.js';
-import { afterModalHistory, icon, localFormat, nextMidnight, STATUS } from '../../js/util.js';
-import { CAUSES, CAUSE_SHORT } from '../../js/path-api.js';
+import { icon, STATUS } from '../../js/dom.js';
+import { localFormat, nextMidnight } from '../../js/clock.js';
+import { numText } from '../../js/escape.js';
+import { CAUSES, CAUSE_SHORT } from '../../js/roles.js';
 import { CAP, hasMore, isLoading, loadAll, loadMore, loadSince, loadedOutages, oldestLoaded, totalCounts } from './list.js';
 import { causeOf, durationOf, formatDuration, levelOfIncident, whenText } from './incidents.js';
 import { settingsValues, val } from '../../js/settings-values.js';
 import standard from './view.js';
+import { everyWhileVisible } from '../../js/timers.js';
 
 const DAY = 86400;
 
@@ -210,7 +213,7 @@ export function present(s, nowMs) {
       count: capped ? `${incidentCount.toLocaleString()} recorded events · newest ${CAP} listed`
         : grouped ? `${everything.length}${s.more ? '+' : ''} events · ${incidentCount} incidents`
         : `${incidentCount}${s.more && knownShown === null ? '+' : ''} recorded events`,
-      expected: { hidden: expectedCount === 0, text: `${s.showExpected ? 'Hide' : 'Show'} ${expectedCount} expected`, pressed: s.showExpected },
+      expected: { hidden: expectedCount === 0, text: `${s.showExpected ? 'Hide' : 'Show'} ${numText(expectedCount)} expected`, pressed: s.showExpected },
       info: totalCount === 0 ? 'Showing 0 events'
         : `Showing ${startIdx + 1}–${endIdx} of ${shownTotal}${plus} events${s.query || s.window ? ' (filtered)' : ''}${capped ? `, from the newest ${CAP} incidents` : ''}`,
       pageNum: `Page ${page} of ${totalPages}`,
@@ -259,6 +262,7 @@ function render() {
   if (!card) return;
   const vm = present(state(), Date.now());
   incidentCurrentPage = vm.page;
+  lastTotal = vm.total;
   card.update(vm);
   const f = vm.frame;
   const set = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
@@ -282,16 +286,17 @@ export function initIncidentsCard(section) {
   root = section.querySelector('.panel-b');
   card = createCard({ panel: 'incidents', root, standard, fixture });
   document.addEventListener('zonechange', render); // the times and the timeline's days are on the page's clock
+  everyWhileVisible(render, 60000); // the timeline's "now", ongoing bars and "Today 14:02" labels move with the clock
 }
 
 // Lists the drops of an outage under its row, or hides them again.
-export function toggleOutage(id) {
+function toggleOutage(id) {
   if (openOutages.has(id)) openOutages.delete(id);
   else openOutages.add(id);
   render();
 }
 
-export function toggleExpectedIncidents() {
+function toggleExpectedIncidents() {
   showExpectedIncidents = !showExpectedIncidents;
   incidentCurrentPage = 1;
   render();
@@ -306,7 +311,7 @@ export function updateIncidentsTable(incidents) {
 
 // The incidents overlapping a stretch of time, from a cell of another panel (When it breaks, Uptime): the list shows only
 // those, the timeline marks the stretch, and the panel comes into view (on a phone its tab is opened first).
-export function showIncidentWindow(win) {
+function showIncidentWindow(win) {
   incidentWindow = win;
   incidentCurrentPage = 1;
   render();
@@ -324,27 +329,33 @@ export function showIncidentWindow(win) {
   // on a phone the panel's tab opens first; tabs.js shows it on hashchange, so the scroll waits for that
   if (section.hidden && tab && location.hash !== `#${tab}`) {
     window.addEventListener('hashchange', reveal, { once: true });
-    afterModalHistory(() => { location.hash = tab; }); // the dialog that sent us here (Show in latency chart) gives its history entry back first
+    location.hash = tab;
   } else reveal();
 }
 
-export function handleIncidentSearch(query) {
+let searchTimer = null;
+function handleIncidentSearch(query) {
   incidentSearchQuery = (query || '').trim().toLowerCase();
   incidentCurrentPage = 1;
-  render();
-  if (incidentSearchQuery && hasMore()) loadAll(); // a search looks through everything the list can hold (list.js re-renders)
+  // a keystroke a moment after the last one is not drawn: the table is rebuilt once the typing pauses
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    render();
+    if (incidentSearchQuery && hasMore()) loadAll(); // a search looks through everything the list can hold (list.js re-renders)
+  }, 150);
 }
 
-export function changeIncidentPageSize(val) {
+function changeIncidentPageSize(val) {
   incidentPageSize = parseInt(val, 10) || 10;
   incidentCurrentPage = 1;
   render();
 }
 
 // How many incidents the filter, the window and the toggle leave (all pages).
-const filteredCount = () => present(state(), Date.now()).total;
+let lastTotal = null; // vm.total of the last render
+const filteredCount = () => (lastTotal === null ? present(state(), Date.now()).total : lastTotal);
 
-export function gotoIncidentPage(action, loaded = false) {
+function gotoIncidentPage(action, loaded = false) {
   const filtered = filteredCount();
   const totalPages = Math.max(1, Math.ceil(filtered / incidentPageSize));
   // past the last loaded page: load the older ones first (the last page is the oldest there is)

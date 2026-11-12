@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from pengumon.state import get_state
 from pengumon.observability import grafana
 from pengumon.web import themes
+from pengumon.web.preload import module_closure
 from pengumon.web.ui import ui as discovered_ui
 from pengumon.web.assets import ASSET_VERSION, ASSET_VERSIONS, STATIC_DIR, TEMPLATES_DIR
 from pengumon.web.settings import DashboardConfig, DisplayConfig
@@ -41,6 +42,16 @@ def page_modules() -> dict:
     return {"dialogs": eager, "lazy": lazy, "panels": modules["panels"]}
 
 
+@lru_cache(maxsize=1)
+def preload_modules() -> tuple:
+    """Every module the page loads at start, for <link rel="modulepreload"> (pengumon.web.preload): js/main.js, the
+    dialogs and panels it imports by path (page_modules) and what they import. A lazy dialog is left out unless
+    something eager imports it."""
+    modules = page_modules()
+    found, _missing = module_closure(STATIC_DIR, ["js/main.js", *modules["dialogs"], *modules["panels"]])
+    return tuple(found)
+
+
 def page_theme(display: DisplayConfig) -> dict:
     """What the page needs to show its theme before the first paint (docs/themes.md, "Applying"): the default from
     Settings (`look`, an unknown id gives `default`), its forced mode when it has only one, the short list of themes
@@ -66,9 +77,11 @@ async def serve_dashboard(request: Request):
     config = state.config
     layout = (config.dashboard if config is not None else DashboardConfig()).model_dump()
     # the effective settings for the help texts (js/settings-values.js reads <body data-settings>); {} before the
-    # settings store is loaded
+    # settings store is loaded. The revision they were read at goes with them (<body data-settings-revision>), taken in
+    # the same step (no await between), so the page can tell a Save made after this render from the first live message.
     settings_values = state.settings.values() if state.settings is not None else {}
+    settings_revision = state.settings.revision if state.settings is not None else None
     display = config.display if config is not None else DisplayConfig()
     return templates.TemplateResponse(request=request, name="index.html", context={
-        "v": ASSET_VERSIONS, "grafana_links": grafana.links(), "layout": layout, "ui": discovered_ui(), "modules": page_modules(),
-        "settings_values": settings_values, "theme": page_theme(display)})
+        "v": ASSET_VERSIONS, "grafana_links": grafana.links(), "layout": layout, "ui": discovered_ui(), "modules": page_modules(), "preload": preload_modules(),
+        "settings_values": settings_values, "settings_revision": settings_revision, "theme": page_theme(display)})

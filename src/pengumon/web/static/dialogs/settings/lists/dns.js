@@ -12,6 +12,7 @@ export default makeListEditor({
   addLabel: 'Add a lookup',
   empty: 'No lookups. Without them Path health shows no DNS stage.',
   note: 'An id is fixed once the lookup is saved, and may not be the id of a hop in the probe path.',
+  emptyView: 'No lookups.',
   resetLabel: 'Back to the two default lookups',
   fields: [
     { f: 'name', label: 'Name', kind: 'text', required: true },

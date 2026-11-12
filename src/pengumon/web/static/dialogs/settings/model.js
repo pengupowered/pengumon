@@ -18,9 +18,9 @@ export const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.strin
 const tidy = (n) => Number(n.toPrecision(12)); // 300.00000000000006 -> 300
 
 // What a number is shown in: stored rounds are seconds (x round_seconds), the rest are x scale (a fraction as %, seconds as min).
-export const factor = (spec, roundSeconds) => (spec.rounds ? roundSeconds : spec.scale || 1);
+const factor = (spec, roundSeconds) => (spec.rounds ? roundSeconds : spec.scale || 1);
 export const toShown = (spec, stored, roundSeconds) => (typeof stored === 'number' ? tidy(stored * factor(spec, roundSeconds)) : stored);
-export const fromShown = (spec, shown, roundSeconds) => tidy(shown / factor(spec, roundSeconds));
+const fromShown = (spec, shown, roundSeconds) => tidy(shown / factor(spec, roundSeconds));
 
 export const isNumeric = (spec) => spec.type === 'number' || spec.type === 'integer';
 

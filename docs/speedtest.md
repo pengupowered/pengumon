@@ -229,8 +229,9 @@ While a test runs, and for the judged window after it, the classifier does not c
 [diagnosis.md](diagnosis.md#while-a-speed-test-runs).
 
 The record keeps: start time, duration, trigger (scheduled or manual), provider and server label, status and reason,
-download and upload Mbps, idle and loaded latency, bytes moved each way and the WAN peaks. Rows older than the rollup
-retention (`database.rollup_retention_days`, but at least 32 days, so this month's data use stays whole) are deleted. The table is in
+download and upload Mbps, idle and loaded latency, bytes moved each way and the WAN peaks. Rows older than the
+quarter-hour history (`database.long_rollup_retention_days`, 400 days by default, but at least 32 days, so this month's
+data use stays whole) are deleted. The table is in
 [storage.md](storage.md#the-speed-tests-schema-v17).
 
 ## On the dashboard

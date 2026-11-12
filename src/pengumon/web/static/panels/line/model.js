@@ -8,10 +8,12 @@
 // adapter's {gauges: [...], errors, channels} (null before the first reading) and `note` the sentence for a technology
 // with no adapter.
 
-import { cloneTemplate, escapeHtml, setText } from '../../js/util.js';
+import { cloneTemplate, setText } from '../../js/dom.js';
+import { escapeHtml } from '../../js/escape.js';
 import { createCard } from '../../js/cards.js';
 import { watchDevice } from '../../js/device-feed.js';
-import { errorOf, paintCommon, partPusher, placeCard } from '../../js/device-panel.js';
+import { errorOf } from '../../js/device-status.js';
+import { paintCommon, partPusher, placeCard } from '../../js/device-panel.js';
 import docsis from './docsis.js';
 import standard from './view.js';
 
@@ -59,6 +61,7 @@ export function mountLine(section, ctx, device) {
   // The live summary is short; when the adapter needs the full reading, it is fetched once per new reading.
   let drawnAt = null;
   let detail = null;
+  let fetching = null; // the timestamp of the reading whose detail is being fetched: one request per reading, not one a second
   const draw = (s) => {
     if (s.timestamp === drawnAt) return;
     drawnAt = s.timestamp;
@@ -72,8 +75,14 @@ export function mountLine(section, ctx, device) {
     if (!reading || !read) return;
     if (!adapter.needsDetail(s)) { detail = s; draw(s); return; }
     if (detail && detail.timestamp === s.timestamp) { draw(detail); return; }
-    fetch(`/api/devices/${encodeURIComponent(device.id)}`).then((r) => (r.ok ? r.json() : null)).then((full) => {
-      if (full && full.timestamp === s.timestamp) { detail = full; draw(full); } else draw(s);
-    }).catch(() => draw(s));
+    if (fetching === s.timestamp) return;
+    fetching = s.timestamp;
+    const done = (full) => {
+      if (fetching === s.timestamp) fetching = null;
+      if (drawnAt !== null && s.timestamp < drawnAt) return; // a slow answer for a reading already replaced by a newer one
+      if (full) { detail = full; draw(full); } else draw(s);
+    };
+    fetch(`/api/devices/${encodeURIComponent(device.id)}`).then((r) => (r.ok ? r.json() : null))
+      .then((full) => done(full && full.timestamp === s.timestamp ? full : null)).catch(() => done(null));
   });
 }

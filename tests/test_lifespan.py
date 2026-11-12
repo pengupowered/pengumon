@@ -305,3 +305,50 @@ async def test_the_manager_refuses_a_device_that_cannot_be_built_and_applies_a_g
         await manager.apply(manager.revision, {}, {"devices": [good, {**good, "id": "wifi2", "url": "http://192.0.2.2"}]})
         assert state.device_supervisor._tasks["wifi"] is task  # unchanged: same task
         assert [d.id for d in state.devices] == ["wifi", "wifi2"]
+
+
+# --- the upgrade to the quarter-hour rollups (schema v18) -------------------------------------------------------------
+
+async def test_the_upgrade_builds_quarter_hours_before_the_new_per_minute_retention_prunes(tmp_path, monkeypatch):
+    """An install that imported config.yaml with the example's rollup_retention_days: 400 upgrades: the migration (the
+    storage component, first) sums every per-minute row into quarter hours and puts the stored 400 back to the new
+    default, 90 days; only then does the retention component's start-up cleanup delete the per-minute rows older than
+    that. Their probes are still in every report, from the quarter hours."""
+    import sqlite3
+    import time
+    from pengumon.reports.queries import daily_availability
+    from pengumon.state import STATE_ATTR
+
+    db = str(tmp_path / "pengumon.db")
+    config = tmp_path / "config.yaml"
+    config.write_text("database:\n  db_path: " + repr(db) + "\n  rollup_retention_days: 400\n"
+                      "targets:\n  - {id: gw, name: Gateway, address: 192.0.2.1, category: gateway}\n", encoding="utf-8")
+    monkeypatch.setenv("PENGUMON_CONFIG", str(config))
+    _workers_idle(monkeypatch)
+    async with main.lifespan(main.app):  # the first start: the one-time import stores 400 as the owner's value
+        assert getattr(main.app.state, STATE_ATTR).repository.rollup_retention_days == 400
+
+    now = time.time()
+    old, recent = int((now - 200 * 86400) // 900) * 15, int((now - 50 * 86400) // 900) * 15  # first minutes of quarters
+    with sqlite3.connect(db) as con:  # back to v17, with per-minute history from before
+        con.execute("DROP TABLE rollup_10s")
+        con.execute("DROP TABLE rollup_15m")
+        con.execute("PRAGMA user_version=17")
+        con.execute("INSERT OR IGNORE INTO targets (key) VALUES ('gw')")
+        gw = con.execute("SELECT id FROM targets WHERE key = 'gw'").fetchone()[0]
+        con.executemany("INSERT INTO rollup_1m (minute, target, n, ok, lat_sum, jit_n) VALUES (?, ?, 60, ?, NULL, 0)",
+                        [(m, gw, ok) for start in (old, recent) for m, ok in ((start, 60), (start + 1, 30))])
+
+    async with main.lifespan(main.app):
+        state = getattr(main.app.state, STATE_ATTR)
+        repo = state.repository
+        assert (repo.rollup_retention_days, repo.long_rollup_retention_days) == (90, 400)
+        assert state.config.database.rollup_retention_days == 90
+        with sqlite3.connect(db) as con:
+            assert con.execute("SELECT minute FROM rollup_1m ORDER BY minute").fetchall() == [(recent,), (recent + 1,)]
+            assert con.execute("SELECT quarter, n, ok FROM rollup_15m ORDER BY quarter").fetchall() == [
+                (old // 15, 120, 90), (recent // 15, 120, 90)]
+        rows = await daily_availability(repo, now - 365 * 86400)
+        assert sum(r["sent"] for r in rows) == 240 and sum(r["ok"] for r in rows) == 180
+        versions = await repo.settings_versions()
+        assert versions[0]["source"] == "upgrade" and "old default" in versions[0]["summary"]

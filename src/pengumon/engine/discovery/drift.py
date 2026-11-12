@@ -15,7 +15,8 @@ What counts (`route_changes`): your network's, the line's and the provider's hop
 internet hops past the provider and the public servers vary from one trace to the next.
 * new: a hop discovery proposes that the applied path does not have, and that was not removed from it before (a hop
   the owner removed and that is still there is no news);
-* gone: an applied hop discovery did not see (a home hop only when it does not answer a ping either);
+* gone: an applied hop discovery did not see (a home hop only when it does not answer a ping either; never a hop
+  the owner probes by TCP or HTTP, which does not answer ping by their own choice);
 * changed: an applied hop that is now in another place among the others (the role alone is not compared: a
   background run has less evidence than the owner's run had).
 A failed check (discovery failed, or no trace reached a public server, as in an outage) compares nothing.
@@ -148,7 +149,8 @@ class DriftChecker:
         self._sleep = sleep
         self._confirm_delay = confirm_delay
         self.minute = (rng or random.Random()).randrange(24 * 60)  # the daily check's minute (UTC)
-        self._lock = asyncio.Lock()
+        self._lock = asyncio.Lock()  # one check at a time (held for the whole check, which can take minutes)
+        self._save_lock = asyncio.Lock()  # orders the saves of the record; dismiss() needs only this one
         self._record: Dict[str, Any] = {}
         self._last_started: Optional[float] = None
         self._incident_task: Optional[asyncio.Task] = None
@@ -176,7 +178,8 @@ class DriftChecker:
         await self.public()  # pins the draft, compared with the path as it is applied now
 
     async def _save(self) -> None:
-        await self._repository.save_path_drift(self._record)
+        async with self._save_lock:
+            await self._repository.save_path_drift(self._record)
 
     # --- the checks ----------------------------------------------------------------------------------------------
 
@@ -220,6 +223,8 @@ class DriftChecker:
                 span.set_attribute("drift.outcome", outcome)
                 drift_checks.add(1, {"reason": reason, "outcome": outcome})
             record["checked_at"] = self._clock()
+            # changes dismissed while this check ran (dismiss() does not wait for a check) are kept
+            record["dismissed"] = sorted(set(record.get("dismissed") or []) | set(self._record.get("dismissed") or []))
             if record["state"] == "checked":
                 record["good_at"] = record["checked_at"]  # a later failed check keeps this: when the shown changes were found
             self._record = record
@@ -288,12 +293,13 @@ class DriftChecker:
 
     async def dismiss(self) -> dict:
         """POST /api/path/drift/dismiss: the changes shown now are seen; they are not shown or announced again."""
-        async with self._lock:
-            public = await self.public()
-            keys = {change_key(c) for c in self._changes(public)}
-            self._record["dismissed"] = sorted(set(self._record.get("dismissed") or []) | keys)
-            await self._save()
-            return await self.public()
+        # Not behind a running check's lock: a check that is confirming a change waits a minute or more, and the owner
+        # clicking "Dismiss" must not hang for it. check() merges what was dismissed meanwhile into its record.
+        public = await self.public()
+        keys = {change_key(c) for c in self._changes(public)}
+        self._record["dismissed"] = sorted(set(self._record.get("dismissed") or []) | keys)
+        await self._save()
+        return await self.public()
 
     # --- when ----------------------------------------------------------------------------------------------------
 
@@ -328,10 +334,13 @@ class DriftChecker:
             if not self.enabled:
                 await self._wait(None)
                 continue
-            if await self._wait(max(0.0, self.next_daily(self._clock()) - self._clock())):
+            due = self.next_daily(self._clock())
+            if await self._wait(max(0.0, due - self._clock())):
                 continue  # the settings changed: work the next check out again
             if not self.enabled:
                 continue
+            if self._clock() < due - 1.0:
+                continue  # the wall clock was set back while waiting: it is not time yet (no early, doubled check)
             try:
                 await self.check("daily")
             except asyncio.CancelledError:
@@ -348,7 +357,7 @@ class DriftChecker:
         if self._incident_task is not None and not self._incident_task.done():
             return
         if self._last_started is not None and \
-                self._clock() + INCIDENT_DELAY_S - self._last_started < INCIDENT_MIN_GAP_S:
+                0 <= self._clock() + INCIDENT_DELAY_S - self._last_started < INCIDENT_MIN_GAP_S:  # (<0: clock set back)
             return
         try:
             loop = asyncio.get_running_loop()
@@ -360,7 +369,7 @@ class DriftChecker:
         await self._sleep(INCIDENT_DELAY_S)
         if not self.enabled:
             return
-        if self._last_started is not None and self._clock() - self._last_started < INCIDENT_MIN_GAP_S:
+        if self._last_started is not None and 0 <= self._clock() - self._last_started < INCIDENT_MIN_GAP_S:
             return
         try:
             await self.check("incident")

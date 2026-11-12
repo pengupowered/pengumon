@@ -164,23 +164,38 @@ _PRIVATE4 = "|".join([
 _IP6_HOME = r"(?<![\w:])(?:fe80|f[cd][0-9a-f]{2})(?::[0-9a-f]{0,4}){2,7}(?![\w:])"
 _IP6 = (r"(?<![\w:])(?:(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{0,4}::"
         r"(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?)(?![\w:])")
-_MAC = r"(?<![0-9a-f:\-])[0-9a-f]{2}(?:[:\-][0-9a-f]{2}){5}(?![0-9a-f:\-])"
-_HOME_HOST = r"\b[\w-]+(?:\.[\w-]+)*\.(?:lan|local|home|internal|localdomain|home\.arpa)\b"
-_HOST = (r"\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|co|us|uk|de|fr|nl|ca|au|edu|gov|info|biz|tv|me|dev|app|"
-         r"lan|local|home|internal|arpa)\b")
+# A MAC address in any of its written forms: six byte pairs joined by ":" or "-", three groups of four hex digits
+# joined by "." (Cisco), or twelve bare hex digits with at least one letter (twelve decimal digits are a count). A ":"
+# or "-" right before it belongs to the text ("MAC:aa:..", "host-aa:.."); a hex group of an IPv6 address before it
+# ("2001:db8:aa:..", "fe80::aa:..") does not, and neither does a seventh pair after it. Fixed-width lookarounds only, so
+# the scan stays linear on any input.
+_MAC_PAIRS = (r"(?<![0-9a-f])(?<!::)" + "".join(rf"(?<!(?<=[:\-])[0-9a-f]{{{n}}}[:\-])" for n in range(1, 5))
+              + r"[0-9a-f]{2}(?:[:\-][0-9a-f]{2}){5}(?![0-9a-f])(?![:\-][0-9a-f])")
+_MAC_DOTTED = r"(?<![0-9a-f])(?<![0-9a-f]\.)[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}(?![0-9a-f])(?!\.[0-9a-f])"
+_MAC_BARE = r"(?<![0-9a-z])(?=[0-9]{0,11}[a-f])[0-9a-f]{12}(?![0-9a-z])"
+_MAC = "|".join((_MAC_PAIRS, _MAC_DOTTED, _MAC_BARE))
+# Host names start only where a name can (not inside a longer name or word): from every dot of "a.a.a.." a match
+# attempt would read to the end, and the scan would be quadratic.
+_HOME_HOST = r"(?<![\w.\-])[\w-]+(?:\.[\w-]+)*\.(?:lan|local|home|internal|localdomain|home\.arpa)(?![\w\-])"
+# Any dotted name whose last label is two or more letters (a version number or a decimal ends in a digit).
+_HOST = r"(?<![\w.\-])(?:[a-z0-9\-]+\.)+[a-z]{2,}(?![\w\-])(?!\.\w)"
 _USERINFO = r"(?<=://)[^\s/@:]+:[^\s/@]+@"   # a password in a URL: user:password@
+# a secret in a URL's query or in a "name=value" of a device's message: token=..., password=..., api_key=...
+_QUERY_SECRET = (r"(?<![a-z0-9])(?:[a-z]+[_\-])?(?:password|passwd|pass|pwd|token|secret|apikey|api_key|key|auth)"
+                 r"=[^\s&#\"'<>]+")
 _DATE = r"\b\d{4}-\d{2}-\d{2}\b|\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b|\bUTC[+\-]\d\d:\d\d\b"
 _VENDOR = r"\b(?:" + "|".join(VENDOR_WORDS) + r")\b"
 # (rule name, pattern, replacement) per level; the identifiers are scanned too, as rule "identifier".
+# The MAC rule runs before the address rules: their dash-separated forms would eat the first four pairs of
+# "02-00-00-00-00-01" (or of "10-00-..") and leave the last two behind.
 SCAN_RULES: Dict[str, List[Tuple[str, str, str]]] = {
-    FULL: [("mac", _MAC, REMOVED), ("secret", _USERINFO, REMOVED)],
-    VAGUE: [("secret", _USERINFO, REMOVED), ("home address", _PRIVATE4, REMOVED), ("home address", _IP6_HOME, REMOVED),
-            ("mac", _MAC, REMOVED),
+    FULL: [("mac", _MAC, REMOVED), ("secret", _USERINFO, REMOVED), ("secret", _QUERY_SECRET, REMOVED)],
+    VAGUE: [("secret", _USERINFO, REMOVED), ("secret", _QUERY_SECRET, REMOVED), ("mac", _MAC, REMOVED),
+            ("home address", _PRIVATE4, REMOVED), ("home address", _IP6_HOME, REMOVED),
             ("home name", _HOME_HOST, REMOVED)],
-    ANONYMIZED: [("secret", _USERINFO, REMOVED), ("address", _IP4, REMOVED), ("address", _IP6_HOME, REMOVED),
-                 ("address", _IP6, REMOVED),
-                 ("mac", _MAC, REMOVED), ("host name", _HOST, REMOVED), ("date", _DATE, REMOVED),
-                 ("vendor", _VENDOR, REMOVED)],
+    ANONYMIZED: [("secret", _USERINFO, REMOVED), ("secret", _QUERY_SECRET, REMOVED), ("mac", _MAC, REMOVED),
+                 ("address", _IP4, REMOVED), ("address", _IP6_HOME, REMOVED), ("address", _IP6, REMOVED),
+                 ("host name", _HOST, REMOVED), ("date", _DATE, REMOVED), ("vendor", _VENDOR, REMOVED)],
 }
 
 

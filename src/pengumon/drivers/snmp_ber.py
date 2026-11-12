@@ -3,14 +3,15 @@
 Only what the snmp driver needs, and strict: every length is checked against the bytes that are actually there,
 only the definite length form of at most four bytes is read, integers and OIDs have bounded sizes, and anything
 malformed raises DriverError("protocol"). A datagram is at most 64 KiB, so decoding one never allocates more than a
-small multiple of that. No SNMPv1 or v3.
+small multiple of that. No SNMPv1. SNMPv3 (the User-based Security Model) is in snmp_v3.py, which wraps the same PDUs:
+the client takes its `security` object and hands it the datagrams.
 """
 
 import asyncio
 import os
 import socket
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Protocol, Sequence, Tuple
 
 from pengumon.capabilities import DriverError
 
@@ -21,7 +22,7 @@ INTEGER, OCTET_STRING, NULL, OBJECT_IDENTIFIER, SEQUENCE = 0x02, 0x04, 0x05, 0x0
 IP_ADDRESS, COUNTER32, GAUGE32, TIMETICKS, OPAQUE, COUNTER64 = 0x40, 0x41, 0x42, 0x43, 0x44, 0x46
 NO_SUCH_OBJECT, NO_SUCH_INSTANCE, END_OF_MIB_VIEW = 0x80, 0x81, 0x82
 # PDU tags.
-GET_REQUEST, GET_NEXT_REQUEST, RESPONSE, GET_BULK_REQUEST = 0xA0, 0xA1, 0xA2, 0xA5
+GET_REQUEST, GET_NEXT_REQUEST, RESPONSE, GET_BULK_REQUEST, REPORT = 0xA0, 0xA1, 0xA2, 0xA5, 0xA8
 
 VERSION_2C = 1
 MAX_DATAGRAM = 65535
@@ -33,6 +34,7 @@ ERROR_STATUS = {1: "tooBig", 2: "noSuchName", 3: "badValue", 4: "readOnly", 5: "
                 12: "inconsistentValue", 13: "resourceUnavailable", 14: "commitFailed", 15: "undoFailed",
                 16: "authorizationError", 17: "notWritable", 18: "inconsistentName"}
 TOO_BIG = 1
+AUTHORIZATION_ERROR = 16
 
 _UNSIGNED_MAX = {COUNTER32: 0xFFFFFFFF, GAUGE32: 0xFFFFFFFF, TIMETICKS: 0xFFFFFFFF, COUNTER64: 0xFFFFFFFFFFFFFFFF}
 
@@ -42,10 +44,15 @@ def _malformed(what: str) -> DriverError:
 
 
 class AgentError(DriverError):
-    """The agent answered with an error-status (tooBig, genErr, ...)."""
+    """The agent answered with an error-status (tooBig, genErr, ...). authorizationError (an SNMPv3 user without read
+    access at its security level, or a variable outside its view) is a refused sign-in."""
 
     def __init__(self, status: int):
-        super().__init__("protocol", f"the agent answered {ERROR_STATUS.get(status, 'error')} ({status})")
+        if status == AUTHORIZATION_ERROR:
+            super().__init__("auth", f"the agent answered authorizationError ({status}): the user may not read this "
+                                     "at its security level (check its access: net-snmp rouser and its view)")
+        else:
+            super().__init__("protocol", f"the agent answered {ERROR_STATUS.get(status, 'error')} ({status})")
         self.status = status
 
 
@@ -73,11 +80,14 @@ class Value:
 
 @dataclass(frozen=True)
 class Response:
+    """A Response PDU (or, from an SNMPv3 agent, a Report: `pdu`). `community` is b"" in SNMPv3."""
+
     request_id: int
     error_status: int
     error_index: int
     varbinds: Tuple[Tuple[Oid, Value], ...]
     community: bytes
+    pdu: int = RESPONSE
 
 
 # --- encoding -------------------------------------------------------------------------------------------------------
@@ -111,12 +121,16 @@ def encode_oid(oid: Sequence[int]) -> bytes:
     return _tlv(OBJECT_IDENTIFIER, bytes(out))
 
 
-def encode_request(pdu: int, community: bytes, request_id: int, oids: Sequence[Oid], a: int = 0, b: int = 0) -> bytes:
-    """A v2c request message. `a`/`b` are error-status/index (0) for GET and GETNEXT, non-repeaters and
-    max-repetitions for GETBULK."""
+def encode_pdu(pdu: int, request_id: int, oids: Sequence[Oid], a: int = 0, b: int = 0) -> bytes:
+    """A request PDU. `a`/`b` are error-status/index (0) for GET and GETNEXT, non-repeaters and max-repetitions for
+    GETBULK."""
     varbinds = b"".join(_tlv(SEQUENCE, encode_oid(oid) + _tlv(NULL, b"")) for oid in oids)
-    body = _int(request_id) + _int(a) + _int(b) + _tlv(SEQUENCE, varbinds)
-    return _tlv(SEQUENCE, _int(VERSION_2C) + _tlv(OCTET_STRING, community) + _tlv(pdu, body))
+    return _tlv(pdu, _int(request_id) + _int(a) + _int(b) + _tlv(SEQUENCE, varbinds))
+
+
+def encode_request(pdu: int, community: bytes, request_id: int, oids: Sequence[Oid], a: int = 0, b: int = 0) -> bytes:
+    """A v2c request message (see encode_pdu)."""
+    return _tlv(SEQUENCE, _int(VERSION_2C) + _tlv(OCTET_STRING, community) + encode_pdu(pdu, request_id, oids, a, b))
 
 
 # --- decoding -------------------------------------------------------------------------------------------------------
@@ -229,10 +243,15 @@ def decode_response(data: bytes) -> Response:
         raise _malformed(f"SNMP version {version}, not v2c")
     c_start, c_end = _expect(data, pos, end, OCTET_STRING, "community")
     community = bytes(data[c_start:c_end])
-    tag, p_start, p_end = _read(data, c_end, end)
+    return decode_pdu(data, c_end, end, community, (RESPONSE,))
+
+
+def decode_pdu(data: bytes, pos: int, end: int, community: bytes, tags: Sequence[int]) -> Response:
+    """The PDU at `pos`, which must end exactly at `end` and have one of `tags` (Response; v3 also Report)."""
+    tag, p_start, p_end = _read(data, pos, end)
     if p_end != end:
         raise _malformed("bytes after the PDU")
-    if tag != RESPONSE:
+    if tag not in tags:
         raise _malformed(f"PDU 0x{tag:02x} is not a Response")
     request_id, pos = _decode_int(data, p_start, p_end, "request-id")
     error_status, pos = _decode_int(data, pos, p_end, "error-status")
@@ -253,34 +272,36 @@ def decode_response(data: bytes) -> Response:
             raise _malformed("bytes after a value")
         varbinds.append((oid, _value(v_tag, data[v_start:v_end])))
         pos = e
-    return Response(request_id, error_status, error_index, tuple(varbinds), community)
+    return Response(request_id, error_status, error_index, tuple(varbinds), community, tag)
 
 
 # --- transport ------------------------------------------------------------------------------------------------------
 
+Accept = Callable[[bytes], Any]  # a datagram -> the answer, or None to ignore it; raises DriverError to fail the request
+
+
 class _Protocol(asyncio.DatagramProtocol):
-    """Hands each datagram to the request waiting for it (one at a time per client)."""
+    """Hands each datagram to the request waiting for it (one at a time per client): its `accept` says whether the
+    datagram is the answer (an answer to an earlier try, or one not for us, is ignored)."""
 
     def __init__(self):
         self.transport: Optional[asyncio.DatagramTransport] = None
         self.waiting: Optional[asyncio.Future] = None
-        self.request_id: Optional[int] = None
-        self.community = b""
+        self.accept: Optional[Accept] = None
 
     def connection_made(self, transport):
         self.transport = transport
 
     def datagram_received(self, data: bytes, addr) -> None:
-        if self.waiting is None or self.waiting.done():
+        if self.waiting is None or self.waiting.done() or self.accept is None:
             return  # a late answer to a request that timed out
         try:
-            response = decode_response(data)
+            answer = self.accept(data)
         except DriverError as err:
             self.waiting.set_exception(err)
             return
-        if response.request_id != self.request_id or response.community != self.community:
-            return  # an answer to an earlier try, or not for us
-        self.waiting.set_result(response)
+        if answer is not None:
+            self.waiting.set_result(answer)
 
     def error_received(self, exc: Exception) -> None:
         if self.waiting is not None and not self.waiting.done():
@@ -291,19 +312,30 @@ class _Protocol(asyncio.DatagramProtocol):
             self.waiting.set_exception(DriverError("unreachable", "the UDP socket closed", transport=True))
 
 
+class Exchange(Protocol):
+    """What SnmpClient hands its `security` for one request: sends `message` (again after each `timeout` without an
+    answer, `tries` times in all, default 1 + retries) and returns what `accept` made of the answer; raises
+    DriverError("timeout") when none came."""
+
+    async def __call__(self, message: bytes, accept: Accept, *, tries: Optional[int] = None) -> Any: ...
+
+
 class SnmpClient:
     """GET, GETBULK and walks against one agent. Requests go one at a time; each try waits `timeout` seconds and
     is sent `retries` more times before the request fails with DriverError("timeout"). The socket is opened on
-    first use and kept."""
+    first use and kept. Without `security` the requests are SNMPv2c with `community` (none: every request fails with
+    DriverError("unconfigured")); with one (snmp_v3.Usm) they are SNMPv3 messages it builds and checks. `random_bytes` makes the request ids (tests replay recorded exchanges)."""
 
     def __init__(self, host: str, port: int, community: str, *, timeout: float = 2.0, retries: int = 1,
-                 max_repetitions: int = 25):
+                 max_repetitions: int = 25, security=None, random_bytes: Callable[[int], bytes] = os.urandom):
         self.host = host
         self.port = port
         self.community = community.encode("utf-8")
         self.timeout = timeout
         self.retries = retries
         self.max_repetitions = max_repetitions
+        self.security = security
+        self._random = random_bytes
         self._protocol: Optional[_Protocol] = None
         self._lock = asyncio.Lock()
         self.requests = 0  # sent datagrams, for tests and logs
@@ -322,29 +354,65 @@ class SnmpClient:
         self._protocol = protocol
         return protocol
 
+    def request_id(self) -> int:
+        return int.from_bytes(self._random(4), "big") & 0x7FFFFFFF
+
+    async def _exchange(self, protocol: _Protocol, message: bytes, accept: Accept, *,
+                        tries: Optional[int] = None) -> Any:
+        loop = asyncio.get_running_loop()
+        tries = self.retries + 1 if tries is None else tries
+        for _ in range(tries):
+            future = loop.create_future()
+            protocol.waiting, protocol.accept = future, accept
+            protocol.transport.sendto(message)
+            self.requests += 1
+            try:
+                return await asyncio.wait_for(future, self.timeout)
+            except asyncio.TimeoutError:
+                continue
+            finally:
+                protocol.waiting, protocol.accept = None, None
+        why = ("SNMP off, a firewall, or a wrong community string: agents ignore those" if self.security is None
+               else "SNMP off or a firewall")
+        raise DriverError("timeout", f"no SNMP answer from {self.host}:{self.port} after {tries} "
+                                     f"{'try' if tries == 1 else 'tries'} ({why})", transport=True)
+
     async def request(self, pdu: int, oids: Sequence[Oid], a: int = 0, b: int = 0) -> Response:
         async with self._lock:
             protocol = await self._endpoint()
-            request_id = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
-            message = encode_request(pdu, self.community, request_id, oids, a, b)
-            loop = asyncio.get_running_loop()
-            for _ in range(self.retries + 1):
-                future = loop.create_future()
-                protocol.waiting, protocol.request_id, protocol.community = future, request_id, self.community
-                protocol.transport.sendto(message)
-                self.requests += 1
+
+            async def exchange(message: bytes, accept: Accept, *, tries: Optional[int] = None) -> Any:
+                return await self._exchange(protocol, message, accept, tries=tries)
+
+            if self.security is not None:
+                response = await self.security.request(exchange, self.request_id, pdu, oids, a, b)
+            else:
+                request_id, community = self.request_id(), self.community
+                if not community:  # (an SNMPv3 client has none: it never falls back to v2c)
+                    raise DriverError("unconfigured", "no SNMPv2c community string")
+
+                malformed: List[str] = []  # why a datagram was dropped, for the error if no answer comes
+
+                def accept(data: bytes) -> Optional[Response]:
+                    try:
+                        response = decode_response(data)
+                    except DriverError as err:  # dropped: a stray, truncated or spoofed datagram must not fail it
+                        malformed[:] = malformed or [err.message]
+                        return None
+                    if response.request_id != request_id or response.community != community:
+                        return None  # an answer to an earlier try, or not for us
+                    return response
+
                 try:
-                    response = await asyncio.wait_for(future, self.timeout)
-                except asyncio.TimeoutError:
-                    continue
-                finally:
-                    protocol.waiting = None
-                if response.error_status:
-                    raise AgentError(response.error_status)
-                return response
-        raise DriverError("timeout", f"no SNMP answer from {self.host}:{self.port} after {self.retries + 1} tries "
-                                     "(SNMP off, a firewall, or a wrong community string: agents ignore those)",
-                          transport=True)
+                    response = await exchange(encode_request(pdu, community, request_id, oids, a, b), accept)
+                except DriverError as err:
+                    if err.kind != "timeout" or not malformed:
+                        raise
+                    raise DriverError("protocol", f"the agent's answer was dropped: it was malformed ({malformed[0]})"
+                                      ) from None
+            if response.error_status:
+                raise AgentError(response.error_status)
+            return response
 
     async def get(self, oids: Sequence[Oid]) -> List[Tuple[Oid, Value]]:
         """The values of `oids`, in order (a missing one is noSuchObject / noSuchInstance)."""

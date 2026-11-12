@@ -7,7 +7,9 @@
 // value is shown through textContent. The Wi-Fi link rate is not traffic and is labeled so.
 
 import { registerActions } from '../../js/dispatch.js';
-import { CLIENT_KINDS, keepKeyboard, openModal, deviceName, localFormat } from '../../js/util.js';
+import { CLIENT_KINDS, deviceName } from '../../js/device-text.js';
+import { keepKeyboard, openModal } from '../../js/modal.js';
+import { localFormat } from '../../js/clock.js';
 import { clientsDevice, setTopologyClients, setTopologyFilter } from './topology.js';
 import { series } from '../../js/chart-theme.js';
 import { levelOfGrade } from '../../js/grades.js';
@@ -62,7 +64,7 @@ function nodeLabel(id) {
 }
 
 // Opens the modal; `nodeId` (optional) filters the client table to one mesh node.
-export function openNetworkModal(nodeId) {
+function openNetworkModal(nodeId) {
   const lists = !!clientsDevice();
   document.querySelectorAll('#networkModal .clients-only').forEach((el) => { el.hidden = !lists; });
   document.getElementById('clientsEmpty').hidden = lists;
@@ -87,14 +89,21 @@ export function openNetworkModal(nodeId) {
   }, REFRESH_MS);
 }
 
+let clientsSeq = 0; // the newest request of each kind wins: an older answer that lands later is dropped
+let historySeq = 0;
+
 async function loadClients() {
+  const mine = ++clientsSeq;
   try {
     const res = await fetch(`${deviceUrl()}/clients`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    view.data = await res.json();
+    const data = await res.json();
+    if (mine !== clientsSeq) return;
+    view.data = data;
     setTopologyClients(view.data);
     renderClients();
   } catch (e) {
+    if (mine !== clientsSeq) return;
     const body = document.getElementById('clientsBody');
     body.replaceChildren();
     const td = make('td', `Could not load the clients: ${e.message}`, 'clients-empty');
@@ -104,13 +113,17 @@ async function loadClients() {
 }
 
 async function loadHistory() {
+  const mine = ++historySeq;
   const end = Math.floor(Date.now() / 1000);
   try {
     const res = await fetch(`${deviceUrl()}/clients/history?start_time=${end - view.rangeSeconds}&end_time=${end}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    view.history = await res.json();
+    const history = await res.json();
+    if (mine !== historySeq) return;
+    view.history = history;
     renderChart();
   } catch (e) {
+    if (mine !== historySeq) return;
     document.getElementById('clientsChartNote').textContent = `Could not load the history: ${e.message}`;
   }
 }
@@ -177,6 +190,10 @@ function row(c, hasNodes) {
   text.appendChild(make('span', c.label, 'primary'));
   const detail = [kind ? kind[0] : null, c.ip, c.mac].filter(Boolean).join(' · ');
   if (detail) text.appendChild(make('span', detail, 'sub mono'));
+  if (c.traffic_hint) { // the app the router counted at least 80 % of its last 24 hours as (Internet use has the figures)
+    const hint = text.appendChild(make('span', `mostly ${c.traffic_hint}`, 'sub cl-hint'));
+    hint.title = 'The router counted at least 80 % of this device\'s last 24 hours of traffic as this app';
+  }
   const conn = tr.appendChild(make('td', null, 'aside')).appendChild(make('span', null, 'chip'));
   conn.appendChild(icon(c.connection === 'wired' ? 'plug' : 'wifi'));
   conn.append(c.connection === 'wired' ? 'Wired' : (c.band || 'Wi-Fi'));
@@ -309,41 +326,41 @@ function markActive(containerId, arg) {
   document.querySelectorAll(`#${containerId} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.arg === String(arg))));
 }
 
-export function setClientsRange(seconds) {
+function setClientsRange(seconds) {
   view.rangeSeconds = seconds;
   markActive('clientsRangeButtons', seconds);
   loadHistory();
 }
 
-export function setClientsChartMode(mode) {
+function setClientsChartMode(mode) {
   view.chartMode = mode;
   markActive('clientsModeButtons', mode);
   renderChart();
 }
 
-export function sortClients(key) {
+function sortClients(key) {
   view.sortDir = view.sortKey === key ? -view.sortDir : 1;
   view.sortKey = key;
   renderClients();
 }
 
-export function toggleOfflineClients(checked) {
+function toggleOfflineClients(checked) {
   view.showOffline = checked;
   renderClients();
 }
 
 // Sets (not toggles) the node filter; an empty id clears it (the topology's mesh nodes and lone pill).
-export function setClientsNodeFilter(nodeId) {
+function setClientsNodeFilter(nodeId) {
   view.filter = nodeId ? { kind: 'node', value: nodeId } : null;
   renderClients();
 }
 
-export function filterClientsNode(nodeId) {
+function filterClientsNode(nodeId) {
   view.filter = isFilter('node', nodeId) ? null : { kind: 'node', value: nodeId };
   renderClients();
 }
 
-export function filterClientsBand(band) {
+function filterClientsBand(band) {
   view.filter = isFilter('band', band) ? null : { kind: 'band', value: band };
   renderClients();
 }

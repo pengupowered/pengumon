@@ -1,0 +1,18 @@
+/* Starship console's Internet use card: the standard view (panels/traffic/view.js) restyled: the totals a console readout in the
+   condensed capitals, each list a station under an orange band, the rows flat blocks with a bar of the accent beside them and the
+   usage bars as segmented gauges, the notes and the notice flat blocks. */
+
+:root[data-look="starship"] [data-panel="traffic"] .trf-totals { font-family: var(--ss-cond); font-stretch: condensed; font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .05em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-range, :root[data-look="starship"] [data-panel="traffic"] .trf-busiest { font-family: var(--ss-cond); font-stretch: condensed; letter-spacing: .04em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-notice { border-radius: 0; border-width: 0 0 0 6px; border-color: var(--st); }
+:root[data-look="starship"] [data-panel="traffic"] .trf-legend { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .05em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-block { gap: var(--sp-2); padding: var(--sp-2) 0 0; border-top: 4px solid var(--accent); }
+:root[data-look="starship"] [data-panel="traffic"] .trf-block > .rb-t { color: var(--ink-1); font-family: var(--ss-cond); font-stretch: condensed; font-weight: var(--fw-bold); letter-spacing: .06em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-block > .rb-t .muted { color: var(--ink-3); }
+:root[data-look="starship"] [data-panel="traffic"] .trf-row { border-radius: 0; border-left: 6px solid var(--accent); background: var(--surface-2); }
+:root[data-look="starship"] [data-panel="traffic"] .trf-row.app { border-left-color: var(--ink-3); }
+:root[data-look="starship"] [data-panel="traffic"] button.trf-row:hover { background: var(--surface-3); }
+:root[data-look="starship"] [data-panel="traffic"] .trf-name,
+:root[data-look="starship"] [data-panel="traffic"] .trf-down { font-family: var(--ss-cond); font-stretch: condensed; letter-spacing: .03em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-bar { height: 10px; border-radius: 2px; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-bar i { border-radius: 0; background: repeating-linear-gradient(90deg, var(--accent) 0 7px, transparent 7px 9px); }

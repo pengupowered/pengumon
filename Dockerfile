@@ -35,14 +35,14 @@ FROM ${WHEEL_STAGE} AS wheel
 FROM ${PYTHON_IMAGE} AS runtime
 WORKDIR /app
 
-# Security updates of the base image, then setcap (below) and curl (health checks). No ping or traceroute: the app
+# Security updates of the base image, then curl (scripts/test-container.sh runs its health checks inside the container
+# with it). setcap's package, libcap2-bin, is installed and purged again in the one RUN that uses it (below). No ping or traceroute: the app
 # sends ICMP itself (pengumon.engine.icmp_linux), traceroute included. APT_REFRESH (scripts/deploy.sh passes the date)
 # makes a local build run the upgrade again at least once a day instead of reusing an old build's cached layer, which
 # kept fixed Debian packages out of local images; a CI build has no cache.
 ARG APT_REFRESH=
 RUN apt-get update && apt-get -y --no-install-recommends upgrade \
     && apt-get install -y --no-install-recommends \
-    libcap2-bin \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -63,7 +63,13 @@ COPY config.example.yaml ./config.yaml
 # The raw ICMP socket needs CAP_NET_RAW; granted as a file capability on the interpreter so the app can run
 # unprivileged. Without it (a runtime that drops NET_RAW) the backend uses a ping socket, which needs the container's
 # net.ipv4.ping_group_range to cover gid 0 (Podman's default). No fallback: a failing setcap must break the build.
-RUN setcap cap_net_raw+ep /usr/local/bin/python3.12 && getcap /usr/local/bin/python3.12 | grep -q cap_net_raw
+# libcap2-bin (setcap, getcap) is only needed here: installed, used, verified and purged in this one RUN, so the image
+# carries the capability and not the tools.
+RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
+    && setcap cap_net_raw+ep /usr/local/bin/python3.12 \
+    && getcap /usr/local/bin/python3.12 | grep -q cap_net_raw \
+    && apt-get purge -y --auto-remove libcap2-bin \
+    && rm -rf /var/lib/apt/lists/*
 
 # SQLite database and router secrets live here (mount a named volume).
 # Runs as an unprivileged user; an existing root-owned volume needs a one-time `chown -R 10001:0`.

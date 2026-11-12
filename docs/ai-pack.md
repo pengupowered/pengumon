@@ -84,8 +84,10 @@ close-ups. **Who is who**, folded away in the dialog, is your key from roles bac
 you can read the assistant's answer against your own devices.
 
 After the pack is built, a final scan reads the whole text again and replaces anything it should not hold at that
-level: MAC addresses and passwords in URLs at every level; also home addresses and host names at Vague; any address,
-date, host name or vendor word at Anonymized. The scan is a safety net: the rules above should already have removed
+level: MAC addresses (in any written form: `aa:bb:..`, `aa-bb-..`, `aabb.ccdd.eeff`, twelve bare hex digits) and
+passwords or tokens in URLs and messages (`user:password@`, `token=`, `password=`, `api_key=`, ...) at every level; also
+home addresses and home host names at Vague; any address, date, dotted host name or vendor word at Anonymized. The scan
+is a safety net: the rules above should already have removed
 everything, and the tests require that it finds nothing.
 
 Read the preview before you send it, especially at Full: it is your network's map.
@@ -99,8 +101,8 @@ off still contributes its stored history.
 | Module | Appears when a device offers | What it adds |
 |---|---|---|
 | Cable line (DOCSIS) | `access_line` with a DOCSIS line | channel power and SNR against the usual ranges (each channel outside them with every way it is), codeword error bursts with their times, restarts and readings the modem did not answer (always in its Findings line, zeros too); per-day new uncorrectables |
-| Line load | `wan_counters` | download and upload rates against the line's capacity, router restarts; per-day peak load, so a busy line is told apart from a fault |
-| Router | `router_system` | CPU and memory, readings above the warning levels, times the router stopped answering |
+| Line load | `wan_counters` | download and upload rates against the line's capacity, router restarts; per-day peak load, so a busy line is told apart from a fault; with a router that reports traffic per client (`traffic_usage`), the router's own count in the busiest busy-line hours and the device that downloaded most, by kind and main app only ("a game console (Sony PlayStation)"), never by name or address |
+| Router | `router_system` | CPU and memory, readings above the warning levels, times the router stopped answering; restarts its uptime shows and WAN port link changes (the device events) |
 | Wi-Fi and mesh | `client_inventory` (and `mesh`) | client counts per band and node, sudden drops in online clients, each mesh node's falls to 0 clients with their times and minutes, each node's backhaul (one just above weak says so) (counts only, never a client) |
 
 Each subsection starts with a short "How to read it" for the assistant (the ranges in force, filled in from your

@@ -43,15 +43,23 @@ def _reset(monkeypatch, app_state):
     _clear_login_throttle()
 
 
-def _clear_login_throttle():
-    """The app's login throttle (5 attempts a minute per address) is one object for the process, so a test's failed
-    sign-ins would count against the next test's: found in the built middleware stack and emptied."""
+def _middleware():
+    """The app's homeguard middleware, found in the built middleware stack (built here when no request has been made
+    yet, as Starlette builds it at the first one: this file run alone)."""
+    if app.middleware_stack is None:
+        app.middleware_stack = app.build_middleware_stack()
     layer = app.middleware_stack
     while layer is not None:
-        throttle = getattr(layer, "throttle", None)
-        if isinstance(throttle, security.LoginThrottle):
-            throttle.hits.clear()
+        if isinstance(layer, security.SecurityMiddleware):
+            return layer
         layer = getattr(layer, "app", None)
+    raise AssertionError("no SecurityMiddleware in the app's middleware stack")
+
+
+def _clear_login_throttle():
+    """The app's throttle of failed sign-ins (5 a minute per address) is one object for the process, so a test's failed
+    sign-ins would count against the next test's: emptied (reset_rate_limits does it too; this says so here)."""
+    _middleware().throttle.clear()
 
 
 def _client():
@@ -111,6 +119,127 @@ async def test_login_sets_cookie_and_wrong_token_does_not(monkeypatch):
         assert SESSION_COOKIE in good.headers["set-cookie"] and "HttpOnly" in good.headers["set-cookie"]
         cookie = good.headers["set-cookie"].split(";")[0]
         assert (await ac.get("/api/status", headers={"Cookie": cookie})).status_code != 401
+
+
+@pytest.mark.asyncio
+async def test_wrong_bearer_tokens_are_throttled_and_a_signed_in_browser_is_not(monkeypatch):
+    """The app's wiring of homeguard's throttle: 5 failed tokens a minute from one address, then 429 without checking
+    (the guards themselves are tested in homeguard)."""
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    cookie = {"Cookie": f"{SESSION_COOKIE}={security_config.issue_session()}"}
+    async with _client() as ac:
+        codes = [(await ac.get("/api/status", headers={"Authorization": "Bearer wrong"})).status_code for _ in range(6)]
+        assert codes == [401] * 5 + [429]
+        assert (await ac.get("/api/status", headers={"Authorization": f"Bearer {TOKEN}"})).status_code == 429
+        assert (await ac.get("/api/status", headers=cookie)).status_code not in (401, 429)
+
+
+@pytest.mark.asyncio
+async def test_a_cross_site_page_cannot_lock_the_read_token_or_new_sign_ins_out(monkeypatch):
+    """Through the real app: another site's page submits wrong tokens to /login in a loop. Refused before
+    anything is counted, so the read token (an assistant on this machine) and a new sign-in keep working; and a
+    correct read token works even from an address that is throttled."""
+    read_token = "pgr_made-up-read-token-for-the-throttle"
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    monkeypatch.setattr(security_config, "read_token_hash", security.read_token_digest(read_token))
+    reader = {"Authorization": f"Bearer {read_token}"}
+    async with _client() as ac:
+        for headers in ({"Origin": "http://evil.example"}, {"Sec-Fetch-Site": "cross-site"}) * 15:
+            res = await ac.post("/login", data={"token": "a-guess"}, headers=headers)
+            assert res.status_code == 403 and "set-cookie" not in res.headers
+        assert (await ac.get("/api/status", headers=reader)).status_code not in (401, 403, 429)  # 503: an empty state
+        signed_in = await ac.post("/login", data={"token": TOKEN}, headers={"Origin": "http://test"})  # the page's form
+        assert signed_in.status_code == 303 and SESSION_COOKIE in signed_in.headers["set-cookie"]
+        ac.cookies.clear()
+        for _ in range(5):  # guesses from this address itself (not a browser): counted
+            assert (await ac.post("/login", data={"token": "a-guess"})).status_code == 401
+        assert (await ac.post("/login", data={"token": TOKEN})).status_code == 429
+        assert (await ac.get("/api/status", headers=reader)).status_code not in (401, 403, 429)
+
+
+def _serve(tmp_path, port, extra_env):
+    """The real entry point (pengumon.main.main, as the image runs it) on 127.0.0.1:<port> with a password from the
+    environment; returns the process once it serves."""
+    import subprocess
+    import sys
+    import threading
+
+    config = tmp_path / "config.yaml"
+    config.write_text("database:\n  db_path: " + repr(str(tmp_path / "pengumon.db")) + "\n"
+                      "targets:\n  - {id: lo, name: Loopback, address: 127.0.0.1, category: local}\n", encoding="utf-8")
+    src = Path(__file__).resolve().parents[1] / "src"
+    env = {**os.environ, "PYTHONPATH": str(src), "PENGUMON_CONFIG": str(config), "PENGUMON_HOST": "127.0.0.1",
+           "PENGUMON_PORT": str(port), "PENGUMON_ACCESS_TOKEN": TOKEN, "PENGUMON_DATA": str(tmp_path / "data"),
+           **extra_env}
+    for name in ("PENGUMON_TRUSTED_PROXIES", "FORWARDED_ALLOW_IPS", "PENGUMON_LOG_FORMAT", "PENGUMON_LOG_LEVEL",
+                 "OTEL_EXPORTER_OTLP_ENDPOINT"):
+        if name not in extra_env:
+            env.pop(name, None)
+    server = subprocess.Popen([sys.executable, "-c", "from pengumon.main import main; main()"], cwd=tmp_path, env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    lines = []
+    threading.Thread(target=lambda: lines.extend(server.stdout), daemon=True).start()
+    deadline = time.monotonic() + 30
+    while not any("Application startup complete" in line for line in lines):
+        if server.poll() is not None or time.monotonic() > deadline:
+            server.kill()
+            raise AssertionError("".join(lines))
+        time.sleep(0.1)
+    return server, lines
+
+
+def _wrong_tokens_from(port, forwarded_for):
+    """The status of a wrong Bearer token sent from 127.0.0.1 with each X-Forwarded-For in turn."""
+    import http.client
+    codes = []
+    for address in forwarded_for:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("GET", "/api/status", headers={"Authorization": "Bearer wrong", "X-Forwarded-For": address})
+        codes.append(conn.getresponse().status)
+        conn.close()
+    return codes
+
+
+@pytest.mark.parametrize("trusted", [None, "127.0.0.1"])
+def test_a_forged_x_forwarded_for_does_not_choose_the_throttle_key(tmp_path, trusted):
+    """Every process on this host connects from 127.0.0.1, which uvicorn trusts by default to say who the client
+    is. Pengumon switches that off: the 6th wrong token from 127.0.0.1 is refused whatever address each one claims.
+    PENGUMON_TRUSTED_PROXIES (a reverse proxy) turns it back on, for the addresses it names only."""
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server, lines = _serve(tmp_path, port, {"PENGUMON_TRUSTED_PROXIES": trusted} if trusted else {})
+    try:
+        codes = _wrong_tokens_from(port, [f"192.0.2.{n}" for n in range(1, 7)])
+        if trusted is None:
+            assert codes == [401] * 5 + [429], "".join(lines)
+        else:  # the proxy's word is taken: six clients, one failure each
+            assert codes == [401] * 6, "".join(lines)
+            assert _wrong_tokens_from(port, ["192.0.2.9"] * 6) == [401] * 5 + [429]
+    finally:
+        server.kill()
+        server.wait(timeout=10)
+
+
+def test_trusting_every_proxy_is_refused():
+    from pengumon.main import proxy_options
+    assert proxy_options({}) == {"proxy_headers": False}
+    assert proxy_options({"PENGUMON_TRUSTED_PROXIES": " 10.0.0.2, 192.0.2.0/24 "}) == {
+        "proxy_headers": True, "forwarded_allow_ips": "10.0.0.2, 192.0.2.0/24"}
+    with pytest.raises(SystemExit, match="every client"):
+        proxy_options({"PENGUMON_TRUSTED_PROXIES": "*"})
+
+
+def test_the_read_token_may_call_mcp_but_change_nothing():
+    """Pengumon's reader paths: MCP is a POST but read-only; nothing else that is a POST."""
+    policy = security.VIEWER_POLICY
+    assert policy.permits_reader("POST", "/mcp") and policy.permits_reader("POST", "/mcp/")
+    assert policy.permits_reader("GET", "/api/status") and not policy.permits_reader("GET", "/api/settings/export")
+    for method, path in (("POST", "/api/mtr/trace"), ("PUT", "/mcp"), ("POST", "/api/access/read-token"),
+                         ("POST", "/mcp/x"), ("DELETE", "/api/access/password")):
+        assert not policy.permits_reader(method, path), (method, path)
+    assert not policy.permits("POST", "/mcp")  # a viewer without any token still cannot
 
 
 @pytest.mark.asyncio
@@ -348,7 +477,7 @@ BEARER = {"Authorization": f"Bearer {TOKEN}"}
 
 def _routes(methods):
     """Every route of the real app (its OpenAPI schema) with one of `methods`, its path parameters filled in."""
-    fill = {"device_id": "modem", "target_id": "t1", "job_id": "j1", "incident_id": "1", "preview_id": "p1"}
+    fill = {"device_id": "modem", "target_id": "t1", "job_id": "j1", "incident_id": "1", "preview_id": "p1", "client": "k1"}
     found = []
     for path, operations in app.openapi()["paths"].items():
         for method in operations:
@@ -438,7 +567,8 @@ async def test_the_token_still_reads_the_export(viewers, app_state):
 
 def test_a_viewer_gets_the_live_stream_but_cannot_send(viewers, monkeypatch):
     """The live socket accepts a viewer; what a viewer sends never reaches the app (homeguard drops it). The app's
-    socket reads and ignores client text in any case (api/live.py): no client message changes anything."""
+    socket reads client text but acts on one thing only (api/live.py): {"resync": true} makes the server send that
+    connection a full message; no other message changes anything."""
     from pengumon.live.ws import ws_manager
 
     client = TestClient(app)

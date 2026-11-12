@@ -13,9 +13,12 @@
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';
 import { createCard } from '../../js/cards.js';
-import { getTargetInfo, percentText, targetList, zonedFormat, zoneParams } from '../../js/util.js';
+import { getTargetInfo, targetList } from '../../js/targets.js';
+import { percentText } from '../../js/format.js';
+import { zonedFormat, zoneParams } from '../../js/clock.js';
 import { quietKey, quietTargets, shortLabels } from '../../js/path.js';
 import standard from './view.js';
+import { everyWhileVisible } from '../../js/timers.js';
 
 const CELL = { ok: '', degraded: 'w', outage: 'c', busy: 'b', no_data: 'n' };
 const WORD = { ok: 'no loss', degraded: 'loss or a dead minute', outage: 'outage', busy: 'busy line (expected)', no_data: 'no data' };
@@ -134,7 +137,8 @@ async function load() {
 export function initStrips(section) {
   card = createCard({ panel: 'strips', root: section.querySelector('.panel-b'), standard, fixture });
   load();
-  setInterval(load, 300000);
+  everyWhileVisible(load, 300000);
+  document.addEventListener('zonechange', load); // the blocks are cut in the page's zone
   bus.subscribe('targets', (targets) => {
     const next = quietTargets(targets);
     if (quietKey(next) === quietKey(quiet)) return;

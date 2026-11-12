@@ -47,6 +47,41 @@ export const steps = [
     await until((s) => document.querySelector(s)?.innerHTML.includes("<svg"), `${ROUTER} [data-f=wanChart]`);
   }],
 
+  ["router card: uptime and its restart, CPU temperature, WAN link and the recent events; a link below the usual or down is said in words", async ({ ROUTER, count, eq, ok, page, text, until, waitText }) => {
+    const sys = `${ROUTER} [data-f=sys]`;
+    await waitText(`${sys} [data-item=uptime] [data-v=value]`, /^2h 0m$/);
+    ok("the restart, from the device's events", /^restarted \d+h \d+m ago$/.test(await text(`${sys} [data-item=uptime] [data-v=sub]`)));
+    eq("the CPU temperature", await text(`${sys} [data-item=temp] [data-v=value]`), "64 °C");
+    eq("the WAN link, in the router's words", await text(`${sys} [data-item=link] [data-v=value]`), "2.5 Gb/s");
+    eq("a link as usual has no status", await count(`${sys} [data-item=link] [data-st]`), 0);
+    await until((s) => document.querySelectorAll(`${s} [data-f=eventList] li`).length === 3, sys);
+    const events = await page.$$eval(`${sys} [data-f=eventList] li [data-v=text]`, (els) => els.map((e) => e.textContent));
+    eq("the events, newest first", events.join(" | "), `WAN link came back at 2.5 Gb/s | WAN link went down (was 2.5 Gb/s) | ${events[2]}`);
+    ok("the oldest is the restart", /^Restarted \(up since \d{4}-\d\d-\d\d \d\d:\d\d\)$/.test(events[2]));
+    // a link slower than the week's usual one, and one that is down: said as icon and word, never color alone
+    const link = (mbps) => page.evaluate((v) => { window.__smokeMutate = (d) => { if (d.devices && d.devices.router) d.devices.router.wan_link_mbps = v; }; }, mbps);
+    await link(1000);
+    await waitText(`${sys} [data-item=link] [data-v=value]`, /^1 Gb\/s$/);
+    eq("below usual", await text(`${sys} [data-item=link] [data-v=status]`), "Below usual");
+    eq("with its icon", await page.$eval(`${sys} [data-item=link] [data-v=status]`, (e) => !!e.querySelector("svg")), true);
+    ok("and what it usually is", /usually 2\.5 Gb\/s/.test(await text(`${sys} [data-item=link] [data-v=sub]`)));
+    await link(0);
+    await waitText(`${sys} [data-item=link] [data-v=value]`, /^down$/);
+    eq("down", await text(`${sys} [data-item=link] [data-v=status]`), "No link");
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    await waitText(`${sys} [data-item=link] [data-v=value]`, /^2\.5 Gb\/s$/);
+  }],
+
+  ["router History modal: the CPU temperature chart when the router reports one", async ({ ROUTER, click, eq, page, shown, until }) => {
+    await click(`${ROUTER} [data-action=openRouterHistory]`);
+    await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
+    eq("the section is shown", await shown("#routerHistTempBox"), true);
+    await until(() => !!Chart.getChart(document.getElementById("routerHistTempChart")));
+    eq("temperature average and peak", await page.evaluate(() => Chart.getChart(document.getElementById("routerHistTempChart")).data.datasets.map((d) => d.label).join()), "Temperature avg,Temperature max");
+    eq("on the shared time axis", await page.evaluate(() => Chart.getChart(document.getElementById("routerHistTempChart")).options.scales.x.min === Chart.getChart(document.getElementById("routerHistWanChart")).options.scales.x.min), true);
+    await click("[data-action=closeModal][data-arg=routerHistModal]");
+  }],
+
   ["router History modal: three charts on one time axis, range buttons refetch", async ({ ROUTER, click, eq, ok, outDir, page, path, shown, until }) => {
     eq("history button shown", await shown(`${ROUTER} [data-action=openRouterHistory]`), true);
     await click(`${ROUTER} [data-action=openRouterHistory]`);
@@ -252,5 +287,16 @@ export const steps = [
     await page.screenshot({ path: path.join(outDir, "router-history-dark.png") });
     await flipMode(); // and back to light
     await click("[data-action=closeModal][data-arg=routerHistModal]");
+  }],
+
+  ["clients modal: a device that used one app almost only says which, next to its name (the router's traffic hint)", async ({ ROUTER, click, ok, page, text, until, waitCount }) => {
+    await click(`${ROUTER} [data-f=count]`);
+    await until(() => document.getElementById("networkModal").classList.contains("active"));
+    await waitCount("#clientsBody tr", 3);
+    const rows = await page.$$eval("#clientsBody tr", (trs) => trs.map((tr) => tr.textContent));
+    ok(`the desk PC is mostly Sony PlayStation (${rows.join(" | ")})`, rows.some((t) => /Desk PC/.test(t) && /mostly Sony PlayStation/.test(t)));
+    ok("a phone that watches three apps has no hint", rows.every((t) => !/Ann's phone.*mostly/.test(t)));
+    ok("the table no longer says per-device traffic is missing", !/Per-device traffic is not available/.test(await text("#networkModal")));
+    await click("[data-action=closeModal][data-arg=networkModal]");
   }],
 ];

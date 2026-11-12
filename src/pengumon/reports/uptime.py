@@ -65,7 +65,9 @@ async def build_uptime(repository, config, window: str = "24h", now: Optional[fl
 
     explained: List[Tuple[float, float]] = []
     faults: List[Tuple[float, float]] = []
-    for r in await repository.get_incidents_since(start):
+    # overlapping: a drop that began before the window and reaches into it colors its first blocks too (a cell asks
+    # whether a span overlaps the block, so a span that starts earlier needs no clipping)
+    for r in await repository.get_incidents_since(start, overlapping=True):
         if is_service_kind(r.get("kind")):
             continue
         span = (r["start_time"], r["end_time"] if r["end_time"] is not None else now)

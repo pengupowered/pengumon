@@ -1,8 +1,8 @@
 // What an incident is called and how long it lasted, as words: the helpers of the incident list (model.js), the timeline and
 // the inspector (inspector.js).
 
-import { localFormat } from '../../js/util.js';
-import { CAUSE_SHORT } from '../../js/path-api.js';
+import { localFormat } from '../../js/clock.js';
+import { CAUSE_SHORT } from '../../js/roles.js';
 
 // Where an incident's fault sat, as a word (js/path-api.js CAUSES, in the timeline's lane order).
 export const causeOf = (inc) => CAUSE_SHORT[inc.cause] || 'Other';

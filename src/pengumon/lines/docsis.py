@@ -147,7 +147,7 @@ class DocsisErrorTracker:
     def __init__(self):
         self._prev_total: Optional[int] = None
         self._prev_ts: Optional[float] = None
-        self._prev_channels: Dict[int, int] = {}
+        self._prev_channels: Dict[Tuple[str, int], int] = {}  # (direction, id): the two are separate number spaces
         self._prev_counts: Dict[int, tuple] = {}  # channel -> (error-free, correctable, uncorrectable) codewords
         self._prev_had_errors = False
 
@@ -156,7 +156,7 @@ class DocsisErrorTracker:
         The error-free counts are not stored, so the first ratio after a restart is unknown."""
         self._prev_total = snapshot.uncorrectables_total
         self._prev_ts = snapshot.timestamp
-        self._prev_channels = {ch.channel_id: (ch.uncorrectables or 0) for ch in snapshot.channels}
+        self._prev_channels = {(ch.direction, ch.channel_id): (ch.uncorrectables or 0) for ch in snapshot.channels}
         self._prev_counts = {}
         self._prev_had_errors = snapshot.uncorrectables_recent > 0
 
@@ -189,7 +189,7 @@ class DocsisErrorTracker:
             snapshot.uncorrectables_recent = delta_total
             snapshot.uncorrectables_rate_per_sec = round(delta_total / dt, 2)
             for ch in snapshot.channels:
-                prev = self._prev_channels.get(ch.channel_id)
+                prev = self._prev_channels.get((ch.direction, ch.channel_id))
                 ch.uncorrectables_recent = max(0, (ch.uncorrectables or 0) - prev) if prev is not None else 0
             if delta_total > 0:
                 hit = [c for c in snapshot.channels if c.uncorrectables_recent > 0]
@@ -215,7 +215,7 @@ class DocsisErrorTracker:
         self._prev_had_errors = snapshot.uncorrectables_recent > 0
         self._prev_total = snapshot.uncorrectables_total
         self._prev_ts = snapshot.timestamp
-        self._prev_channels = {ch.channel_id: (ch.uncorrectables or 0) for ch in snapshot.channels}
+        self._prev_channels = {(ch.direction, ch.channel_id): (ch.uncorrectables or 0) for ch in snapshot.channels}
         self._prev_counts = {c.channel_id: (c.unerrored, c.correcteds or 0, c.uncorrectables or 0)
                              for c in snapshot.channels if c.direction == "downstream" and c.unerrored is not None}
         return grade_snapshot(snapshot, levels)  # the recent-error figures are known only now

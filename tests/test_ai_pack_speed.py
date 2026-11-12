@@ -129,3 +129,14 @@ def test_the_speeds_are_the_lines_the_router_measured_and_the_table_says_by_what
     assert ("Measured by the router (what the line carried during the test, all traffic): 1 of 2 tests; the others by "
             "the test alone (one server); in 1 the test itself got under 70 % of what the line carried") in sec
     assert "*By* router" in sec
+
+
+@pytest.mark.parametrize("level", ["vague", "anonymized"])
+def test_a_reason_is_swept_before_it_is_cut(level):
+    """The note column keeps 80 characters. Cut first, an address or a MAC across the cut left a fragment no rule knows
+    ("192.168.8", five pairs of a MAC)."""
+    pad = "x" * 70 + " "
+    rows = [row(0, status="failed", reason=pad + "192.168.88.7 refused"),
+            row(1, status="failed", reason=pad[:-5] + " 02:00:00:aa:bb:cc dropped")]
+    sec = section(render_pack(with_speed(rows), level).markdown)
+    assert "192.168.8" not in sec and "02:00:00:aa" not in sec, sec

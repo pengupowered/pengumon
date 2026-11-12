@@ -89,7 +89,7 @@ export const steps = [
 
   ["desktop layout: no tab bar and every card shown", async ({ LINE, ROUTER, eq, ok, visible }) => {
     eq("bar hidden", await visible("#mobileTabs"), false);
-    for (const sel of ["#diagnosisBanner", "#latencyChart", "#hopMatrixBody", LINE, ROUTER, "#servicesCard", "#incidentsBody", "#reportOutput"]) {
+    for (const sel of ["#diagnosisBanner", "#latencyChart", "#hopMatrixBody", LINE, ROUTER, "#trafficCard", "#servicesCard", "#incidentsBody", "#reportOutput"]) {
       ok(`${sel} shown on desktop`, await visible(sel));
     }
   }],
@@ -102,7 +102,7 @@ export const steps = [
     eq("four tabs", await page.$$eval("#mobileTabs [role=tab]", (b) => b.filter((x) => !x.hidden).map((x) => x.textContent).join()), "Live,Network,Line,Incidents");
     const selected = () => page.$eval("#mobileTabs [aria-selected=true]", (b) => b.dataset.arg);
     const shownCards = async (want) => {
-      const all = { live: ["#diagnosisBanner", "#latencyChart", "#hopMatrixBody"], network: [ROUTER, "#servicesCard"], line: [LINE], incidents: ["#incidentsBody", "#reportOutput"] };
+      const all = { live: ["#diagnosisBanner", "#latencyChart", "#hopMatrixBody"], network: [ROUTER, "#trafficCard", "#servicesCard"], line: [LINE], incidents: ["#incidentsBody", "#reportOutput"] };
       for (const [tab, sels] of Object.entries(all)) {
         for (const sel of sels) eq(`${sel} on tab ${want}`, await visible(sel), tab === want);
       }
@@ -275,6 +275,37 @@ export const steps = [
     await pickLook(""); // the steps after this one start from the default theme
     await page.evaluate(() => localStorage.removeItem("pengumon.effects"));
   }, { chromiumOnly: "page.emulateMediaFeatures is CDP only" }],
+
+  ["an effect whose start() throws is stopped and does not break theme switching", async ({ eq, moduleUrl, ok, page, pickLook, sleep, until }) => {
+    // The rain effect may be in the browser's memory cache already (an earlier step ran it), which request interception does
+    // not see; so the theme is pointed at an address of its own, and that one is answered with an effect that throws.
+    await page.evaluate(async (themes) => { const { lookInfo } = await import(themes); lookInfo("digital-rain").effect += "?smoke-effect-boom"; }, await moduleUrl("themes.js"));
+    await page.setRequestInterception(true);
+    const handler = (req) => {
+      if (/\/themes\/digital-rain\/effect\.js\?smoke-effect-boom$/.test(req.url())) {
+        req.respond({ status: 200, contentType: "text/javascript", headers: { "access-control-allow-origin": "*" },
+          body: "export default { start(layer, ctx) { ctx.onFrame(() => { window.__fxFrames = (window.__fxFrames || 0) + 1; }); layer.appendChild(document.createElement('canvas')); layer.dataset.touched = '1'; throw new Error('smoke-effect-boom'); } };" });
+      } else req.continue();
+    };
+    page.on("request", handler);
+    try {
+      await pickLook("digital-rain");
+      await until(() => performance.getEntriesByType("resource").some((r) => /smoke-effect-boom/.test(r.name)));
+      await until(() => document.getElementById("fxLayer").dataset.touched === "1"); // start() ran (and threw)
+      await sleep(700); // a frame callback it left behind would be drawing by now
+      eq("what it set going was stopped", await page.evaluate(() => window.__fxFrames ?? 0), 0);
+      eq("the layer is clean", await page.evaluate(() => `${document.getElementById("fxLayer").childElementCount}|${document.getElementById("fxLayer").dataset.fx ?? ""}`), "0|");
+      await pickLook("amber-crt");
+      eq("another theme can be picked", await page.evaluate(() => document.documentElement.dataset.look), "amber-crt");
+      await pickLook("");
+      ok("and the default", await page.evaluate(() => document.documentElement.dataset.look === document.documentElement.dataset.lookDefault));
+    } finally {
+      page.off("request", handler);
+      await page.setRequestInterception(false);
+      await pickLook("");
+      await page.evaluate(async (themes) => { const { lookInfo } = await import(themes); const l = lookInfo("digital-rain"); l.effect = l.effect.replace("?smoke-effect-boom", ""); }, await moduleUrl("themes.js"));
+    }
+  }, { chromiumOnly: "the effect module is swapped through request interception" }],
 
   ["card views: a switch between two themes that draw cards their own way shows the new theme's views from the moment the page takes the new theme (never the old view without its styles)", async ({ eq, page, pickLook, stubFetch, until }) => {
     // a fresh page, so the second theme's views have not been loaded by anything before the switch
@@ -516,6 +547,187 @@ export const steps = [
     await until(() => !document.getElementById("statusPill").className.includes("st-unknown"));
   }],
 
+  ["a malformed address hash (a lone %) does not stop the page: it still connects, and a later hashchange to one throws nothing", async ({ base, eq, layoutMounted, page, waitText }) => {
+    await page.goto(base + "/#%E0%A4%A", { waitUntil: "load" });
+    await layoutMounted();
+    await waitText("#wsText", /^Live/);
+    eq("connected, no connection banner", await page.evaluate(() => document.getElementById("connBanner").hidden), true);
+    await page.evaluate(() => { location.hash = "%"; });
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 200))); // (a throw in the hashchange handler is a page error: the run fails on it)
+    eq("still live", await page.evaluate(() => document.body.dataset.conn), "open");
+    await page.evaluate(() => { history.replaceState(null, "", location.pathname); });
+  }],
+
+  ["a socket that dies without a close: the badge says Stale, then the page opens a new socket and is live again", async ({ eq, ok, page, until, waitText }) => {
+    await page.goto((await page.evaluate(() => location.origin)) + "/", { waitUntil: "load" });
+    await waitText("#wsText", /^Live/);
+    const before = await page.evaluate(() => {
+      const socket = window.__smokeSockets.at(-1);
+      socket.onmessage = null; // the page hears nothing more from it and is never told it closed
+      return window.__smokeSockets.length;
+    });
+    await until(() => /Stale/.test(document.getElementById("wsText").textContent));
+    ok("a stale badge is not green", await page.$eval("#wsStatus", (e) => !e.className.includes("live-live")));
+    await until((n) => window.__smokeSockets.length > n, before);
+    await waitText("#wsText", /^Live/);
+    eq("the connection banner is gone", await page.evaluate(() => document.getElementById("connBanner").hidden), true);
+  }],
+
+  ["close code 1008 while this browser changes its sign-in: the page stays and the socket is opened again (no dead end)", async ({ eq, moduleUrl, page, until, waitText }) => {
+    await page.goto((await page.evaluate(() => location.origin)) + "/", { waitUntil: "load" });
+    await waitText("#wsText", /^Live/);
+    const url = await moduleUrl("session.js");
+    const before = await page.evaluate(async (src) => {
+      const { holdSignIn } = await import(src);
+      window.__holding = holdSignIn(() => new Promise((release) => { window.__release = release; }));
+      const socket = window.__smokeSockets.at(-1);
+      socket.dispatchEvent(new CloseEvent("close", { code: 1008 })); // what the server sends when the sign-in changed
+      return window.__smokeSockets.length;
+    }, url);
+    await until((n) => window.__smokeSockets.length > n, before);
+    await waitText("#wsText", /^Live/);
+    eq("still on the dashboard", await page.evaluate(() => location.pathname), "/");
+    await page.evaluate(() => { window.__release(); return window.__holding; });
+  }],
+
+  ["the live message's unchanged topics are not published again: the verdict, a device's snapshot and the scalars reach their subscribers when they change", async ({ moduleUrl, nextMessages, ok, page }) => {
+    const src = await moduleUrl("bus.js");
+    await page.evaluate(async (u) => {
+      const { bus } = await import(u);
+      window.__pub = { diagnosis: 0, "device:router": 0, incidents_version: 0, message: 0 };
+      window.__seen = [];
+      Object.keys(window.__pub).forEach((topic) => bus.subscribe(topic, (v) => { window.__pub[topic]++; if (topic === "diagnosis") window.__seen.push(v); }));
+    }, src);
+    await nextMessages(6);
+    const n = await page.evaluate(() => window.__pub);
+    const seen = await page.evaluate(() => window.__seen.map((v) => JSON.stringify({ ...v, timestamp: 0 })));
+    ok(`the verdict was published ${n.diagnosis} times for 6 messages (its own replay included): ${seen.length > 1 ? seen.slice(0, 2).join(" <> ").slice(0, 600) : ""}`, n.diagnosis <= 3);
+    ok(`the router's snapshot ${n["device:router"]} times`, n["device:router"] <= 3);
+    ok(`incidents_version ${n.incidents_version} times`, n.incidents_version <= 2);
+    ok(`the whole message still came every time (${n.message})`, n.message >= 6);
+  }],
+
+  ["a tab-dot observer is not woken by a card that writes its status again: nothing in the cards changes when nothing changed", async ({ nextMessages, eq, page }) => {
+    await page.evaluate(() => {
+      window.__statusWrites = 0;
+      window.__statusWatch = new MutationObserver((records) => { window.__statusWrites += records.length; window.__statusWho = records.map((r) => `${r.target.id || r.target.className} ${r.attributeName}=${r.target.getAttribute(r.attributeName)} was ${r.oldValue}`); });
+      window.__statusWatch.observe(document.getElementById("panels"), { subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ["data-status"] });
+    });
+    await nextMessages(6);
+    const writes = await page.evaluate(() => { window.__statusWatch.disconnect(); return window.__statusWrites; });
+    eq(`status writes in 6 messages (${await page.evaluate(() => window.__statusWho)})`, writes, 0);
+  }],
+
+  ["a card on a hidden tab is not redrawn: the latency chart keeps its last drawing off screen, and catches up when its tab shows", async ({ click, layoutMounted, nextMessages, ok, page, until, PHONE }) => {
+    await page.setViewport(PHONE);
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await until(() => document.querySelector("[data-panel=latency] canvas") && window.Chart && window.Chart.getChart(document.querySelector("[data-panel=latency] canvas")));
+    const lastLabel = () => page.evaluate(() => window.Chart.getChart(document.querySelector("[data-panel=latency] canvas")).data.labels.at(-1));
+    await click("#mobileTabs [data-arg=incidents]");
+    await until(() => document.querySelector("[data-panel=latency]").hidden);
+    await new Promise((r) => setTimeout(r, 400));
+    const before = await lastLabel();
+    await nextMessages(4);
+    ok("the hidden chart was not redrawn", (await lastLabel()) === before);
+    await click("#mobileTabs [data-arg=live]");
+    await until((b) => window.Chart.getChart(document.querySelector("[data-panel=latency] canvas")).data.labels.at(-1) !== b, before);
+  }],
+
+  ["keyed lists, action names and the other helpers hold up against odd input", async ({ eq, moduleUrl, page }) => {
+    const out = await page.evaluate(async ([cards, dispatch, escape, path]) => {
+      const { kit } = await import(cards);
+      const { registerActions } = await import(dispatch);
+      const { numText } = await import(escape);
+      const { shortLabels } = await import(path);
+      const box = document.createElement("div");
+      const render = (item) => { const li = document.createElement("li"); li.textContent = item.t; return li; };
+      kit.list(box, [{ k: "a", t: "one" }, { k: "a", t: "two" }], { key: (i) => i.k, render });
+      const twice = box.children.length;
+      kit.list(box, [{ k: "a", t: "one" }], { key: (i) => i.k, render });
+      let registered = "no";
+      try { registerActions("click", { constructor: () => {}, toString: () => {} }); registered = "yes"; } catch (e) { registered = e.message; }
+      const labels = shortLabels([{ id: "x", category: "__proto__", name: "Odd", address: "192.0.2.1", enabled: true }]);
+      const inherited = shortLabels([{ id: "y", category: "constructor", name: "Odd two", address: "192.0.2.2", enabled: true }]);
+      return { twice, after: box.children.length, registered, numbers: [numText("<img>"), numText(" "), numText(null), numText("12.50"), numText(3)].join("|"), labelled: Object.hasOwn(labels, "x"), inherited: inherited.y };
+    }, [await moduleUrl("cards.js"), await moduleUrl("dispatch.js"), await moduleUrl("escape.js"), await moduleUrl("path.js")]);
+    eq("two rows with one key are two rows", out.twice, 2);
+    eq("and one row is left when one is wanted (no orphan)", out.after, 1);
+    eq("action names that Object.prototype also has can be registered", out.registered, "yes");
+    eq("numText", out.numbers, "|||12.5|3");
+    eq("a category named __proto__ does not break the labels", out.labelled, true);
+    eq("a category named constructor is not the role table's inherited function", out.inherited, "Odd two");
+  }],
+
+  ["the settings values rendered into the page carry their revision: a first live message with another revision reads them again, with the same one it does not", async ({ eq, layoutMounted, nextMessages, ok, page, waitText }) => {
+    const reads = () => page.evaluate(() => performance.getEntriesByType("resource").filter((r) => /\/api\/settings\/values/.test(r.name)).length);
+    const live = await page.evaluate(async () => (await (await fetch("/api/settings/values", { cache: "no-store" })).json()).revision);
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    eq("the page carries the revision it was rendered at", await page.evaluate(() => document.body.dataset.settingsRevision), String(live));
+    await waitText("#wsText", /^Live/);
+    await nextMessages(2);
+    eq("nothing changed since the render: the first message needed no read", await reads(), 0);
+    // a Save between the render and the connection: the page claims another revision than the server's
+    const hook = await page.evaluateOnNewDocument((fake) => {
+      new MutationObserver((_, obs) => { if (document.body) { document.body.dataset.settingsRevision = String(fake); obs.disconnect(); } }).observe(document, { childList: true, subtree: true });
+    }, live + 1000);
+    try {
+      await page.reload({ waitUntil: "load" });
+      await layoutMounted();
+      eq("(the page claims a revision the server is not at)", await page.evaluate(() => document.body.dataset.settingsRevision), String(live + 1000));
+      await waitText("#wsText", /^Live/);
+      await nextMessages(2);
+      ok("the first message's revision differed: the values were read again", (await reads()) >= 1);
+    } finally {
+      await page.removeScriptToEvaluateOnNewDocument(hook.identifier);
+      await page.reload({ waitUntil: "load" });
+      await layoutMounted();
+    }
+  }],
+
+  ["the zone changes: Uptime, the report and the loss grid read their data again; the settings values are read one at a time", async ({ eq, ok, moduleUrl, page, sleep }) => {
+    const calls = await page.evaluate(async (settings) => {
+      const real = window.fetch;
+      window.__calls = [];
+      window.fetch = (url, ...rest) => { window.__calls.push(String(url)); return real(url, ...rest); };
+      document.dispatchEvent(new CustomEvent("zonechange"));
+      const { refreshSettingsValues } = await import(settings);
+      await Promise.all([refreshSettingsValues(), refreshSettingsValues(), refreshSettingsValues()]);
+      window.fetch = real;
+      return window.__calls;
+    }, await moduleUrl("settings-values.js"));
+    await sleep(500);
+    const seen = (re) => calls.filter((u) => re.test(u)).length;
+    ok(`Uptime asked again (${seen(/\/api\/uptime/)})`, seen(/\/api\/uptime/) >= 1);
+    ok("the report asked again", seen(/\/api\/report\?/) >= 1);
+    ok("the loss grid asked again", seen(/loss-grid/) >= 1);
+    ok(`three requests for the settings values were one or two reads (${seen(/settings\/values/)})`, seen(/settings\/values/) <= 2);
+    eq("reads", true, true);
+  }],
+
+  ["a discovery that never ends is given up after its limit; reloads of the incident list asked together are one read", async ({ eq, moduleUrl, page }) => {
+    const out = await page.evaluate(async ([api, list]) => {
+      const real = window.fetch;
+      window.fetch = (url, ...rest) => {
+        if (String(url).includes("/api/discovery/")) return Promise.resolve(new Response(JSON.stringify({ state: "running", progress: "x" }), { status: 200 }));
+        return real(url, ...rest);
+      };
+      const { waitDiscovery } = await import(api);
+      let gaveUp = "never";
+      try { await waitDiscovery("stuck", () => {}, 5, 60); } catch (e) { gaveUp = e.message; }
+      window.fetch = real;
+      const { reload } = await import(list);
+      const counted = [];
+      window.fetch = (url, ...rest) => { counted.push(String(url)); return real(url, ...rest); };
+      await Promise.all([reload(), reload(), reload(), reload(), reload()]);
+      window.fetch = real;
+      return { gaveUp, reads: counted.filter((u) => /\/api\/incidents\?/.test(u)).length };
+    }, [await moduleUrl("path-api.js"), (await moduleUrl("main.js")).replace("js/main.js", "panels/incidents/list.js")]);
+    eq("gave up", /too long/.test(out.gaveUp), true);
+    eq("the incident list was read once for five reloads", out.reads, 1);
+  }],
+
   ["stale reading: a line read 2 h ago (poll every 30 min) is stale; one read 10 min ago is not; a router 5 min old is", async ({ LINE, ROUTER, SHOTS, click, eq, layoutMounted, ok, page, shot, text, until }) => {
     // the keys of the real message, for the next steps
     const keys = await page.evaluate(() => new Promise((res) => { window.__smokeMutate = (d) => { res(Object.keys(d)); window.__smokeMutate = null; }; }));
@@ -615,14 +827,14 @@ export const steps = [
     await waitCount("#pathChain .node[data-node]", 3);
     const probe = () => page.evaluate(async () => {
       const find = (f) => performance.getEntriesByType("resource").map((r) => r.name).find((n) => n.endsWith(f));
-      const util = await import(find("/js/util.js"));
+      const targets = await import(find("/js/targets.js"));
       const theme = await import(find("/js/chart-theme.js"));
-      const id = util.canonicalTargetOrder[0];
+      const id = targets.canonicalTargetOrder[0];
       const real = window.getComputedStyle;
       let calls = 0;
       window.getComputedStyle = (...a) => { calls++; return real.apply(window, a); };
       let color; let crit;
-      try { for (let i = 0; i < 30; i++) { color = util.getTargetInfo(id).color; crit = theme.token("--crit"); } } finally { window.getComputedStyle = real; }
+      try { for (let i = 0; i < 30; i++) { color = targets.getTargetInfo(id).color; crit = theme.token("--crit"); } } finally { window.getComputedStyle = real; }
       const root = real(document.documentElement);
       return { calls, color, crit, wantCrit: root.getPropertyValue("--crit").trim(), want: [1, 2, 3, 4, 5, 6, 7, 8].map((k) => root.getPropertyValue(`--s${k}`).trim()) };
     });
@@ -667,6 +879,27 @@ export const steps = [
     eq("shown: and its targets", shown.targets, 1);
     await until((h) => performance.getEntriesByType("resource").filter((r) => /\/api\/history\?/.test(r.name)).length > h, hidden.history);
     await until(() => window.__seen.message >= 3); // and the feed goes on
+  }],
+
+  ["Path health off screen is not drawn: live messages change nothing in its chain, and it shows the newest values once scrolled into view", async ({ eq, nextMessages, ok, page, showCard, until, waitCount }) => {
+    const chain = "#pathChain";
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await waitCount(`${chain} .node[data-node]`, 3);
+    await showCard("matrix"); // the chain is far above the window now
+    ok("the chain is out of sight, well above the window", await page.$eval(chain, (c) => c.getBoundingClientRect().bottom < -300));
+    await page.evaluate((sel) => {
+      window.__writes = 0;
+      window.__offObs = new MutationObserver((records) => { window.__writes += records.length; });
+      window.__offObs.observe(document.querySelector(sel), { subtree: true, childList: true, attributes: true, characterData: true });
+    }, chain);
+    await setMutate(page, "d.targets.forEach((t) => { t.last_ms = 77.7; t.recent_latencies = Array(30).fill(77.7); });");
+    await nextMessages(3);
+    eq("no DOM writes in the off-screen chain", await page.evaluate(() => window.__writes), 0);
+    ok("and it still shows the old figures", !/77\.7/.test(await page.$eval(chain, (c) => c.textContent)));
+    await page.$eval(chain, (c) => c.scrollIntoView({ block: "center" }));
+    await until((sel) => /77\.7/.test(document.querySelector(sel).textContent), chain);
+    await setMutate(page, null);
+    await page.evaluate(() => { window.__offObs.disconnect(); window.scrollTo(0, 0); });
   }],
 
   ["Hop details off screen is not drawn: live messages change nothing in its body, and it shows the newest values once scrolled into view", async ({ eq, moduleUrl, ok, page, until, waitCount }) => {
@@ -722,8 +955,6 @@ export const steps = [
     await until(() => document.getElementById("tracerouteModal").classList.contains("active") && document.activeElement?.id === "traceTargetInput");
     ok("the trace dialog was loaded by that click", (await loaded()).split(",").includes("trace"));
     await click("[data-action=closeModal][data-arg=tracerouteModal]");
-    // the closed dialog gives its history entry back a moment later (js/util.js): a hash set before that lands could be
-    // undone by it, which no person is quick enough to meet; wait for it, as a person would
     await until(() => !document.getElementById("tracerouteModal").classList.contains("active") && !history.state?.pgModal);
     // a link to #settings opens the page's Settings on load
     await page.evaluate(() => { location.hash = "settings"; });
@@ -758,7 +989,7 @@ export const steps = [
         await until((i) => document.getElementById(i).classList.contains("active"), id);
         if (how === "button") await click(closer); else await page.keyboard.press("Escape");
         await until((i) => !document.getElementById(i).classList.contains("active"), id);
-        await until(() => history.state?.mark === "base"); // its entry went with it
+        await until(() => history.state?.mark === "base"); // its entry is the page's own again (spent)
         await sleep(200);
         now = await here();
         eq(`${name}: closed by ${how}, no entry left behind`, `${now.url}|${now.mark}|${now.open}`, `${base}|base|`);
@@ -778,20 +1009,112 @@ export const steps = [
     ok("the page was never left", await page.evaluate(() => location.href.startsWith("http")));
   }],
 
-  ["a reload right after a dialog closes is not cancelled by the dialog giving its history entry back", async ({ click, eq, layoutMounted, page, until }) => {
+  ["Back after closing two dialogs in a row leaves the page and opens neither; the second reuses the first's spent entry", async ({ click, eq, layoutMounted, ok, page, until }) => {
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await page.evaluate(() => { history.replaceState({ mark: "prev" }, ""); history.pushState({ mark: "page" }, ""); });
+    const length = await page.evaluate(() => history.length);
+    const open = () => page.evaluate(() => [...document.querySelectorAll(".modal.active")].map((m) => m.id).join());
+    for (const [opener, id, closer] of [["[data-action=openDossierModal]", "dossierModal", "[data-action=closeModal][data-arg=dossierModal]"],
+      ["#headerTools [data-action=openLayoutDialog]", "layoutModal", "[data-action=closeModal][data-arg=layoutModal]"]]) {
+      await click(opener);
+      await until((i) => document.getElementById(i).classList.contains("active"), id);
+      await click(closer);
+      await until((i) => !document.getElementById(i).classList.contains("active"), id);
+    }
+    eq("both dialogs together added one entry", await page.evaluate(() => history.length), length + 1);
+    await page.evaluate(() => history.back());
+    await until(() => history.state?.mark === "prev");
+    eq("one Back reached the page before, with no dialog open", await open(), "");
+    await page.evaluate(() => history.forward());
+    await until(() => history.state?.mark === "page");
+    eq("Forward is the page again, still no dialog", await open(), "");
+    await page.evaluate(() => history.forward());
+    await until(() => history.state?.pgSpent !== undefined);
+    ok("and onto the spent entry: nothing opens", (await open()) === "" && (await page.evaluate(() => history.state.mark)) === "page");
+  }],
+
+  ["Forward after a dialog closed does not open it again (Dossier by Back; Settings by Back, address #settings)", async ({ click, eq, layoutMounted, ok, page, sleep, until }) => {
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    const open = () => page.evaluate(() => [...document.querySelectorAll(".modal.active")].map((m) => m.id).join());
+    await click("[data-action=openDossierModal]");
+    await until(() => document.getElementById("dossierModal").classList.contains("active"));
+    await page.evaluate(() => history.back());
+    await until(() => !document.getElementById("dossierModal").classList.contains("active"));
+    await page.evaluate(() => history.forward());
+    await until(() => history.state?.pgModal !== undefined); // on the Dossier's old entry
+    await sleep(300);
+    eq("the Dossier stayed closed", await open(), "");
+    // Back from the Dossier's dead entry passes the page entry it stands for and goes one on (js/modal.js: a Back that
+    // starts from a spent entry), so the page ends on an earlier entry than the one it started on, whose address may differ. The first
+    // landing already has no dialog state, so the step waits for the moves to end, and compares addresses with the one
+    // the page has then.
+    await page.evaluate(() => history.back());
+    await until(() => history.state?.pgModal === undefined);
+    await sleep(500);
+    const below = await page.evaluate(() => location.hash);
+    await click("#btnSettings");
+    await until(() => document.getElementById("settingsModal").classList.contains("active") && location.hash === "#settings");
+    await page.evaluate(() => history.back());
+    await until((h) => !document.getElementById("settingsModal").classList.contains("active") && location.hash === h, below);
+    await page.evaluate(() => history.forward());
+    await until(() => location.hash === "#settings"); // the address of the Settings entry
+    await sleep(500);
+    ok("Settings stayed closed on its old address", (await open()) === "" && await page.evaluate(() => history.state?.pgModal !== undefined));
+    await page.evaluate(() => history.back());
+    await sleep(500); // (Back from that dead entry goes on past the page it stands for as well)
+    ok("Back left the old Settings address and no dialog is open", (await open()) === "" && await page.evaluate(() => location.hash !== "#settings"));
+  }],
+
+  ["a hash set in the same task as a dialog's close is kept, and Back from it lands on the page the dialog was opened from", async ({ click, eq, layoutMounted, page, sleep, until }) => {
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await page.evaluate(() => { history.replaceState({ mark: "prev" }, ""); history.pushState({ mark: "page" }, ""); });
+    const start = await page.evaluate(() => location.hash);
+    const next = start === "#network" ? "live" : "network";
+    await click("[data-action=openDossierModal]");
+    await until(() => document.getElementById("dossierModal").classList.contains("active"));
+    await page.evaluate((h) => { document.querySelector("[data-action=closeModal][data-arg=dossierModal]").click(); location.hash = h; }, next);
+    await sleep(500);
+    eq("the hash stayed", await page.evaluate(() => location.hash), `#${next}`);
+    eq("the dialog is closed", await page.evaluate(() => document.getElementById("dossierModal").classList.contains("active")), false);
+    await page.evaluate(() => history.back());
+    await until((h) => location.hash === h, start);
+    eq("Back skipped the spent entry: the page the dialog was opened from", await page.evaluate(() => history.state?.mark), "page");
+    await page.evaluate(() => history.back());
+    await until(() => history.state?.mark === "prev");
+  }],
+
+  ["a reload right after a dialog closed stays on the page, and the closed dialog's entry is still skipped by Back", async ({ click, eq, layoutMounted, page, until }) => {
+    await page.setViewport({ width: 1400, height: 1000 });
+    await page.reload({ waitUntil: "load" });
+    await layoutMounted();
+    await page.evaluate(() => { history.replaceState({ mark: "prev" }, ""); history.pushState({ mark: "page" }, ""); });
+    await click("[data-action=openDossierModal]");
+    await until(() => document.getElementById("dossierModal").classList.contains("active"));
+    await click("[data-action=closeModal][data-arg=dossierModal]");
+    await page.reload({ waitUntil: "load" }); // at once: nothing of the close is still on its way
+    await layoutMounted();
+    eq("still the dashboard, no dialog", await page.evaluate(() => `${location.pathname}|${document.querySelectorAll(".modal.active").length}`), "/|0");
+    await page.evaluate(() => history.back());
+    await until(() => history.state?.mark === "prev");
+  }],
+
+  ["a reload in the same task as a dialog closing goes through (a close moves nothing in the history)", async ({ click, layoutMounted, page, until }) => {
     await page.setViewport({ width: 1400, height: 1000 });
     await page.reload({ waitUntil: "load" });
     await layoutMounted();
     await click("[data-action=openDossierModal]");
     await until(() => document.getElementById("dossierModal").classList.contains("active"));
     await page.evaluate(() => { window.__beforeReload = true; });
-    // the close schedules the entry's removal for later in this task's wake; the reload starts in the same task, so the
-    // removal (a history traversal) would land on the reload in flight and cancel it
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "load", timeout: 15000 }),
-      page.evaluate(() => { document.querySelector("[data-action=closeModal][data-arg=dossierModal]").click(); location.reload(); }),
-    ]);
-    eq("the reload went through (a new page)", await page.evaluate(() => window.__beforeReload === undefined), true);
+    // closing only marks the dialog's entry spent: no traversal follows it that could land on the reload in flight. (Not
+    // waitForNavigation: the close's replaceState is a same-document navigation to it and would end that wait at once.)
+    await page.evaluate(() => { document.querySelector("[data-action=closeModal][data-arg=dossierModal]").click(); location.reload(); }).catch(() => {}); // (the context may go before the answer)
+    await page.waitForFunction(() => window.__beforeReload === undefined && document.readyState === "complete", { timeout: 15000 });
     await layoutMounted();
   }],
 ];

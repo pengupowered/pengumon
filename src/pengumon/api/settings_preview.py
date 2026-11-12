@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from pengumon.api.common import StateDep
 from pengumon.api.settings_models import PreviewRequest
 from pengumon.security import rate_limit
+from pengumon.settings.finite import MESSAGE, non_finite
 from pengumon.settings.preview import PreviewBusy, PreviewInvalid, PreviewJob, build_spec
 
 router = APIRouter(prefix="/api")
@@ -33,6 +34,10 @@ def _jobs(state):
 @router.post("/settings/preview", dependencies=[Depends(rate_limit("settings_preview", 6, 60))])
 async def start_preview(body: PreviewRequest, state: StateDep) -> Dict[str, str]:
     jobs = _jobs(state)
+    where = non_finite(body.values)  # (a model validator's 422 would have to print the value: JSON cannot)
+    if where:
+        return JSONResponse(status_code=422, content={"detail": f"{where} {MESSAGE}",
+                                                      "errors": [{"where": f"values.{where}", "message": MESSAGE}]})
     try:
         spec, key = build_spec(state, body.values, body.days, time.time())
     except PreviewInvalid as e:

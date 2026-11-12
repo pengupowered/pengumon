@@ -108,9 +108,10 @@ leave out the rest rather than inventing values. The enum is `Capability` in `ca
 | Capability | The reading you return | What your device must give | What it brings |
 |---|---|---|---|
 | `wan_counters` | `WanCounters(rx_bytes, tx_bytes, counter_bits=None, read_at=None)` | Cumulative bytes received and sent on the WAN port since the device started | WAN rates, line load against the line's capacity, load-aware incident analysis, router restarts |
-| `router_system` | `SystemReading(cpu_pct, mem_pct, client_count, model)` | Any of CPU %, memory %, the number of connected devices, the device's own model name. A value you do not know is `None` | The router card, warnings for high CPU or memory, the router module of the Ask AI pack |
+| `router_system` | `SystemReading(cpu_pct, mem_pct, client_count, model, uptime_s, cpu_temp_c, wan_link_mbps, uptime_wrap_s)` | Any of CPU %, memory %, the number of connected devices, the device's own model name, its uptime, CPU temperature and WAN link speed. A value you do not know is `None` | The router card (the uptime also gives the restart and WAN link events), warnings for high CPU or memory, the router module of the Ask AI pack |
 | `client_inventory` | `ClientsReading(clients=(Client(...), ...))` | The list of connected devices: MAC, name, wired or Wi-Fi, band, signal, link rates | The Local network dialog, client counts per band, the Wi-Fi module of the pack |
 | `mesh` | `MeshReading(nodes=(MeshNode(...), ...))` | The mesh nodes and how many clients each carries (usually with `client_inventory`) | Per-node counts, a node dropping to 0 clients, backhaul |
+| `traffic_usage` | `TrafficReading(read_at, hours=(TrafficHour(...), ...), apps=(TrafficApps(...), ...))` | Bytes up and down per client and clock hour, and per app over 24-hour windows, as the device counted them (the `asuswrt` driver reads the router's Traffic Analyzer) | The Internet use card, the device traffic dialog, the traffic in the incident inspector, the MCP `traffic` tool |
 | `access_line` | `LineReading(technology="docsis", channels=(DocsisChannel(...), ...))` | The physical line to the provider: per-channel power, SNR and codeword errors | The Line card and tab, the cable-line module of the pack, line-fault wording in incidents |
 
 Rules that follow from the code:
@@ -242,7 +243,9 @@ Points that matter when you adapt it:
   trace span for each request and, with `PENGUMON_LOG_LEVELS=pengumon.drivers=debug`, logs method, path, status, duration and
   size, never a query string or a body (a login carries credentials). Use `self.http.get`, `.post` or `.request`; for a
   session, the cookies stay in the client and `clear_session()` forgets them (call it from `set_credentials`). `client=`
-  is how a test supplies a client with a mock transport.
+  is how a test supplies a client with a mock transport. Every answer is read with a size limit (`limit=`, 1 MiB by
+  default: a longer answer is a `protocol` error, and `.request_capped` reads only the start of one instead), counted
+  after decoding; requests ask for no compression, and an answer compressed anyway is decoded only up to the limit.
 - **TLS** comes from the entry's `tls:` settings. Pass `verify=device_verify(cfg)` to the client you build; do not
   read the `tls` settings yourself and never default to turning checking off. Set a timeout on the client (the drivers use 6 s
   and 12 s). Read only the configured address, and do not follow redirects unless your device needs it (httpx follows none by default; the Xfinity
@@ -494,6 +497,7 @@ panel that is not available with the reason). The list is [dashboard.md](dashboa
 | `wan_counters` | The **Router** card (download and upload rates) and the router history chart; the **line load**, as a share of the line's capacity (learned from the rates, or set in Settings), which lets incident analysis call a slow line "busy" instead of a fault |
 | `router_system` | The **Router** card: CPU, memory, connected-client count, graded against the router levels in Settings |
 | `client_inventory` | The **Local network** dialog (clients by band, signal, link rate, mesh node) and the client counts on the router card |
+| `traffic_usage` | The **Internet use** card (which devices and apps used the internet, per hour), the traffic of the hours of an incident in the inspector and the MCP `traffic` tool |
 | `mesh` | The mesh nodes on the router card and in the Local network dialog; a node the device reports offline turns the card to a warning |
 
 `GET /api/devices` shows each device with its `label` and `offers`, and `GET /api/features` which features are available

@@ -382,3 +382,55 @@ async def test_the_page_keeps_the_hooks_a_skin_relies_on():
     # every card's header gets its tools box with the card's menu button last (js/layout.js addMenuButton)
     layout = (themes.THEMES_DIR.parent / "js" / "layout.js").read_text(encoding="utf-8")
     assert "className: 'panel-tools'" in layout and "'btn icon sm panel-menu-btn'" in layout and "tools.appendChild(b)" in layout
+
+
+# ---------- custom theme values and lint ----------
+
+@pytest.mark.parametrize("value", ["rgba(١٢٣, 0, 0, 1)", "rgb(1, 2, ٣)", "rgba(10, 20, 30, .5)", "rgba(1, 2, 3, .٥)"])
+def test_a_color_with_non_ascii_digits_or_spaces_is_not_a_color(value):
+    assert themes.parse_color(value) is None
+    assert themes.token_problem("--accent", value, custom=True)
+
+
+@pytest.mark.parametrize("name, value", [("--fs-md", "١٤px"), ("--r-sm", "٤px"), ("--t-fast", "٩٠ms"), ("--fw-bold", "٧٠٠"),
+                                        ("--ease", "cubic-bezier(٠, 0, 1, 1)")])
+def test_a_size_with_non_ascii_digits_is_refused(name, value):
+    assert themes.token_problem(name, value, custom=False)
+
+
+def test_two_custom_themes_may_not_share_an_id():
+    one, two = _custom(), _custom(name="Other")
+    with pytest.raises(ValidationError, match="custom-test"):
+        DisplayConfig(themes=[ThemeItem.model_validate(one), ThemeItem.model_validate(two)])
+    assert len(DisplayConfig(themes=[ThemeItem.model_validate(one), ThemeItem.model_validate(_custom(id="custom-two"))]).themes) == 2
+
+
+def test_a_custom_theme_that_hides_its_text_gets_a_warning_not_an_error():
+    from pengumon.web.settings import theme_warnings
+    good = ThemeItem.model_validate(_custom())
+    assert theme_warnings([good]) == []
+    tokens = {m: dict(t) for m, t in _custom()["tokens"].items()}
+    tokens["dark"]["--ink-1"] = tokens["dark"]["--bg"]
+    hidden = ThemeItem.model_validate(_custom(id="custom-hidden", tokens=tokens))  # accepted
+    found = theme_warnings([good, hidden])
+    assert found and all(w["where"] == "values.display.themes" for w in found)
+    assert any("custom-hidden dark: --ink-1 on" in w["message"] for w in found)
+    assert not any("custom-test" in w["message"] for w in found)
+
+
+def test_the_skin_lint_sees_nesting_escapes_and_other_url_functions():
+    scope = ':root[data-look="x"]'
+    assert themes.skin_problems("x", scope + " { body & { color: red; } }")  # nesting out of the scope
+    assert themes.skin_problems("x", scope + r" .a { background: u\72l(https://example.com/a.png); }")
+    assert themes.skin_problems("x", scope + r" .a { background: \75 rl(//example.com/a.png); }")
+    assert themes.skin_problems("x", scope + ' .a { background: image-set("//example.com/a.png" 1x); }')
+    assert themes.skin_problems("x", scope + " .a { background: src(https://example.com/a.png); }")
+    assert themes.skin_problems("x", r"@\69 mport 'x.css';")
+    assert themes.skin_problems("x", scope + ' .a { background: image-set("a.png" 1x); content: "\\2022"; }') == []
+
+
+def test_the_view_lint_sees_a_dynamic_import(tmp_path):
+    folder = tmp_path / "x"
+    (folder / "panels").mkdir(parents=True)
+    (folder / "panels" / "services.js").write_text("export default { mount(root) { import('/x.js'); } };")
+    assert any("import" in p for p in themes.view_problems("x", folder))

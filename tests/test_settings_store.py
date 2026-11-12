@@ -302,6 +302,22 @@ async def test_validation_warnings_are_not_refusals(tmp_path):
     assert any("anyone who can reach the page sees" in m for m in messages)
 
 
+async def test_a_custom_theme_that_hides_its_text_shows_a_warning_on_save(tmp_path):
+    """The theme is accepted (the colors are the owner's call); Save says what the readability rules find."""
+    from test_themes import _custom
+    manager, _ = await make_manager(tmp_path)
+    tokens = {m: dict(t) for m, t in _custom()["tokens"].items()}
+    tokens["dark"]["--ink-1"] = tokens["dark"]["--bg"]
+    good, hidden = _custom(), _custom(id="custom-hidden", tokens=tokens)
+    checked = await manager.validate({}, {"themes": [good]})
+    assert checked.ok and checked.warnings == []
+    checked = await manager.validate({}, {"themes": [good, hidden]})
+    assert checked.ok
+    found = [w for w in checked.warnings if w["where"] == "values.display.themes"]
+    assert any("custom-hidden dark: --ink-1 on" in w["message"] for w in found)
+    assert not any("custom-test" in w["message"] for w in found)
+
+
 async def test_list_rules_ids_renames_and_hop_ids(tmp_path):
     manager, _ = await make_manager(tmp_path)
     devices = manager.list_items("devices")

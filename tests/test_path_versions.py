@@ -93,6 +93,25 @@ async def test_every_apply_is_kept_as_a_version_newest_first_and_the_import_is_r
     assert (await ac.get("/api/path/versions/9")).status_code == 404
 
 
+async def test_a_kept_path_version_needs_the_password_as_the_export_does(path_app, monkeypatch):
+    """A version is a whole path document (with hops the dashboard no longer shows), as the export, which the
+    viewer policy denies; restoring it is an edit. A viewer and the read token get the list of versions, not one."""
+    from pengumon import security
+    from pengumon.main import security_config
+    ac, _ = path_app
+    monkeypatch.setattr(security_config, "access_token", "example-token")
+    monkeypatch.setattr(security_config, "view_without_token", True)
+    monkeypatch.setattr(security_config, "read_token_hash", security.read_token_digest("pgr_made-up-for-paths"))
+    reader = {"Authorization": "Bearer pgr_made-up-for-paths"}
+    for headers in ({}, reader):
+        assert (await ac.get("/api/path/versions", headers=headers)).status_code == 200
+        refused = await ac.get("/api/path/versions/1", headers=headers)
+        assert refused.status_code == 401 and "hops" not in refused.text, headers
+        assert (await ac.get("/api/path/export", headers=headers)).status_code in (401, 403)
+    owner = await ac.get("/api/path/versions/1", headers={"Authorization": "Bearer example-token"})
+    assert owner.status_code == 200 and [h["id"] for h in owner.json()["hops"]] == ["gw", "isp_1", "pub"]
+
+
 async def test_restoring_a_version_is_applying_its_draft_and_a_removed_hop_gets_its_history_back(path_app):
     ac, state = path_app
     now = time.time()
@@ -205,3 +224,29 @@ async def test_deleting_a_removed_hops_history_deletes_its_events(tmp_path):
     assert len(await repo.path_events("isp_1")) == 1
     assert await repo.delete_path_history("isp_1")
     assert await repo.path_events("isp_1") == []
+
+
+# --- probe changes -------------------------------------------------------------------------------------------------------
+
+def test_a_probe_change_is_named_and_is_not_also_a_settings_change():
+    tcp = PUB.model_copy(update={"probe": "tcp", "port": 443})
+    assert describe_change([PUB], [tcp]) == ("Public: probe ping → TCP 443", [])
+    assert describe_change([tcp], [tcp.model_copy(update={"port": 8443})])[0] == "Public: probe TCP 443 → TCP 8443"
+    site = TargetConfig(id="s", name="Site", address="example.com", probe="http")
+    assert describe_change([site], [site.model_copy(update={"http_path": "/x"})])[0] == \
+        "Site: probe HTTPS HEAD → HTTPS HEAD /x"
+    assert describe_change([site], [site.model_copy(update={"color": "#112233"})])[0] == "Settings of 1 hop changed"
+
+
+async def test_a_probe_change_is_stored_as_an_event_with_the_old_and_new_method(path_app):
+    ac, state = path_app
+    state.prober.stats["pub"].sent = 40
+    hops = [_hop(GW, 0), _hop(ISP, 1), _hop(PUB, 2, probe="tcp", port=443)]
+    res = await ac.put("/api/path", json={"base_revision": 1, "hops": hops})
+    assert res.status_code == 200, res.text
+    events = (await ac.get("/api/path/events", params={"target_id": "pub"})).json()
+    assert [(e["kind"], e["old"], e["new"], e["revision"]) for e in events] == [("probe_changed", "ping", "TCP 443", 2)]
+    assert (await ac.get("/api/path/events", params={"target_id": "gw"})).json() == []
+    assert (await ac.get("/api/path/versions")).json()[0]["summary"] == "Public: probe ping → TCP 443"
+    res = await ac.put("/api/path", json={"base_revision": 2, "hops": hops})  # no change: no event
+    assert len((await ac.get("/api/path/events", params={"target_id": "pub"})).json()) == 1

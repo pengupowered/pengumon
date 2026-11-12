@@ -63,6 +63,95 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=deviceSetupModal]");
   }],
 
+  ["device setup: the router's fields are not offered the dashboard's own sign-in, and a typed password does not stay in the closed dialog", async ({ ROUTER, click, eq, page, until }) => {
+    await click(`${ROUTER} [data-action=openDeviceSetup]`);
+    await until(() => document.getElementById("deviceSetupModal").classList.contains("active"));
+    // A saved dashboard sign-in (same address) is offered to a text field + current-password pair; "new-password" and "off" are not
+    eq("user name: no autofill", await page.$eval("#setupUsername", (i) => i.autocomplete), "off");
+    eq("password: a new password, never the saved one", await page.$eval("#setupPassword", (i) => i.autocomplete), "new-password");
+    eq("privacy password: the same", await page.$eval("#setupPrivacy", (i) => i.autocomplete), "new-password");
+    eq("the password managers that ignore autocomplete are told", await page.$$eval("#setupUsername, #setupPassword, #setupPrivacy", (els) => els.every((i) => i.hasAttribute("data-1p-ignore") && i.dataset.lpignore === "true")), true);
+    await page.type("#setupPassword", "typed-not-sent");
+    await click("[data-action=closeModal][data-arg=deviceSetupModal]");
+    await until(() => !document.getElementById("deviceSetupModal").classList.contains("active"));
+    eq("the password is gone from the closed dialog", await page.$eval("#setupPassword", (i) => `${i.type}:${i.value}`), "password:");
+  }],
+
+  ["an SNMPv3 device asks for its user, authentication and privacy passwords; an SNMPv2c one for its community string only", async ({ ROUTER, click, eq, ok, page, phone, noSideScroll, shots, stubFetch, text, until, waitText }) => {
+    const devices = await page.evaluate(async () => (await (await fetch("/api/devices")).json()));
+    const as = (signIn) => devices.map((d) => (d.id === "router" ? { ...d, driver: "snmp", sign_in: signIn } : d));
+    const V3 = { username: "SNMPv3 user name", password: "Authentication password", privacy_password: "Privacy password" };
+    // the credentials call answered by the page, keeping what was sent
+    const capture = () => page.evaluate(() => {
+      window.__realFetch = window.__realFetch || window.fetch;
+      window.__sent = null;
+      window.fetch = (url, opts) => {
+        if (opts && opts.method === "POST" && String(url).endsWith("/credentials")) {
+          window.__sent = JSON.parse(opts.body);
+          return Promise.resolve(new Response(JSON.stringify({ success: true, snapshot: null }), { status: 200 }));
+        }
+        return window.__realFetch(url, opts);
+      };
+    });
+    const open = async () => {
+      await click(`${ROUTER} [data-action=openDeviceSetup]`);
+      await until(() => document.getElementById("deviceSetupModal").classList.contains("active"));
+    };
+    const fill = (id, value) => page.$eval(id, (i, v) => { i.value = v; }, value);
+
+    await stubFetch({ "GET /api/devices": { body: as(V3) } });
+    await open();
+    const shownField = (id) => page.$eval(id, (f) => !f.hidden && f.getClientRects().length > 0);
+    eq("the user name field", await shownField("#setupUsernameField"), true);
+    eq("the privacy password field", await shownField("#setupPrivacyField"), true);
+    eq("the labels", [await text("#setupUsernameLabel"), await text("#setupPasswordLabel"), await text("#setupPrivacyLabel")].join("|"),
+      "SNMPv3 user name|Authentication password|Privacy password");
+    eq("the privacy password is hidden and required", await page.$eval("#setupPrivacy", (i) => `${i.type}:${i.required}:${i.value}`), "password:true:");
+    ok("the sources name the privacy password's variable and file", /PENGUMON_DEVICE_ROUTER_PRIVACY_PASSWORD/.test(await text("#setupSource")) && /pengumon_router_privacy_password/.test(await text("#setupSource")));
+    await click("#btnShowPrivacy");
+    eq("shown on request", await page.$eval("#setupPrivacy", (i) => i.type), "text");
+    eq("the other one stays hidden", await page.$eval("#setupPassword", (i) => i.type), "password");
+    await click("#btnShowPrivacy");
+    await shots("device-setup-snmpv3");
+    await capture();
+    await fill("#setupUsername", "monitor");
+    await fill("#setupPassword", "auth-pass-not-echoed");
+    await fill("#setupPrivacy", "priv-pass-not-echoed");
+    await page.evaluate(() => document.getElementById("btnSaveSetup").click());
+    await waitText("#setupResult", /Success/);
+    eq("what was sent", JSON.stringify(await page.evaluate(() => window.__sent)),
+      JSON.stringify({ username: "monitor", password: "auth-pass-not-echoed", privacy_password: "priv-pass-not-echoed" }));
+    ok("no password is shown", !/not-echoed/.test(await text("#deviceSetupModal")));
+    await until(() => !document.getElementById("deviceSetupModal").classList.contains("active"));
+    await open();
+    eq("both passwords are empty on reopening", await page.$eval("#setupPassword", (i) => i.value) + await page.$eval("#setupPrivacy", (i) => i.value), "");
+    await click("[data-action=closeModal][data-arg=deviceSetupModal]");
+    await phone(async () => {
+      await open();
+      ok("phone width: no sideways scroll", await noSideScroll("deviceSetupModal"));
+      await click("[data-action=closeModal][data-arg=deviceSetupModal]");
+    });
+
+    await stubFetch({ "GET /api/devices": { body: as({ username: null, password: "Community string", privacy_password: null }) } });
+    await open();
+    eq("SNMPv2c: no user name field", await shownField("#setupUsernameField"), false);
+    eq("SNMPv2c: no privacy password field", await shownField("#setupPrivacyField"), false);
+    eq("SNMPv2c: the password is the community string", await text("#setupPasswordLabel"), "Community string");
+    ok("SNMPv2c: the sources name no privacy password", !/PRIVACY/.test(await text("#setupSource")));
+    await capture();
+    await fill("#setupPassword", "community-not-echoed");
+    await page.evaluate(() => document.getElementById("btnSaveSetup").click());
+    await waitText("#setupResult", /Success/);
+    ok("SNMPv2c: no privacy password is sent", !("privacy_password" in await page.evaluate(() => window.__sent)));
+    await until(() => !document.getElementById("deviceSetupModal").classList.contains("active"));
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await stubFetch(null);
+    await open();
+    eq("a device without sign_in keeps the usual labels", [await text("#setupUsernameLabel"), await text("#setupPasswordLabel")].join("|"), "Username|Password");
+    eq("and no privacy password", await shownField("#setupPrivacyField"), false);
+    await click("[data-action=closeModal][data-arg=deviceSetupModal]");
+  }],
+
   ["a device that needs no sign-in (UPnP) has no Setup button on its card; the others keep theirs", async ({ LINE, ROUTER, eq, page, stubFetch, until }) => {
     const devices = await page.evaluate(async () => (await (await fetch("/api/devices")).json()));
     await stubFetch({ "GET /api/devices": { body: devices.map((d) => (d.id === "router" ? { ...d, needs_sign_in: false } : d)) } });

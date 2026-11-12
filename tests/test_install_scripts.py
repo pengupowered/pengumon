@@ -273,3 +273,94 @@ def test_the_macos_backup_and_install_ps1_name_the_exit_status_when_the_backup_p
     assert "exited with status" in mac
     ps1 = (ROOT / "scripts" / "install.ps1").read_text()
     assert "the backup printed nothing (exit code $backupExit)" in ps1
+
+
+# ---- the installers: rollback, signals, checks -------------------------------------------------------------------------------------------
+
+def _guard_block() -> str:
+    """install.sh's rollback, cleanup and trap lines, as one piece of shell."""
+    return SH[SH.index("HAD_OLD=0\n"):SH.index("trap 'exit 143' TERM\n") + len("trap 'exit 143' TERM\n")]
+
+
+@posix_shell
+def test_an_interrupt_ends_the_installer_instead_of_going_on_after_the_cleanup(tmp_path):
+    import signal
+    import time
+    script = tmp_path / "t.sh"
+    script.write_text(
+        f'say() {{ echo "$*"; }}\nroot() {{ "$@"; }}\nWORK="{tmp_path / "work"}"\nmkdir "$WORK"\n'
+        + _guard_block() + 'echo ready\nsleep 2\necho continued_after_trap\n')
+    for sig, code in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
+        (tmp_path / "work").mkdir(exist_ok=True)
+        proc = subprocess.Popen(["sh", str(script)], stdout=subprocess.PIPE, text=True)
+        assert proc.stdout.readline().strip() == "ready"
+        time.sleep(0.2)
+        proc.send_signal(sig)
+        out, _ = proc.communicate(timeout=30)
+        assert "continued_after_trap" not in out and proc.returncode == code, (sig, out, proc.returncode)
+        assert not (tmp_path / "work").exists()
+
+
+def _guarded_run(tmp_path, *, had_old, swapped, armed=True):
+    """Runs install.sh's rollback guard around a failing step; returns (venv folder, calls the fake pengumon saw)."""
+    app = tmp_path / "app"
+    (app / "venv").mkdir(parents=True)
+    (app / "venv" / "marker").write_text("new" if swapped else "old")
+    if swapped:
+        (app / "venv.old").mkdir()
+        (app / "venv.old" / "marker").write_text("old")
+    fake = tmp_path / "pengumon"
+    calls = tmp_path / "calls"
+    fake.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n')
+    fake.chmod(0o755)
+    script = tmp_path / "t.sh"
+    script.write_text(
+        f'say() {{ echo "$*"; }}\nroot() {{ "$@"; }}\nWORK="{tmp_path / "work"}"\nmkdir "$WORK"\n'
+        f'APP="{app}"; VENV="$APP/venv"; OLD_VENV="$APP/venv.old"; PENGUMON="{fake}"; SCOPE_FLAG=--user\n'
+        + _guard_block() + f'HAD_OLD={1 if had_old else 0}\nROLLBACK={1 if armed else 0}\nexit 1\n')
+    done = subprocess.run(["sh", str(script)], capture_output=True, text=True, check=False, timeout=30)
+    assert done.returncode == 1
+    return app, (calls.read_text() if calls.exists() else "")
+
+
+@posix_shell
+def test_a_failure_after_the_swap_puts_the_old_environment_back_and_starts_the_old_service(tmp_path):
+    app, calls = _guarded_run(tmp_path, had_old=True, swapped=True)
+    assert (app / "venv" / "marker").read_text() == "old" and not (app / "venv.old").exists()
+    assert calls.strip() == "service install --user"
+
+
+@posix_shell
+def test_a_failure_before_the_swap_leaves_the_working_environment_alone_and_starts_the_service(tmp_path):
+    app, calls = _guarded_run(tmp_path, had_old=True, swapped=False)
+    assert (app / "venv" / "marker").read_text() == "old"  # it was never moved: it must not be deleted
+    assert calls.strip() == "service install --user"
+
+
+@posix_shell
+def test_a_failed_first_install_leaves_no_half_built_environment(tmp_path):
+    app, calls = _guarded_run(tmp_path, had_old=False, swapped=False)
+    assert not (app / "venv").exists() and calls == ""
+
+
+@posix_shell
+def test_a_finished_install_is_not_rolled_back(tmp_path):
+    app, calls = _guarded_run(tmp_path, had_old=True, swapped=True, armed=False)
+    assert (app / "venv" / "marker").read_text() == "new" and (app / "venv.old").exists() and calls == ""
+
+
+def test_the_installers_build_the_new_environment_before_the_old_one_is_gone():
+    for text, clear in ((SH, "venv --clear"), (PS1, "'--clear'")):
+        assert clear not in text  # `--clear` deleted the working environment first
+    assert SH.index('uvr python install') < SH.index('mv "$VENV" "$OLD_VENV"') < SH.index('uvr venv')
+    assert SH.index('"$PENGUMON" version > /dev/null') < SH.index("ROLLBACK=0\nsay \"Installed")
+    assert SH.index("ROLLBACK=1\nuvr python install") > SH.index("stop_service\nfi")
+    assert PS1.index("'python', 'install'") < PS1.index("Move-Item -LiteralPath $Venv") < PS1.index("'venv', '--python'")
+    assert PS1.index("Invoke-Native $Pengumon @('version')") < PS1.index("$Armed = $false")
+
+
+@posix_shell
+@pytest.mark.parametrize("port", ["0", "65536", "99999", "00000"])
+def test_a_port_outside_1_to_65535_is_refused(assets, port):
+    done = _install("--port", port, "--from", str(assets))
+    assert done.returncode == 1 and "between 1 and 65535" in done.stderr, done.stderr

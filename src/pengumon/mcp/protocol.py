@@ -32,7 +32,8 @@ INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
 INSTRUCTIONS = (
-    "Pengumon is a home network monitor: it pings every hop between this network and the internet once a second, "
+    "Pengumon is a home network monitor: it probes every hop between this network and the internet once a second (by ping, or by a TCP connection or "
+    "HTTP request where the owner chose one), "
     "records outages and slow spells as incidents, and polls the cable modem and router. Everything here is read-only. "
     "Start with the `status` tool to answer 'is the internet OK right now?'. Use `incidents` and `incident` to see what "
     "went wrong and why, `report` for uptime over a day, week or month, `devices` for the modem and router, `services` "

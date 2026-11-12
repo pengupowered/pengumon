@@ -48,7 +48,7 @@ def _query(path, sql):
 async def test_v16_gives_the_stored_names_their_us_spelling_and_keeps_their_values(tmp_path, monkeypatch):
     path = str(tmp_path / "v15.db")
     colors = await _v15_database(path, monkeypatch)
-    assert await migrations.migrate(path) == migrations.LATEST_VERSION == 17
+    assert await migrations.migrate(path) == migrations.LATEST_VERSION >= 19
     assert _query(path, "SELECT title, kind FROM incidents ORDER BY id") == [
         ("ISP Hop Deprioritizes Ping", "hop_deprioritized"), ("Line Busy: ISP Hops Deprioritize Ping", "busy_isp_hops"),
         ("Slow DNS Queries", "dns_slow")]
@@ -60,7 +60,7 @@ async def test_v16_gives_the_stored_names_their_us_spelling_and_keeps_their_valu
     documents = [json.loads(d) for d, in _query(path, "SELECT document FROM settings_versions ORDER BY revision")]
     assert documents[0] == {"values": {"line.up_mbps": 40}, "lists": {}}  # nothing to rename: left as it was
     assert documents[1]["values"] == {"line.up_mbps": 40, "dashboard.colors": colors}
-    assert await migrations.migrate(path) == 17  # runs once
+    assert await migrations.migrate(path) == migrations.LATEST_VERSION  # runs once
 
 
 async def test_v16_keeps_a_value_already_under_the_new_name(tmp_path, monkeypatch):
@@ -73,3 +73,16 @@ async def test_v16_keeps_a_value_already_under_the_new_name(tmp_path, monkeypatc
     await migrations.migrate(path)
     assert _query(path, "SELECT key, value FROM meta WHERE key LIKE 'settings_initiali%'") == [
         ("settings_initialized", "new")]
+
+
+async def test_v16_skips_a_saved_settings_version_that_is_not_json(tmp_path, monkeypatch):
+    path = str(tmp_path / "bad.db")
+    await _v15_database(path, monkeypatch)
+    con = sqlite3.connect(path)
+    con.execute("INSERT INTO settings_versions (revision, applied_at, source, summary, document) VALUES (3, 1.0, 'page', 's', ?)",
+                ("{not json",))
+    con.commit()
+    con.close()
+    assert await migrations.migrate(path) == migrations.LATEST_VERSION  # one unreadable version does not stop the start
+    assert _query(path, "SELECT document FROM settings_versions WHERE revision = 3") == [("{not json",)]
+    assert "dashboard.colors" in json.loads(_query(path, "SELECT document FROM settings_versions WHERE revision = 2")[0][0])["values"]

@@ -1,6 +1,7 @@
 """Tests for the macOS ICMP backend: byte-exact packets with a fake socket, plus real-socket tests on macOS."""
 
 import asyncio
+import errno
 import os
 import socket
 import struct
@@ -191,7 +192,7 @@ async def test_sent_packet_is_a_valid_echo_request_to_the_target(backend):
     assert addr == (DEST, 0) and ttl == 64
     assert data[0] == 8 and _checksum(data) == 0
     backend.close()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(OSError):
         await task
 
 
@@ -391,12 +392,34 @@ async def test_missing_timestamp_falls_back(backend):
     assert backend.fallback_timestamps == 1
 
 
-async def test_close_cancels_pending_and_closes_socket(backend):
+async def test_a_socket_that_keeps_failing_to_read_pauses_the_reader_R4_L8(backend, monkeypatch):
+    removed = []
+
+    class Loop:
+        def remove_reader(self, fd):
+            removed.append(fd)
+
+    await started(backend)
+    backend._loop = Loop()
+
+    def broken(size, ancsize):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(backend._sock, "recvmsg", broken)
+    for _ in range(icmp_macos._MAX_RECV_ERRORS - 1):
+        backend._on_readable()
+    assert removed == [] and backend._loop is not None  # a few stray errors are tolerated
+    backend._on_readable()
+    assert removed == [backend._sock.fileno()] and backend._loop is None
+
+
+async def test_close_fails_pending_with_an_oserror_and_closes_socket_R4_L9(backend):
     task = await started(backend)
     backend.close()
     assert backend._sock.closed and backend._pending == {}
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(OSError) as raised:
         await task
+    assert raised.value.errno == errno.EBADF and not task.cancelled()
     with pytest.raises(OSError):
         await backend.probe(DEST, timeout=0.1)
     backend.close()  # twice is fine

@@ -1,6 +1,7 @@
 // Incident log panel: the timeline and the table of outages (model.js makes the view model, view.js is the standard view;
 // docs/themes.md, "Drawing a card"), with the inspector that opens from a row (a dialog, not a card).
 
+import { renderedRevision } from '../../js/settings-values.js';
 import { initIncidentsCard, updateIncidentsTable } from './model.js';
 import { bindIncidents, loadSince, reload } from './list.js';
 import './inspector.js';
@@ -30,7 +31,7 @@ export default {
       if (!first) load();
     });
     // a Save in Settings (here or in another browser) may change how drops are grouped (incidents.group_gap_minutes): read again
-    let revision = null;
+    let revision = renderedRevision(); // the page's own, so a Save made between the render and the connection shows as a change
     ctx.bus.subscribe('settings_revision', (r) => {
       if (revision !== null && r !== revision) load();
       revision = r;

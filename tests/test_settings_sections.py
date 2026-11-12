@@ -125,6 +125,12 @@ def test_a_short_round_keeps_the_default_timeout():
     assert ProberConfig(interval_seconds=1.0, timeout_seconds=1.0).timeout_seconds == 1.0
 
 
+@pytest.mark.parametrize("seconds", [0, -1, 0.0, 61])
+def test_a_probe_round_must_be_positive_and_at_most_a_minute_R4_L11(seconds):
+    with pytest.raises(ValidationError):
+        ProberConfig(interval_seconds=seconds)
+
+
 def test_log_level_names_are_read_like_the_logging_setup_reads_them():
     assert ServerConfig(log_level="INFO").log_level == "info"
     assert ServerConfig(log_level=" Warn ").log_level == "warning"

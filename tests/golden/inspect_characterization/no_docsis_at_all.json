@@ -1,4 +1,5 @@
 {
+ "device_events": [],
  "docsis_correlation": {
   "active_errors_in_window": 0,
   "gateway_offline": false,
@@ -88,6 +89,9 @@
    }
   ],
   "sha256": "d832f71f0b361ad3a532e24339374c18ce1277b425f95eed0f070620145a41a1"
+ },
+ "traffic": {
+  "hours": []
  },
  "window_end": 1759992905.0,
  "window_start": 1759992755.0

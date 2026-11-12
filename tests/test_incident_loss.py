@@ -163,3 +163,33 @@ async def test_the_api_lists_the_loss_span(tmp_path, app_state):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         (listed,) = json.loads((await ac.get("/api/incidents")).text)
     assert (listed["duration_seconds"], listed["loss_start"], listed["loss_seconds"]) == (12.0, base - 3, 7.0)
+
+
+@pytest.mark.asyncio
+async def test_start_does_not_rescan_incidents_that_can_never_get_a_loss_span(tmp_path, monkeypatch):
+    path = str(tmp_path / "loss.db")
+    repo = DatabaseRepository(db_path=path)
+    await repo.initialize()
+    base = float(int(time.time())) - 600
+    await repo.insert_samples(probes(base, "gw", {0, 1, 2}))
+    await repo.flush_samples()
+    wanted = await repo.create_incident(incident(base, 10.0, ["gw"]))
+    no_targets = await repo.create_incident(incident(base, 10.0, []))
+    service = await repo.create_incident(incident(base, 10.0, ["gw"]))
+    await repo.close()
+    async with aiosqlite.connect(path) as db:
+        await db.execute("UPDATE incidents SET kind = 'zz_not_a_network_kind' WHERE id = ?", (service,))
+        await db.execute("UPDATE incidents SET end_time = start_time + 10, duration_seconds = 10, resolved = 1")
+        await db.commit()
+    asked = []
+    original = DatabaseRepository.store_incident_loss
+
+    async def spy(self, incident_id):
+        asked.append(incident_id)
+        return await original(self, incident_id)
+
+    monkeypatch.setattr(DatabaseRepository, "store_incident_loss", spy)
+    repo = DatabaseRepository(db_path=path)
+    await repo.initialize()
+    assert asked == [wanted] and no_targets not in asked and service not in asked
+    assert (await repo.get_incident_by_id(wanted)).loss_seconds == 3.0

@@ -63,7 +63,9 @@ addresses of the path as what is sent. Untick the box to skip it; the roles then
 ### Device checks
 
 On by default. Sent to the devices in your home: each private hop before the first public one, and the common
-gateway addresses below.
+gateway addresses below. A hop's address comes from the ICMP answer of the trace, so the checks contact any private or
+link-local address a trace reports (a device on the path that forges its answers could name another LAN address); each
+gets the one read-only request described here and nothing else.
 
 - A private hop gets one GET of `/` over HTTP, or HTTPS when nothing listens on port 80. A redirect is followed only
   to the same address (at most twice); a redirect to another host is never followed.

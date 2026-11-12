@@ -17,13 +17,13 @@ import subprocess
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from pengumon.access.manager import SETUP_KEY
-from pengumon.capabilities import BAND_5G, Client, ClientsReading
+from pengumon.capabilities import BAND_5G, Client, ClientsReading, SystemReading, TrafficApps, TrafficHour
 from pengumon.db.repository import DatabaseRepository
 from pengumon.db.samples import MeshCount
 from pengumon.devices.samples import device_sample
@@ -145,8 +145,59 @@ async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
         await repo.insert_mesh_counts([MeshCount("router", ts + 1, "0000a1", 2), MeshCount("router", ts + 1, "0000a2", k // 60 % 4 + 1)])
     await repo.flush_samples()
     await seed_speed_tests(repo, now)
+    await seed_router_traffic(repo, now)
     await repo.close()
     assert long_id and short_id
+
+
+async def seed_router_traffic(repo: DatabaseRepository, now: float) -> None:
+    """The router's traffic (schema v19) for the made-up client list in serve.py: 36 complete hours, the newest one not
+    published yet (the router publishes an hour after it ends); Desk PC downloads 75 GB in one morning hour, mostly one
+    app; Ann's phone a little every hour; the app rows of the two whole days before today. Two device events (a restart, the WAN link down and back) and uptime, CPU
+    temperature and WAN link readings on the router's history."""
+    newest = int(now // 3600) * 3600 - 2 * 3600
+    rows = []
+    for n in range(36):
+        h = newest - n * 3600
+        big = 75 * 10**9 if n == 5 else 0
+        phone = (n % 5 + 1) * 2 * 10**8
+        rows += [TrafficHour("", h, 3 * 10**8 + big // 50, big + phone + 10**9),
+                 TrafficHour("AA:AA:AA:00:00:02", h, phone // 20, phone),
+                 TrafficHour("AA:AA:AA:00:00:03", h, 10**6, 5 * 10**6)]
+        if big:
+            rows.append(TrafficHour("AA:AA:AA:00:00:01", h, big // 50, big))
+    await repo.upsert_traffic_hours("router", rows, now - 300)
+    # the two whole days before today (UTC, the zone the test server's days are cut on): their app rows, as Pengumon
+    # keeps them just after each midnight (the 7 and 30 day ranges add them up; the device dialog lists them)
+    today = datetime.fromtimestamp(now, timezone.utc).date()
+    for back, desk in ((1, 75 * 10**9), (2, 0)):
+        day = (today - timedelta(days=back)).isoformat()
+        end = int(datetime(today.year, today.month, today.day, tzinfo=timezone.utc).timestamp()) - (back - 1) * 86400
+        desk_apps = (("Sony PlayStation", 1_500_000_000, desk),) if desk else ()
+        await repo.store_traffic_apps("router", [
+            TrafficApps("AA:AA:AA:00:00:01", end, desk_apps),
+            TrafficApps("AA:AA:AA:00:00:02", end, (("YouTube", 10**8, 2 * 10**9),)),
+            TrafficApps("", end, desk_apps + (("YouTube", 10**8, 2 * 10**9),)),
+        ], now - 300, lambda w, d=day: d)
+    window = newest + 3600
+    await repo.store_traffic_apps("router", [
+        TrafficApps("AA:AA:AA:00:00:01", window, (("Sony PlayStation", 1_500_000_000, 75 * 10**9),
+                                                  ("General", 1_000_000, 50_000_000))),
+        TrafficApps("AA:AA:AA:00:00:02", window, (("YouTube", 10**8, 2 * 10**9), ("Netflix", 5 * 10**7, 10**9),
+                                                  ("Instagram", 4 * 10**7, 8 * 10**8))),
+        TrafficApps("AA:AA:AA:00:00:03", window, (("General", 10**6, 5 * 10**6),)),
+        TrafficApps("", window, (("Sony PlayStation", 1_500_000_000, 75 * 10**9), ("YouTube", 10**8, 2 * 10**9),
+                                 ("Netflix", 5 * 10**7, 10**9), ("Instagram", 4 * 10**7, 8 * 10**8))),
+    ], now - 300, lambda w: None)
+    await repo.insert_device_event("router", now - 7000, "restarted", {"boot_at": round(now - 7100), "uptime_s": 100})
+    await repo.insert_device_event("router", now - 5000, "wan_link", {"old": 2500, "new": 0})
+    await repo.insert_device_event("router", now - 4940, "wan_link", {"old": 0, "new": 2500})
+    for k in range(0, 3600, 60):
+        await repo.insert_device_sample(device_sample("router", RouterMetricsSnapshot(timestamp=now - 3600 + k + 2,
+                                                                                      status="healthy"),
+                                                      system=SystemReading(uptime_s=7100 + 3600 - k,
+                                                                           cpu_temp_c=60.0 + k % 7,
+                                                                           wan_link_mbps=2500)))
 
 
 async def seed_speed_tests(repo: DatabaseRepository, now: float) -> None:
@@ -212,20 +263,24 @@ DEVICES = {
 }
 
 
-# `full` is most of the time of the suite (about 150 s of steps), so it runs as three slices of the step files, each with
+# `full` is most of the time of the suite (about 390 s of steps), so it runs as four slices of the step files (three
+# came within seconds of the 240 s limit a run then had on a 4-vCPU CI runner once 0.27 had added its steps), each with
 # its own app and browser (smoke.mjs, SHARD); the other variants take about 20 s each. With pytest-xdist
 # (scripts/test-ui.sh) they all run side by side.
-FULL_SHARDS = 3
+FULL_SHARDS = 4
+# One run (a slice of `full` is about 100 s of steps on an idle machine, twice that on a 4-vCPU CI runner busy with the
+# other runs): scripts/test-ui.sh sets the hang guard above it.
+RUN_TIMEOUT_S = 420
 # The order matters to pytest-xdist (scripts/test-ui.sh, 4 workers, `--dist worksteal`): each worker starts on a block of
 # four runs and idle workers take the unstarted ones of the others, but never the last one. A slice of `full` every fourth
 # run keeps two of them from queuing on one worker.
 RUNS = [pytest.param(*r, id="-".join([r[0]] + ([r[1].replace("/", "of")] if r[1] != "1/1" else []) + ([r[2]] if len(r) > 2 else []))) for r in (
     # one pass in Firefox (core and Settings steps only, smoke.mjs FIREFOX_FILES), in two slices like `full`; they run beside the
     # Chromium ones
-    ("full", "3/3"), ("full", "2/2", "firefox"), ("longpath", "1/1"),
-    ("full", "1/3"), ("token", "1/1"), ("tworouters", "1/1"),
-    ("full", "2/3"), ("viewonly", "1/1"), ("bare", "1/1"),
-    ("full", "1/2", "firefox"), ("unknownline", "1/1"), ("firstrun", "1/1"))]
+    ("full", "4/4"), ("full", "2/2", "firefox"), ("longpath", "1/1"),
+    ("full", "1/4"), ("token", "1/1"), ("tworouters", "1/1"),
+    ("full", "2/4"), ("viewonly", "1/1"), ("bare", "1/1"),
+    ("full", "3/4"), ("full", "1/2", "firefox"), ("unknownline", "1/1"), ("firstrun", "1/1"))]
 assert {r.values[0] for r in RUNS} == set(DEVICES) and sum(r.values[0] == "full" and len(r.values) == 2 for r in RUNS) == FULL_SHARDS
 
 
@@ -318,7 +373,7 @@ def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
             pytest.fail("the service check of the app itself never came up")
         out_dir = tmp_path / "out"  # screenshots and the downloaded dossier; tmp_path is the only writable place in the container
         out_dir.mkdir()
-        run = subprocess.run(["node", str(UI / "smoke.mjs"), base, str(out_dir), variant, shard], env=env, capture_output=True, text=True, timeout=240)
+        run = subprocess.run(["node", str(UI / "smoke.mjs"), base, str(out_dir), variant, shard], env=env, capture_output=True, text=True, timeout=RUN_TIMEOUT_S)
         print(run.stdout)  # shown with -s: the steps passed and the sparkline cost
         assert run.returncode == 0, f"{run.stdout}\n{run.stderr}"
     finally:

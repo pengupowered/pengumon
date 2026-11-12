@@ -402,6 +402,18 @@ async def test_a_malformed_answer_or_one_for_other_variables_is_a_protocol_error
         await client.aclose()
 
 
+async def test_a_datagram_that_does_not_decode_is_dropped_and_the_answer_after_it_is_taken():
+    """A stray, truncated or spoofed datagram from the agent's address must not fail the request (as for SNMPv3)."""
+    agent, port = await start_agent({})
+    client = ber.SnmpClient("127.0.0.1", port, COMMUNITY, timeout=0.5, retries=0)
+    try:
+        agent.reply = lambda data, rid: [b"\x30\x84\xff\xff\xff\xff", b"\x30\x03\x02\x01",
+                                         encode_response(COMMUNITY.encode(), rid, [(SYS_UPTIME, (ber.TIMETICKS, 43))])]
+        assert (await client.get([SYS_UPTIME]))[0][1].value == 43
+    finally:
+        await client.aclose()
+
+
 async def test_walks_end_at_the_table_and_halve_the_repetitions_on_too_big():
     mib = {IF_NAME + (i,): (ber.OCTET_STRING, f"port{i}") for i in range(1, 61)}
     mib[IF_HC_IN_OCTETS + (1,)] = (ber.COUNTER64, 1)
@@ -539,3 +551,16 @@ def test_large_lengths_and_long_oids_are_bounded():
         ber.decode_oid(b"\x2b\x81")
     with pytest.raises(DriverError):
         ber.decode_response(b"\x30\x82\xff\xff" + b"\x00" * 70000)  # more than a datagram
+
+
+async def test_the_uptime_is_a_system_reading_in_seconds():
+    """sysUpTime (hundredths of a second) is the router's uptime: the device events tell a restart from it, and a drop of
+    2^32 ticks (the TimeTicks counter wrapping, about every 497 days) from a restart."""
+    agent, port = await start_agent(router_mib(uptime=500_000))
+    device = snmp_driver(port)
+    try:
+        result = await device.driver.poll()
+        system = result.readings[Capability.ROUTER_SYSTEM]
+        assert system.uptime_s == 5_000 and system.uptime_wrap_s == 2**32 / 100
+    finally:
+        await device.aclose()

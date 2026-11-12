@@ -1,27 +1,34 @@
 """AsusWRT routers (RT-AX, ...): WAN byte counters, CPU, memory, the connected-client count, the client list and, on
-an AiMesh network, the mesh nodes.
+an AiMesh network, the mesh nodes; with the client list, the uptime, the WAN port's link speed and the CPU temperature;
+and the Traffic Analyzer's figures per client, hour and app (drivers/asuswrt_traffic.py).
 
-Read-only: the router's status hooks on appGet.cgi (and update.cgi for the counters as a fallback), with the
-login token the Asus mobile app uses. One poll is normally one request carrying every hook; firmware that cannot
-answer several hooks at once gets one request per hook, and the combined form is tried again every hour.
+Read-only: the router's status hooks on appGet.cgi (and update.cgi for the counters as a fallback) and a few of its
+status pages (ALLOWED_REQUESTS lists every request), with the login token the Asus mobile app uses. One poll is
+normally one request carrying every hook; firmware that cannot answer several hooks at once gets one request per hook,
+and the combined form is tried again every hour. The status pages and the traffic statistics add at most
+REQUESTS_PER_POLL short requests to a poll, and none while a speed test runs.
 """
 
 import base64
-import json
-import re
 import time
-from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, Optional, Set, Tuple
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pengumon.capabilities import (
-    BAND_2G, BAND_5G, BAND_6G, BAND_OTHER, Capability, Client, ClientsReading, DriverError, ErrorKind, MeshNode, MeshReading,
-    PollResult, SystemReading, WanCounters,
+    Capability, ClientsReading, DriverError, ErrorKind, PollResult, SystemReading, WanCounters,
 )
+from pengumon.drivers import asuswrt_traffic as stats
 from pengumon.capabilities.contrib import DriverNotes
-from pengumon.drivers.common import TEXT_MAX, CpuCounters, CpuMeter, clean_text, normal_mac
-from pengumon.drivers.http import DeviceHttp, Verify, device_verify
+from pengumon.drivers.asuswrt_parse import (
+    _NodeInfo, _cfg_nodes, _decode, _has_status_data, _json_object, _online_count, _parse_client_list, _parse_cpu,
+    _parse_mem, _parse_mesh_names, _parse_mesh_nodes, _parse_netdev, _parse_update_netdev, _token_refused, build_mesh,
+    node_id,
+)
+from pengumon.drivers.common import TEXT_MAX, CpuCounters, CpuMeter, clean_text
+from pengumon.drivers.http import DeviceHttp, Verify, device_verify, new_client
 from pengumon.observability import get_logger
 
 if TYPE_CHECKING:
@@ -30,308 +37,29 @@ if TYPE_CHECKING:
 
 USER_AGENT = "asusrouter-Android-DUTUtil-1.0.0.245"
 
-_NUM = r'["\']?\s*:\s*["\']?'
-_RE_RX = re.compile(r'INTERNET_rx' + _NUM + r'(0x[0-9a-fA-F]+|\d+)')
-_RE_TX = re.compile(r'INTERNET_tx' + _NUM + r'(0x[0-9a-fA-F]+|\d+)')
-_RE_CPU = re.compile(r'cpu(\d+)_total["\']?\s*:\s*["\']?(\d+)["\']?.*?cpu\1_usage["\']?\s*:\s*["\']?(\d+)')
-_RE_MEM_TOTAL = re.compile(r'mem_total["\']?\s*:\s*["\']?(\d+)')
-_RE_MEM_USED = re.compile(r'mem_used["\']?\s*:\s*["\']?(\d+)')
-_RE_UPDATE_NETDEV = re.compile(
-    r'["\']?(?:INTERNET|eth0|vlan2|wan0)["\']?\s*:\s*\{[^}]*?rx["\']?\s*:\s*["\']?(\d+)[^}]*?tx["\']?\s*:\s*["\']?(\d+)')
+# The answers are read up to these sizes (the rest never is). A combined appGet answer is mostly the client list, a few
+# hundred bytes per client in the test fixtures and up to about 2 KB with every field a firmware adds: 4 MiB holds
+# about 2000 such clients, several times the most a home router keeps (it also lists offline ones it remembers). A
+# longer answer is that poll's problem (said once in the log), never parsed. update.cgi's netdev answer is a few KB.
+APPGET_MAX_BYTES = 4 * 1024 * 1024
+UPDATE_MAX_BYTES = 1024 * 1024
 
 NETDEV_HOOKS = ["netdev()", "cpu_usage()", "memory_usage()"]
 CLIENTLIST_HOOK = "get_clientlist()"
 MESH_NODES_HOOK = "get_cfg_clientlist()"  # the AiMesh nodes (alias, model, MACs); changes almost never
+UPTIME_HOOK = "uptime()"  # "<date>(<seconds> secs since boot)", asked with the client list
+
+# Every request the driver may make, as (method, path): read-only status hooks and pages. `_request` refuses anything
+# else, and a test checks this list. Never apply.cgi, applyapp.cgi, set_*.cgi, netool.cgi or the traffic log's clearing.
+ALLOWED_REQUESTS = frozenset({
+    ("POST", "login.cgi"), ("POST", "appGet.cgi"), ("GET", "update.cgi"),
+    ("GET", stats.WAN_TRAFFIC_PAGE), ("GET", stats.APP_TRAFFIC_PAGE), ("GET", stats.PORTS_PAGE),
+    ("GET", stats.CORE_TEMP_PAGE),
+})
 
 # After the router has shown that it cannot answer several hooks in one request, the combined form is tried
 # again this often (a firmware update may have fixed it).
 COMBINED_RETRY_SECONDS = 3600.0
-
-
-def _to_int(raw: str) -> int:
-    return int(raw, 16) if raw.startswith("0x") else int(raw)
-
-
-def _parse_netdev(text: str) -> Optional[Tuple[int, int]]:
-    """(rx_bytes, tx_bytes) of the WAN interface from an appGet body containing netdev(), or None."""
-    m_rx = _RE_RX.search(text)
-    m_tx = _RE_TX.search(text)
-    if m_rx and m_tx:
-        return _to_int(m_rx.group(1)), _to_int(m_tx.group(1))
-    if "netdev" in text:
-        try:
-            data = json.loads(text).get("netdev", {})
-            for iface in ["eth0", "vlan2", "wan0", "eth1"]:
-                if iface in data:
-                    dev = data[iface]
-                    rx = dev.get("rx") or dev.get("rx_bytes")
-                    tx = dev.get("tx") or dev.get("tx_bytes")
-                    if rx is not None and tx is not None:
-                        return int(rx), int(tx)
-        except (ValueError, AttributeError, TypeError):
-            pass
-    return None
-
-
-def _json_object(text: str) -> Optional[dict]:
-    """The body as a JSON object, or None if it is anything else (an HTML error page, plain text, ...)."""
-    try:
-        data = json.loads(text)
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _parse_cpu(text: str) -> CpuCounters:
-    """Per-core cumulative (total, busy) counters from an appGet body containing cpu_usage(); empty if absent.
-    They count from the router's boot, so a CPU percentage needs two readings (drivers/common.py CpuMeter)."""
-    return {core: (int(total), int(busy)) for core, total, busy in _RE_CPU.findall(text)}
-
-
-def _parse_mem(text: str) -> Optional[float]:
-    """Memory use in percent from an appGet body containing memory_usage()."""
-    m_tot = _RE_MEM_TOTAL.search(text)
-    m_used = _RE_MEM_USED.search(text)
-    if m_tot and m_used and int(m_tot.group(1)) > 0:
-        return round((int(m_used.group(1)) / int(m_tot.group(1))) * 100.0, 1)
-    return None
-
-
-def _object_section(text: str, key: str) -> Optional[dict]:
-    """The JSON object that follows `"key":` in an appGet body, parsed on its own. Some firmware (an RT-AX model, for
-    one) answers several hooks with a body that is not valid JSON as a whole ("cpu_usage":"cpu1_total":"..."
-    without braces), while each object inside it is; parsing the whole body then loses every section."""
-    m = re.search(r'"' + re.escape(key) + r'"\s*:\s*\{', text)
-    if not m:
-        return None
-    try:
-        value, _ = json.JSONDecoder().raw_decode(text, m.end() - 1)
-    except ValueError:
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def _has_status_data(text: str) -> bool:
-    """Whether a body that is not valid JSON still carries CPU, memory or client data (some firmware's combined
-    answers never are valid JSON; a maintenance HTML page carries none)."""
-    return bool(_parse_cpu(text)) or _parse_mem(text) is not None or _parse_clients(text) is not None
-
-
-def _parse_clients(text: str) -> Optional[int]:
-    """Number of online clients from an appGet body containing get_clientlist(); None if it isn't there."""
-    cl_data = _object_section(text, "get_clientlist")
-    if cl_data is None:
-        return None
-    entries = [v for v in cl_data.values() if isinstance(v, dict)]  # not "maclist" / "ClientAPILevel"
-    online = sum(1 for v in entries if v.get("isOnline") == "1" or v.get("online") == "1")
-    if online == 0 and entries:
-        online = len(entries)
-    return online
-
-
-_RE_HMS = re.compile(r"^(\d+):([0-5]?\d):([0-5]?\d)$")
-# A mesh node's own MAC, then its radios'. Not the pap*: those are its parent's. Not wired_mac either: it lists the
-# node's wired neighbors (on an AiMesh main router, the satellites' own MACs), not the node.
-_MAC_NODE_FIELDS = ("mac", "ap2g", "ap5g", "ap5g1", "ap6g", "ap6g1", "ap2g_fh", "ap5g_fh", "ap5g1_fh", "ap6g_fh",
-                    "ap6g1_fh", "apdwb")
-_BANDS = {"1": BAND_2G, "2": BAND_5G}  # isWL: 0 wired; 3 and anything else is BAND_OTHER (a 2nd high band, not 6 GHz)
-# The firmware's numeric client `type` as plain words. Only the types seen on an AiMesh router with their vendors are
-# mapped (9 Android devices, 10 and 6 Apple, 34 Windows and Linux PCs, 22 dhcpcd/Linux hosts, 7 game consoles, 24 Asus
-# network gear); the rest, including type 0 (the default) and 18 (printers and cameras and radio modules share it),
-# stay None so the page shows nothing rather than a wrong icon. The word is a key the page maps to a label and icon.
-_CLIENT_KINDS = {"9": "phone", "10": "phone", "6": "computer", "34": "computer", "1": "computer", "22": "computer",
-                 "7": "game", "24": "network"}
-
-
-def _client_kind(entry: dict) -> Optional[str]:
-    """phone / computer / game / network / printer for a client the firmware has classified, else None."""
-    if str(entry.get("isPrinter")).strip() == "1":
-        return "printer"
-    if str(entry.get("isGateway")).strip() == "1":
-        return "network"
-    return _CLIENT_KINDS.get(str(entry.get("type", "")).strip())
-
-
-def _mac_id(value: object) -> Optional[str]:
-    """A mesh node's short id: the last six hex digits of a MAC, lower case; None if `value` is not a MAC."""
-    mac = normal_mac(value)
-    return re.sub(r"[^0-9a-f]", "", mac.lower())[-6:] if mac else None
-
-
-def node_id(value: str) -> Optional[str]:
-    """The id for a MAC or for the six hex digits of one (what `mesh_node_labels` keys are), else None."""
-    value = value.strip()
-    if re.fullmatch(r"[0-9A-Fa-f]{6}", value):
-        return value.lower()
-    return _mac_id(value)
-
-
-def _num(value: object) -> Optional[float]:
-    """A number from the router's strings; None when empty, not a number or negative."""
-    try:
-        number = float(str(value).replace(",", "").strip())
-    except ValueError:
-        return None
-    return number if number >= 0 else None
-
-
-def _connected_seconds(value: object) -> Optional[int]:
-    """"HH:MM:SS" (hours may pass 24) as seconds; None for anything else, which includes the empty string of a wired
-    client."""
-    m = _RE_HMS.match(str(value).strip())
-    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)) if m else None
-
-
-def _parse_client_list(text: str) -> Optional[ClientsReading]:
-    """The clients from an appGet body containing get_clientlist(); None if it isn't there. Online status follows
-    _parse_clients (so the count and the list agree). A client that is not online keeps no signal, rates or time:
-    the router leaves stale values on it. No traffic is read: the per-client byte counters are empty on the firmware
-    checked, and curTx/curRx are Wi-Fi link rates, not traffic."""
-    cl_data = _object_section(text, "get_clientlist")
-    if cl_data is None:
-        return None
-    entries = [(k, v) for k, v in cl_data.items() if isinstance(v, dict)]
-    flags = [v.get("isOnline") == "1" or v.get("online") == "1" for _, v in entries]
-    if entries and not any(flags):
-        flags = [True] * len(entries)  # same fallback as _parse_clients
-    clients = []
-    for (key, v), online in zip(entries, flags):
-        raw = v.get("mac") if isinstance(v.get("mac"), str) and v["mac"].strip() else key
-        mac = normal_mac(raw)
-        wifi = str(v.get("isWL", "0")).strip() not in ("0", "")
-        rssi = _num(str(v.get("rssi", "")).lstrip("-")) if online and wifi else None
-        rssi = -int(rssi) if rssi else None  # 0 means "no signal value"; dBm is negative
-        clients.append(Client(
-            key=mac or str(key),
-            label_parts=tuple(n for n in (clean_text(v.get("nickName")), clean_text(v.get("name"))) if n),
-            vendor=clean_text(v.get("vendor")),
-            kind=_client_kind(v),
-            ip=clean_text(v.get("ip")),
-            mac=mac,
-            connection="wifi" if wifi else "wired",
-            band=_BANDS.get(str(v.get("isWL")).strip(), BAND_OTHER) if wifi else None,
-            node=_mac_id(v.get("amesh_papMac")) if online else None,
-            rssi_dbm=rssi,
-            link_tx_mbps=_num(v.get("curTx")) if online and wifi else None,
-            link_rx_mbps=_num(v.get("curRx")) if online and wifi else None,
-            connected_s=_connected_seconds(v.get("wlConnectTime")) if online and wifi else None,
-            online=online,
-        ))
-    return ClientsReading(tuple(clients))
-
-
-def _parse_mesh_names(text: str) -> Dict[str, str]:
-    """Node id -> label from an appGet body containing get_cfg_clientlist(): the node's alias, else its model name.
-    Every MAC a node is known by (its own and its radios') maps to it, because the clients name the MAC of the radio
-    they are on. Field by field across the nodes, so a node's own MAC is never taken by another node's radio field.
-    Empty if the answer has no nodes."""
-    body = _json_object(text)
-    nodes = body.get("get_cfg_clientlist") if body else None
-    labeled = []
-    for node in nodes if isinstance(nodes, list) else []:
-        if not isinstance(node, dict):
-            continue
-        alias = clean_text(node.get("alias"))
-        label = alias if alias and normal_mac(alias) is None else clean_text(node.get("model_name"))
-        if label:
-            labeled.append((node, label))
-    names: Dict[str, str] = {}
-    for field in _MAC_NODE_FIELDS:
-        for node, label in labeled:
-            nid = _mac_id(node.get(field))
-            if nid:
-                names.setdefault(nid, label)
-    return names
-
-
-class _NodeInfo(NamedTuple):
-    """What get_cfg_clientlist() says about one node: its own MAC's id, its label (alias, else model), whether it is
-    online (None: the answer has no `online`) and how it is connected to its parent."""
-
-    id: Optional[str]
-    label: Optional[str]
-    online: Optional[bool]
-    backhaul: Optional[str]
-    band: Optional[str]
-    rssi_dbm: Optional[int]
-
-
-# The fields of a node that name its parent's radio (and the signal to it): the node is on Wi-Fi to its parent when
-# one of them holds a MAC. Left empty by a wired node, and by the main router.
-_BACKHAUL_RADIOS = (("pap6g", "rssi6g", BAND_6G), ("pap5g1", "rssi5g1", BAND_OTHER), ("pap5g", "rssi5g", BAND_5G),
-                    ("pap2g", "rssi2g", BAND_2G))
-
-
-def _node_info(node: dict, wired_neighbors: set) -> _NodeInfo:
-    """One node of get_cfg_clientlist(). `wired_neighbors` holds the ids listed in any node's `wired_mac`: the main
-    router lists the satellites it reaches by cable, so a node found there with no parent radio is on a cable.
-    Whether a satellite on Wi-Fi fills pap*/rssi* was not seen on the firmware checked (every pap* was empty on a
-    AiMesh network whose satellites are wired); that part follows the field names only."""
-    online = {"1": True, "0": False}.get(str(node.get("online", "")).strip())
-    nid = _mac_id(node.get("mac"))
-    alias = clean_text(node.get("alias"))
-    label = alias if alias and normal_mac(alias) is None else clean_text(node.get("model_name"))
-    for pap, rssi, band in _BACKHAUL_RADIOS:
-        if _mac_id(node.get(pap)):
-            raw = _num(str(node.get(rssi, "")).lstrip("-"))
-            return _NodeInfo(nid, label, online, "wifi", band, -int(raw) if raw else None)
-    return _NodeInfo(nid, label, online, "wired" if nid in wired_neighbors else None, None, None)
-
-
-def _parse_mesh_nodes(text: str) -> Tuple[List[_NodeInfo], Dict[str, _NodeInfo]]:
-    """(the nodes in the router's order, node id -> its info for every MAC the node is known by) from an appGet body
-    containing get_cfg_clientlist(). The MACs map field by field exactly as _parse_mesh_names does."""
-    body = _json_object(text)
-    nodes = body.get("get_cfg_clientlist") if body else None
-    raw = [n for n in (nodes if isinstance(nodes, list) else []) if isinstance(n, dict)]
-    neighbors = set()
-    for node in raw:
-        wired = node.get("wired_mac")
-        neighbors.update(i for i in (_mac_id(m) for m in (wired if isinstance(wired, list) else [])) if i)
-    infos = [_node_info(n, neighbors) for n in raw]
-    by_id: Dict[str, _NodeInfo] = {}
-    for field in _MAC_NODE_FIELDS:
-        for node, info in zip(raw, infos):
-            nid = _mac_id(node.get(field))
-            if nid:
-                by_id.setdefault(nid, info)
-    return infos, by_id
-
-
-def build_mesh(clients: ClientsReading, names: Dict[str, str], overrides: Dict[str, str],
-               infos: Sequence[_NodeInfo] = (), info_by_id: Optional[Dict[str, _NodeInfo]] = None) -> Optional[MeshReading]:
-    """The mesh nodes the online clients are on, labeled by `overrides` (the options' mesh_node_labels), else by the
-    router's `names`, else "Node 1", "Node 2", ... in the order of the node ids. With the router's node list (`infos`,
-    `info_by_id` from _parse_mesh_nodes) each node also carries whether it is online and its backhaul, and a node
-    that carries no client (an offline one, or an idle one) is listed too, so that a node that dropped off is seen.
-    Without it only nodes that carry a client are listed. None when no online client says which node it is on and
-    the router lists fewer than two nodes, as with a single router."""
-    info_by_id = dict(info_by_id or {})
-    counts: Dict[str, List[int]] = {}
-    for c in clients.clients:
-        if c.online and c.node:
-            total_wired = counts.setdefault(c.node, [0, 0])
-            total_wired[0] += 1
-            total_wired[1] += c.connection == "wired"
-    seen = {id(info_by_id[nid]) for nid in counts if nid in info_by_id}
-    for info in infos:  # nodes without a client; their own MAC is their id
-        if id(info) not in seen and info.id and info.id not in counts and len(infos) > 1:
-            counts[info.id] = [0, 0]
-            info_by_id.setdefault(info.id, info)
-    if not counts:
-        return None
-    nodes, fallback = [], 0
-    for nid in sorted(counts):
-        info = info_by_id.get(nid)
-        label = overrides.get(nid) or names.get(nid) or (info.label if info else None)
-        if not label:
-            fallback += 1
-            label = f"Node {fallback}"
-        nodes.append(MeshNode(id=nid, label=label, clients=counts[nid][0], wired=counts[nid][1],
-                              online=info.online if info else None, backhaul=info.backhaul if info else None,
-                              backhaul_band=info.band if info else None,
-                              backhaul_rssi_dbm=info.rssi_dbm if info else None))
-    return MeshReading(tuple(nodes))
 
 
 class AsusWrtOptions(BaseModel):
@@ -345,6 +73,11 @@ class AsusWrtOptions(BaseModel):
     mesh_nodes_interval_seconds: float = Field(default=60.0, gt=0)
     # Node label by MAC (or the last six hex digits of it), for nodes the router does not name or named wrongly.
     mesh_node_labels: Dict[str, str] = Field(default_factory=dict)
+    # The Traffic Analyzer's figures (which clients and apps used the internet, per hour): read when the router has
+    # a new hour, at most this often (the router refreshes them once an hour, so more often finds nothing new sooner
+    # than a minute or so after the hour); false never reads them.
+    traffic_usage: bool = True
+    traffic_interval_seconds: float = Field(default=stats.DEFAULT_INTERVAL_SECONDS, ge=stats.MIN_INTERVAL_SECONDS)
 
     @field_validator("mesh_node_labels")
     @classmethod
@@ -358,11 +91,27 @@ class AsusWrtOptions(BaseModel):
         return out
 
 
+@dataclass
+class _Answers:
+    """What one poll's requests brought back, before it is turned into readings."""
+    problems: List[Tuple[ErrorKind, str]] = field(default_factory=list)  # why a request gave nothing, in order
+    transport_error: Optional[httpx.HTTPError] = None
+    fresh: bool = False  # this poll got data from the router (not only the client count kept from an earlier one)
+    fresh_clients: bool = False
+    wan: Optional[Tuple[int, int]] = None
+    wan_read_at: Optional[float] = None
+    cpu: CpuCounters = field(default_factory=dict)
+    mem_pct: Optional[float] = None
+    uptime: Optional[int] = None
+    client_count: Optional[int] = None  # starts as the count kept from the last client-list read
+    client_list: Optional[ClientsReading] = None  # get_clientlist(), parsed, when this poll got it
+
+
 class AsusWrtDriver:
     name = "asuswrt"
     label = "ASUS router"  # what the device is, in the dashboard's words (devices.summary.device_label)
     offers = frozenset({Capability.WAN_COUNTERS, Capability.ROUTER_SYSTEM, Capability.CLIENT_INVENTORY,
-                        Capability.MESH})
+                        Capability.MESH, Capability.TRAFFIC_USAGE})
     options_model = AsusWrtOptions
     # WAN rates for the load-aware classifier need recent counters; one request every 10 s is light for the router.
     default_poll_seconds = 10.0
@@ -374,21 +123,27 @@ class AsusWrtDriver:
     #  - client list every {clientlist_interval}, counts in between repeat the last list: `clientlist_interval_seconds`
     #    :341 and the reuse at :518-519;
     #  - CPU is the average since the previous reading: drivers/common.py `CpuMeter`;
-    #  - node names are the alias, else the model: `_parse_mesh_names` :223-235;
-    #  - offline clients the router remembers are not counted: devices/samples.py `client_counts` :18 (online only).
+    #  - node names are the alias, else the model: `_parse_mesh_names` in asuswrt_parse.py;
+    #  - offline clients the router remembers are not counted: devices/samples.py `client_counts` :18 (online only);
+    #  - traffic per client and hour is the router's own count, hourly, the hour in progress never included, app figures
+    #    only as 24-hour windows: asuswrt_traffic.py (module docstring, `TrafficRounds`);
+    #  - uptime, WAN link speed and CPU temperature with the client list: UPTIME_HOOK and `_status_pages`.
     # The anonymized text leaves out the vendor, firmware and mesh-network words.
     pack_notes: ClassVar[DriverNotes] = DriverNotes(
         full=("Device notes: the router is an ASUS router with ASUS firmware (AsusWRT){aimesh}. Its counters are "
               "read every {poll}, its client list every {clientlist_interval} (counts in between repeat the last "
               "list). CPU is the average since the previous reading. Node names are the owner's alias, else the "
-              "model. Clients the router still remembers but are offline are not counted."),
+              "model. Clients the router still remembers but are offline are not counted. Traffic per client is the "
+              "router's own hourly count, published after each hour; app figures cover 24-hour windows."),
         anonymized=("Device notes: the router reports WAN counters every {poll} and its client list every "
-                    "{clientlist_interval}; CPU is the average since the previous reading."),
+                    "{clientlist_interval}; CPU is the average since the previous reading. Traffic per client is the "
+                    "router's own hourly count; app figures cover 24-hour windows."),
     )
 
     def __init__(self, url: str, username: str, password: Optional[str], *,
                  clientlist_interval_seconds: float = 60.0, mesh_node_names: bool = True,
                  mesh_nodes_interval_seconds: float = 60.0, mesh_node_labels: Optional[Dict[str, str]] = None,
+                 traffic_usage: bool = True, traffic_interval_seconds: float = stats.DEFAULT_INTERVAL_SECONDS,
                  client: Optional[httpx.AsyncClient] = None,
                  clock: Callable[[], float] = time.monotonic, wall_clock: Callable[[], float] = time.time,
                  verify: Verify = True):
@@ -411,7 +166,7 @@ class AsusWrtDriver:
         self._token: Optional[str] = None
         self._session_cookies: Dict[str, str] = {}
         self.http = DeviceHttp(url, self._new_client, driver=self.name, client=client)
-        self._log = get_logger("pengumon.drivers.asuswrt", host=self.http.host)
+        self._log = get_logger("pengumon.drivers.asuswrt")
         # Several hooks in one appGet request: assumed to work until the router answers one with a 200 JSON
         # object that has no netdev data; tried again every COMBINED_RETRY_SECONDS after that.
         self._combined_ok = True
@@ -419,6 +174,19 @@ class AsusWrtDriver:
         self._client_count: Optional[int] = None
         self._clients_read_at: Optional[float] = None
         self._cpu = CpuMeter(clock)
+        # The router's statistics pages, read at the client list's pace (link speed, temperature) or in rounds (traffic)
+        self._pages_unsupported: Dict[str, float] = {}  # page -> monotonic time to ask for it again (it answered 404)
+        self._pages_too_big: Set[str] = set()  # pages that answered longer than stats.PAGE_MAX_BYTES (logged once)
+        self._appget_too_big = False  # an appGet answer was longer than APPGET_MAX_BYTES (logged once)
+        self._traffic = (stats.TrafficRounds(self._page_get, traffic_interval_seconds, wall_clock=wall_clock,
+                                             log=self._log) if traffic_usage else None)
+        self._traffic_reason: Optional[str] = None  # why there is no traffic, as last said in `missing`
+        if not traffic_usage:
+            self.offers = self.offers - {Capability.TRAFFIC_USAGE}
+        # True while the reads that can wait must wait: a speed test is running (DeviceRegistry sets it). A read of the
+        # WAN counters for a speed test (read_wan_counters) also holds them for SPEED_TEST_QUIET_SECONDS.
+        self.pause_reads: Callable[[], bool] = lambda: False
+        self._counters_read_at: Optional[float] = None
 
     @classmethod
     def from_config(cls, cfg: "DeviceConfig", credentials: "Credentials", *,
@@ -429,11 +197,12 @@ class AsusWrtDriver:
                    clientlist_interval_seconds=options.clientlist_interval_seconds,
                    mesh_node_names=options.mesh_node_names,
                    mesh_nodes_interval_seconds=options.mesh_nodes_interval_seconds,
-                   mesh_node_labels=options.mesh_node_labels, client=client,
+                   mesh_node_labels=options.mesh_node_labels, traffic_usage=options.traffic_usage,
+                   traffic_interval_seconds=options.traffic_interval_seconds, client=client,
                    verify=device_verify(cfg), **clocks)
 
     def _new_client(self) -> httpx.AsyncClient:
-        client = httpx.AsyncClient(timeout=6.0, verify=self._verify, headers={"User-Agent": USER_AGENT})
+        client = new_client(self._verify, headers={"User-Agent": USER_AGENT})
         if self._session_cookies:
             client.cookies.update(self._session_cookies)
         return client
@@ -441,6 +210,11 @@ class AsusWrtDriver:
     @property
     def host(self) -> str:
         return self.http.host
+
+    @property
+    def traffic_interval_seconds(self) -> Optional[float]:
+        """How often the Traffic Analyzer is read at most (None: switched off in the options)."""
+        return self._traffic.interval if self._traffic is not None else None
 
     def missing_configuration(self) -> Optional[str]:
         return None if self._password else "no password"
@@ -452,11 +226,35 @@ class AsusWrtDriver:
     async def aclose(self) -> None:
         await self.http.aclose()
 
+    @staticmethod
+    def _allow(method: str, path: str) -> None:
+        if (method, path) not in ALLOWED_REQUESTS:
+            raise DriverError("internal", f"refused to send {method} {path}: not one of the driver's read-only requests")
+
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """Every request the driver makes goes through here or `_capped`: one of ALLOWED_REQUESTS, or none at all."""
+        self._allow(method, path)
+        return await self.http.request(method, path, **kwargs)
+
+    async def _capped(self, method: str, path: str, limit: int, **kwargs) -> stats.Page:
+        """One of ALLOWED_REQUESTS with its answer read up to `limit` bytes only (the rest never is): `truncated` says
+        it was longer. The status pages, the traffic pages, appGet.cgi and update.cgi are read this way."""
+        self._allow(method, path)
+        status, headers, body, truncated = await self.http.request_capped(method, path, limit, **kwargs)
+        return stats.Page(status, _decode(headers, body), truncated)
+
+    async def _page_get(self, page: str, params: Optional[dict] = None) -> stats.Page:
+        """GET of one of the router's .asp pages on the session, as its own web page would ask for it, read up to
+        stats.PAGE_MAX_BYTES."""
+        return await self._capped("GET", page, stats.PAGE_MAX_BYTES, params=params,
+                                  timeout=stats.PAGE_TIMEOUT_SECONDS,
+                                  headers={"User-Agent": USER_AGENT, "Referer": f"{self.http.base_url}/index.asp"})
+
     async def _login(self) -> None:
         """Logs in and keeps the token. Raises DriverError when refused; transport errors propagate."""
         raw = f"{self._username}:{self._password}".encode("utf-8")
-        res = await self.http.post(
-            "login.cgi",
+        res = await self._request(
+            "POST", "login.cgi",
             data={"login_authorization": base64.b64encode(raw).decode("ascii")},
             headers={"User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -473,7 +271,7 @@ class AsusWrtDriver:
         error_status = data.get("error_status")
         if error_status:
             raise DriverError("auth", f"Authentication failed on Asus router ({self.host}): error_status "
-                                      f"{error_status}. Check credentials.")
+                                      f"{clean_text(str(error_status), 20)}. Check credentials.")
         raise DriverError("auth" if res.status_code in (401, 403) else "protocol",
                           f"Asus router login at {self.host} answered HTTP {res.status_code} without a token")
 
@@ -483,12 +281,19 @@ class AsusWrtDriver:
         is, and for any other status (a 502 page from a struggling router is a failed poll, not an answer); the
         reason goes to `problems`. Transport errors and a refused login propagate."""
         for attempt in (1, 2):
-            res = await self.http.post(
-                "appGet.cgi",
+            res = await self._capped(
+                "POST", "appGet.cgi", APPGET_MAX_BYTES,
                 data={"hook": ";".join(hooks)},
                 headers={"User-Agent": USER_AGENT, "asus_token": self._token or ""},
             )
-            if res.status_code == 200 and "error_status" not in res.text:
+            if res.status_code == 200 and res.truncated:  # not an answer this driver reads: none of it is used
+                reason = f"appGet answered with more than {APPGET_MAX_BYTES // (1024 * 1024)} MiB: not read"
+                if not self._appget_too_big:
+                    self._log.warning(f"The router {reason} (said once)")
+                    self._appget_too_big = True
+                problems.append(("protocol", reason))
+                return None
+            if res.status_code == 200 and not _token_refused(res.text):
                 return res.text
             if res.status_code not in (200, 401, 403):
                 problems.append(("protocol", f"appGet answered HTTP {res.status_code}"))
@@ -506,135 +311,231 @@ class AsusWrtDriver:
         if not self._token:
             await self._login()
 
-        problems: List[Tuple[ErrorKind, str]] = []
-        transport_error: Optional[httpx.HTTPError] = None
-        fresh = False  # this poll got data from the router (not only the client count kept from an earlier one)
-        fresh_clients = False
-        wan: Optional[Tuple[int, int]] = None
-        wan_read_at: Optional[float] = None
-        cpu: CpuCounters = {}
-        mem_pct: Optional[float] = None
-
         # The client list changes slowly and is the heaviest answer: read it every clientlist_interval_seconds
         # and reuse the last count in between.
         clients_due = (
             self._clients_read_at is None
             or self._clock() - self._clients_read_at >= self._clientlist_interval
         )
-        hooks = NETDEV_HOOKS + ([CLIENTLIST_HOOK] if clients_due else [])
+        hooks = NETDEV_HOOKS + ([CLIENTLIST_HOOK, UPTIME_HOOK] if clients_due else [])
         if clients_due:
             self._clients_read_at = self._clock()
-        client_count = self._client_count
-        clients_text: Optional[str] = None  # the answer that carried get_clientlist(), when this poll got one
+        got = await self._ask_router(hooks, clients_due)
+        return await self._readings_of(got, clients_due)
 
-        text: Optional[str] = None
-        if self._combined_ok or self._clock() >= self._combined_retry_at:
-            if not self._combined_ok:  # the hourly retry; whatever happens, the next one is an hour away
-                self._combined_retry_at = self._clock() + COMBINED_RETRY_SECONDS
-            try:
-                text = await self._hook(hooks, problems)
-            except httpx.HTTPError as ex:
-                transport_error = ex
-            else:
-                counters = _parse_netdev(text) if text is not None else None
-                if text is not None and counters is None:
-                    body = _json_object(text)
-                    if body is not None and "netdev" not in body:
-                        # A real answer that lacks the counters: the router does not take several hooks at once.
-                        # (A non-200 status, or a 200 that is not JSON, says nothing about that: failed poll.)
-                        log = self._log.warning if self._combined_ok else self._log.debug
-                        log("Router returned no WAN counters for a combined appGet request; "
-                            "using one request per hook (combined requests are retried every "
-                            f"{COMBINED_RETRY_SECONDS / 3600:g} h)")
-                        self._combined_ok = False
-                        self._combined_retry_at = self._clock() + COMBINED_RETRY_SECONDS
-                    if body is None and not _has_status_data(text):
-                        problems.append(("protocol", "appGet answer was not JSON"))
-                        text = None
-                    elif body is not None and "netdev" not in body:
-                        text = None
-                elif text is not None and not self._combined_ok:
-                    self._log.info("Router answers combined appGet requests again")
-                    self._combined_ok = True
-            if text is not None:
-                fresh = True
-                wan, wan_read_at = counters, self._wall_clock()
-                cpu = _parse_cpu(text)
-                mem_pct = _parse_mem(text)
-                if clients_due:
-                    client_count = _parse_clients(text)
-                    fresh_clients = client_count is not None
-                    clients_text = text
+    async def _ask_router(self, hooks: List[str], clients_due: bool) -> "_Answers":
+        """The requests of one poll: the hooks (in one request, else one each), then update.cgi for the counters if
+        they are still missing. Raises when nothing at all was read (the first problem found, else the transport
+        error, else a protocol error)."""
+        got = _Answers(client_count=self._client_count)
+        text = await self._read_combined(hooks, clients_due, got)
         if text is None and not self._combined_ok:
-            # One request per hook (firmware that rejects several hooks in one request)
-            for hook in hooks:
-                try:
-                    part = await self._hook([hook], problems)
-                except httpx.HTTPError as ex:
-                    transport_error = ex
-                    continue
-                if part is None:
-                    continue
-                fresh = True
-                if hook == "netdev()":
-                    parsed = _parse_netdev(part)
-                    if parsed:
-                        wan, wan_read_at = parsed, self._wall_clock()
-                elif hook == "cpu_usage()":
-                    cpu = _parse_cpu(part)
-                elif hook == "memory_usage()":
-                    mem_pct = _parse_mem(part)
-                else:
-                    client_count = _parse_clients(part)
-                    fresh_clients = client_count is not None
-                    clients_text = part
+            await self._read_each_hook(hooks, got)
         if clients_due:
-            self._client_count = client_count
-
-        if wan is None:  # fallback for the counters: the realtime traffic page's data source
-            try:
-                res = await self.http.get(
-                    "update.cgi", params={"output": "netdev"},
-                    headers={"User-Agent": USER_AGENT,
-                             "Referer": f"{self.http.base_url}/Main_TrafficMonitor_realtime.htm"},
-                )
-            except httpx.HTTPError as ex:
-                transport_error = ex
-            else:
-                m = _RE_UPDATE_NETDEV.search(res.text) if res.status_code == 200 else None
-                if m:
-                    wan, wan_read_at = (int(m.group(1)), int(m.group(2))), self._wall_clock()
-                    fresh = True
-
-        if not fresh:
-            if problems:
-                raise DriverError(*problems[0])
-            if transport_error is not None:
-                raise transport_error
+            self._client_count = got.client_count
+        if got.wan is None:  # fallback for the counters: the realtime traffic page's data source
+            await self._read_update_cgi(got)
+        if not got.fresh:
+            if got.problems:
+                raise DriverError(*got.problems[0])
+            if got.transport_error is not None:
+                raise got.transport_error
             raise DriverError("protocol", "the router answered without WAN counters, CPU, memory or clients")
+        return got
 
-        cpu_pct = self._cpu.update(cpu)
+    async def _read_combined(self, hooks: List[str], clients_due: bool, got: "_Answers") -> Optional[str]:
+        """All the hooks in one appGet request (not while the router is known to refuse that, except for the hourly
+        retry). Returns the answer's text when it carries data, else None; what it holds goes to `got`."""
+        if not (self._combined_ok or self._clock() >= self._combined_retry_at):
+            return None
+        if not self._combined_ok:  # the hourly retry; whatever happens, the next one is an hour away
+            self._combined_retry_at = self._clock() + COMBINED_RETRY_SECONDS
+        try:
+            text = await self._hook(hooks, got.problems)
+        except httpx.HTTPError as ex:
+            got.transport_error = ex
+            return None
+        counters = _parse_netdev(text) if text is not None else None
+        if text is not None and counters is None:
+            text = self._judge_answer_without_counters(text, got)
+        elif text is not None and not self._combined_ok:
+            self._log.info("Router answers combined appGet requests again")
+            self._combined_ok = True
+        if text is None:
+            return None
+        got.fresh = True
+        got.wan, got.wan_read_at = counters, self._wall_clock()
+        got.cpu = _parse_cpu(text)
+        got.mem_pct = _parse_mem(text)
+        if clients_due:
+            got.client_list = _parse_client_list(text)
+            got.client_count = _online_count(got.client_list)
+            got.fresh_clients = got.client_count is not None
+            got.uptime = stats.uptime_seconds(text)
+        return text
+
+    def _judge_answer_without_counters(self, text: str, got: "_Answers") -> Optional[str]:
+        """A combined answer that has no WAN counters: `text` when it still carries data, else None (the reason goes to
+        `got.problems` when it was not JSON). A JSON answer without netdev data means the router does not take
+        several hooks at once, which is remembered."""
+        body = _json_object(text)
+        if body is not None and "netdev" not in body:
+            # A real answer that lacks the counters: the router does not take several hooks at once.
+            # (A non-200 status, or a 200 that is not JSON, says nothing about that: failed poll.)
+            log = self._log.warning if self._combined_ok else self._log.debug
+            log("Router returned no WAN counters for a combined appGet request; "
+                "using one request per hook (combined requests are retried every "
+                f"{COMBINED_RETRY_SECONDS / 3600:g} h)")
+            self._combined_ok = False
+            self._combined_retry_at = self._clock() + COMBINED_RETRY_SECONDS
+        if body is None and not _has_status_data(text):
+            got.problems.append(("protocol", "appGet answer was not JSON"))
+            return None
+        if body is not None and "netdev" not in body:
+            return None
+        return text
+
+    async def _read_each_hook(self, hooks: List[str], got: "_Answers") -> None:
+        """One request per hook (firmware that rejects several hooks in one request)."""
+        for hook in hooks:
+            try:
+                part = await self._hook([hook], got.problems)
+            except httpx.HTTPError as ex:
+                got.transport_error = ex
+                continue
+            if part is None:
+                continue
+            got.fresh = True
+            if hook == "netdev()":
+                parsed = _parse_netdev(part)
+                if parsed:
+                    got.wan, got.wan_read_at = parsed, self._wall_clock()
+            elif hook == "cpu_usage()":
+                got.cpu = _parse_cpu(part)
+            elif hook == "memory_usage()":
+                got.mem_pct = _parse_mem(part)
+            elif hook == UPTIME_HOOK:
+                got.uptime = stats.uptime_seconds(part)
+            else:
+                got.client_list = _parse_client_list(part)
+                got.client_count = _online_count(got.client_list)
+                got.fresh_clients = got.client_count is not None
+
+    async def _read_update_cgi(self, got: "_Answers") -> None:
+        """The WAN counters from update.cgi?output=netdev, when the hooks gave none."""
+        try:
+            res = await self._capped(
+                "GET", "update.cgi", UPDATE_MAX_BYTES, params={"output": "netdev"},
+                headers={"User-Agent": USER_AGENT,
+                         "Referer": f"{self.http.base_url}/Main_TrafficMonitor_realtime.htm"},
+            )
+        except httpx.HTTPError as ex:
+            got.transport_error = ex
+            return
+        found = (_parse_update_netdev(res.text)
+                 if res.status_code == 200 and not res.truncated else None)
+        if found:
+            got.wan, got.wan_read_at = found, self._wall_clock()
+            got.fresh = True
+
+    async def _readings_of(self, got: "_Answers", clients_due: bool) -> PollResult:
+        """What the poll's answers make: the capabilities' readings, and why the others are missing. The status pages
+        and the Traffic Analyzer round add their requests here, within the poll's request budget."""
+        cpu_pct = self._cpu.update(got.cpu)
 
         readings: dict = {}
         missing: dict = {}
         if clients_due:
             self._clients_missing = {}
-            if fresh_clients and clients_text is not None:
-                await self._client_readings(clients_text, readings)
+            if got.fresh_clients and got.client_list is not None:
+                await self._client_readings(got.client_list, readings)
             else:
                 reason = "the router's answer had no client list"
                 self._clients_missing = {Capability.CLIENT_INVENTORY: reason, Capability.MESH: reason}
         missing.update({c: r for c, r in self._clients_missing.items() if c not in readings})
-        if wan is not None:
-            readings[Capability.WAN_COUNTERS] = WanCounters(rx_bytes=wan[0], tx_bytes=wan[1], read_at=wan_read_at)
+        if got.wan is not None:
+            readings[Capability.WAN_COUNTERS] = WanCounters(rx_bytes=got.wan[0], tx_bytes=got.wan[1],
+                                                            read_at=got.wan_read_at)
         else:
-            missing[Capability.WAN_COUNTERS] = problems[0][1] if problems else "the router's answer had no WAN counters"
-        if not cpu and mem_pct is None and not fresh_clients:
+            missing[Capability.WAN_COUNTERS] = (got.problems[0][1] if got.problems
+                                                else "the router's answer had no WAN counters")
+        budget = stats.REQUESTS_PER_POLL
+        link = temp = None
+        if clients_due:  # the status pages, at the client list's pace
+            link, temp, made = await self._status_pages(budget)
+            budget -= made
+        if not got.cpu and got.mem_pct is None and not got.fresh_clients:
             missing[Capability.ROUTER_SYSTEM] = "the router's answer had no CPU, memory or client data"
         else:
-            readings[Capability.ROUTER_SYSTEM] = SystemReading(cpu_pct=cpu_pct, mem_pct=mem_pct,
-                                                               client_count=client_count)
+            readings[Capability.ROUTER_SYSTEM] = SystemReading(cpu_pct=cpu_pct, mem_pct=got.mem_pct,
+                                                               client_count=got.client_count, uptime_s=got.uptime,
+                                                               cpu_temp_c=temp, wan_link_mbps=link)
+        await self._traffic_step(budget, readings, missing)
         return PollResult(readings=readings, missing=missing)
+
+    def _paused(self) -> bool:
+        """Whether the reads that can wait (the statistics pages) must wait: during a speed test."""
+        read_at = self._counters_read_at
+        if read_at is not None and self._clock() - read_at < stats.SPEED_TEST_QUIET_SECONDS:
+            return True
+        try:
+            return bool(self.pause_reads())
+        except Exception:  # a broken hook must not cost the poll
+            return False
+
+    async def _status_page(self, page: str) -> Optional[str]:
+        """The body of one status page, or None: not offered by this router (404: asked again a day later, logged
+        once), any other answer, or a transport error (the next client-list poll asks again)."""
+        if self._clock() < self._pages_unsupported.get(page, 0.0):
+            return None
+        try:
+            res = await self._page_get(page)
+        except httpx.HTTPError as ex:
+            self._log.debug(f"{page} not read: {type(ex).__name__}")
+            return None
+        if res.status_code == 404:
+            if page not in self._pages_unsupported:
+                self._log.info(f"The router does not offer {page}; asking again in a day")
+            self._pages_unsupported[page] = self._clock() + stats.UNSUPPORTED_RECHECK_SECONDS
+            return None
+        if res.status_code == 200 and res.truncated:  # not the page's size: none of it is used
+            if page not in self._pages_too_big:
+                self._log.info(f"The router answered {page} with more than {stats.PAGE_MAX_BYTES} bytes; not read")
+                self._pages_too_big.add(page)
+            return None
+        return res.text if res.status_code == 200 else None
+
+    async def _status_pages(self, budget: int) -> Tuple[Optional[int], Optional[float], int]:
+        """(WAN link Mb/s, CPU °C, requests made) from the two status pages; nothing during a speed test."""
+        if self._paused():
+            return None, None, 0
+        made = 0
+        link = temp = None
+        for page in (stats.PORTS_PAGE, stats.CORE_TEMP_PAGE):
+            if made >= budget or self._clock() < self._pages_unsupported.get(page, 0.0):
+                continue
+            made += 1
+            body = await self._status_page(page)
+            if body is None:
+                continue
+            if page == stats.PORTS_PAGE:
+                link = stats.wan_link_mbps(body)
+            else:
+                temp = stats.cpu_temp_c(body)
+        return link, temp, made
+
+    async def _traffic_step(self, budget: int, readings: dict, missing: dict) -> None:
+        """A few requests of the Traffic Analyzer round under way (asuswrt_traffic.TrafficRounds). Why there is no
+        traffic goes to `missing` once, when it is found out (or changes), not at every poll."""
+        if self._traffic is None or self._paused():
+            return
+        reading, reason, _ = await self._traffic.step(budget)
+        if reading is not None:
+            readings[Capability.TRAFFIC_USAGE] = reading
+            self._traffic_reason = None
+        if reason is not None and reason != self._traffic_reason:
+            missing[Capability.TRAFFIC_USAGE] = reason
+            self._traffic_reason = reason
 
     async def read_wan_counters(self) -> Optional[WanCounters]:
         """The WAN counters alone, for a running speed test (Device.read_wan_counters, about once a second): one
@@ -644,6 +545,7 @@ class AsusWrtDriver:
         answer has none; a refused login raises, like a poll's."""
         if not self._token:
             await self._login()
+        self._counters_read_at = self._clock()  # a speed test is running: the statistics pages wait
         problems: List[Tuple[ErrorKind, str]] = []
         text = await self._hook(["netdev()"], problems)
         counters = _parse_netdev(text) if text is not None else None
@@ -653,12 +555,9 @@ class AsusWrtDriver:
             return None
         return WanCounters(rx_bytes=counters[0], tx_bytes=counters[1], read_at=self._wall_clock())
 
-    async def _client_readings(self, text: str, readings: dict) -> None:
-        """The client list and the mesh from the answer that carried get_clientlist(): no further request except the
-        node names, asked at most every mesh_nodes_interval_seconds."""
-        clients = _parse_client_list(text)
-        if clients is None:
-            return
+    async def _client_readings(self, clients: ClientsReading, readings: dict) -> None:
+        """The client list (parsed from the answer that carried get_clientlist()) and the mesh: no further request
+        except the node names, asked at most every mesh_nodes_interval_seconds."""
         self._clients_missing = {}
         readings[Capability.CLIENT_INVENTORY] = clients
         if self._mesh_node_names and any(c.node for c in clients.clients):
@@ -680,8 +579,9 @@ class AsusWrtDriver:
             self._log.debug(f"Mesh node names not read: {type(ex).__name__}")
             self._mesh_infos, self._mesh_info_by_id = [], {}  # an online flag that is not current is worse than none
             return
-        names = _parse_mesh_names(text) if text is not None else {}
-        self._mesh_infos, self._mesh_info_by_id = _parse_mesh_nodes(text) if text is not None else ([], {})
+        nodes = _cfg_nodes(text) if text is not None else None  # (parsed once for both)
+        names = _parse_mesh_names("", nodes) if nodes is not None else {}
+        self._mesh_infos, self._mesh_info_by_id = _parse_mesh_nodes("", nodes) if nodes is not None else ([], {})
         if names:
             self._mesh_names = names
         else:

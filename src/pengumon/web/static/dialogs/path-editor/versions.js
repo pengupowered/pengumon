@@ -1,7 +1,10 @@
 // Earlier applied paths (GET /api/path/versions) and Export (the saved path as YAML) in the path editor.
 
 import { fetchPath, fetchVersion, fetchVersions } from '../../js/path-api.js';
-import { escapeHtml, exportToggle, icon, localFormat } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { exportToggle } from '../../js/export-view.js';
+import { icon } from '../../js/dom.js';
+import { localFormat } from '../../js/clock.js';
 import { $, pe } from './draft.js';
 import { permissions } from './render.js';
 
@@ -32,5 +35,5 @@ export async function versionDraft(revision) {
 }
 
 // ---------- export ----------
-// The saved path as YAML, shown with Copy and a download link (util.exportToggle).
+// The saved path as YAML, shown with Copy and a download link (exportToggle in js/export-view.js).
 export const toggleExport = () => exportToggle('path', { url: '/api/path/export', what: 'path', intro: 'The probe path as YAML. Import reads it in another install.', file: 'pengumon-path.yaml' });

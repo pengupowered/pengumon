@@ -1,6 +1,6 @@
 # The path editor
 
-The probe path is the list of addresses Pengumon pings every second, in the order a packet meets them: your router, the
+The probe path is the list of addresses Pengumon probes every second (by ping, or for a hop that ignores ping by a TCP connection or an HTTP request), in the order a packet meets them: your router, the
 modem, your provider's routers, the internet. It is stored in the database and edited in the dashboard, not in
 `config.yaml`. Open it with **Edit** in the header of **Path health** (or with **Review** on the first-run banner or the
 "Your path changed" notice).
@@ -34,7 +34,16 @@ the editor is open:
   shows the median and loss here before you apply.
 
 **The second line** is the address, **Change address**, the role in plain words, and badges (New, Changed, Sure,
-Likely, IPv6, ...).
+Likely, IPv6, "TCP 443", "HTTPS HEAD /health", ...).
+
+**Probe by** picks how the hop is probed ([probing.md](probing.md#tcp-and-http-probes)): **Ping** (the default),
+**TCP connect** (a Port) or **HTTP(S) request** (Scheme, an optional Port, Path, and Request HEAD or GET; the line under
+the fields shows the address it will request, and says that TLS is checked, nothing is followed and no cookies or
+passwords are sent). An HTTP hop is always **Other**: its time includes the server's own work, so the Role control is
+fixed and the hop is charted, never judged as a stage of the path. The server refuses loopback and link-local
+addresses, a port from the list of bad ports (mail, login, file sharing), a path with a `?` or `#`, and more than 8 TCP
+or HTTP hops. **Test** and **Preview** use the hop's own method. Changing a hop's method starts its live figures over and
+is kept as an event ("Probe changed: ping → TCP 443") on its history.
 
 **The controls**:
 
@@ -128,6 +137,15 @@ targets:
 
 `category` is `local`, `gateway`, `isp`, `public`, `dns` or `custom` (the roles above, in that order).
 
+A hop probed by TCP or HTTP adds `probe` (`tcp` or `http`; left out for a ping, so a path of ping hops exports as it
+always did), `port` (TCP: required; HTTP: optional, 443 or 80 by default) and, for HTTP, `http_scheme` (`https` or
+`http`), `http_path` (starts with `/`, no query string) and `http_verb` (`HEAD` or `GET`):
+
+```yaml
+  - { id: cf_tcp, name: "Cloudflare (TCP)", category: public, address: "1.1.1.1", probe: tcp, port: 443 }
+  - { id: site, name: "My site", category: custom, address: "example.com", probe: http, http_path: /health }
+```
+
 ## First run
 
 On an install that has never stored a path, the default targets (the default gateway and two public resolvers) are
@@ -144,5 +162,8 @@ added from the dashboard are imported into the database once, with their ids, so
 
 From 0.19: the "Ignores ping" setting is gone. Any value stored with a hop is dropped at the first start (the startup
 log says so), and the hops of your network and the line are linked to their devices by address once.
+
+A hop can be probed by TCP or HTTP. A path with such hops, read by a version that predates this, still loads: that
+version ignores the new keys and probes the hop by ping.
 
 The API is in [api.md](api.md) (`/api/path`).

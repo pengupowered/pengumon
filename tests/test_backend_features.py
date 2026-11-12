@@ -22,6 +22,7 @@ from pengumon.incidents.model import Incident
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.models.probes import ProbeSample, TargetConfig, TargetStats
 from pengumon.notify.notifier import Notifier
+from pengumon.notify.webhook import Alert
 from pengumon.reports.common import find_primary_failing_hop
 from pengumon.reports.dossier import build_dossier
 from pengumon.reports.reliability import build_report
@@ -56,6 +57,7 @@ async def _repo(tmp_path, loss=None, minutes=30, now=None):
             samples.append(ProbeSample(target_id=tid, timestamp=ts, success=not lost,
                                        latency_ms=None if lost else 5.0, packet_loss_pct=100.0 if lost else 0.0))
     await repo.insert_samples(samples)
+    await repo.flush_samples()  # a 24-hour read leaves the last seconds in the buffer
     return repo
 
 
@@ -286,6 +288,55 @@ async def test_notifier_sends_start_and_resolve_with_token():
     assert "Cause: ISP Outage" in body and "72%" in body
     assert "resolved" in end.headers["Title"].lower()
     assert "5.0 min" in end.content.decode()
+    await n.aclose()
+
+
+def _decoded(header):
+    from email.header import decode_header, make_header
+    return str(make_header(decode_header(header)))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("title", ["Telef\u00f3nica Disconnect", "Line or \u5149\u30d5\u30a1\u30a4\u30d0\u30fc Outage " * 4,
+                                   "Plain title"])
+async def test_ntfy_title_with_other_than_ascii_is_delivered_encoded(title):
+    """The Title header goes out as ASCII; a title with an accent raised UnicodeEncodeError and the alert
+    was lost. It is sent as RFC 2047 encoded words, which ntfy decodes."""
+    requests = []
+    n = _mock_notifier(requests)
+    n._dispatch(Alert(event="incident_started", severity="critical", title=title, message="x"))
+    await _drain(n)
+    assert len(requests) == 1
+    sent = requests[0].headers["Title"]
+    assert sent.isascii() and _decoded(sent) == " ".join(title.split())
+    assert all(len(word) <= 75 for word in sent.split())
+    await n.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_ntfy_delivery_is_visible_in_the_test_results():
+    requests = []
+    n = _mock_notifier(requests, status=500)
+    result = await n.send_test()
+    assert result == [{"name": "ntfy", "ok": False, "detail": "the server answered 500"}]
+    await n.aclose()
+
+
+@pytest.mark.asyncio
+async def test_the_test_alert_names_the_channels_it_sent_to_even_if_they_change_meanwhile():
+    """The names were read after the sends, so a Save that reconfigured the channels meanwhile paired the
+    results with other names (or none)."""
+    release = asyncio.Event()
+
+    async def handler(request):
+        await release.wait()
+        return httpx.Response(200)
+    n = Notifier("http://ntfy.test/topic", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    task = asyncio.create_task(n.send_test())
+    await asyncio.sleep(0.05)
+    n.reconfigure(None, None, [], None, n.policy)  # ntfy is gone now
+    release.set()
+    assert await task == [{"name": "ntfy", "ok": True, "detail": None}]
     await n.aclose()
 
 

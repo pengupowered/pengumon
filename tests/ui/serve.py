@@ -8,7 +8,9 @@ real monitors grade them. A device with the id "router2" answers as a second, qu
 variant); PENGUMON_SMOKE_LINE_TECHNOLOGY turns the modem driver into another line technology (the `unknownline`
 variant: the page has no adapter for it). The ICMP backend is a stand-in that only names itself: "linux-dgram" with
 kernel timestamps, or, with PENGUMON_SMOKE_PROBE_RESOLUTION_MS (the `longpath` variant), "windows-icmpapi" with that
-resolution (the latency panel then says so); it answers the path editor's test probes.
+resolution (the latency panel then says so); it answers the path editor's test probes. TCP and HTTP hops (the path
+editor's other probe methods) are answered by `socket_attempt` below: a TCP connect in 1.5 ms, an HTTP 200 in 1.5 ms
+(connect 1.0 ms), for the live rounds and for the editor's Test alike; nothing connects anywhere.
 """
 import os
 
@@ -56,8 +58,8 @@ def router_snapshot(device_id: str = "router") -> RouterMetricsSnapshot:
     # memory above the server's 85 % warning line (pengumon.devices.monitors), so the meter shows the warn grade
     return RouterMetricsSnapshot(
         timestamp=time.time(), wan_rx_rate_mbps=123.4, wan_tx_rate_mbps=12.3, wan_rx_load_pct=24.7, wan_tx_load_pct=30.8,
-        cpu_usage_pct=23.0, mem_usage_pct=91.0, client_count=17, status="healthy",
-        grades={"cpu": "good", "mem": "warn", "wan_rx": "good", "wan_tx": "good"})
+        cpu_usage_pct=23.0, mem_usage_pct=91.0, client_count=17, status="healthy", uptime_s=7_234, cpu_temp_c=64.1,
+        wan_link_mbps=2500, grades={"cpu": "good", "mem": "warn", "wan_rx": "good", "wan_tx": "good"})
 
 
 def clients_reading() -> ClientsReading:
@@ -88,6 +90,13 @@ async def probe_icmp(self, target):
         return None
     return ProbeSample(target_id=target.id, timestamp=time.time(), success=True,
                        latency_ms=1.0 + (sum(map(ord, target.id)) % 7) / 10 + int(time.time() * 1000) % 4 / 10, jitter_ms=0.2)
+
+
+async def socket_attempt(self, target):
+    """The one place the prober makes a TCP or HTTP attempt (NetworkProber.socket_attempt): live rounds, Test and Preview."""
+    http = target.probe == "http"
+    return {"kind": "reply", "rtt_ms": 1.5, "responder": None, "address": target.address, "error": None,
+            "status": 200 if http else None, "connect_ms": 1.0 if http else None}
 
 
 class StandInBackend:
@@ -135,6 +144,8 @@ def fake_clients_poll(device) -> None:
     else:
         return
     device.monitor.latest_clients, device.monitor.latest_mesh, device.monitor.clients_at = clients, mesh, time.time()
+    if device.id == "router":  # the traffic test_ui_smoke.py seeds was read 5 minutes ago
+        device.monitor.traffic_read_at = time.time() - 300
 
 
 async def device_poll(self, force=False, **_):
@@ -210,6 +221,7 @@ discovery_component.Deps = discovery_deps
 if os.environ.get("PENGUMON_SMOKE_LINE_TECHNOLOGY"):
     XfinityXbDriver.line_technology = os.environ["PENGUMON_SMOKE_LINE_TECHNOLOGY"]
 NetworkProber.probe_icmp = probe_icmp
+NetworkProber.socket_attempt = socket_attempt
 NetworkProber.probe_dns = probe_dns
 def _no_pings(self):
     from pengumon.engine.icmp_base import IcmpUnavailable

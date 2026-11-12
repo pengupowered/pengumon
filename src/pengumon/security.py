@@ -18,8 +18,12 @@ from pengumon._vendor.homeguard.security import (
     SecurityMiddleware,
     ViewerPolicy,
     can_edit,
+    check_token_hash,
+    confirm_token,
+    hash_token,
     host_allowed,
     origin_allowed,
+    read_token_digest,
     reset_rate_limits,
     session_status,
 )
@@ -48,9 +52,9 @@ def rate_limit(name: str, calls: int, per_seconds: float):
 
 
 __all__ = ["CSP", "PROFILE", "PUBLIC_PATHS", "SESSION_COOKIE", "SESSIONS_PATH", "VIEWER_POLICY", "FileSessionStore",
-           "LoginThrottle", "SecurityConfig", "SecurityMiddleware", "can_edit", "host_allowed", "origin_allowed",
-           "rate_limit", "reset_rate_limits", "session_cookie", "session_status", "tls_files",
-           "tls_requested"]
+           "LoginThrottle", "SecurityConfig", "SecurityMiddleware", "can_edit", "check_token_hash", "confirm_token",
+           "hash_token", "host_allowed", "origin_allowed", "rate_limit", "read_token_digest", "reset_rate_limits",
+           "session_cookie", "session_status", "tls_files", "tls_requested"]
 
 # Kept in one place. No inline scripts or handlers anywhere (the dashboard delegates events), so script-src
 # stays strict; 'self' in connect-src covers the same-origin websocket in current browsers. The dashboard has
@@ -72,12 +76,17 @@ PUBLIC_PATHS = ("/api/health", "/login", "/favicon.ico")
 # default; only with a password, pengumon.access): someone without the token may see the
 # dashboard (the page, every GET of the API, /metrics and the live socket, which is receive-only for them) but change
 # nothing: every POST/PUT/DELETE/PATCH needs the token, and so do the reads below, which give away more than the
-# dashboard shows (the path and the settings as files to import elsewhere; anything under a device's credentials). Client names, IP and
+# dashboard shows (the path and the settings as files to import elsewhere, a backup of the whole database; anything under a device's credentials). Client names, IP and
 # MAC addresses are masked for viewers in the clients API itself (api/clients.py privacy_mode).
+# The same policy says what the read token (Settings > Sign-in, pengumon.access) may do, whether or not viewing is on:
+# what a viewer may, plus POST /mcp (the read-only MCP endpoint is a POST). It is never `can_edit`, so it sees what a
+# viewer sees (client details masked).
 VIEWER_POLICY = ViewerPolicy(
     allow=("/", "/api/**", "/metrics"),
-    deny=("/api/path/export", "/api/settings/export", "/api/devices/*/credentials", "/api/devices/*/credentials/**"),
+    deny=("/api/path/export", "/api/settings/export", "/api/backup", "/api/devices/*/credentials",
+          "/api/devices/*/credentials/**"),
     websockets=("/ws",),
+    reader_post=("/mcp", "/mcp/"),
 )
 
 PROFILE = AppProfile(

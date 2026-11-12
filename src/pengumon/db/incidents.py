@@ -2,17 +2,20 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Set
 
 import aiosqlite
 
 from pengumon.incidents.loss import loss_span, probe_window
-from pengumon.incidents.taxonomy import ISP_LINE_KINDS, kinds_in_scope
+from pengumon.incidents.taxonomy import CAUSE_CODES, ISP_LINE_KINDS, current_cause, kinds_in_scope
 from pengumon.incidents.model import Incident
 from pengumon.models.probes import PathTraceHop
 
 logger = logging.getLogger("pengumon.db")
+INCIDENT_CACHE_KEYS = 8  # list answers kept (each is keyed by limit, filter and scope; /api/incidents asks for up to 2000)
 _unreadable_traces: Set[int] = set()  # incidents whose stored trace was reported as unreadable (once each)
+_unreadable_rows: Set[int] = set()  # incidents whose cause, severity or targets were read as a fallback (once each)
+SEVERITIES = ("info", "warning", "critical")
 
 
 class IncidentQueries:
@@ -99,14 +102,19 @@ class IncidentQueries:
     async def backfill_incident_loss(self) -> int:
         """The loss span of every resolved incident that has none yet and whose probes may still be stored (it ended
         after the oldest raw sample): incidents from before schema v12, and those closed at start after a crash. Runs on
-        every start; an incident with no stored probes stays NULL. Returns how many it filled."""
+        every start; an incident with no stored probes stays NULL. Only network incidents with affected targets are
+        looked at: a service outage or one with no targets can never get a span. Returns how many it filled."""
+        kinds = kinds_in_scope("network")
         async with self._db.read() as db:
             async with db.execute(
-                """
+                f"""
                 SELECT id FROM incidents
                 WHERE resolved = 1 AND loss_seconds IS NULL AND end_time >= (SELECT MIN(ts) FROM samples)
+                  AND (kind IS NULL OR kind IN ({','.join('?' * len(kinds))}))
+                  AND affected_targets IS NOT NULL AND TRIM(affected_targets) NOT IN ('', '[]')
                 ORDER BY start_time
-                """
+                """,
+                kinds,
             ) as cursor:
                 ids = [r[0] for r in await cursor.fetchall()]
         filled = 0
@@ -127,16 +135,35 @@ class IncidentQueries:
                 if r["id"] not in _unreadable_traces:
                     _unreadable_traces.add(r["id"])
                     logger.warning(f"Incident {r['id']}: its stored path trace cannot be read; it is shown without one")
+        # One row a newer build wrote (a cause code or severity this build does not know) or a hand edit must not take the
+        # whole list down: read what can be read, fall back for the rest and say so once per incident.
+        fallbacks = []
+        try:
+            targets = [t for t in json.loads(r["affected_targets"]) if isinstance(t, str)]
+        except (ValueError, TypeError):  # not JSON, NULL, or not a list
+            targets = []
+            fallbacks.append("affected targets")
+        cause = current_cause(r["cause_code"]) if isinstance(r["cause_code"], str) else None
+        if cause not in CAUSE_CODES:
+            cause = "unknown_outage"
+            fallbacks.append(f"cause {r['cause_code']!r}")
+        severity = r["severity"]
+        if severity not in SEVERITIES:
+            severity = "info"
+            fallbacks.append(f"severity {r['severity']!r}")
+        if fallbacks and r["id"] not in _unreadable_rows:
+            _unreadable_rows.add(r["id"])
+            logger.warning(f"Incident {r['id']}: its {', '.join(fallbacks)} cannot be read; shown with a fallback")
         return Incident(
             id=r["id"],
             start_time=r["start_time"],
             end_time=r["end_time"],
             duration_seconds=r["duration_seconds"],
-            cause_code=r["cause_code"],
+            cause_code=cause,
             title=r["title"],
             description=r["description"],
-            severity=r["severity"],
-            affected_targets=json.loads(r["affected_targets"]),
+            severity=severity,
+            affected_targets=targets,
             resolved=bool(r["resolved"]),
             path_trace=pt,
             load_pct=r["load_pct"],
@@ -182,7 +209,14 @@ class IncidentQueries:
                 (*params, limit),
             ) as cursor:
                 incidents = [self._incident_from_row(r) for r in await cursor.fetchall()]
+        if version != self._incidents_version:
+            return incidents  # changed while reading: the answer is stale already, not worth keeping
+        if any(v != version for v, _ in self._incidents_cache.values()):
+            self._incidents_cache.clear()  # entries of an older version are never read again
+        self._incidents_cache.pop(key, None)
         self._incidents_cache[key] = (version, incidents)
+        while len(self._incidents_cache) > INCIDENT_CACHE_KEYS:
+            del self._incidents_cache[next(iter(self._incidents_cache))]  # the oldest first
         return incidents
 
     async def network_incidents(self, limit: int = 50, include_expected: bool = True) -> List[Incident]:
@@ -264,16 +298,18 @@ class IncidentQueries:
             await db.execute("UPDATE incidents SET expected = 1 WHERE id = ?", (incident_id,))
         self._incidents_version += 1
 
-    async def get_incidents_since(self, start_time: float) -> List[Dict[str, Any]]:
-        """Incidents that started at or after start_time, newest first, as plain rows."""
+    async def get_incidents_since(self, start_time: float, overlapping: bool = False) -> List[Dict[str, Any]]:
+        """Incidents that started at or after start_time, newest first, as plain rows. With `overlapping`, also those
+        that started before it and were still open at it or ended at or after it."""
+        where = "start_time >= ?1 OR end_time IS NULL OR end_time >= ?1" if overlapping else "start_time >= ?1"
         async with self._db.read() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                """
+                f"""
                 SELECT id, start_time, end_time, duration_seconds, cause_code,
                        title, description, severity, affected_targets, load_pct, expected, kind
                 FROM incidents
-                WHERE start_time >= ?
+                WHERE {where}
                 ORDER BY start_time DESC
                 """,
                 (start_time,),

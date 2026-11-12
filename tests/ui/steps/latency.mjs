@@ -30,6 +30,61 @@ export const steps = [
     eq("the mode label is unchanged", await page.$eval("#chartModeLabel", (n) => n.textContent), "last 60 s · every probe");
   }, { variants: ["full", "longpath"] }],
 
+  ["stored probes are grouped by probe round, not by whole second: a round whose place drifts across a half second leaves no gap", async ({ eq, moduleUrl, page }) => {
+    const r = await page.evaluate(async (u) => {
+      const { roundKeys } = await import(u);
+      // 3 targets probed 25 ms apart, rounds 1 s apart drifting from .40 past .50 (as the live server's rounds drift),
+      // and a round with its last probe late (an answer that took long)
+      const stamps = [];
+      for (let k = 0; k < 20; k++) [0, 0.025, 0.05].forEach((o, i) => stamps.push({ k, i, ts: 1000 + k + 0.4 + k * 0.01 + o + (k === 7 && i === 2 ? 0.12 : 0) }));
+      const keys = roundKeys(stamps.map((s) => s.ts));
+      const groups = new Map();
+      stamps.forEach((s) => { const g = keys.get(s.ts); if (!groups.has(g)) groups.set(g, new Set()); groups.get(g).add(`${s.k}`); });
+      const bySecond = new Map();
+      stamps.forEach((s) => { const g = Math.round(s.ts); bySecond.set(g, (bySecond.get(g) || 0) + 1); });
+      // a long list of targets (60, 25 ms apart: 1.5 s) still falls into rounds of under a second
+      const dense = roundKeys(Array.from({ length: 60 }, (_, i) => 2000 + i * 0.025));
+      return {
+        rounds: groups.size,
+        whole: [...groups.values()].every((g) => g.size === 1),
+        each: [...groups.keys()].map((g) => stamps.filter((s) => keys.get(s.ts) === g).length).join(""),
+        secondsTorn: [...bySecond.values()].some((n) => n !== 3),
+        denseRounds: new Set(dense.values()).size
+      };
+    }, await moduleUrl("path.js"));
+    eq("a group per round", r.rounds, 20);
+    eq("no group mixes two rounds", r.whole, true);
+    eq("every round has its 3 targets", r.each, "3".repeat(20));
+    eq("(grouping by whole seconds would have torn a round: the case this guards)", r.secondsTorn, true);
+    eq("60 targets over 1.5 s are two rounds", r.denseRounds, 2);
+  }],
+
+  ["a stored window's torn edges are left out: a second some path targets are not stored in yet is no gap in their lines", async ({ eq, moduleUrl, page }) => {
+    const r = await page.evaluate(async (u) => {
+      const { wholeEdges } = await import(u);
+      const all = { router: 1, gateway: 1, internet: 1 };
+      const rows = (missing) => Object.fromEntries(Object.entries(all).filter(([id]) => !missing.includes(id)));
+      // seconds 1-10: the oldest lacks the router (stored after the window began), the two newest the router and the
+      // gateway (their round was not stored yet); a dns lookup is never a path target
+      const at = { 1: rows(["router"]), 9: rows(["router", "gateway"]), 10: rows(["router", "gateway"]) };
+      const rowAt = (ts) => at[ts] || all;
+      const times = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      const ids = ["router", "gateway", "internet"];
+      return {
+        torn: wholeEdges(times, rowAt, ids).join(),
+        whole: wholeEdges(times, () => all, ids) === times,
+        middle: wholeEdges(times, (ts) => (ts === 5 ? rows(["router"]) : all), ids).join(),
+        capped: wholeEdges(times, (ts) => (ts > 2 ? rows(["gateway"]) : all), ids, 3).join(),
+        none: wholeEdges(times, rowAt, []).length
+      };
+    }, await moduleUrl("path.js"));
+    eq("the torn oldest and two newest seconds are left out", r.torn, "2,3,4,5,6,7,8");
+    eq("a whole window is kept as it is", r.whole, true);
+    eq("a gap in the middle is kept (a real missing row there is said as a gap)", r.middle, "1,2,3,4,5,6,7,8,9,10");
+    eq("at most `edge` times go at each end (a target that stopped long ago does not empty the chart)", r.capped, "1,2,3,4,5,6,7");
+    eq("without path targets nothing is cut", r.none, 10);
+  }],
+
   ["live chart is fed by the websocket", async ({ chartLabels, eq, hasChart, ok, page, text, until }) => {
     await hasChart("latencyChart");
     await hasChart("lossChart");
@@ -43,6 +98,52 @@ export const steps = [
     const sets = await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.map((d) => d.id).join());
     ok(`three path series and the WAN overlay (${sets})`, /path_router,path_line,path_internet/.test(sets));
     ok("legend", /Internet/.test(await text("#latencyLegend")));
+  }],
+
+  ["the page's socket sends deltas: the panels still get whole windows, equal to a full socket's, also across a gap", async ({ eq, moduleUrl, ok, page, until }) => {
+    await until(() => window.__smokeSockets.some((s) => s.readyState === 1));
+    const busUrl = await moduleUrl("bus.js");
+    // the page's own socket (live.js, ?delta=1): the frames it receives, the requests it sends, and the windows the bus gets
+    // from it; a second, plain socket of the page's origin gets the same messages in full
+    const r = await page.evaluate(async (bu) => {
+      const { bus } = await import(bu);
+      const own = window.__smokeSockets.filter((s) => s.readyState === 1).at(-1);
+      const raw = [];
+      const asked = [];
+      const sendReal = own.send.bind(own);
+      own.send = (t) => { asked.push(t); return sendReal(t); };
+      own.addEventListener("message", (e) => raw.push(JSON.parse(e.data)));
+      const full = new Map(); // timestamp -> {target id: window} as the plain socket got it
+      const plain = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`);
+      plain.addEventListener("message", (e) => { const d = JSON.parse(e.data); full.set(d.timestamp, Object.fromEntries(d.targets.map((t) => [t.target_id, [t.sent, t.recent_latencies]]))); });
+      const seen = new Map(); // timestamp -> windows the panels would read (bus "message")
+      bus.subscribe("message", (d) => seen.set(d.timestamp, Object.fromEntries(d.targets.map((t) => [t.target_id, [t.sent, t.recent_latencies]]))));
+      const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+      await wait(5000);
+      const calm = raw.length;
+      // a gap: one message arrives with the probe counter further on than its tail explains (as if messages were lost)
+      let broken = null;
+      window.__smokeMutate = (d) => { if (broken === null) { broken = d.timestamp; d.targets.forEach((t) => { t.sent += 7; }); } };
+      await wait(6000);
+      window.__smokeMutate = null;
+      plain.close();
+      const compared = [...seen].filter(([ts]) => full.has(ts));
+      const same = compared.filter(([ts, w]) => JSON.stringify(w) === JSON.stringify(full.get(ts))).length;
+      return {
+        calmFrames: raw.slice(0, calm).length,
+        deltaFrames: raw.filter((d) => d.targets.every((t) => t.latency_tail && !t.recent_latencies)).length,
+        fullAfterAsk: raw.filter((d) => d.targets.every((t) => t.recent_latencies && !t.latency_tail)).length,
+        leaked: [...seen.values()].some((w) => Object.values(w).some(([, x]) => !Array.isArray(x))),
+        asked, broken, compared: compared.length, same,
+        windowLens: [...new Set(Object.values([...seen.values()].at(-1)).map(([, x]) => x.length))]
+      };
+    }, busUrl);
+    ok(`the page's socket sent tails, not windows (${r.deltaFrames} of ${r.calmFrames} frames before the gap)`, r.calmFrames >= 3 && r.deltaFrames >= r.calmFrames);
+    ok("the panels never see a delta field and always a whole window", !r.leaked && r.windowLens.every((n) => n >= 1));
+    eq("the page asked for a full message once", JSON.stringify(r.asked), '["{\\"resync\\":true}"]');
+    ok("and the server answered with whole windows", r.fullAfterAsk >= 1);
+    ok("a message that did not follow was met (the counter jumped)", r.broken !== null);
+    ok(`every message the panels got (counters and windows) equals the full socket's (${r.same} of ${r.compared} compared)`, r.compared >= 6 && r.same === r.compared);
   }],
 
   ["a view model's tooltips read the data it was made from, not the live chart's (a fixture's tooltips show no live data)", async ({ eq, moduleUrl, ok, page }) => {

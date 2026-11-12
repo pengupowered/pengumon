@@ -190,7 +190,7 @@ async def test_v9_migration_keeps_every_reading_as_the_api_showed_it(tmp_path, m
     monkeypatch.setattr(v009_device_tables, "tracer", spans)
 
     with caplog.at_level(logging.INFO, logger="pengumon.db"):
-        assert await migrations.migrate(path) == migrations.LATEST_VERSION == 17
+        assert await migrations.migrate(path) == migrations.LATEST_VERSION >= 19
 
     repo = DatabaseRepository(db_path=path)
     await repo.initialize()
@@ -478,7 +478,8 @@ async def test_a_row_takes_far_less_room_than_before(repo):
     line = _bytes(repo.db_path, "line_samples", "idx_line_samples_device_ts") / len(docsis_rows)
     print(f"\ndevice_samples: {device:.0f} B per row (was {BASELINE_ROUTER_BYTES_PER_ROW}); "
           f"line_samples: {line:,.0f} B per row (was {BASELINE_MODEM_BYTES_PER_ROW:,})")
-    assert device < BASELINE_ROUTER_BYTES_PER_ROW * 0.95
+    # (0.96 since v19: its three columns, NULL on most polls, cost a byte each in the row header)
+    assert device < BASELINE_ROUTER_BYTES_PER_ROW * 0.96
     assert line < BASELINE_MODEM_BYTES_PER_ROW * 0.4
 
 

@@ -23,29 +23,26 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlsplit
 
-import yaml
-from pydantic import BaseModel
-
 from pengumon import yamlsafe
-from pengumon.config import BOOTSTRAP_KEYS, AppConfig, read_config_file
+from pengumon.config import AppConfig, read_config_file
 from pengumon.db.settings import SettingsConflict
-from pengumon.notify.settings import SECRET_PREFIX
 from pengumon.observability import get_logger
 from pengumon.observability.telemetry import settings_imports, settings_saves
 from pengumon.secrets import SECRETS_DIR, SECRETS_FILE_DAMAGED, SecretsFileUnusable, SecretStore, resolve_slot
 from pengumon.settings import env as settings_env
 from pengumon.settings import lenient, registry
+from pengumon.settings.candidate import candidate_data, copy_into, document_slots
+from pengumon.settings.describe import describe
 from pengumon.settings.document import SettingsDocument
+from pengumon.settings.dotted import set_dotted
 from pengumon.settings.hub import Change, SettingsHub
 from pengumon.settings.importer import get_path, jsonable, read_settings, secret_names
-from pengumon.settings.plain import plain
-from pengumon.settings.validate import Validation, describe, list_item_id as _item_id
+from pengumon.settings.transfer import draft_from_import, export_yaml
+from pengumon.settings.validate import Validation, ValidationContext
 from pengumon.settings.validate import validate as validate_change
 
 _log = get_logger("pengumon.settings")
 
-EXPORT_HEADER = ("# Pengumon settings (Settings > Export). Import them on the Settings page of any install. Secrets\n"
-                 "# (ntfy, webhook URLs and header values, device passwords) are not in this file.\n")
 SOURCES = ("save", "restore", "yaml_import")
 
 
@@ -76,40 +73,11 @@ class Applied:
     live_failed: List[str]
 
 
-# --- dotted paths into plain mappings ----------------------------------------------------------------------------
-
-def set_path(data: dict, path: str, value: Any) -> None:
-    parts = path.split(".")
-    node = data
-    for part in parts[:-1]:
-        node = node.setdefault(part, {})
-    node[parts[-1]] = value
-
-
 def _host(url: Optional[str]) -> Optional[str]:
     try:
         return urlsplit(url).hostname if url else None
     except ValueError:
         return None
-
-
-def copy_into(live: AppConfig, new: AppConfig) -> None:
-    """Copies `new` into the live config objects in place: nested models field by field (so a holder of a section,
-    such as the prober's hop_status, sees the change), lists by slice. `targets` (the path store's) is left alone."""
-    for name in type(new).model_fields:
-        if name == "targets":
-            continue
-        _copy_value(live, name, getattr(live, name), getattr(new, name))
-
-
-def _copy_value(owner: Any, name: str, old: Any, new: Any) -> None:
-    if isinstance(new, BaseModel) and type(old) is type(new):
-        for field_name in type(new).model_fields:
-            _copy_value(old, field_name, getattr(old, field_name), getattr(new, field_name))
-    elif isinstance(new, list) and isinstance(old, list):
-        old[:] = new
-    else:
-        setattr(owner, name, new)
 
 
 # --- the manager ---------------------------------------------------------------------------------------------------
@@ -183,16 +151,7 @@ class SettingsManager:
 
     def slots(self, document: Optional[SettingsDocument] = None) -> List[str]:
         """The slots the document uses: ntfy's, each webhook's URL and every header secret it names."""
-        document = document or self._document
-        out = ["ntfy.url", "ntfy.token"]
-        for item in document.lists.get("webhooks") or []:
-            out.append(f"webhook.{_item_id(item)}.url")
-            for text in (item.get("headers") or {}).values():
-                if isinstance(text, str) and text.startswith(SECRET_PREFIX):
-                    slot = f"webhook_header.{text[len(SECRET_PREFIX):]}"
-                    if slot not in out:
-                        out.append(slot)
-        return out
+        return document_slots(document or self._document)
 
     def secret_states(self) -> Dict[str, Dict[str, Any]]:
         return {slot: self.secret_state(slot) for slot in self.slots()}
@@ -231,31 +190,8 @@ class SettingsManager:
 
     def _data(self, document: SettingsDocument, secret: Callable[[str], Optional[str]],
               problems: Optional[List[Dict[str, str]]] = None) -> dict:
-        """The candidate config as a mapping: the bootstrap keys of the live config, the document's values and
-        lists (each webhook with its URL from its slot; one without is left out, or reported in `problems`)."""
-        data: dict = {}
-        for key in BOOTSTRAP_KEYS:
-            set_path(data, key, jsonable(get_path(self.config, key)))
-        for key, value in document.values.items():
-            if key in registry.BY_KEY:
-                set_path(data, key, copy.deepcopy(value))
-        for name, spec in registry.LISTS.items():
-            items = document.lists.get(name)
-            if items is None:
-                continue
-            if name == "webhooks":
-                hooks = []
-                for i, item in enumerate(items):
-                    url = secret(f"webhook.{_item_id(item)}.url")
-                    if url is None:
-                        if problems is not None:
-                            problems.append({"where": f"secrets.webhook.{_item_id(item)}.url",
-                                             "message": "a webhook needs its URL"})
-                        continue
-                    hooks.append({**copy.deepcopy(item), "url": url})
-                items = hooks
-            set_path(data, spec.path, copy.deepcopy(items))
-        return data
+        """The candidate config as a mapping (settings/candidate.py)."""
+        return candidate_data(self.config, document, secret, problems)
 
     def _with_defaults(self, config: AppConfig, document: SettingsDocument) -> AppConfig:
         if document.lists.get("dns_probes") is None:
@@ -270,7 +206,7 @@ class SettingsManager:
         document = document if document is not None else self._document
         data = self._data(document, secret or self.secret_value)
         for key, text in self.env_overrides().items():
-            set_path(data, key, text)
+            set_dotted(data, key, text)
         config, dropped = lenient.validate_leniently(AppConfig, data)
         return self._with_defaults(config, document), dropped
 
@@ -354,7 +290,14 @@ class SettingsManager:
     async def validate(self, values: Mapping[str, Any], lists: Mapping[str, Optional[List[dict]]],
                        secrets: Mapping[str, str] = None) -> Validation:
         """Checks a change against the current state as a whole candidate config; nothing is applied."""
-        return await validate_change(self, values, lists, secrets)
+        return await validate_change(self.validation_context(), values, lists, secrets)
+
+    def validation_context(self) -> ValidationContext:
+        """What validation may read of this manager (settings/validate.py)."""
+        return ValidationContext(
+            config=self.config, document=self.document, env_overrides=self.env_overrides, environ=self._environ,
+            token_set=self._token_set, hop_ids=self._hop_ids, candidate=self._data, secret_value=self.secret_value,
+            slots=self.slots, round_seconds=lambda: self.round_seconds)
 
     # --- saving ------------------------------------------------------------------------------------------------------
 
@@ -391,9 +334,12 @@ class SettingsManager:
                                                                           touched_lists)
             if conflicts:
                 raise SettingsConflict(current, conflicts)
-            if checked.secret_updates or checked.secret_removals:
+            written: Optional[Dict[Tuple[str, ...], Optional[str]]] = None  # path -> the value it had (None: none)
+            if checked.secret_updates:  # written before the commit (a crash between the two loses no secret) ...
+                paths = _leaf_paths(checked.secret_updates)
+                written = {path: self.secrets.get(path) for path in paths}
                 try:
-                    self.secrets.change(checked.secret_updates, checked.secret_removals)
+                    self.secrets.change(checked.secret_updates, [])
                 except SecretsFileUnusable:  # logged by the store, with what to do
                     raise SecretsWriteFailed(SECRETS_FILE_DAMAGED) from None
                 except OSError as e:
@@ -402,10 +348,34 @@ class SettingsManager:
             document = checked.document
             change_values = {k: document.values.get(k) for k in touched_values}
             change_lists = {n: document.lists.get(n) for n in touched_lists}
-            revision, old, new, summary = await self.repository.save_settings(
-                base_revision, change_values, change_lists, source,
-                lambda before, after: describe(before, after, checked.slots, self.round_seconds))
+            try:
+                revision, old, new, summary = await self.repository.save_settings(
+                    base_revision, change_values, change_lists, source,
+                    lambda before, after: describe(before, after, checked.slots, self.round_seconds))
+            except BaseException:  # ... and a failed commit puts back what it replaced (a failed save changes nothing)
+                if written:
+                    self._restore_secrets(written)
+                raise
+            if checked.secret_removals:
+                try:
+                    self.secrets.change({}, checked.secret_removals)
+                except (SecretsFileUnusable, OSError) as e:  # committed: the secrets of a removed webhook stay unused
+                    _log.error(f"Secrets of removed items could not be deleted from secrets.json: {type(e).__name__}")
             return await self._go_live(revision, summary, checked.slots)
+
+    def _restore_secrets(self, before: Mapping[Tuple[str, ...], Optional[str]]) -> None:
+        """Puts the secrets of `before` (path -> value it had, None for none) back, after a commit that failed."""
+        updates: dict = {}
+        for path, value in before.items():
+            if value is not None:
+                node = updates
+                for part in path[:-1]:
+                    node = node.setdefault(part, {})
+                node[path[-1]] = value
+        try:
+            self.secrets.change(updates, [path for path, value in before.items() if value is None])
+        except (SecretsFileUnusable, OSError) as e:
+            _log.error(f"Secrets could not be put back after a failed save: {type(e).__name__}")
 
     async def _go_live(self, revision: int, summary: str, slots: Set[str]) -> Applied:
         old_document = self._document
@@ -429,8 +399,13 @@ class SettingsManager:
                            new=self._document)
         failed: List[str] = []
         if not change.empty:
-            for name in await self.hub.publish(change):
+            ran = self.hub.subscribers(change)
+            broke = await self.hub.publish(change)
+            for name in broke:
                 failed += self.hub.touched_by(name, change)
+            for name in ran:  # what applied this time is no longer waiting for a restart
+                if name not in broke:
+                    self._live_failed -= set(self.hub.touched_by(name, change))
         self._live_failed |= set(failed)
         restart = sorted(k for k in changed_keys if not registry.get(k).live)
         _log.info(f"Settings saved as revision {revision}: {summary}", revision=revision)
@@ -456,19 +431,8 @@ class SettingsManager:
         return {"revision": revision, "values": values, "lists": lists}
 
     def export_yaml(self) -> str:
-        """The stored values (those marked for export) and the set lists, in config.yaml syntax. No secret: a
-        webhook has no URL and its headers name their secrets."""
-        data: dict = {}
-        for key, value in self._document.values.items():
-            setting = registry.BY_KEY.get(key)
-            if setting is not None and setting.export:
-                set_path(data, key, copy.deepcopy(value))
-        for name, spec in registry.LISTS.items():
-            items = self._document.lists.get(name)
-            if items is not None:
-                set_path(data, spec.path, copy.deepcopy(items))  # a stored webhook has no url
-        body = yaml.safe_dump(data, sort_keys=False, allow_unicode=True) if data else "{}\n"
-        return EXPORT_HEADER + body
+        """The stored values (those marked for export) and the set lists, in config.yaml syntax (settings/transfer.py)."""
+        return export_yaml(self._document)
 
     async def import_yaml(self, text: str) -> Dict[str, Any]:
         """An export (or a whole config.yaml) read into a draft {values, lists, notes}. Nothing is applied and no
@@ -481,21 +445,16 @@ class SettingsManager:
             settings_imports.add(1, {"outcome": "invalid"})
             raise
         settings_imports.add(1, {"outcome": "ok"})
-        result = read_settings(raw, hop_ids=await self._hop_ids())
-        notes = list(result.notes)
-        kept = []  # settings whose value in the file the checks refused: the page keeps what it has for them
-        for r in result.report:
-            spec = registry.BY_KEY.get(r["key"])
-            if spec is None:
-                notes.append(f"{r['key']}: {plain(r['reason'])} (not imported)")
-                continue
-            kept.append(spec.key)
-            notes.append(f"{spec.label}: {plain(r['reason'])}. Left as it is now.")
-        overrides = self.env_overrides()
-        values = {}
-        for key, value in result.document.values.items():
-            if key in overrides:
-                notes.append(f"{key}: set by the environment variable {settings_env.SETTING_ENV[key]} (not imported)")
-            else:
-                values[key] = value
-        return {"values": values, "lists": dict(result.document.lists), "notes": notes, "kept": kept}
+        result = await asyncio.to_thread(read_settings, raw, hop_ids=await self._hop_ids())
+        return draft_from_import(result, self.env_overrides())
+
+
+def _leaf_paths(tree: Mapping[str, Any], prefix: Tuple[str, ...] = ()) -> List[Tuple[str, ...]]:
+    """The paths of the values (leaves) of a nested dict."""
+    paths: List[Tuple[str, ...]] = []
+    for key, value in tree.items():
+        if isinstance(value, Mapping):
+            paths += _leaf_paths(value, prefix + (key,))
+        else:
+            paths.append(prefix + (key,))
+    return paths

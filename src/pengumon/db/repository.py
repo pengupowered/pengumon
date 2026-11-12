@@ -10,10 +10,11 @@ from pengumon.db.probes import ProbeQueries
 from pengumon.db.settings import SettingsQueries
 from pengumon.db.speedtests import SpeedTestQueries
 from pengumon.db.targets import TargetQueries
+from pengumon.db.traffic import TrafficQueries
 
 
 class DatabaseRepository(
     ClientQueries, DeviceQueries, IncidentQueries, PathQueries, SettingsQueries, SpeedTestQueries, TargetQueries,
-    ProbeQueries, RepositoryCore,
+    TrafficQueries, ProbeQueries, RepositoryCore,
 ):
     """Every method callers use is defined in one of the mixins; the shared connections and caches are RepositoryCore's."""

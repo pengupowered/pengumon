@@ -60,3 +60,46 @@ async def test_the_count_is_the_real_total_not_a_page(app_state, repo, monkeypat
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get("/api/incidents/count")
     assert res.json() == {"total": 13, "expected": 1}
+
+
+async def _codes(path, n, app_state, monkeypatch):
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", [])):
+        monkeypatch.setattr(security_config, name, value)
+    app_state.repository = None  # the limit comes before the handler: each call that gets in answers 503
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        return [(await ac.get(path)).status_code for _ in range(n)]
+
+
+async def test_the_dossier_is_limited_to_twenty_a_minute(app_state, monkeypatch):
+    assert await _codes("/api/incidents/dossier?hours=720", 21, app_state, monkeypatch) == [503] * 20 + [429]
+
+
+async def test_the_inspector_is_limited_to_sixty_a_minute(app_state, monkeypatch):
+    assert await _codes("/api/incidents/1/inspect", 61, app_state, monkeypatch) == [503] * 60 + [429]
+
+
+async def test_one_dossier_is_built_at_a_time_and_a_second_asker_is_told_to_wait(app_state, repo, monkeypatch):
+    """A build reads up to 720 hours of evidence; like the AI pack, the dossier has one build at a time."""
+    import asyncio
+
+    from pengumon.api import incidents as incidents_api
+
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", [])):
+        monkeypatch.setattr(security_config, name, value)
+    app_state.repository = repo
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {"formatted_markdown": "# done"}
+    monkeypatch.setattr(incidents_api, "build_dossier", slow)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        first = asyncio.create_task(ac.get("/api/incidents/dossier?hours=24"))
+        await started.wait()
+        second = await ac.get("/api/incidents/dossier?hours=72")
+        assert second.status_code == 429 and "Another dossier" in second.json()["detail"]
+        assert second.headers["retry-after"] == "5"
+        release.set()
+        assert (await first).status_code == 200
+        assert (await ac.get("/api/incidents/dossier?hours=72")).status_code == 200  # the lock was let go

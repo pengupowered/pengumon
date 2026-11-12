@@ -49,11 +49,11 @@ async def _exercise(client, state):
     assert client.server_info.name == "pengumon"
     tools = (await client.list_tools()).tools
     assert sorted(t.name for t in tools) == ["ai_pack", "devices", "incident", "incidents", "report", "services", "speed_tests",
-                                          "status"]
+                                          "status", "traffic"]
     assert all(t.annotations.read_only_hint is True and t.annotations.open_world_hint is False for t in tools)
     calls = [("status", {}), ("incidents", {"period": "30d"}), ("incident", {"id": state.example_incident_id}),
              ("report", {"period": "24h"}), ("devices", {}), ("services", {}), ("speed_tests", {"period": "30d"}),
-             ("ai_pack", {"level": "anonymized"})]
+             ("traffic", {"hours": 24}), ("ai_pack", {"level": "anonymized"})]
     for name, arguments in calls:
         result = await client.call_tool(name, arguments)
         assert not result.is_error, (name, result.content)

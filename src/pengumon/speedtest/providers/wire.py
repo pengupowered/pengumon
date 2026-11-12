@@ -18,8 +18,9 @@ It is an `httpx.AsyncBaseTransport`, so the providers use the usual httpx client
   upload payload counts its bytes as they are handed over, as before).
 * The timeouts of the request (connect, read, write) apply, and raise httpx's own timeout errors; other socket and TLS
   errors are httpx.ConnectError / ReadError / WriteError, a malformed answer is RemoteProtocolError.
-* No proxies (environment proxies are not used with a custom transport), no HTTP/2, no compression (the providers ask
-  for none; a compressed answer is passed through as it came, and httpx decodes it).
+* No proxies (environment proxies are not used with a custom transport), no HTTP/2, no compression: the providers ask
+  for none (`Accept-Encoding: identity`); a compressed answer is passed through as it came, and the providers' reader
+  (drivers.http.CappedBody) refuses a compressed download and decodes anything else only up to its limit.
 """
 
 import asyncio

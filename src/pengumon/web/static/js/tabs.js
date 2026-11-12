@@ -8,7 +8,6 @@
 // screen) its tab is the current one. layout.js keeps the first two in data-available and data-layout-hidden.
 
 import { registerActions } from './dispatch.js';
-import { afterModalHistory } from './util.js';
 
 const DEFAULT_TAB = 'live';
 const NARROW = '(max-width: 720px)';
@@ -25,7 +24,9 @@ function presentTabs() {
 }
 
 function currentTab(present) {
-  const name = decodeURIComponent(location.hash.replace(/^#/, ''));
+  const raw = location.hash.replace(/^#/, '');
+  let name = raw;
+  try { name = decodeURIComponent(raw); } catch (e) { /* a lone % in the address: use it as it is, it matches no tab */ }
   if (present.has(name)) return name;
   if (present.has(DEFAULT_TAB)) return DEFAULT_TAB;
   const first = barButtons().map((b) => b.dataset.arg).find((t) => present.has(t));
@@ -54,7 +55,7 @@ export function applyTabs() {
 const RANKS = { busy: 1, warn: 2, crit: 3 };
 const WORDS = { busy: 'busy, expected', warn: 'needs attention', crit: 'problem' };
 
-export function paintTabDots() {
+function paintTabDots() {
   const worst = {};
   const note = (tab, level) => { if ((RANKS[level] || 0) > (RANKS[worst[tab]] || 0)) worst[tab] = level; };
   panelSections().filter((el) => el.dataset.available !== '0' && el.dataset.layoutHidden !== '1').forEach((el) => {
@@ -82,7 +83,8 @@ export function paintTabDots() {
 export function selectTab(name) {
   if (!presentTabs().has(name)) return;
   if (location.hash === `#${name}`) return;
-  afterModalHistory(() => { location.hash = name; window.scrollTo(0, 0); }); // a dialog that closed in this task (one whose button switches the tab) has given its history entry back first
+  location.hash = name;
+  window.scrollTo(0, 0);
 }
 
 registerActions('click', { selectTab: (el) => selectTab(el.dataset.arg) });

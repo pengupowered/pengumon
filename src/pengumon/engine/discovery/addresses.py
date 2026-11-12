@@ -27,6 +27,9 @@ _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 _DOCUMENTATION = tuple(ipaddress.ip_network(n) for n in (
     "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32"))
 _ULA = ipaddress.ip_network("fc00::/7")
+# IPv6 ranges that carry an IPv4 address inside (NAT64 64:ff9b::/96, IPv4-compatible ::/96, IPv4-translated
+# ::ffff:0:0:0/96): not the host they look like, and never an address to connect to.
+_EMBEDDED_IPV4 = tuple(ipaddress.ip_network(n) for n in ("64:ff9b::/96", "::/96", "::ffff:0:0:0/96"))
 
 # The plain words the evidence uses for each class.
 CLASS_WORDS = {
@@ -60,6 +63,8 @@ def address_class(address: Optional[str]) -> Optional[str]:
         return LOOPBACK
     if ip.is_link_local:
         return LINK_LOCAL
+    if ip.version == 6 and any(ip in net for net in _EMBEDDED_IPV4):
+        return SPECIAL
     if ip.version == 4:
         if any(ip in net for net in _RFC1918):
             return PRIVATE

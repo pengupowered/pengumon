@@ -9,6 +9,10 @@ for each other). DNS lookups and custom targets are no stage of the path. "No re
 An IPv6 target this host cannot probe now (TargetStats.ipv6_unavailable: no IPv6 here) is no stage either: it has no
 fresh verdict to give or to vouch with.
 
+A hop probed by TCP is a stage like any other: its handshake is one round trip, so a TCP gateway that gives no answer
+while later stages answer is up and only "ignores its probe" (the pages word it for the method), and a TCP hop that
+answers vouches for the earlier ones. A hop probed by an HTTP request has the role custom, which is no stage.
+
 The rule judges the targets as they are now (their status, from the last probes the outage rules judge,
 classifier.window_probes); views over a longer time apply the current verdict to all of it. It never decides whether
 an incident opens: the classifier's verdicts do not read it.

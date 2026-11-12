@@ -30,6 +30,8 @@
   "samples",
   "docsis_snapshots",
   "docsis_correlation",
-  "router_snapshots"
+  "router_snapshots",
+  "device_events",
+  "traffic"
  ]
 }

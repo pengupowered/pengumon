@@ -16,6 +16,11 @@ class RouterMetricsSnapshot(BaseModel):
     cpu_usage_pct: Optional[float] = None
     mem_usage_pct: Optional[float] = None
     client_count: Optional[int] = None
+    # Read less often than every poll (AsusWRT: with the client list): the latest known value. The uptime counts on
+    # from its reading. None: the device does not report it (or not yet).
+    uptime_s: Optional[int] = None
+    cpu_temp_c: Optional[float] = None
+    wan_link_mbps: Optional[int] = None  # the WAN port's link speed; 0: no link
     wan_rx_load_pct: Optional[float] = None  # download / the line's capacity; None while the capacity is unknown
     wan_tx_load_pct: Optional[float] = None
     # cpu, mem, wan_rx, wan_tx -> good/warn/critical, decided in pengumon.devices.monitors

@@ -5,10 +5,10 @@
 
 import { kit } from '../../js/cards.js';
 import { token } from '../../js/chart-theme.js';
-import { formatMs } from '../../js/util.js';
+import { formatMs } from '../../js/format.js';
+import { has } from '../../js/values.js';
 
 const { escapeHtml } = kit;
-const has = (v) => v !== null && v !== undefined;
 const fmtMs = (v) => formatMs(v, { unit: true, empty: 'no reply', tenths: true });
 
 // Index of the point nearest to `ts` (times are sorted).
@@ -207,18 +207,34 @@ function charts(latencyCanvas, lossCanvas) {
     },
     plugins: [quietLane(vm)]
   });
+  // What each dataset looks like apart from its data: while a second's message only moves the data, the chart keeps its
+  // dataset objects (and what it resolved from their styles) and gets the new arrays.
+  let styles = [];
+  const style = ({ data, ...rest }) => JSON.stringify(rest);
+  let quiet = false; // the loss lane was empty when it was last drawn
   return {
     update(next) {
       m = next;
       lat.data.labels = m.labels;
-      lat.data.datasets = datasets(m, latencyCanvas);
+      const sets = datasets(m, latencyCanvas);
+      const looks = sets.map(style);
+      if (looks.length === styles.length && looks.every((l, i) => l === styles[i]) && lat.data.datasets.length === sets.length) {
+        sets.forEach((d, i) => { lat.data.datasets[i].data = d.data; });
+      } else {
+        lat.data.datasets = sets;
+        styles = looks;
+      }
       lat.options.scales.yLoad.display = !!(m.wan && m.wan.axis);
       lost.data.labels = m.labels;
+      const bars = m.loss.some((v) => v > 0);
       lost.data.datasets = [{ id: 'loss', label: 'Lost', data: m.loss.map((v) => (v > 0 ? v : null)), backgroundColor: token('--crit'),
         borderWidth: 0, barPercentage: 0.9, categoryPercentage: 1, minBarLength: 3 }];
       lat.update('none');
+      const before = lost.options.layout.padding.right;
       alignLossLane();
-      lost.update('none');
+      // an empty lane looks the same from one second to the next (the note, no bars): not redrawn until something changes
+      if (bars || !quiet || before !== lost.options.layout.padding.right) lost.update('none');
+      quiet = !bars;
     },
     unmount() {
       lat.destroy();
@@ -304,8 +320,8 @@ function modes(group) {
       m.modes.forEach((b) => {
         const button = group.querySelector(`[data-arg="${b.arg}"]`);
         if (!button) return;
-        button.classList.toggle('active', b.pressed);
-        button.setAttribute('aria-pressed', String(b.pressed));
+        if (button.classList.contains('active') !== !!b.pressed) button.classList.toggle('active', b.pressed);
+        if (button.getAttribute('aria-pressed') !== String(b.pressed)) button.setAttribute('aria-pressed', String(b.pressed));
       });
     }
   };

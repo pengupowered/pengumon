@@ -17,6 +17,8 @@
         <div class="pe-add-row">
           <div class="field grow"><label for="pathAddAddress">Address</label><input class="input mono" type="text" id="pathAddAddress" placeholder="198.51.100.1 or example.com" maxlength="255" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="pathAddMsg"></div>
           <div class="field"><label for="pathAddRole">Role</label><select class="input" id="pathAddRole" data-change="pathAddRoleChanged" aria-describedby="pathAddRoleFx"></select></div>
+          <div class="field"><label for="pathAddProbe">Probe by</label><select class="input" id="pathAddProbe" data-change="pathAddProbeChanged"><option value="icmp" selected>Ping</option><option value="tcp">TCP connect</option><option value="http">HTTP(S) request</option></select></div>
+          <div class="field" id="pathAddPortField" hidden><label for="pathAddPort">Port</label><input class="input num" id="pathAddPort" inputmode="numeric" maxlength="5" autocomplete="off"></div>
           <div class="field"><label for="pathAddFamily">A host name as</label><select class="input" id="pathAddFamily"><option value="4" selected>IPv4</option><option value="6">IPv6</option></select></div>
           <div class="field"><label for="pathAddPosition">Where</label><select class="input" id="pathAddPosition"></select></div>
           <button type="submit" class="btn outline" id="btnAddPathHop"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span>Add</span></button>

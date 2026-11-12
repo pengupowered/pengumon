@@ -25,7 +25,7 @@ registerHelp({
     + 'higher ping times.',
   'router.clients': 'The number of devices the router currently counts as connected, wired and Wi-Fi. Where the router '
     + 'can list them, this opens the Clients list.',
-  'router.history': (v) => 'CPU and memory, WAN rates and the number of clients over 1 hour to ' + val(v, 'database.retention_days', 7) + ' days (how long readings are kept), from the router readings '
+  'router.history': (v) => 'CPU and memory, the CPU temperature (when the router reports it), WAN rates and the number of clients over 1 hour to ' + val(v, 'database.retention_days', 7) + ' days (how long readings are kept), from the router readings '
     + 'saved every 10 s. Longer ranges are averaged into time slices (solid lines are the average, dashed '
     + 'lines the peak). Use it to see whether a slowdown lined up with a busy line or a loaded router.',
   'clients.band': 'How the device is connected: wired, or Wi-Fi on the 2.4, 5 or 6 GHz band. 2.4 GHz reaches farther but '
@@ -33,8 +33,8 @@ registerHelp({
   'clients.signal': 'Signal strength (RSSI) of the Wi-Fi link in dBm, as the router or mesh node hears the device. Closer to '
     + '0 is stronger: above -60 dBm is excellent, above -67 good, above -75 fair, and -75 or below is weak and likely to be slow or drop.',
   'clients.speed': 'The Wi-Fi link rate the radio negotiated with the router (Tx / Rx), not traffic. It is the speed '
-    + 'the connection could carry, not what the device is using. A phone on a fast link may be idle, and per-device '
-    + 'traffic is not available. A low rate usually goes with a weak signal.',
+    + 'the connection could carry, not what the device is using. A phone on a fast link may be idle. How much a '
+    + 'device really used is on the Internet use card. A low rate usually goes with a weak signal.',
   'clients.connected': 'How long the device has been on the network in its current session. It restarts when the device '
     + 'disconnects or the router reboots.',
   'clients.node': 'The mesh node (router or satellite) the device is connected to. Signal and link speed '

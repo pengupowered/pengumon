@@ -1,4 +1,5 @@
 {
+ "device_events": [],
  "docsis_correlation": {
   "active_errors_in_window": 0,
   "gateway_offline": false,
@@ -361,6 +362,9 @@
    "timestamp": 1759992805.00453
   }
  ],
+ "traffic": {
+  "hours": []
+ },
  "window_end": 1759992875.0,
  "window_start": 1759992755.0
 }

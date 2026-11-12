@@ -17,7 +17,7 @@ export function val(v, key, fallback) {
   return x === undefined || x === null ? fallback : x;
 }
 
-export async function refreshSettingsValues() {
+async function read() {
   try {
     const res = await fetch('/api/settings/values', { cache: 'no-store' });
     if (!res.ok) return false;
@@ -30,17 +30,49 @@ export async function refreshSettingsValues() {
   return true;
 }
 
-// The page carries the values it was rendered with (<body data-settings>, from web/pages.py), so help texts need no fetch;
-// without them (an older server) the first read is a request.
+// One read at a time (the live message repeats the new revision every second until a read has it, and answers could
+// otherwise land out of order). A request that comes while a read is under way (a Save, or a newer revision) may have
+// changed what it reads, so it is read once more, at most twice.
+let inflight = null;
+let again = false;
+export function refreshSettingsValues() {
+  if (inflight) { again = true; return inflight; }
+  inflight = (async () => {
+    let ok;
+    for (let n = 0; n < 3; n++) {
+      again = false;
+      ok = await read();
+      if (!again || !ok) break;
+    }
+    return ok;
+  })().finally(() => { inflight = null; });
+  return inflight;
+}
+
+// The revision the page's settings were read at (<body data-settings-revision>), or null for a page rendered without one
+// (an older server): then the first live message's revision is taken as the page's own.
+export function renderedRevision() {
+  const at = document.body.dataset.settingsRevision;
+  return at !== undefined && /^\d+$/.test(at) ? Number(at) : null;
+}
+
+// The page carries the values it was rendered with (<body data-settings>, from web/pages.py) and the revision they were
+// read at (data-settings-revision), so help texts need no fetch and a Save made between the render and the live
+// connection shows as a first message with another revision, which reads them again. Without them (an older server) the
+// first read is a request.
 export async function initSettingsValues() {
   try {
     const rendered = JSON.parse(document.body.dataset.settings || '{}');
-    if (rendered && Object.keys(rendered).length) { values = rendered; return true; }
+    if (rendered && Object.keys(rendered).length) {
+      values = rendered;
+      revision = renderedRevision();
+      return true;
+    }
   } catch (e) { /* fall through to the request */ }
   return refreshSettingsValues();
 }
 
 bus.subscribe('settings_revision', (rev) => {
-  if (revision === null && Object.keys(values).length && typeof rev === 'number') { revision = rev; return; } // rendered by the server: the first message's revision is its own
+  if (revision === null && Object.keys(values).length && typeof rev === 'number') { revision = rev; return; } // rendered without a revision: the first message's is taken as its own
   if (revision !== null && typeof rev === 'number' && rev !== revision) refreshSettingsValues();
 });

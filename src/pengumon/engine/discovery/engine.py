@@ -26,11 +26,14 @@ from pengumon.engine.discovery.traces import (
     PUBLIC_SERVERS, PUBLIC_SERVERS_V6, TRACE_MAX_HOPS, TRACE_TIMEOUT_S, MergedPath, PathHop, Trace, merge_paths,
     run_traces,
 )
+from pengumon.observability import get_logger
 from pengumon.observability.telemetry import discovery_duration, discovery_runs, tracer
 
 # Why this run was started, for the telemetry: the route-change checker sets it around its runs (daily, incident,
 # confirm); a run the owner asked for is "manual".
 discovery_trigger: contextvars.ContextVar[str] = contextvars.ContextVar("discovery_trigger", default="manual")
+
+_log = get_logger("pengumon.discovery")
 
 CHECKS_DEADLINE_S = 15.0
 PING_TIMEOUT_S = 1.0
@@ -129,12 +132,19 @@ def off_path_candidates(path: MergedPath) -> List[str]:
     return [a for a in GATEWAY_ADDRESSES if address_key(a) not in on_path and not (first and same_subnet(a, first))]
 
 
-async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
-    """rDNS, ASN, web pages, the gateway addresses off the path, UPnP and SNMP, all at once. Returns (names, asns,
-    pages, off-path devices, igds, snmp)."""
-    lookups = Lookups(deps.query)
-    addresses = [h.address for h in path.hops if h.address]
-    public = [a for a in addresses if address_class(a) == PUBLIC]
+async def _contained(check: str, awaitable, empty):
+    """The result of one check, or `empty` when it raised: one odd answer from one device costs only its own
+    evidence, never the run (and no sibling is left running on a closed client)."""
+    try:
+        return await awaitable
+    except Exception as exc:  # noqa: BLE001 - any failure of one check is no evidence
+        _log.warning(f"discovery check '{check}' failed ({type(exc).__name__}); its evidence is left out")
+        return empty
+
+
+def _device_hosts(path: MergedPath, options: DiscoveryOptions, deps: Deps) -> Tuple[List[str], List[str]]:
+    """The hosts the device checks contact: (the private hops before the first public one, at most MAX_DEVICE_HOSTS
+    less the off-path gateways; the gateway addresses off the traced path)."""
     first_public = next((i for i, h in enumerate(path.hops) if h.address and address_class(h.address) == PUBLIC),
                         len(path.hops))
     private = []
@@ -146,59 +156,80 @@ async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
     # echo request from here, even when the trace misses it and it looks like an off-path gateway.
     off_path = ([a for a in off_path_candidates(path) if address_key(a) not in limited]
                 if options.device_checks or options.off_path_gateways else [])
-    private = private[:MAX_DEVICE_HOSTS - len(off_path)]
+    return private[:MAX_DEVICE_HOSTS - len(off_path)], off_path
 
-    async def pages(client):
-        async def one(address):
-            if address_key(address) in limited:
-                return address, await devices.fetch_page(address, client, budget=1, fallback_https=False)
-            return address, await devices.fetch_page(address, client)
 
-        return {a: p for a, p in await asyncio.gather(*(one(a) for a in private)) if p is not None}
+async def _fetch_pages(private: List[str], limited: set, client) -> dict:
+    """The front page of each private hop (a limited host: one plain try), by address."""
+    async def one(address):
+        if address_key(address) in limited:
+            return address, await devices.fetch_page(address, client, budget=1, fallback_https=False)
+        return address, await devices.fetch_page(address, client)
 
-    async def gateways(client):
-        """Each gateway address off the path (a limited host is not one): one echo request and one GET of `/`."""
-        async def one(address):
-            ping = deps.ping or _default_ping
-            answered, page = await asyncio.gather(
-                asyncio.sleep(0, result=False) if address_key(address) in limited else ping(address),
-                devices.fetch_page(address, client, budget=1, fallback_https=False))
-            return OffPathDevice(address=address, page=page, answered_ping=bool(answered))
+    return {a: p for a, p in await asyncio.gather(*(_contained("page", one(a), (a, None)) for a in private))
+            if p is not None}
 
-        found = await asyncio.gather(*(one(a) for a in off_path))
-        return [d for d in found if d.page is not None or d.answered_ping]
 
-    async def igds(client):
-        # only a gateway that is a hop of the traced path is followed (anything else on the LAN can claim to be one)
-        return await upnp.discover_igds(client, deps.ssdp, skip=lambda a: address_key(a) in limited,
-                                        allowed={address_key(a) for a in addresses})
+async def _probe_gateways(off_path: List[str], limited: set, client, deps: Deps) -> List[OffPathDevice]:
+    """Each gateway address off the path (a limited host is not one): one echo request and one GET of `/`."""
+    async def one(address):
+        ping = deps.ping or _default_ping
+        answered, page = await asyncio.gather(
+            asyncio.sleep(0, result=False) if address_key(address) in limited else ping(address),
+            devices.fetch_page(address, client, budget=1, fallback_https=False))
+        return OffPathDevice(address=address, page=page, answered_ping=bool(answered))
 
-    async def asns(igds_task):
-        # this host's own public address (the router's UPnP-reported external address, or a hop that equals it) is
-        # never sent to the ASN lookup
-        own = {address_key(i.external_ip) for i in (await igds_task) if i.external_ip}
-        return await lookups.asns([a for a in public if address_key(a) not in own])
+    found = await asyncio.gather(*(_contained("gateway", one(a), None) for a in off_path))
+    return [d for d in found if d is not None and (d.page is not None or d.answered_ping)]
 
-    async def snmp():
-        get = deps.snmp_get or devices.snmp_sysdescr
-        targets = [a for a in private if address_key(a) not in limited]
-        answers = await asyncio.gather(*(get(a) for a in targets))
-        return {a: d for a, d in zip(targets, answers) if d}
 
-    async def nothing():
-        return {}
+async def _find_igds(addresses: List[str], limited: set, client, deps: Deps):
+    # only a gateway that is a hop of the traced path is followed (anything else on the LAN can claim to be one)
+    return await _contained("upnp", upnp.discover_igds(
+        client, deps.ssdp, skip=lambda a: address_key(a) in limited, allowed={address_key(a) for a in addresses}),
+        [])
+
+
+async def _lookup_asns(public: List[str], igds_task, lookups: Lookups):
+    # this host's own public address (the router's UPnP-reported external address, or a hop that equals it) is
+    # never sent to the ASN lookup
+    own = {address_key(i.external_ip) for i in (await igds_task) if i.external_ip}
+    return await lookups.asns([a for a in public if address_key(a) not in own])
+
+
+async def _snmp_sysdescrs(private: List[str], limited: set, deps: Deps) -> dict:
+    get = deps.snmp_get or devices.snmp_sysdescr
+    targets = [a for a in private if address_key(a) not in limited]
+    answers = await asyncio.gather(*(_contained("snmp", get(a), None) for a in targets))
+    return {a: d for a, d in zip(targets, answers) if d}
+
+
+async def _nothing():
+    return {}
+
+
+async def _checks(path: MergedPath, options: DiscoveryOptions, deps: Deps):
+    """rDNS, ASN, web pages, the gateway addresses off the path, UPnP and SNMP, all at once. Returns (names, asns,
+    pages, off-path devices, igds, snmp)."""
+    lookups = Lookups(deps.query)
+    addresses = [h.address for h in path.hops if h.address]
+    public = [a for a in addresses if address_class(a) == PUBLIC]
+    private, off_path = _device_hosts(path, options, deps)
+    limited = {address_key(a) for a in deps.limited_hosts}
 
     client = (deps.http_client or devices.new_client)()
     try:
-        igds_task = asyncio.ensure_future(igds(client) if options.device_checks else asyncio.sleep(0, result=[]))
+        igds_task = asyncio.ensure_future(
+            _find_igds(addresses, limited, client, deps) if options.device_checks else asyncio.sleep(0, result=[]))
         try:
             names, found_asns, found_pages, found_off_path, found_igds, found_snmp = await asyncio.gather(
-                lookups.reverse_names(addresses),
-                asns(igds_task) if options.asn_lookup else nothing(),
-                pages(client) if options.device_checks else nothing(),
-                gateways(client),
+                _contained("names", lookups.reverse_names(addresses), {}),
+                _contained("asn", _lookup_asns(public, igds_task, lookups), {}) if options.asn_lookup else _nothing(),
+                _contained("pages", _fetch_pages(private, limited, client), {}) if options.device_checks
+                else _nothing(),
+                _contained("gateways", _probe_gateways(off_path, limited, client, deps), []),
                 igds_task,
-                snmp() if options.snmp else nothing(),
+                _contained("snmp", _snmp_sysdescrs(private, limited, deps), {}) if options.snmp else _nothing(),
             )
         finally:
             igds_task.cancel()

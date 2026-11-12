@@ -288,9 +288,18 @@ class SpeedTestRunner:
         values = [r["latency_ms"] for r in rows if r["success"] and r["latency_ms"] is not None]
         return round(statistics.median(values), 1) if values else None
 
-    async def _phase(self, call) -> Tuple[Optional[Any], Optional[ProviderError]]:
+    async def _phase(self, call, provider: Any = None) -> Tuple[Optional[Any], Optional[ProviderError]]:
         """One direction, watched: canceled when the speed test is turned off (_Stopped) or when it runs past
-        PHASE_LIMIT_SECONDS (a failed direction)."""
+        PHASE_LIMIT_SECONDS (a failed direction). A direction cut off or ended by a provider bug keeps what it moved
+        (`provider.moved()`), which counts toward the monthly data cap."""
+        before = getattr(provider, "meter", None)
+
+        def moved() -> int:
+            count = getattr(provider, "moved", None)
+            if count is None or (hasattr(provider, "meter") and provider.meter is before):
+                return 0  # (the direction never started counting: the meter is still the previous direction's)
+            return count()
+
         task = asyncio.ensure_future(call())
         began = time.monotonic()
         try:
@@ -301,14 +310,14 @@ class SpeedTestRunner:
                 if not self.cfg.enabled:
                     raise _Stopped()
                 if time.monotonic() - began > PHASE_LIMIT_SECONDS:
-                    return None, ProviderError("did not finish in time")
+                    return None, ProviderError("did not finish in time", moved=moved())
         except ProviderError as e:
             return None, e
         except (asyncio.CancelledError, _Stopped):
             raise
         except Exception as e:  # a provider bug is a failed test, never an exception out of the scheduler
             _log.error(f"Speed test provider error: {e.__class__.__name__}", exc_info=True)
-            return None, ProviderError(f"unexpected error: {e.__class__.__name__}")
+            return None, ProviderError(f"unexpected error: {e.__class__.__name__}", moved=moved())
         finally:
             if not task.done():
                 task.cancel()
@@ -330,7 +339,7 @@ class SpeedTestRunner:
             # the line's own rate, from the router's counters
             async with RouterSampler(self._wan_reader, self.wan_sample_s) as router:
                 down, down_err = await self._phase(lambda: provider.download(cfg.download_bytes, TIME_LIMIT_SECONDS,
-                                                                             target_s=TARGET_SECONDS))
+                                                                             target_s=TARGET_SECONDS), provider)
             row["bytes_down"] = down.bytes if down else (down_err.moved if down_err else 0)
             t1 = self.clock()
             row["loaded_down_ms"] = await self._median_latency(t0, t1)
@@ -339,7 +348,7 @@ class SpeedTestRunner:
             phase = "bytes_up"
             async with RouterSampler(self._wan_reader, self.wan_sample_s) as router:
                 up, up_err = await self._phase(lambda: provider.upload(cfg.upload_bytes, TIME_LIMIT_SECONDS,
-                                                                       target_s=TARGET_SECONDS))
+                                                                       target_s=TARGET_SECONDS), provider)
             row["bytes_up"] = up.bytes if up else (up_err.moved if up_err else 0)
             phase = None
             t2 = self.clock()

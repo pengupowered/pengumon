@@ -1,5 +1,7 @@
-"""The retention component: removes what is older than the database section's retention_days (raw samples) and
-rollup_retention_days (per-minute rollups), once at start and then every hour."""
+"""The retention component: removes what is older than the database section's retention_days (raw samples),
+slot_retention_days (10-second rollups), rollup_retention_days (per-minute rollups) and long_rollup_retention_days (quarter-hour rollups and
+speed tests), once at start and then every hour. It starts after the storage component, whose migration builds the
+quarter-hour rollups from the per-minute ones before this first cleanup can delete any of them."""
 
 import asyncio
 
@@ -15,7 +17,8 @@ async def cleanup_background_worker(config, repository) -> None:
     """Periodically purges metrics older than retention_days."""
     _log.info(
         f"Retention policy active: raw probe data {config.database.retention_days} days, "
-        f"per-minute rollups {config.database.rollup_retention_days} days."
+        f"per-minute rollups {config.database.rollup_retention_days} days, "
+        f"quarter-hour rollups {config.database.long_rollup_retention_days} days."
     )
     while True:
         try:

@@ -590,7 +590,7 @@
     },
     {
       "type": "row",
-      "title": "Network probes (1 s ICMP / DNS)",
+      "title": "Network probes (1 s ICMP / TCP / HTTP / DNS)",
       "collapsed": false,
       "panels": [],
       "id": 9,

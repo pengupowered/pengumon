@@ -3,15 +3,21 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { bus } from '../../js/bus.js';
-import { keepKeyboard, openModal, setBadge } from '../../js/util.js';
+import { keepKeyboard, openModal } from '../../js/modal.js';
+import { setBadge } from '../../js/dom.js';
 
-let notificationsEnabled = (localStorage.getItem('pengumon_notify') === 'true');
-let audioAlertsEnabled = (localStorage.getItem('pengumon_sound') === 'true');
+// localStorage can throw (site data blocked, some embedded views): the choices then last for the page only
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch (_) { return null; } },
+  set(key, value) { try { localStorage.setItem(key, String(value)); } catch (_) { /* kept for this page only */ } }
+};
+let notificationsEnabled = (store.get('pengumon_notify') === 'true');
+let audioAlertsEnabled = (store.get('pengumon_sound') === 'true');
 let previousDiagnosisStatus = null;
 
 // Which changes raise an alert (this browser only). All on by default, which is what the dialog did before it had a choice.
 const ALERT_KINDS = { down: 'pengumon_alert_down', degraded: 'pengumon_alert_degraded', recovered: 'pengumon_alert_recovered' };
-const alertOn = (kind) => localStorage.getItem(ALERT_KINDS[kind]) !== 'false';
+const alertOn = (kind) => store.get(ALERT_KINDS[kind]) !== 'false';
 // The kind of alert a change of verdict is, or null for a change that never alerted (and still does not).
 function alertKind(status, previous) {
   if (status === 'down' || status === 'degraded') return status;
@@ -78,7 +84,7 @@ async function sendServerTest() {
 export function setNotificationsEnabled(on) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   notificationsEnabled = on;
-  localStorage.setItem('pengumon_notify', String(on));
+  store.set('pengumon_notify', on);
   updateNotifyButton();
   updateAlertModalUI();
   if (on) {
@@ -135,9 +141,15 @@ function updateAlertModalUI() {
   }
 }
 
+// A sentence in the dialog's own note, where the person is looking (not a browser alert box).
+function explain(text) {
+  const help = document.getElementById('notifHelpText');
+  if (help) help.textContent = text;
+}
+
 export function requestDesktopPermission() {
   if (!("Notification" in window)) {
-    alert("Desktop notifications are restricted by your browser over plain HTTP IP access. Use http://localhost:8000 or enable In-App Audio Chimes below!");
+    explain('This browser has no desktop notifications. The sound below works here.');
     return;
   }
 
@@ -145,23 +157,23 @@ export function requestDesktopPermission() {
     updateAlertModalUI();
     if (permission === 'granted') {
       notificationsEnabled = true;
-      localStorage.setItem('pengumon_notify', 'true');
+      store.set('pengumon_notify', true);
       updateNotifyButton();
       sendTestNotification();
     } else if (permission === 'denied') {
-      alert("Permission was blocked. Click the lock/tune icon next to the URL in your browser address bar and toggle Notifications to 'Allow'.");
+      explain('Notifications are blocked for this address. Open the site settings (the icon left of the address in the browser), set Notifications to Allow, then press Test.');
     }
   });
 }
 
 export function setAlertOption(kind, on) {
   if (!ALERT_KINDS[kind]) return;
-  localStorage.setItem(ALERT_KINDS[kind], String(on));
+  store.set(ALERT_KINDS[kind], on);
 }
 
 export function toggleSoundAlerts() {
   audioAlertsEnabled = !audioAlertsEnabled;
-  localStorage.setItem('pengumon_sound', audioAlertsEnabled);
+  store.set('pengumon_sound', audioAlertsEnabled);
   updateAlertModalUI();
   updateNotifyButton();
   if (audioAlertsEnabled) {
@@ -187,7 +199,7 @@ export function sendTestNotification() {
       console.warn('Notification test error:', e);
     }
   } else {
-    alert("Desktop notifications are not yet allowed. Follow the instructions above or enable Sound Alerts!");
+    explain('Desktop notifications are not allowed yet. Press Allow notifications above, or use the sound.');
   }
 }
 
@@ -212,8 +224,9 @@ export function checkNotificationTrigger(diagnosis) {
 
     // 2. Send Desktop Notification if enabled
     if (notificationsEnabled && "Notification" in window && Notification.permission === "granted") {
-      // Prevent spam on rapid bouncing: only send if status is 'down' or > 12s since last update
-      if (diagnosis.status === 'down' || (now - lastNotificationTime) > 12000) {
+      // Prevent spam on rapid bouncing: only send if status is 'down', a recovery (the last pop-up would say the line is
+      // down for good otherwise) or > 12s since last update
+      if (diagnosis.status === 'down' || kind === 'recovered' || (now - lastNotificationTime) > 12000) {
         lastNotificationTime = now;
         
         let title = '';
@@ -255,13 +268,24 @@ export function checkNotificationTrigger(diagnosis) {
   }
 }
 
+// One context for the page's life (browsers allow only a few live ones), woken up whenever a tone is due: one made without a
+// recent click starts suspended, so the first click anywhere makes it too.
+let audio = null;
+function audioContext() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!audio || audio.state === 'closed') audio = new Ctx();
+  if (audio.state === 'suspended') audio.resume().catch(() => {});
+  return audio;
+}
+document.addEventListener('pointerdown', () => { if (audioAlertsEnabled) audioContext(); }, { once: true });
+
 export function playAlertSound(type, isTest = false) {
 
   if (!audioAlertsEnabled && !isTest) return;
   try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
+    const ctx = audioContext();
+    if (!ctx) return;
 
     if (type === 'down') {
       // Urgent double descending pulse

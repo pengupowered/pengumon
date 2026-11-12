@@ -31,9 +31,21 @@ These lock files are the dependency record: every package, its exact version and
 SBOM from it (Insights → Dependency graph → Export SBOM). `$DG sbom .` writes a CycloneDX SBOM locally when one is needed.
 
 Runtime privileges: the container runs as uid 10001 with only `cap_net_raw` as a file capability on
-the Python interpreter (for the raw ICMP socket; the build fails if `setcap` fails). The image has no `ping` or
+the Python interpreter (for the raw ICMP socket; the build fails if `setcap` fails). The image has no `ping`, no `setcap`/`getcap` (installed and purged in the one build step that uses them) and no
 `traceroute` package: the app sends ICMP itself. The first deploy of the
 non-root image chowns the `pengumon_data` volume to 10001:0.
+
+## cryptography (SNMPv3 privacy)
+
+The `snmp` driver's SNMPv3 privacy (AES-128 in CFB mode, RFC 3826) needs AES, which the standard library does not have
+and which must not be written by hand, so the runtime lock carries `cryptography` with its `cffi` and `pycparser`. They
+are pinned to the exact versions (`cryptography==50.0.2`, `cffi==2.1.1`, `pycparser==3.11`) that `requirements-dev.txt`
+already locked for the MCP test client, with the same hashes: the runtime lock added no version the test lock had not
+already been audited with. Only the AES-CFB cipher is used (from `cryptography.hazmat.decrepit`, where the library keeps
+CFB as a legacy mode; RFC 3826 prescribes it); the hashes and HMACs come from the standard library (`hashlib`, `hmac`).
+Its wheels bundle OpenSSL, so an OpenSSL advisory arrives as a `cryptography` release and is caught by the audit like any
+other package. When updating, move the runtime and the dev lock to the same version, and run `tests/test_snmp_v3.py`
+(known-answer tests and exchanges recorded from net-snmp).
 
 ## Browser test tooling (npm)
 

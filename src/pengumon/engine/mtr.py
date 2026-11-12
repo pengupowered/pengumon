@@ -125,7 +125,8 @@ class MtrEngine:
         except (ValueError, OSError) as ex:  # IcmpUnavailable is an OSError
             logger.warning(f"Traceroute to {self.target_host} not run: {getattr(ex, 'reason', ex)}")
             return []
-        key = (asyncio.get_running_loop(), id(backend), address, self.max_hops, self.timeout)
+        labels = tuple((getattr(t, "address", None), getattr(t, "name", None)) for t in self.known_targets)
+        key = (asyncio.get_running_loop(), id(backend), address, self.max_hops, self.timeout, labels)
         task = _running.get(key)
         if task is None:
             task = asyncio.ensure_future(self._one_at_a_time(backend, address))
@@ -153,7 +154,8 @@ class MtrEngine:
             await asyncio.sleep(delay)
             try:
                 return await backend.probe(address, timeout=self.timeout, ttl=ttl)
-            except OSError as ex:
+            except Exception as ex:  # an OSError (no buffer space) or any other failure: that probe is silent, the
+                # others go on (gather would otherwise raise and leave them running unobserved)
                 logger.debug(f"Traceroute probe ttl={ttl} to {address} failed: {ex}")
                 return ProbeResult("timeout")
 

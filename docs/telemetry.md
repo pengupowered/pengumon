@@ -3,11 +3,15 @@
 ## Telemetry budget (what it stores, sends and writes)
 
 - Raw probe samples, device readings (`device_samples`, `line_samples`): Kept for `database.retention_days` (7). Pruned at startup and hourly; the log line says how many rows went, and an incremental vacuum then hands the space back to the OS Where: `cleanup_old_samples`
-- Per-minute rollups (`rollup_1m`): One row per target and minute (count, ok, latency sum/min/max, jitter), upserted on every flush. Kept for `database.rollup_retention_days` (400). They feed every history chart, the report, the dossier and the incident inspector (its hop table and charts, at minute resolution) beyond the raw window Where: `cleanup_old_samples`
-- Speed tests (`speed_tests`, off unless the speed test is on): One row per test, a few a day at most with the default interval (24 hours; one an hour at the shortest). Kept as long as the rollups (at least 32 days), so this month's data use stays whole ([speedtest.md](speedtest.md)) Where: `cleanup_old_samples`
-- Incidents: Kept (hundreds of rows, a few hundred KB). They are the outage record, including the ones classified as expected (busy line)
-- Dashboard live stream: The incident history (up to 500 entries, ~0.5 MB) is sent once per dashboard and again only when an incident changes; every other second's message is ~12 KB. With no dashboard open nothing is built or queried Where: `live/ws.py`
-- Disk writes: Probe samples (and their rollup upserts) are committed in one transaction every 10 s (`sample_flush_seconds`); reads and shutdown flush first. A crash can lose at most 10 s of samples. One idle connection stays open so SQLite does not checkpoint and delete the WAL after every write; every connection uses `synchronous=NORMAL` Where: `db/probes.py`
+- 10-second rollups (`rollup_10s`): One row per target and 10 seconds (the columns of `rollup_1m`, with that slot's exact 10th and 90th percentile), recomputed from the raw samples on every flush. Kept for `database.slot_retention_days` (7). They answer the latency chart's 10 s buckets (with the band) up to a day Where: `cleanup_old_samples`
+- Per-minute rollups (`rollup_1m`): One row per target and minute (count, ok, latency sum/min/max, jitter, p10/p90), upserted on every flush. Kept for `database.rollup_retention_days` (90). They feed the history charts, the dossier and the incident inspector (its hop table and charts, at minute resolution) beyond the raw window, and the edges of the quarter-hour reads Where: `cleanup_old_samples`
+- Quarter-hour rollups (`rollup_15m`): One row per target and quarter hour, summed from `rollup_1m` on every flush (the band as weighted sums, the dead minutes the uptime strips count). Kept for `database.long_rollup_retention_days` (400). They answer the report, the loss grid, the uptime strips, the hop totals of long windows and history buckets of whole quarters, and every range older than the per-minute rollups Where: `cleanup_old_samples`
+- Speed tests (`speed_tests`, off unless the speed test is on): One row per test, a few a day at most with the default interval (24 hours; one an hour at the shortest). Kept as long as the quarter-hour rollups (at least 32 days), so this month's data use stays whole ([speedtest.md](speedtest.md)) Where: `cleanup_old_samples`
+- Router traffic and events (`traffic_hourly`, `traffic_apps`, `device_events`; an ASUS router with its Traffic Analyzer on): bytes per client (by MAC) and hour, the apps per 24-hour window, and a few restart and WAN link rows a month; about 30 bytes a row, 10 active clients about 8 MB a year. Traffic kept for `database.traffic_retention_days` (400), events as long as the quarter-hour rollups. Only the dashboard and the API name a client; the dossier, the AI pack and MCP give its kind and maker ([storage.md](storage.md#router-readings-device-events-and-traffic-schema-v19)) Where: `cleanup_old_samples`
+- Device names (`client_names`): one row per device given a name in Pengumon (at most 1000, 40 characters each), never pruned; read once and kept in memory, so listing clients costs no database read.
+- Incidents: Kept (hundreds of rows, a few hundred KB) unless `database.incident_retention_days` is set (0, the default, keeps them forever; resolved ones older than that are deleted hourly, an open one never). They are the outage record, including the ones classified as expected (busy line)
+- Dashboard live stream: The incident history (up to 500 entries, ~0.5 MB) is sent once per dashboard and again only when an incident changes; every other second's message is ~12 KB (a dashboard on `/ws?delta=1` is sent only the probes since its last message, so less). With no dashboard open nothing is built or queried Where: `live/ws.py`
+- Disk writes: Probe samples (and their rollup upserts) are committed in one transaction every 10 s (`sample_flush_seconds`); shutdown flushes first, and so does a read whose window reaches the unflushed samples (a window of 6 hours or more, or one that ends before them, does not). A crash can lose at most 10 s of samples. One idle connection stays open so SQLite does not checkpoint and delete the WAL after every write; every connection uses `synchronous=NORMAL` Where: `db/probes.py`
 
 Measured 2026-10-10 on the live container (before 0.2.0): disk writes 93 → 16 KB/s (~8 GB/day → ~1.4 GB/day), network out
 ~55 → ~5 KB/s with no dashboard open and ~537 → ~12 KB/s per open dashboard, CPU 1.9% → 0.6%.
@@ -17,7 +21,7 @@ Diagnostics: `scripts/diagnostics/pengumon-db-report.py` (table sizes, ages, fre
 ## 🪵 Logging and tracing
 
 Logs go to stdout (journald, through Podman). Each line keeps the `time [LEVEL] logger: message` form and adds
-`key=value` context, e.g. `... pengumon.devices: Polling router (asuswrt at 192.168.1.1) failing: timeout: ...
+`key=value` context, e.g. `... pengumon.devices: Polling router (asuswrt) failing: timeout: ...
 device=router driver=asuswrt failures=1`. A device that keeps failing logs when it starts failing, when the error
 changes, every 15 minutes while it lasts, and when it recovers (with the outage length), not on every poll.
 
@@ -42,14 +46,20 @@ bounded to 5 s each.
 * **Traces**: device polls with their HTTP requests to the modem and router, incident path traces, migrations,
   retention, and FastAPI's request and WebSocket spans.
 * **Metrics** (every 30 s): per-probe latency (`pengumon.probe.latency`, histogram) and probes by result
-  (`pengumon.probes`, answered / lost) per target; device poll duration and outcome (ok, partial, error with its
+  (`pengumon.probes`, answered / lost) per target, both with a `probe` attribute (`icmp`, `tcp`, `http` or `dns`: how
+  the target is probed); device poll duration and outcome (ok, partial, error with its
   type, unconfigured); incidents opened by kind and severity; host service checks; probe round time; database
   flushes; FastAPI's HTTP request duration; and gauges read when the metrics are collected: target status, overall
   network status, device status, open incident, probe loop age (grows when the 1 s loop stalls). The metrics
   reference below lists everything else: the process and event loop, storage, dashboard clients, devices, discovery,
   alerts, settings and previews.
 * **Logs**: the `pengumon` loggers and uvicorn's warnings and errors (its INFO lines name client addresses), with the
-  `key=value` context as attributes and the trace and span id of the span they were logged in.
+  `key=value` context as attributes and the trace and span id of the span they were logged in. What is **not** in the
+  logs and spans that leave the machine: a device's address and the login name Pengumon signs in with (a device is
+  named by its id and driver, and an error text that holds the address or the login says the id or "the login"; the
+  device spans carry `device.id`, not `server.address`), the value of cookie and token headers (`[redacted]`), and the path,
+  query and any user name of the address in an `httpx` or `httpcore` line (they keep scheme, host and port). The page
+  and the API keep the full error text, so you still see which address failed.
 
 The gauges, here and in the Prometheus text at `/metrics`, come from one table, `observability/gauges.py` (`GAUGES`:
 Prometheus name, OTel name, unit, help, a function of the app state); a new metric is one entry. The device status
@@ -107,6 +117,9 @@ Already there: `pengumon_db_flush_duration_seconds`, `pengumon_db_flush_rows_tot
 | `pengumon_api_answer_size_bytes` | h | `endpoint` | Body bytes of a history answer (not recorded for the bucketed device answer, which FastAPI encodes) |
 | `pengumon_api_answer_capped_total` | c | `endpoint`, `cap` rows, range | Answers that reached the 50 000-row cap, or whose unbucketed range was bucketed (`history`) or cut to 48 h (`device_history`) |
 | `pengumon_api_rate_limited_total` | c | `bucket` | Requests answered 429 by a rate limit |
+| `pengumon_db_backups_total` | c | `outcome` ok, no_space, failed | Database backups asked for through `GET /api/backup` |
+| `pengumon_db_backup_size_bytes` | h | | Bytes of a backup made through `GET /api/backup` |
+| `pengumon_db_backup_duration_seconds` | h | | Time `VACUUM INTO` took to write one |
 | `pengumon_ai_pack_exports_total` | c | `level` full, vague, anonymized; `scope` window, incident | AI troubleshooting packs built through `GET /api/ai-pack` |
 | `pengumon_mcp_calls_total` | c | `tool` (a tool name, or `unknown`), `outcome` ok, error, refused | MCP tool calls through `POST /mcp` ([mcp.md](mcp.md)): error is a tool's own failure, refused an unknown tool or bad arguments |
 | `pengumon_ws_clients` | g | | Dashboards connected to the live stream |

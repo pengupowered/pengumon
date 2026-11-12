@@ -20,6 +20,7 @@ FEATURES: Mapping[str, FrozenSet[Capability]] = MappingProxyType({
     "router_system": frozenset({Capability.ROUTER_SYSTEM}),  # router CPU, memory, connected clients
     "clients": frozenset({Capability.CLIENT_INVENTORY}),     # the list of connected devices and their history
     "mesh": frozenset({Capability.MESH}),                    # mesh nodes and their client counts
+    "traffic": frozenset({Capability.TRAFFIC_USAGE}),        # which clients and apps used the internet, per hour
 })
 
 

@@ -7,29 +7,33 @@ rules: expected conditions and app outages inside their grace period are quiet, 
 (notify/policy.py) say when the rest goes out: a severity filter, a delay, quiet hours that hold an alert until they end, and how often one cause repeats.
 Delivery runs in background tasks with a short timeout, so the classifier never waits for the network.
 
+This module decides whether and when an alert is announced. The timers are scheduler.py, the texts messages.py, the
+request to ntfy and the delivery count delivery.py, the channels the settings describe channels.py.
+
 A saved change to the channels or the rules reaches the notifier through `reconfigure`, with no restart; what it
 already announced, what it sent lately and what is waiting for its time all carry over (notify/component.py).
 """
 
 import asyncio
 import logging
-import os
 import time
 from urllib.parse import urlsplit
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence, Set
 
 import httpx
 
 from pengumon.incidents.taxonomy import is_service_kind
 from pengumon.incidents.model import Incident
 from pengumon.incidents.outages import Drop, OutageBuilder, drop_of
+from pengumon.notify import messages
+from pengumon.notify.channels import build_channels
+from pengumon.notify.delivery import count_alert as _count, deliver, make_test_alert, send_ntfy
 from pengumon.notify.policy import SEVERITY_RANK, AlertPolicy, Timing
-from pengumon.notify.settings import SECRET_PREFIX, NotificationsConfig, WebhookConfig
-from pengumon.observability.telemetry import alert_delivery_duration, alerts, tracer
-from pengumon.secrets import SECRETS_DIR, SecretStore, resolve_webhook_secret
-from pengumon.settings.env import secret_override
-from pengumon.notify.webhook import Alert, WebhookSender, alert_link, failure_words
+from pengumon.notify.scheduler import AlertScheduler
+from pengumon.notify.settings import NotificationsConfig
+from pengumon.notify.webhook import Alert, WebhookSender
+from pengumon.secrets import SECRETS_DIR, SecretStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,45 +42,6 @@ logger = logging.getLogger("pengumon.notify")
 
 MIN_INTERVAL_SECONDS = 300.0  # the default of alerts.repeat_window_seconds: one start message per cause in this time
 SEND_TIMEOUT_SECONDS = 5.0
-
-
-_ALL = "all"  # the channel of a decision made before any channel was asked
-# The Alert.event of what a schedule key announces
-_KEY_EVENTS = {"incident": "incident_started", "resolved": "incident_resolved", "service_down": "service_down",
-               "service_up": "service_up", "path_changed": "path_changed", "speed_slow": "speed_slow"}
-
-
-def _count(event: str, outcome: str, channel: str = _ALL) -> None:
-    alerts.add(1, {"event": event, "channel": channel, "outcome": outcome})
-
-
-def _duration_text(seconds: Optional[float]) -> str:
-    seconds = seconds or 0
-    if seconds < 90:
-        return f"{seconds:.0f} s"
-    return f"{seconds / 60:.1f} min"
-
-
-@dataclass
-class Channels:
-    """What the settings say the Notifier talks to now: the ntfy topic and token, and one sender per usable webhook."""
-    url: Optional[str]
-    token: Optional[str]
-    senders: List[WebhookSender]
-
-
-@dataclass
-class _Pending:
-    """An announcement waiting for its time. `due` is asked again when it fires and when the rules change, so it
-    always follows the current rules; `emit` sends it."""
-    due: "Callable[[], Optional[Timing]]"
-    emit: "Callable[[Timing], None]"
-    handle: Any = None
-
-    def cancel(self) -> None:
-        if self.handle is not None:
-            self.handle.cancel()
-            self.handle = None
 
 
 @dataclass
@@ -117,15 +82,15 @@ class Notifier:
         self.policy = policy or AlertPolicy()
         self.clock = clock
         self._wall = wall
-        self._schedule_fn = schedule or self._call_later
+        self._timers = AlertScheduler(wall, schedule or self._call_later)
         self._token = token
         self._client = client or httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS)
         self._last_sent: Dict[str, float] = {}
         self._announced: Set[int] = set()  # incident ids (the first one's, for an outage) whose start message went out
         self._current: Optional[_Live] = None  # the outage a new drop may still join (only with grouping on)
         self._member: Dict[int, _Live] = {}  # incident id -> the outage it belongs to
-        self._pending: Dict[str, _Pending] = {}  # waiting for the delay or the end of quiet hours
         self._tasks: Set[asyncio.Task] = set()
+
 
     @staticmethod
     def _call_later(delay: float, fn: Callable[[], None]):
@@ -159,8 +124,7 @@ class Notifier:
         self.url, self._token, self.public_url = ntfy_url, ntfy_token, public_url
         self.webhooks = list(senders)
         self.policy = rules
-        for key in list(self._pending):
-            self._reschedule(key)
+        self._timers.reschedule_all()
 
     def channels(self) -> List[dict]:
         """What is configured, for the alerts dialog: names, formats and hosts, no secrets and no paths."""
@@ -170,58 +134,12 @@ class Notifier:
 
     async def send_test(self) -> List[dict]:
         """Sends a test message to every channel now (no quiet rules) and says how each went."""
-        alert = Alert(event="test", severity="info", title="Pengumon: test alert",
-                      message="This is a test message from the Pengumon alerts dialog.", tags="white_check_mark",
-                      started_at=self._wall())
+        alert = make_test_alert(self._wall())
+        names = [c["name"] for c in self.channels()]  # (before the sends: a Save meanwhile may change the channels)
         results = await asyncio.gather(*self._deliveries(alert))
-        names = [c["name"] for c in self.channels()]
         return [{"name": name, "ok": reason is None, "detail": reason} for name, reason in zip(names, results)]
 
     # --- the rules: when an alert goes out ---------------------------------------------------------------------
-
-    def _schedule(self, key: str, due: "Callable[[], Optional[Timing]]", emit: "Callable[[Timing], None]",
-                  first: bool = True) -> None:
-        """Sends now, or at the time `due()` says (None: never). One waiting announcement per key. `first` is False
-        when a waiting one is timed again (its timer fired, or the rules changed): the telemetry counted it already."""
-        previous = self._pending.pop(key, None)
-        if previous is not None:
-            previous.cancel()
-        event = _KEY_EVENTS.get(key.split(":", 1)[0], "other")
-        timing = due()
-        if timing is None:
-            if first:
-                _count(event, "dropped")
-            return
-        delay = timing.at - self._wall()
-        if delay <= 0:
-            emit(timing)
-            return
-        if first:
-            _count(event, "held" if timing.held else "delayed")
-        entry = _Pending(due, emit)
-        try:
-            entry.handle = self._schedule_fn(delay, lambda: self._fire(key, entry))
-        except RuntimeError:  # no event loop (a sync caller): nothing can wait, as _dispatch sends nothing either
-            return
-        self._pending[key] = entry
-
-    def _fire(self, key: str, entry: _Pending) -> None:
-        if self._pending.get(key) is not entry:
-            return
-        del self._pending[key]
-        self._schedule(key, entry.due, entry.emit, first=False)  # asked again: a timer that fired early waits again
-
-    def _reschedule(self, key: str) -> None:
-        entry = self._pending.pop(key, None)
-        if entry is not None:
-            entry.cancel()
-            self._schedule(key, entry.due, entry.emit, first=False)
-
-    def _drop(self, key: str) -> bool:
-        entry = self._pending.pop(key, None)
-        if entry is not None:
-            entry.cancel()
-        return entry is not None
 
     @staticmethod
     def _incident_key(incident: Incident) -> str:
@@ -250,7 +168,7 @@ class Notifier:
         an escalation is."""
         live.outage.add(drop)
         self._member[drop.id] = live
-        self._drop(f"resolved:{live.id}")
+        self._timers.drop(f"resolved:{live.id}")
         self._rank_up(live, incident)
         self._reconsider(live)
 
@@ -261,8 +179,8 @@ class Notifier:
 
     def _reconsider(self, live: _Live) -> None:
         key = f"incident:{live.id}"
-        if key in self._pending:
-            self._reschedule(key)  # timed again: the outage may now be exempt from quiet hours
+        if key in self._timers:
+            self._timers.reschedule(key)  # timed again: the outage may now be exempt from quiet hours
         elif live.id not in self._announced and live.dropped and not live.suppressed \
                 and self.policy.passes_severity(live.severity):
             self._consider_outage(live, self._wall())
@@ -280,7 +198,7 @@ class Notifier:
                 return None
             return self.policy.incident_time(start_time, live.severity)
 
-        self._schedule(f"incident:{live.id}", due, lambda timing: self._announce_outage(live, timing))
+        self._timers.schedule(f"incident:{live.id}", due, lambda timing: self._announce_outage(live, timing))
 
     def on_incident_escalated(self, incident: Incident) -> None:
         """A warning incident became critical. With `min_severity: critical` it was not announced; it is considered
@@ -297,8 +215,8 @@ class Notifier:
             self._reconsider(live)
             return
         key = self._incident_key(incident)
-        if key in self._pending:
-            self._reschedule(key)
+        if key in self._timers:
+            self._timers.reschedule(key)
         elif incident.id is None or incident.id not in self._announced:
             self._consider(incident, self._wall())
 
@@ -312,7 +230,7 @@ class Notifier:
                 return None
             return self.policy.incident_time(start_time, incident.severity)
 
-        self._schedule(self._incident_key(incident), due, lambda timing: self._announce_incident(incident, timing))
+        self._timers.schedule(self._incident_key(incident), due, lambda timing: self._announce_incident(incident, timing))
 
     def _announce_incident(self, incident: Incident, timing: Timing) -> None:
         now = self.clock()
@@ -323,16 +241,7 @@ class Notifier:
         self._last_sent[key] = now
         if incident.id is not None:
             self._announced.add(incident.id)
-        load = f"\nLine load: {incident.load_pct:.0f}%" if incident.load_pct is not None else ""
-        self._dispatch(Alert(
-            event="incident_started", severity=incident.severity,
-            title=self._ongoing(f"Pengumon: {incident.title}", timing, incident.start_time),
-            message=f"Cause: {incident.title}\n{incident.description}{load}",
-            priority="high" if incident.severity == "critical" else "default",
-            tags="rotating_light",
-            incident_id=incident.id, cause=incident.cause_code, started_at=incident.start_time,
-            load_pct=incident.load_pct, **self._alone(incident),
-        ))
+        self._dispatch(messages.incident_started(self.policy, incident, timing))
 
     def _announce_outage(self, live: _Live, timing: Timing) -> None:
         first = live.first
@@ -343,29 +252,8 @@ class Notifier:
             return
         self._last_sent[first.cause_code] = now
         self._announced.add(live.id)
-        drops = len(live.outage.members)
-        load = f"\nLine load: {first.load_pct:.0f}%" if first.load_pct is not None else ""
-        more = f"\nDrops so far: {drops}" if drops > 1 else ""
-        self._dispatch(Alert(
-            event="incident_started", severity=live.severity,
-            title=self._ongoing(f"Pengumon: {first.title}", timing, first.start_time),
-            message=f"Cause: {first.title}\n{first.description}{load}{more}",
-            priority="high" if live.severity == "critical" else "default",
-            tags="rotating_light",
-            incident_id=first.id, cause=first.cause_code, started_at=first.start_time, load_pct=first.load_pct,
-            outage_id=live.id, drops=drops,
-        ))
-
-    def _ongoing(self, title: str, timing: Timing, since: float) -> str:
-        """An alert that quiet hours held says since when it has been going on."""
-        if not timing.held:
-            return title
-        return title.replace("Pengumon: ", f"Pengumon: Ongoing since {self.policy.clock_text(since)}: ", 1)
-
-    @staticmethod
-    def _alone(incident: Incident) -> Dict[str, Any]:
-        """The outage fields of an alert about an incident that is its own outage (grouping off)."""
-        return {"outage_id": incident.id, "drops": 1} if drop_of(incident) is not None else {}
+        self._dispatch(messages.outage_started(self.policy, first, live.severity, len(live.outage.members), timing,
+                                               live.id))
 
     def on_incident_resolved(self, incident: Incident) -> None:
         if incident.expected or is_service_kind(incident.kind):
@@ -374,26 +262,16 @@ class Notifier:
         if live is not None:
             self._member_resolved(live, incident)
             return
-        if self._drop(self._incident_key(incident)):
+        if self._timers.drop(self._incident_key(incident)):
             return  # still waiting for its time: it was never announced, so there is nothing to resolve
         if incident.id not in self._announced:
             return
         self._announced.discard(incident.id)
         at = self._wall()
-        load = f"\nPeak line load: {incident.load_pct:.0f}%" if incident.load_pct is not None else ""
-        alert = Alert(
-            event="incident_resolved", severity="info",
-            title=f"Pengumon: resolved, {incident.title}",
-            message=f"Cause: {incident.title}\nDuration: {_duration_text(incident.duration_seconds)}{load}",
-            priority="default",
-            tags="white_check_mark",
-            incident_id=incident.id, cause=incident.cause_code, started_at=incident.start_time,
-            ended_at=incident.end_time, duration_seconds=incident.duration_seconds, load_pct=incident.load_pct,
-            **self._alone(incident),
-        )
+        alert = messages.incident_resolved(incident)
         # quiet hours hold a "resolved" too, unless the incident was exempt (critical, critical_still): the person
         # who heard about it at night hears that it is over
-        self._schedule(f"resolved:{incident.id}", lambda: self.policy.quiet_time(at, incident.severity),
+        self._timers.schedule(f"resolved:{incident.id}", lambda: self.policy.quiet_time(at, incident.severity),
                        lambda timing: self._dispatch(alert))
 
     def _member_resolved(self, live: _Live, incident: Incident) -> None:
@@ -414,37 +292,17 @@ class Notifier:
         def due() -> Optional[Timing]:
             return self.policy.quiet_time(live.outage.latest_end(self._wall()) + gap, live.severity)
 
-        self._schedule(f"resolved:{live.id}", due, lambda timing: self._finish_outage(live))
+        self._timers.schedule(f"resolved:{live.id}", due, lambda timing: self._finish_outage(live))
 
     def _finish_outage(self, live: _Live) -> None:
         """The gap passed after the outage's last drop: it is over. Sends its one resolved alert if it was announced."""
         self._forget(live)
-        self._drop(f"incident:{live.id}")  # never announced (still waiting): there is nothing to resolve
+        self._timers.drop(f"incident:{live.id}")  # never announced (still waiting): there is nothing to resolve
         if live.id not in self._announced:
             return
         self._announced.discard(live.id)
         summary = live.outage.summary(self._wall(), self.policy.outage_rules)
-        zone_text = self.policy.clock_text
-        span = f"{zone_text(summary['start_time'])}-{zone_text(summary['end_time'])} ({_duration_text(summary['duration_seconds'])})"
-        lines = [f"Cause: {summary['title']}", f"Span: {span}"]
-        if summary["drops"] > 1:
-            lines.append(f"Drops: {summary['drops']} ({summary['critical_drops']} critical)")
-            lines.append(f"Down: {_duration_text(summary['down_seconds'])}")
-        if summary["likely_maintenance"]:
-            lines.append("Likely maintenance (a guess from the hour: provider hops, in the maintenance hours). "
-                         "The downtime counts in full.")
-        if live.load_pct is not None:
-            lines.append(f"Peak line load: {live.load_pct:.0f}%")
-        self._dispatch(Alert(
-            event="incident_resolved", severity="info",
-            title=f"Pengumon: resolved, {summary['title']}",
-            message="\n".join(lines),
-            priority="default",
-            tags="white_check_mark",
-            incident_id=live.id, cause=summary["cause_code"], started_at=summary["start_time"],
-            ended_at=summary["end_time"], duration_seconds=summary["duration_seconds"], load_pct=live.load_pct,
-            outage_id=live.id, drops=summary["drops"],
-        ))
+        self._dispatch(messages.outage_resolved(self.policy, summary, live.id, live.load_pct))
 
     def _forget(self, live: _Live) -> None:
         for m in live.outage.members:
@@ -460,56 +318,33 @@ class Notifier:
 
         def build(timing: Timing) -> Alert:
             down_for = seconds_down + max(0.0, self._wall() - created)
-            return Alert(
-                event="service_down", severity="warning",
-                title=self._ongoing(f"Pengumon: {service.name} not responding", timing, created - seconds_down),
-                message=f"{service.name} not responding: {error.message}\nDown for {_duration_text(down_for)}",
-                priority="default",
-                tags="warning",
-                started_at=created - seconds_down, duration_seconds=down_for, service_id=service.id,
-            )
+            return messages.service_down(self.policy, service, error, timing, created, seconds_down, down_for)
 
-        self._schedule(f"service_down:{service.id}", lambda: self.policy.quiet_time(created, "warning"),
+        self._timers.schedule(f"service_down:{service.id}", lambda: self.policy.quiet_time(created, "warning"),
                        lambda timing: self._dispatch(build(timing)))
 
     def notify_service_up(self, service, seconds_down: float) -> None:
         """Sent only for an outage notify_service_down announced (ServiceChecker guarantees it); when that message
         is still waiting for the end of quiet hours, both are dropped: the app came back before anyone was told."""
-        if self._drop(f"service_down:{service.id}"):
+        if self._timers.drop(f"service_down:{service.id}"):
             return
         now = self._wall()
-        alert = Alert(
-            event="service_up", severity="info",
-            title=f"Pengumon: {service.name} is back",
-            message=f"{service.name} is responding again after {_duration_text(seconds_down)}",
-            priority="default",
-            tags="white_check_mark",
-            started_at=now - seconds_down, ended_at=now, duration_seconds=seconds_down, service_id=service.id,
-        )
-        self._schedule(f"service_up:{service.id}", lambda: self.policy.quiet_time(now, "info"),
+        alert = messages.service_up(service, seconds_down, now)
+        self._timers.schedule(f"service_up:{service.id}", lambda: self.policy.quiet_time(now, "info"),
                        lambda timing: self._dispatch(alert))
 
     def forget_service(self, service_id: str) -> None:
         """A service was removed or changed: its waiting messages are stale."""
-        self._drop(f"service_down:{service_id}")
-        self._drop(f"service_up:{service_id}")
+        self._timers.drop(f"service_down:{service_id}")
+        self._timers.drop(f"service_up:{service_id}")
 
     def notify_path_changed(self, changes: Sequence[str]) -> None:
         """The background route-change check (engine/discovery/drift.py) found that the route differs from the applied
         path; it deduplicates, so this is sent once per set of changes. Normal priority: nothing is down. Only quiet
         hours apply; a newer set replaces one that is still waiting."""
-        lines = list(changes[:6]) + ([f"...and {len(changes) - 6} more"] if len(changes) > 6 else [])
         created = self._wall()
-        alert = Alert(
-            event="path_changed", severity="info",
-            title="Pengumon: your network path changed",
-            message="\n".join(lines) + "\nReview it on Path health (Your path changed · Review).",
-            priority="default",
-            tags="world_map",
-            started_at=created,
-            page="#live",
-        )
-        self._schedule("path_changed", lambda: self.policy.quiet_time(created, "info"),
+        alert = messages.path_changed(changes, created)
+        self._timers.schedule("path_changed", lambda: self.policy.quiet_time(created, "info"),
                        lambda timing: self._dispatch(alert))
 
     def notify_speed_slow(self, down_mbps: Optional[float], up_mbps: Optional[float], plan_down: Optional[float],
@@ -520,33 +355,13 @@ class Notifier:
         `measured_by` "router" when they are the line's rate the router measured during the test, "test" when they
         are the test's own; `note` says when the household's traffic shared the line. Normal priority: nothing is
         down, and no incident is opened. Only quiet hours apply; a newer one replaces one that is still waiting."""
-        def line(label: str, value: Optional[float], plan: Optional[float]) -> Optional[str]:
-            if value is None or not plan:
-                return None
-            share = value / plan * 100.0
-            return f"{label}: {value:.0f} of {plan:.0f} Mbps ({share:.0f} %)" + (" - under the alert level" if share < alert_pct else "")
-
-        lines = [x for x in (line("Download", down_mbps, plan_down), line("Upload", up_mbps, plan_up)) if x]
-        if measured_by == "router":
-            lines.append("Measured by your router: what the line carried during the test.")
-        elif measured_by == "test":
-            lines.append("Measured by the test alone (one server; your router gave no reading of the line).")
-        if note:
-            lines.append(note)
         created = self._wall()
-        alert = Alert(
-            event="speed_slow", severity="info",
-            title="Pengumon: your line measured slow",
-            message="\n".join(lines) + f"\nThe alert level is {alert_pct:.0f} % of your plan speed.",
-            priority="default",
-            tags="turtle",
-            started_at=created,
-        )
-        self._schedule("speed_slow", lambda: self.policy.quiet_time(created, "info"),
+        alert = messages.speed_slow(down_mbps, up_mbps, plan_down, plan_up, alert_pct, measured_by, note, created)
+        self._timers.schedule("speed_slow", lambda: self.policy.quiet_time(created, "info"),
                        lambda timing: self._dispatch(alert))
 
     def pending_count(self) -> int:
-        return len(self._pending)
+        return self._timers.count()
 
     def _dispatch(self, alert: Alert) -> None:
         """Hands the alert to every channel, each in its own background task, so one slow channel delays no other."""
@@ -562,111 +377,15 @@ class Notifier:
     def _deliveries(self, alert: Alert) -> list:
         """One coroutine per channel that sends `alert`, each counted and timed (and a span of its own) under the
         channel's name: "ntfy", or the webhook's id. Never the address, the topic or the text."""
-        found = [self._deliver("ntfy", alert, self._send_ntfy(alert))] if self.url else []
-        return found + [self._deliver(w.config.id or w.name, alert, w.send(self._client, alert)) for w in self.webhooks]
-
-    @staticmethod
-    async def _deliver(channel: str, alert: Alert, send) -> Optional[str]:
-        started = time.perf_counter()
-        with tracer.start_as_current_span("alert.deliver", attributes={"alert.channel": channel,
-                                                                        "alert.event": alert.event}) as span:
-            reason = await send  # (the channels return None for sent, a short reason for failed, and never raise)
-            outcome = "sent" if reason is None else "failed"
-            span.set_attribute("alert.outcome", outcome)
-        _count(alert.event, outcome, channel)
-        alert_delivery_duration.record(time.perf_counter() - started, {"channel": channel})
-        return reason
+        found = [deliver("ntfy", alert, self._send_ntfy(alert))] if self.url else []
+        return found + [deliver(w.config.id or w.name, alert, w.send(self._client, alert)) for w in self.webhooks]
 
     async def _send_ntfy(self, alert: Alert) -> Optional[str]:
-        headers = {"Title": alert.title, "Priority": alert.priority, "Tags": alert.tags}
-        link = alert_link(alert, self.public_url) if alert.page else None
-        if link:
-            headers["Click"] = link  # ntfy opens it when the notification is tapped
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
-        try:
-            response = await self._client.post(
-                self.url,
-                content=alert.message.encode("utf-8"),
-                headers=headers,
-            )
-            response.raise_for_status()
-        except Exception as e:
-            # (not str(e): an HTTP error's text names the URL, and the URL holds the topic)
-            status = getattr(getattr(e, "response", None), "status_code", None)
-            logger.warning(f"Notification not delivered: {type(e).__name__}" + (f" (HTTP {status})" if status else ""))
-            return failure_words(e)
-        return None
+        return await send_ntfy(self._client, self.url, self._token, self.public_url, alert)
 
     async def aclose(self) -> None:
-        for entry in list(self._pending.values()):
-            entry.cancel()
-        self._pending.clear()
+        self._timers.cancel_all()
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         await self._client.aclose()
-
-
-def build_channels(settings: NotificationsConfig, store: Optional[SecretStore] = None,
-                   env: Optional[Mapping[str, str]] = None,
-                   secrets_dir: "Optional[Path]" = SECRETS_DIR,
-                   secret_value: Optional[Callable[[str], Optional[str]]] = None) -> Channels:
-    """The channels the settings and secrets describe. `secret_value(slot)` is the settings manager's
-    (state.settings.secret_value: environment, secret file, then secrets.json); without it the SecretStore is read
-    directly (tests, a start without the manager). ntfy: PENGUMON_NOTIFY_URL / _TOKEN win, else the Settings
-    secrets `ntfy.url` / `ntfy.token`. A webhook's URL: the secret slot `webhook.<id>.url` (secrets.json
-    webhook_urls.<id>), else the `url` of a config.yaml webhook. A webhook with no URL, or whose header names a
-    secret nobody has, is left out and logged (it would only be refused)."""
-    env = os.environ if env is None else env
-    store = store or SecretStore()
-    stored = store.data()
-    ntfy = stored.get("ntfy") if isinstance(stored.get("ntfy"), dict) else {}
-    if secret_value is not None:
-        url, token = _text(secret_value("ntfy.url")), _text(secret_value("ntfy.token"))
-    else:
-        url = secret_override("ntfy.url", env) or _text(ntfy.get("url"))
-        token = secret_override("ntfy.token", env) or _text(ntfy.get("token"))
-    urls = stored.get("webhook_urls") if isinstance(stored.get("webhook_urls"), dict) else {}
-    senders = []
-    for hook in settings.webhooks:
-        label = hook.name or hook.id or "webhook"
-        stored_url = secret_value(f"webhook.{hook.id}.url") if secret_value is not None else urls.get(hook.id)
-        address = _text(stored_url) or _text(getattr(hook, "url", None))
-        if address is None:
-            logger.error(f"Webhook {label} is not used: its URL is not set")
-            continue
-        if not isinstance(hook, WebhookConfig) or hook.url != address:
-            try:
-                hook = WebhookConfig(**hook.model_dump(exclude={"url"}), url=address)
-            except ValueError:
-                logger.error(f"Webhook {label} is not used: its URL is not a valid http(s) address")
-                continue
-        headers = _resolve_headers(label, hook.headers, env, secrets_dir, store, secret_value)
-        if headers is not None:
-            senders.append(WebhookSender(hook, headers, settings.public_url))
-    return Channels(url, token, senders)
-
-
-def _text(value: Any) -> Optional[str]:
-    return value.strip() or None if isinstance(value, str) else None
-
-
-def _resolve_headers(name: str, headers: Mapping[str, str], env: Mapping[str, str],
-                     secrets_dir: "Optional[Path]", store: Optional[SecretStore],
-                     secret_value: Optional[Callable[[str], Optional[str]]] = None) -> Optional[Dict[str, str]]:
-    """The headers to send, with each "secret:<name>" value replaced by the secret; None (and a log line naming the
-    webhook and the secret, never a value) when one cannot be found."""
-    resolved = {}
-    for header, value in headers.items():
-        if value.startswith(SECRET_PREFIX):
-            secret_name = value[len(SECRET_PREFIX):]
-            secret = (secret_value(f"webhook_header.{secret_name}") if secret_value is not None else
-                      resolve_webhook_secret(secret_name, env=env, secrets_dir=secrets_dir, store=store))
-            if secret is None:
-                logger.error(f"Webhook {name} is not used: header {header} names the secret {secret_name!r}, which "
-                             "is not set (environment, secrets directory or data/secrets.json)")
-                return None
-            value = secret
-        resolved[header] = value
-    return resolved

@@ -213,6 +213,7 @@ async def test_the_dossier_lists_a_hop_that_ignores_ping_but_counts_it_in_no_fin
             ok = tid != "modem"  # the modem never answers ping, the hub behind it always does
             samples.append(ProbeSample(target_id=tid, timestamp=ts, success=ok, latency_ms=5.0 if ok else None))
     await repo.insert_samples(samples)
+    await repo.flush_samples()  # a 24-hour read leaves the last seconds in the buffer
     cfg = SimpleNamespace(targets=[
         SimpleNamespace(id="router", name="Router", address="192.168.1.1", category="local"),
         SimpleNamespace(id="modem", name="Modem", address="192.168.100.1", category="gateway"),
@@ -225,3 +226,19 @@ async def test_the_dossier_lists_a_hop_that_ignores_ping_but_counts_it_in_no_fin
     assert "Ignores ping" in after["formatted_markdown"] and "no single failing hop was isolated" in after["formatted_markdown"].lower()
     assert "100.0% worst loss" not in after["formatted_markdown"]
     await repo.close()
+
+
+# ---- hops probed by TCP or HTTP ----
+
+def test_a_tcp_gateway_that_is_down_with_a_public_hop_answering_is_flagged_but_an_http_hop_is_no_stage():
+    prober = NetworkProber()
+    prober.register_target(TargetConfig(id="g", name="G", category="gateway", address="192.0.2.1", probe="tcp", port=443))
+    prober.register_target(TargetConfig(id="p", name="P", category="public", address="192.0.2.2"))
+    prober.register_target(TargetConfig(id="w", name="W", category="custom", address="example.com", probe="http"))
+    for k in range(10):
+        feed(prober, 1000 + k, lost={"g"})
+    assert prober.stats["g"].ignores_ping is True  # up, "ignores its probe"; the page words it for the method
+    # an HTTP hop (custom) is no stage: it neither vouches for others nor is judged
+    for k in range(10):
+        feed(prober, 1100 + k, lost={"w", "p"})
+    assert prober.stats["w"].ignores_ping is False

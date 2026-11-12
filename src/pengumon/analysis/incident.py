@@ -8,11 +8,14 @@ FastAPI encodes them, which is what the dashboard has always received.
 """
 
 import math
+import time
 from collections import defaultdict
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from pengumon.devices.events import EVENT_REACH_SECONDS, events_between
 from pengumon.devices.snapshots import RouterMetricsSnapshot
+from pengumon.devices.traffic import hours_explained
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.incidents.loss import LEAD_SECONDS, TAIL_SECONDS
 from pengumon.incidents.model import Incident
@@ -78,6 +81,11 @@ class IncidentInspection:
     router_snapshots: List[RouterMetricsSnapshot]
     sample_bucket_seconds: Optional[int] = None  # None: `samples` are the raw 1 s probes
     hop_resolution: Optional[str] = None  # "minute": hop_impact comes from per-minute rollups (raw samples are gone)
+    # The device events (devices/events.py) within EVENT_REACH_SECONDS of the incident, oldest first, as dicts.
+    device_events: List[Dict[str, Any]] = field(default_factory=list)
+    # The router's traffic in the clock hours the incident covers (devices/traffic.py hours_explained): {"hours": [...]};
+    # None without a device that reports traffic.
+    traffic: Optional[Dict[str, Any]] = None
 
     def to_response(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
@@ -278,24 +286,22 @@ async def _episode_stats(repository, calc_start: float, calc_end: float, window_
     return [], False
 
 
-async def inspect_incident(repository, targets: Sequence, incident: Incident,
-                           snapshot_reach_seconds: float = SNAPSHOT_REACH_SECONDS, *, line=None,
-                           router=None, classifier: Optional[ClassifierConfig] = None) -> IncidentInspection:
-    """Everything stored about the minutes around one incident. `targets` is the canonical target order
-    (ICMP targets, then DNS probes). `snapshot_reach_seconds` (the modem poll interval) is how far outside the window
-    a modem snapshot may lie and still be shown for the incident. `line` is the line device's DocsisHistory and
-    `router` the WAN device's RouterHistory; without one, that part of the inspection has no snapshots.
-    `classifier`: the outage rules in force (their degraded loss level judges the router); None: the defaults."""
-    # Time window: 45 seconds before start to 45 seconds after end
-    end_time = incident.end_time or (incident.start_time + (incident.duration_seconds or 10.0))
-    window_start = incident.start_time - WINDOW_PADDING_SECONDS
-    window_end = end_time + WINDOW_PADDING_SECONDS
+def _incident_end(incident: Incident) -> float:
+    """When the incident ended; one still open has lasted until now, and one with no duration at all, 10 seconds."""
+    if incident.end_time:
+        return incident.end_time
+    if incident.duration_seconds:
+        return incident.start_time + incident.duration_seconds
+    if not incident.resolved:  # still open (no duration yet): the whole of it so far, not its first 10 seconds
+        return max(incident.start_time + 10.0, time.time())
+    return incident.start_time + 10.0
 
-    # Per-hop impact is computed specifically during the degradation episode, with a 10 s lead-in buffer to capture
-    # the initial packet drops that triggered the incident
-    calc_start = incident.start_time - CALC_LEAD_SECONDS
-    calc_end = max(end_time + CALC_TAIL_SECONDS, calc_start + CALC_MIN_SECONDS)
 
+async def _hops_and_samples(repository, targets: Sequence, window_start: float, window_end: float, calc_start: float,
+                            calc_end: float):
+    """The per-hop impact and the samples for the charts: raw 1 s samples when the window is short and they are still
+    stored, else per-minute rollups. Returns the hops, the samples, the bucket width of the samples (None: raw) and
+    whether the hops come from the rollups."""
     sample_bucket_seconds = None
     minute_hops = False
     short_window = window_end - window_start <= INSPECT_RAW_MAX_SECONDS
@@ -319,8 +325,12 @@ async def inspect_incident(repository, targets: Sequence, incident: Incident,
         hops = hop_impact_from_stats(stats, targets)
         if short_window and not samples:
             sample_bucket_seconds = None  # nothing stored at all: the plain short-window shape
+    return hops, samples, sample_bucket_seconds, minute_hops
 
-    # DOCSIS snapshots within or surrounding the incident window, and the one nearest to the incident start
+
+async def _nearby_snapshots(line, incident: Incident, window_start: float, window_end: float,
+                            snapshot_reach_seconds: float):
+    """The modem's snapshots within or surrounding the incident window, and the one nearest to the incident start."""
     docsis_snapshots: List[DocsisSignalSnapshot] = []
     nearest_snapshot = None
     if line is not None:
@@ -336,6 +346,36 @@ async def inspect_incident(repository, targets: Sequence, incident: Incident,
                 start_time=window_start, end_time=window_end, padding_seconds=snapshot_reach_seconds
             )
             nearest_snapshot = min(reach, key=lambda s: abs(s.timestamp - incident.start_time)) if reach else None
+    return docsis_snapshots, nearest_snapshot
+
+
+async def inspect_incident(repository, targets: Sequence, incident: Incident,
+                           snapshot_reach_seconds: float = SNAPSHOT_REACH_SECONDS, *, line=None,
+                           router=None, classifier: Optional[ClassifierConfig] = None, traffic=None,
+                           tz=None) -> IncidentInspection:
+    """Everything stored about the minutes around one incident. `targets` is the canonical target order
+    (ICMP targets, then DNS probes). `snapshot_reach_seconds` (the modem poll interval) is how far outside the window
+    a modem snapshot may lie and still be shown for the incident. `line` is the line device's DocsisHistory and
+    `router` the WAN device's RouterHistory; without one, that part of the inspection has no snapshots.
+    `classifier`: the outage rules in force (their degraded loss level judges the router); None: the defaults.
+    `traffic`: (device id, devices.traffic.Namer) of the device that reports traffic per client: the hours the incident
+    covers get their top clients by download. `tz`: the zone the traffic texts give clock times in (None: local).
+    An incident still open has lasted until now."""
+    # Time window: 45 seconds before start to 45 seconds after end
+    end_time = _incident_end(incident)
+    window_start = incident.start_time - WINDOW_PADDING_SECONDS
+    window_end = end_time + WINDOW_PADDING_SECONDS
+
+    # Per-hop impact is computed specifically during the degradation episode, with a 10 s lead-in buffer to capture
+    # the initial packet drops that triggered the incident
+    calc_start = incident.start_time - CALC_LEAD_SECONDS
+    calc_end = max(end_time + CALC_TAIL_SECONDS, calc_start + CALC_MIN_SECONDS)
+
+    hops, samples, sample_bucket_seconds, minute_hops = await _hops_and_samples(
+        repository, targets, window_start, window_end, calc_start, calc_end)
+
+    docsis_snapshots, nearest_snapshot = await _nearby_snapshots(line, incident, window_start, window_end,
+                                                                 snapshot_reach_seconds)
 
     correlation = docsis_correlation(incident, hops, docsis_snapshots, nearest_snapshot, minute_hops=minute_hops,
                                      local_loss_pct=(classifier or _DEFAULT_RULES).degraded_loss_pct)
@@ -345,6 +385,15 @@ async def inspect_incident(repository, targets: Sequence, incident: Incident,
         router_snapshots = await router.get_router_snapshots_in_range(
             start_time=window_start, end_time=window_end, padding_seconds=SNAPSHOT_PADDING_SECONDS
         )
+
+    device_events = [e.as_dict(tz) for e in await events_between(
+        repository, None, incident.start_time - EVENT_REACH_SECONDS, end_time + EVENT_REACH_SECONDS)
+    ] if hasattr(repository, "get_device_events") else []
+    traffic_hours = None
+    if traffic is not None:
+        device_id, namer = traffic
+        traffic_hours = {"hours": await hours_explained(repository, device_id, incident.start_time, end_time, namer,
+                                                         tz=tz)}
 
     return IncidentInspection(
         incident=incident,
@@ -359,4 +408,6 @@ async def inspect_incident(repository, targets: Sequence, incident: Incident,
         router_snapshots=router_snapshots,
         sample_bucket_seconds=sample_bucket_seconds,
         hop_resolution="minute" if minute_hops else None,
+        device_events=device_events,
+        traffic=traffic_hours,
     )

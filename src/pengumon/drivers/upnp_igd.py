@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict
 
 from pengumon.capabilities import Capability, DriverError, PollResult, WanCounters
 from pengumon.capabilities.contrib import DriverNotes
-from pengumon.drivers.http import DeviceHttp, Verify, device_verify
+from pengumon.drivers.http import DeviceHttp, Verify, device_verify, new_client
 from pengumon.drivers.upnp_wire import (
     COMMON_CONFIG, IGD_TYPES, IP_CONNECTION, PPP_CONNECTION, SSDP_GROUP, XML_MAX, msearch, parse_description,
     parse_soap_answer, soap_body, ssdp_location,
@@ -134,7 +134,7 @@ class UpnpIgdDriver:
         self._locate = locate or ask_host
         self._wall_clock = wall_clock
         self.http = DeviceHttp(url, self._new_client, driver=self.name, client=client)
-        self._log = get_logger("pengumon.drivers.upnp_igd", host=self.http.host)
+        self._log = get_logger("pengumon.drivers.upnp_igd")
         self._layout: Optional[_Layout] = None
         self._bits: Optional[int] = COUNTER_BITS
         self._uptime: Optional[int] = None
@@ -147,7 +147,7 @@ class UpnpIgdDriver:
         return cls(cfg.url, client=client, verify=device_verify(cfg), **clocks)
 
     def _new_client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=6.0, verify=self._verify, follow_redirects=False)
+        return new_client(self._verify)
 
     @property
     def host(self) -> str:

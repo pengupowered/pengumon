@@ -4,10 +4,10 @@
 // group, as its own line like Path health's own node. ISP hops and DNS stay out of the path series (at most three lines cross, as the
 // design asks); the chart's "Each target" view, hop details and target history show every target.
 
-import { latestMs, median } from './util.js';
-import { ROLE_SHORT } from './path-api.js';
+import { has, latestMs, median } from './values.js';
+import { ROLE_SHORT } from './roles.js';
 
-export const V6_GROUP = 'internet_v6';
+const V6_GROUP = 'internet_v6';
 
 export const SERIES = [
   { id: 'path_router', name: 'Router', cats: ['local'], color: '--s1', combine: 'worst' },
@@ -16,8 +16,6 @@ export const SERIES = [
   // the IPv6 servers discovery proposes as their own group: a line of their own, as Path health has a node of their own
   { id: 'path_internet_v6', name: 'Internet (IPv6)', cats: ['public'], group: V6_GROUP, color: '--s4', combine: 'median', dash: [6, 4] } // dashed: amber beside orange-red is not a difference to rely on
 ];
-
-const has = (v) => v !== null && v !== undefined;
 
 // Which target ids feed which series: { seriesId: [targetId...] }, from [{id, category}] (the configured targets;
 // disabled ones are left out).
@@ -37,6 +35,40 @@ export function seriesMembers(targets) {
   return out;
 }
 
+// Raw samples' timestamps -> the probe round each belongs to (Map ts -> the round's first timestamp). The prober sends a
+// round's probes 25 ms apart, so one round spans a few tenths of a second and its first and last probes can sit on either
+// side of a half second; and the rounds drift slowly against the clock. Grouping by whole seconds (Math.round) therefore
+// moves a target into the next second whenever its place in the round crosses a half second, leaving one second
+// without it: a gap in its line although no probe was lost. A round is instead a run of timestamps with no pause longer
+// than `gap` seconds (between rounds there are several tenths), never longer than `span` (a long list of targets still
+// falls into rounds of about a second).
+export function roundKeys(stamps, gap = 0.25, span = 0.95) {
+  const key = new Map();
+  let start = null;
+  let prev = null;
+  [...new Set(stamps)].sort((a, b) => a - b).forEach((ts) => {
+    if (start === null || ts - prev > gap || ts - start >= span) start = ts;
+    key.set(ts, start);
+    prev = ts;
+  });
+  return key;
+}
+
+// The times of a stored window without its torn edges: `times` sorted, `rowAt(ts)` the targets' rows at a time ({id: row}),
+// `ids` the path targets that have rows in the window. A probe round's rows are stored when the round ends, so the newest
+// second (or bucket) of an answer holds the targets stored so far and not yet the others, and the oldest those stored after
+// the window began; a lost probe has a row of its own. So a time at either end that lacks one of `ids` is left out (at most
+// `edge` at each end), rather than drawn as a gap in that target's line.
+export function wholeEdges(times, rowAt, ids, edge = 5) {
+  if (!ids.length) return times;
+  const whole = (ts) => { const row = rowAt(ts) || {}; return ids.every((id) => row[id]); };
+  let first = 0;
+  let end = times.length;
+  while (first < Math.min(edge, end) && !whole(times[first])) first++;
+  while (end > first && times.length - end < edge && !whole(times[end - 1])) end--;
+  return first === 0 && end === times.length ? times : times.slice(first, end);
+}
+
 // One value of a series from the values of its member targets (null for a lost probe).
 export function combine(series, values) {
   if (!values.length) return null;
@@ -52,7 +84,7 @@ export function combine(series, values) {
 export function shortLabels(targets) {
   const live = targets.filter((t) => t.enabled !== false);
   const out = {};
-  const byCat = {};
+  const byCat = Object.create(null);
   live.forEach((t) => { (byCat[t.category] ||= []).push(t); });
   live.forEach((t) => {
     const group = byCat[t.category];
@@ -83,7 +115,7 @@ export function memberNames(group, all = group) {
 // median across the public targets (the same as the latency chart's Internet line), from each target's own median of its
 // last 60 probes. `spark` is the same median probe by probe, the newest probes lined up. Targets with no probes yet
 // give null. `group` is a list of {recent_latencies, last_ms}.
-export function internetFigure(group) {
+function internetFigure(group) {
   const recent = group.map((t) => (t.recent_latencies || []).slice(-60));
   const own = group.map((t, i) => (recent[i].length ? median(recent[i]) : (has(t.last_ms) ? t.last_ms : null)));
   const len = Math.max(0, ...recent.map((r) => r.length));
@@ -106,7 +138,7 @@ export const IGNORES_PING = 'Ignores ping';
 export const IGNORES_PING_WHY = 'This hop does not answer ping, but the hops after it do, so traffic passes through it: many provider '
   + 'routers ignore or rate-limit ping. What this part of the path adds shows on the next hop that answers.';
 // Where a strip of uptime blocks would be (Uptime, target history): it would only be red, and its loss counts nowhere.
-export const IGNORES_PING_STRIP = `${IGNORES_PING} · traffic passes, not counted as an outage`;
+const IGNORES_PING_STRIP = `${IGNORES_PING} · traffic passes, not counted as an outage`;
 
 // An IPv6 target while this host has no IPv6 (no route, or none in the OS): not probed, so no samples, no loss and no
 // verdict. The server decides it (engine/prober.py, re-checked every few minutes) and flags the target of the live topic
@@ -114,28 +146,40 @@ export const IGNORES_PING_STRIP = `${IGNORES_PING} · traffic passes, not counte
 export const NO_IPV6 = 'IPv6 unavailable on this host';
 export const NO_IPV6_WHY = 'This host has no IPv6 route right now, so this IPv6 target is not probed: no loss is recorded and it is not '
   + 'an outage. Pengumon checks again every few minutes and probes it as soon as IPv6 works.';
-export const NO_IPV6_STRIP = `${NO_IPV6} · not probed, not counted`;
+const NO_IPV6_STRIP = `${NO_IPV6} · not probed, not counted`;
 
 // The words for each kind of neutral target: the state's name, why, the text where its strip would be, and the short
 // line under a path node.
+// The same for a hop the owner probes by TCP or HTTP: it does not answer that probe (kind stays 'ping': the matrix's
+// unprobed logic is the same)
+export const IGNORES_PROBE = { kind: 'ping', word: 'Ignores the probe', why: 'This hop does not answer its TCP probe, but the hops after it do, so traffic passes through it.', strip: 'Ignores the probe · traffic passes, not counted as an outage', meta: 'ignores the probe · traffic passes' };
 const IGNORES = { kind: 'ping', word: IGNORES_PING, why: IGNORES_PING_WHY, strip: IGNORES_PING_STRIP, meta: 'ignores ping · traffic passes' };
 export const NO_PINGS_WHY = 'This computer cannot send pings right now, so nothing is measured: the hops are not down, they are not probed. '
   + 'The status at the top says why and how to fix it.';
-export const NO_PINGS = { kind: 'host', word: 'Not probed', why: NO_PINGS_WHY, strip: 'Not probed · this computer cannot send pings', meta: 'not probed · pings not allowed' };
+const NO_PINGS = { kind: 'host', word: 'Not probed', why: NO_PINGS_WHY, strip: 'Not probed · this computer cannot send pings', meta: 'not probed · pings not allowed' };
 const UNPROBED = { kind: 'ipv6', word: NO_IPV6, why: NO_IPV6_WHY, strip: NO_IPV6_STRIP, meta: 'not probed · no IPv6 here' };
 
 // The targets shown neutral instead of up or down: hops that ignore ping, and IPv6 targets this host cannot probe now.
 // A Map from target id to its words (above); `.has(id)` is what most panels ask. `targets` are the live topic's.
+const quietOf = new WeakMap(); // a targets array -> its quiet map (five panels ask for it per message; the result is only read)
 export function quietTargets(targets) {
+  if (quietOf.has(targets)) return quietOf.get(targets);
+  const out = quietMap(targets);
+  quietOf.set(targets, out);
+  return out;
+}
+
+function quietMap(targets) {
   const out = new Map();
-  ignoringPing(targets).forEach((id) => out.set(id, IGNORES));
+  const bySocket = new Set(targets.filter((t) => t.probe && t.probe !== 'icmp').map((t) => t.target_id));
+  ignoringPing(targets).forEach((id) => out.set(id, bySocket.has(id) ? IGNORES_PROBE : IGNORES));
   targets.forEach((t) => { if (t.enabled !== false && t.ipv6_unavailable === true) out.set(t.target_id, UNPROBED); });
   targets.forEach((t) => { if (t.enabled !== false && t.probing_unavailable === true) out.set(t.target_id, NO_PINGS); });
   return out;
 }
 
 // The words of a target that is not in a quietTargets map (a hop that ignores ping, the older and commoner case).
-export const quietWords = (quiet, id) => (quiet && quiet.get && quiet.get(id)) || IGNORES;
+const quietWords = (quiet, id) => (quiet && quiet.get && quiet.get(id)) || IGNORES;
 
 // The set (or quietTargets map) of a list's neutral targets as a string, to tell whether it changed between two live
 // messages; the kind is part of it, so a target that turns from one kind to the other is drawn again.
@@ -243,4 +287,11 @@ export function pathNodes(targets, { collapseIsp = false } = {}) {
     });
   });
   return nodes;
+}
+
+// "Hop 3: Provider router" -> "Provider router": the numbered prefix older configs carry (Path health numbers hops).
+const HOP_PREFIX = /^\s*hop\s*\d+\s*[:.)\u2013\u2014-]\s*/i;
+export function cleanName(name) {
+  const rest = String(name || '').replace(HOP_PREFIX, '');
+  return rest && rest !== name ? rest : null;
 }

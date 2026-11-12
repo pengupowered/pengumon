@@ -27,9 +27,10 @@ import { checkSources, checkSubjects, libNames } from "./guards.mjs";
 const [base, outDir, variant, shardArg = "1/1"] = process.argv.slice(2);
 const [shardIndex, shardCount] = shardArg.split("/").map(Number);
 // Seconds each step file takes in the `full` variant (measured; the run prints them as fileMs), only to balance the slices.
-const SHARD_WEIGHT = { "settings.mjs": 34, "path-editor.mjs": 26, "core.mjs": 21, "matrix.mjs": 12, "strips.mjs": 9, "router.mjs": 8, "device-setup.mjs": 8,
-  "incidents.mjs": 6, "diagnosis.mjs": 6, "trace.mjs": 5.5, "target-history.mjs": 5, "add-target.mjs": 5, "alerts.mjs": 4.5, "line.mjs": 4,
-  "report.mjs": 3, "dossier.mjs": 3, "layout.mjs": 3, "latency.mjs": 2, "heat.mjs": 2, "sign-out.mjs": 1, "services.mjs": 1, "speed.mjs": 6 };
+const SHARD_WEIGHT = { "core.mjs": 90, "settings.mjs": 66, "incidents.mjs": 34, "path-editor.mjs": 28, "speed.mjs": 20, "latency.mjs": 19,
+  "matrix.mjs": 18, "device-setup.mjs": 17, "diagnosis.mjs": 13, "router.mjs": 11, "traffic.mjs": 11, "strips.mjs": 10, "ai-pack.mjs": 9,
+  "dossier.mjs": 9, "trace.mjs": 6, "target-history.mjs": 5.5, "layout.mjs": 5, "add-target.mjs": 5, "alerts.mjs": 4.5, "line.mjs": 4,
+  "heat.mjs": 3, "report.mjs": 2.5, "services.mjs": 1, "sign-out.mjs": 0.5 };
 // PENGUMON_BROWSER=firefox: one pass in Firefox (WebDriver BiDi), only these step files (docs/testing.md). A step that needs
 // a Chromium-only API says so with the option `chromiumOnly: "<reason>"`; Firefox skips it and prints the reason.
 const firefox = process.env.PENGUMON_BROWSER === "firefox";

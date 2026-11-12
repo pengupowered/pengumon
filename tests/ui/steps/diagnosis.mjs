@@ -26,7 +26,8 @@ const measurePath = (page) => page.evaluate(() => {
 });
 
 export const steps = [
-  ["path health: verdict, one node per path stage with median, loss and a sparkline, header pill with numbers", async ({ click, count, eq, ok, page, text, until, waitCount }) => {
+  ["path health: verdict, one node per path stage with median, loss and a sparkline, header pill with numbers", async ({ click, count, eq, ok, page, showCard, text, until, waitCount }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 3); // router (local), line (gateway), internet (public); the DNS probes stay out
     const kinds = await page.$$eval("#pathChain .node .node-kind", (els) => els.map((e) => e.textContent).join(">"));
     eq("path order", kinds, "Router>Gateway>Internet");
@@ -76,7 +77,8 @@ export const steps = [
     eq("writes to the header over three messages that change nothing", writes.join("; "), "");
   }],
 
-  ["while this host cannot send pings, the path's nodes say Not probed (not No reply) and are not drawn as down", async ({ eq, page, until, waitCount }) => {
+  ["while this host cannot send pings, the path's nodes say Not probed (not No reply) and are not drawn as down", async ({ eq, page, showCard, until, waitCount }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 3);
     // as in real use: no new probes, so the last figures stay in the stats (stale) while the flag says why
     await page.evaluate(() => { window.__smokeMutate = (d) => d.targets.forEach((t) => { t.probing_unavailable = true; t.status = "down"; }); });
@@ -87,7 +89,8 @@ export const steps = [
     await until(() => /^\d/.test(document.querySelector("#pathChain .node[data-node] .node-val")?.textContent ?? ""));
   }],
 
-  ["path health with seven long-named nodes: short labels uncut, configured name as tooltip, no overlap, at 1440, 1024 and phone width", async ({ eq, layoutSettled, ok, page, path, outDir, until, waitCount }) => {
+  ["path health with seven long-named nodes: short labels uncut, configured name as tooltip, no overlap, at 1440, 1024 and phone width", async ({ eq, layoutSettled, ok, outDir, page, path, showCard, until, waitCount }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 6);
     await until(() => /^\d/.test(document.querySelector("#pathChain .node[data-node] .node-val")?.textContent ?? ""));
     for (const [w, shot] of [[1440, "path-long-1440.png"], [1024, "path-long-1024.png"], [390, "path-long-390.png"]]) {
@@ -109,7 +112,8 @@ export const steps = [
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["longpath"] }],
 
-  ["path health with the IPv6 servers not probed (seven nodes): \"Not probed\" stays on one line at 1440, 1024 and phone width", async ({ eq, layoutSettled, ok, page, until, waitCount }) => {
+  ["path health with the IPv6 servers not probed (seven nodes): \"Not probed\" stays on one line at 1440, 1024 and phone width", async ({ eq, layoutSettled, ok, page, showCard, until, waitCount }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 6);
     // the third public server is the IPv6 group, and this host has no IPv6 (as strips.mjs makes it)
     await page.evaluate(() => {
@@ -136,8 +140,9 @@ export const steps = [
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["longpath"] }],
 
-  ["screenshots of the page with three public servers a few ms apart (PENGUMON_SMOKE_SHOTS=1)", async ({ SHOTS, page, path, outDir, until, waitCount }) => {
+  ["screenshots of the page with three public servers a few ms apart (PENGUMON_SMOKE_SHOTS=1)", async ({ outDir, page, path, SHOTS, showCard, until, waitCount }) => {
     if (!SHOTS) return;
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 6);
     const v = { lp_router: 5, lp_modem: 8, lp_isp1: 9, lp_isp2: 6.8, lp_isp3: 7, lp_public: 10, lp_public2: 20, lp_public3: 40 };
     await page.evaluate((x) => { window.__smokeMutate = (d) => d.targets.forEach((t) => { if (x[t.target_id] !== undefined) { t.recent_latencies = Array(30).fill(x[t.target_id]); t.last_ms = x[t.target_id]; } }); }, v);
@@ -153,7 +158,8 @@ export const steps = [
     await page.setViewport({ width: 1400, height: 1000 });
   }, { variants: ["longpath"] }],
 
-  ["one Internet figure: the median across the public targets in the hero node and the header pill, the node names them; a faster later hop reads as about 0 ms with a tooltip; the pills stay on their links at 1024", async ({ eq, layoutSettled, ok, page, until, waitCount }) => {
+  ["one Internet figure: the median across the public targets in the hero node and the header pill, the node names them; a faster later hop reads as about 0 ms with a tooltip; the pills stay on their links at 1024", async ({ eq, layoutSettled, ok, page, showCard, until, waitCount }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 6);
     const series = { lp_router: 5, lp_modem: 8, lp_isp1: 9, lp_isp2: 6.8, lp_isp3: 7, lp_public: 10, lp_public2: 20, lp_public3: 40 };
     await page.evaluate((v) => {
@@ -203,6 +209,7 @@ export const steps = [
         cut: [...c.querySelectorAll(".node-val, .node-meta, .node-kind")].some((e) => e.scrollWidth > e.clientWidth + 1) };
     });
     await page.setViewport({ width: 1440, height: 1000 });
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await mutate(9);
     await until(() => document.querySelector('#pathChain .node[data-node="ISP:run"]'));
     const long = await chain();
@@ -226,6 +233,7 @@ export const steps = [
     const silentRows = await page.$$eval("#hopMatrixBody tr", (rs) => rs.map((r) => r.textContent).filter((t) => t.includes("Example provider router 2")));
     ok("Hop details says no ping, not lost", silentRows.length === 1 && /no ping/.test(silentRows[0]) && !/LOST/.test(silentRows[0]));
     // the page follows the server's flag, not a rule of its own: the same silent hop unflagged is down
+    await showCard("diagnosis"); // back to Path health: the chain is not drawn while it is off screen
     await mutate(3, false);
     await until(() => document.querySelector("#pathChain .node[data-node='ISP:x_isp1'] .node-st")?.title === "Down");
     ok("an unflagged silent hop is down", /st-crit/.test(await page.$eval("#pathChain .node[data-node='ISP:x_isp1']", (n) => n.className)));
@@ -257,7 +265,8 @@ export const steps = [
       ok("no sideways scroll", wide <= 1);
     });
   }],
-  ["the always-on animations (flowing wire dashes, pulsing status dots) only animate transform and opacity, so they run on the compositor", async ({ eq, ok, page, until, waitCount }) => {
+  ["the always-on animations (flowing wire dashes, pulsing status dots) only animate transform and opacity, so they run on the compositor", async ({ eq, ok, page, showCard, until, waitCount }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 3);
     await until(() => document.querySelector("#pathChain.is-live") !== null && document.querySelector("#pathChain .link:not(.broken) .wirebox") !== null);
     const found = await page.evaluate(() => document.getAnimations().map((a) => ({

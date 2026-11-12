@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from pengumon.models.probes import TargetConfig
+from pengumon.models.probes import TargetConfig, probe_identity, probe_label
 
 logger = logging.getLogger("pengumon.db")
 
@@ -31,6 +31,11 @@ PATH_DRIFT_KEY = "path_drift"
 MAX_VERSIONS = 50
 SUMMARY_MAX = 300
 ADDRESS_CHANGED = "address_changed"
+PROBE_CHANGED = "probe_changed"
+# Deleting a removed hop's history: (table, time column, column units per batch). Each batch is its own write
+# transaction (about an hour of rows at a time), so the probe loop's sample flush waits for one batch, not the whole delete.
+HISTORY_BATCHES = (("samples", "ts", 3600), ("rollup_10s", "slot", 360), ("rollup_1m", "minute", 1440),
+                   ("rollup_15m", "quarter", 2880))
 
 # The roles in the words the path editor uses for them.
 ROLE_WORDS = {"local": "Your network", "gateway": "Gateway (modem)", "isp": "Provider", "public": "Internet",
@@ -109,7 +114,10 @@ def describe_change(old: Sequence[TargetConfig], new: Sequence[TargetConfig],
                 parts.append(f"linked {t.name} to device {t.device_id}")
             else:
                 parts.append(f"{t.name}: device {was.device_id} → {t.device_id}")
-        rest = {"id", "name", "category", "address", "device_id"}
+        if probe_identity(was) != probe_identity(t):
+            parts.append(f"{t.name}: probe {probe_label(was) or 'ping'} → {probe_label(t) or 'ping'}")
+        rest = {"id", "name", "category", "address", "device_id", "probe", "port", "http_scheme", "http_path",
+                "http_verb"}
         if was.model_dump(exclude=rest) != t.model_dump(exclude=rest):
             other += 1
     common_before = [t.id for t in old if t.id in after_ids]
@@ -125,6 +133,13 @@ def describe_change(old: Sequence[TargetConfig], new: Sequence[TargetConfig],
     if len(text) > SUMMARY_MAX:
         text = text[:SUMMARY_MAX - 1].rstrip() + "…"
     return text, moves
+
+
+def probe_changes(old: Sequence[TargetConfig], new: Sequence[TargetConfig]) -> List[Tuple[str, str, str]]:
+    """The hops in both lists whose probe method changed, as (id, old label, new label); a ping is "ping"."""
+    before = {t.id: t for t in old}
+    return [(t.id, probe_label(before[t.id]) or "ping", probe_label(t) or "ping")
+            for t in new if t.id in before and probe_identity(before[t.id]) != probe_identity(t)]
 
 
 def _hops_json(targets: Sequence[TargetConfig]) -> str:
@@ -146,7 +161,8 @@ async def _rows(db, deleted: bool) -> List[TargetConfig]:
 
 
 async def _store_version(db, revision: int, targets: Sequence[TargetConfig], summary: str, now: float,
-                         moves: Sequence[Tuple[str, str, str]] = ()) -> None:
+                         moves: Sequence[Tuple[str, str, str]] = (),
+                         probe_moves: Sequence[Tuple[str, str, str]] = ()) -> None:
     await db.execute(
         "INSERT OR REPLACE INTO path_versions (revision, applied_at, hop_count, summary, hops) VALUES (?, ?, ?, ?, ?)",
         (revision, now, len(targets), summary, _hops_json(targets)))
@@ -155,6 +171,10 @@ async def _store_version(db, revision: int, targets: Sequence[TargetConfig], sum
         await db.executemany(
             "INSERT INTO path_events (at, kind, target_id, old, new, revision) VALUES (?, ?, ?, ?, ?, ?)",
             [(now, ADDRESS_CHANGED, tid, old, new, revision) for tid, old, new in moves])
+    if probe_moves:
+        await db.executemany(
+            "INSERT INTO path_events (at, kind, target_id, old, new, revision) VALUES (?, ?, ?, ?, ?, ?)",
+            [(now, PROBE_CHANGED, tid, old, new, revision) for tid, old, new in probe_moves])
 
 
 class PathQueries:
@@ -241,26 +261,29 @@ class PathQueries:
             await _store_version(db, 1, targets, summary, time.time())
             await _put_meta(db, PATH_DEVICES_LINKED_KEY, "1")
         self.hidden_targets = {t.id for t in removed}
+        self._path_changes += 1
         return True
 
     async def save_path(self, base_revision: int, targets: List[TargetConfig]) -> int:
         """Replaces the path with `targets` (in path order) if it is still at `base_revision`, else raises
         PathConflict. Hops left out are soft-deleted; a removed hop that comes back is restored with its history. The
         applied path is stored as the new revision's version, and a hop whose address changed (same id) gets an
-        "address_changed" event. Returns the new revision."""
+        "address_changed" event, and one whose probe method changed a "probe_changed" event. Returns the new revision."""
         async with self._db.write() as db:
             current = int(await _meta(db, PATH_REVISION_KEY) or 0)
             if current != base_revision:
                 raise PathConflict(current)
-            summary, moves = describe_change(await _rows(db, False), targets, await _rows(db, True))
+            live = await _rows(db, False)
+            summary, moves = describe_change(live, targets, await _rows(db, True))
             await self._write_hops(db, targets)
             await _put_meta(db, PATH_REVISION_KEY, str(current + 1))
             await _put_meta(db, PATH_INITIALIZED_KEY, "1")
-            await _store_version(db, current + 1, targets, summary, time.time(), moves)
+            await _store_version(db, current + 1, targets, summary, time.time(), moves, probe_changes(live, targets))
             await _put_meta(db, PATH_DEVICES_LINKED_KEY, "1")
             async with db.execute("SELECT id FROM path_targets WHERE deleted_at IS NOT NULL") as cursor:
                 hidden = {row[0] for row in await cursor.fetchall()}
         self.hidden_targets = hidden
+        self._path_changes += 1
         return current + 1
 
     @staticmethod
@@ -284,19 +307,35 @@ class PathQueries:
         """Deletes the stored probes of a hop removed from the path, and forgets the hop. False (nothing deleted)
         when `target_id` is not a removed hop: the history of a hop on the path is never deleted here."""
         await self.flush_samples()
-        async with self._db.write() as db:
-            async with db.execute(
-                "SELECT 1 FROM path_targets WHERE id = ? AND deleted_at IS NOT NULL", (target_id,)
-            ) as cursor:
+        removed = "SELECT 1 FROM path_targets WHERE id = ? AND deleted_at IS NOT NULL"
+        key = self._target_ids.get(target_id)  # the targets row stays: the id map is cached, and the id may come back later
+        async with self._db.read() as db:
+            async with db.execute(removed, (target_id,)) as cursor:
                 if await cursor.fetchone() is None:
                     return False
-            key = self._target_ids.get(target_id)
-            if key is not None:  # the targets row stays: the id map is cached, and the id may come back later
-                await db.execute("DELETE FROM samples WHERE target = ?", (key,))
-                await db.execute("DELETE FROM rollup_1m WHERE target = ?", (key,))
+        for table, column, width in HISTORY_BATCHES if key is not None else ():
+            low = float("-inf")
+            while True:
+                async with self._db.write() as db:  # one batch; the hop may have been put back on the path meanwhile
+                    async with db.execute(removed, (target_id,)) as cursor:
+                        if await cursor.fetchone() is None:
+                            return False
+                    # the next stored time at or after `low` (the time column leads the key: no scan), so gaps cost nothing
+                    async with db.execute(f"SELECT MIN({column}) FROM {table} WHERE {column} >= ?", (low,)) as cursor:
+                        first = (await cursor.fetchone())[0]
+                    if first is None:
+                        break
+                    await db.execute(f"DELETE FROM {table} WHERE {column} >= ? AND {column} < ? AND target = ?",
+                                     (first, first + width, key))
+                low = first + width
+        async with self._db.write() as db:
+            async with db.execute(removed, (target_id,)) as cursor:
+                if await cursor.fetchone() is None:
+                    return False
             await db.execute("DELETE FROM path_targets WHERE id = ?", (target_id,))
             await db.execute("DELETE FROM path_events WHERE target_id = ?", (target_id,))
         self.hidden_targets = self.hidden_targets - {target_id}
+        self._path_changes += 1
         return True
 
     # --- versions and events ---------------------------------------------------------------------------------------

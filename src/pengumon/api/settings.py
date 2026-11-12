@@ -2,13 +2,16 @@
 read, validated, saved, versioned, exported and imported. Bodies: api/settings_models.py.
 
 GET  /api/settings/schema         the registry with types, ranges, defaults, the lists' fields, drivers, secret slots
-GET  /api/settings                the current state: every value with its source, the lists, the secret slots (set
+GET  /api/settings                the current state (a viewer gets the lists without what only the owner needs, and no
+                                  secret hosts): every value with its source, the lists, the secret slots (set
                                   or not, never a value), the learned capacity and, for an editor, "about this install"
 GET  /api/settings/values         {revision, values}: the effective values only
 POST /api/settings/validate       a change {values, lists} -> {ok, errors, warnings, summary}; nothing is applied
-PUT  /api/settings                {base_revision, values, lists, secrets} -> the new revision (?source=restore for a
-                                  version loaded with GET /versions/{n}, ?source=yaml_import for an Import draft)
-GET  /api/settings/versions       the kept versions, newest first
+PUT  /api/settings                {base_revision, values, lists, secrets, current_password?} -> the new revision
+                                  (?source=restore for a version loaded with GET /versions/{n}, ?source=yaml_import for
+                                  an Import draft); turning access.allow_viewers on needs current_password while a
+                                  password is in force (api/access.py says why)
+GET  /api/settings/versions       the kept versions, newest first (a viewer's without the header secrets' names)
 GET  /api/settings/versions/{n}   that version as a draft (saving it restores it)
 GET  /api/settings/export         the stored values and lists as YAML, no secrets (needs the token: VIEWER_POLICY)
 POST /api/settings/import         YAML in the body -> a draft {values, lists, notes}; nothing is applied
@@ -20,10 +23,14 @@ and the conflicting parts.
 from typing import Dict, Optional
 from urllib.parse import urlsplit
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import Field
 
 from pengumon import __version__, paths
+from pengumon.api.access import NEED_CURRENT_VIEWERS, unconfirmed
 from pengumon.api.common import StateDep
 from pengumon.api.settings_models import (
     About, ConfigYamlState, ConflictError, ImportDraft, ListState, PutResponse, SecretState, SettingsValidate,
@@ -35,12 +42,18 @@ from pengumon.db.settings import SettingsConflict
 from pengumon.observability import grafana
 from pengumon.security import can_edit, rate_limit
 from pengumon.settings.env import env_value
-from pengumon.settings.manager import SecretsWriteFailed, SettingsInvalid, SettingsManager
+from pengumon.settings.manager import SecretsWriteFailed, SettingsInvalid, SettingsManager, _host
 from pengumon.settings.schema import build_schema
 
 router = APIRouter(prefix="/api")
 
 _SAVE_RATE = rate_limit("settings", 20, 60)
+VIEWERS_KEY = "access.allow_viewers"
+
+
+class SettingsPutBody(SettingsPut):
+    """PUT /api/settings: SettingsPut, plus the current password for a save that lets others look without it."""
+    current_password: Optional[str] = Field(None, max_length=1024)
 
 
 def _manager(state: AppState) -> SettingsManager:
@@ -49,11 +62,45 @@ def _manager(state: AppState) -> SettingsManager:
     return state.settings
 
 
-def _host(url: Optional[str]) -> Optional[str]:
+def url_origin(url: object) -> str:
+    """scheme://host[:port] of a URL: no user name, path or query (an API key often rides in one of them)."""
     try:
-        return urlsplit(url).hostname if url else None
+        parts = urlsplit(str(url))
+        host = parts.hostname
+        if not host or not parts.scheme:
+            return ""
+        port = f":{parts.port}" if parts.port else ""
+        return f"{parts.scheme}://{'[' + host + ']' if ':' in host else host}{port}"
     except ValueError:
-        return None
+        return ""
+
+
+def _for_viewer(name: str, item: dict) -> dict:
+    """A list item as someone without the password sees it in the read-only Settings page: what the dashboard shows
+    anyway (ids, names, on or off, the device's address), without what only the owner needs (a device's user name
+    and driver options, which hold the mesh labels; a check's path, query and CA file path; a webhook's headers)."""
+    item = dict(item)
+    if name == "devices":
+        item["url"] = url_origin(item.get("url"))
+        item["username"] = ""
+        item["options"] = {}
+        if isinstance(item.get("tls"), dict):
+            item["tls"] = {**item["tls"], "ca_file": None}
+    elif name == "services":
+        item["url"] = url_origin(item.get("url"))
+        item["ca_file"] = None
+    elif name == "webhooks":
+        item["headers"] = {}
+    return item
+
+
+def _turns_viewers_on(manager: SettingsManager, values: dict) -> bool:
+    """Whether a save of `values` stores `access.allow_viewers` as on while it is not stored so (null resets it to its
+    default, off). Compared with what is stored, not with what is in force: a value stored under
+    PENGUMON_VIEW_WITHOUT_TOKEN=0 takes effect once the variable goes."""
+    if VIEWERS_KEY not in values or values[VIEWERS_KEY] is None or values[VIEWERS_KEY] is False:
+        return False
+    return manager.value_states().get(VIEWERS_KEY, {}).get("stored") is not True
 
 
 def _learned(state: AppState) -> Dict[str, Optional[float]]:
@@ -69,7 +116,7 @@ def _about(request: Request, manager: SettingsManager, state: AppState) -> About
         data_dir=str(paths.data_dir()),
         config_path=str(paths.config_path()),
         db_path=getattr(state.repository, "db_path", None),
-        token_set=bool(getattr(security, "access_token", "")),
+        token_set=bool(getattr(security, "token_set", False)),
         view_without_token=bool(getattr(security, "view_without_token", False)),
         otlp_host=_host(env_value("OTEL_EXPORTER_OTLP_ENDPOINT")),
         config_yaml=ConfigYamlState(**manager.config_yaml_state()),
@@ -108,11 +155,15 @@ async def get_settings(request: Request, state: StateDep):
     errors = getattr(state.devices, "errors", None)
     if isinstance(errors, dict):
         lists["devices"]["errors"] = {str(k): str(v) for k, v in errors.items()}
+    secrets = manager.secret_states()
+    if not editor:  # a viewer sees whether a secret is set, not which host it points at, and no header secret (its name names the header)
+        lists = {k: {**v, "items": [_for_viewer(k, i) for i in v["items"]]} for k, v in lists.items()}
+        secrets = {k: {**v, "host": None} for k, v in secrets.items() if not k.startswith("webhook_header.")}
     return SettingsState(
         revision=manager.revision,
         values={k: ValueState(**v) for k, v in manager.value_states().items()},
         lists={k: ListState(**v) for k, v in lists.items()},
-        secrets={k: SecretState(**v) for k, v in manager.secret_states().items()},
+        secrets={k: SecretState(**v) for k, v in secrets.items()},
         learned=_learned(state), about=_about(request, manager, state) if editor else None, can_edit=editor)
 
 
@@ -140,11 +191,17 @@ async def validate_settings(body: SettingsValidate, state: StateDep):
 @router.put("/settings", response_model=PutResponse, dependencies=[Depends(_SAVE_RATE)],
             responses={400: {"model": SettingsError}, 409: {"model": ConflictError}, 422: {"model": SettingsError},
                        500: {"model": SettingsError}})
-async def put_settings(body: SettingsPut, state: StateDep,
+async def put_settings(body: SettingsPutBody, request: Request, state: StateDep,
                        source: str = Query("save", pattern="^(save|restore|yaml_import)$")):
     """Saves a change as the next revision and applies it. values[key] = null resets a key, lists[name] = null a
-    list, secrets[slot] = "" clears a slot."""
+    list, secrets[slot] = "" clears a slot. A save (a restore, an import) that turns viewing without the password on
+    needs the current password while one is in force: a browser left signed in must not open the dashboard to everyone
+    (403 without it or with a wrong one, which counts as a failed sign-in)."""
     manager = _manager(state)
+    if _turns_viewers_on(manager, body.values):
+        why = await unconfirmed(request, body.current_password, NEED_CURRENT_VIEWERS)
+        if why is not None:
+            return _error(403, why, [{"where": f"values.{VIEWERS_KEY}", "message": why}])
     try:
         applied = await manager.apply(body.base_revision, body.values, body.lists, body.secrets, source=source)
     except SettingsInvalid as e:
@@ -159,13 +216,30 @@ async def put_settings(body: SettingsPut, state: StateDep,
                        restart_needed=applied.restart_needed, live_failed=applied.live_failed)
 
 
+# "secret webhook_header.<name> changed" in a version line (settings/describe.py): the name names a header secret
+_HEADER_SLOT = re.compile(r"\bsecret webhook_header\..*? changed(?=; |$)", re.IGNORECASE)
+
+
+def _summary_for_viewer(summary: str) -> str:
+    """A version line as someone without the password sees it: a header secret's change without its name, which
+    /api/settings keeps from them too (it names the header)."""
+    return _HEADER_SLOT.sub(lambda m: m.group(0)[0] + "ecret of a webhook header changed", summary)  # "s" or "S"
+
+
 @router.get("/settings/versions", response_model=list[VersionInfo])
-async def get_settings_versions(state: StateDep):
-    return [VersionInfo(**v) for v in await _manager(state).versions()]
+async def get_settings_versions(request: Request, state: StateDep):
+    """The kept versions, newest first. A viewer (or the read token) gets the lines without the header secrets'
+    names."""
+    versions = await _manager(state).versions()
+    if not can_edit(request):
+        versions = [{**v, "summary": _summary_for_viewer(v["summary"])} for v in versions]
+    return [VersionInfo(**v) for v in versions]
 
 
 @router.get("/settings/versions/{revision}", response_model=VersionDraft)
-async def get_settings_version(revision: int, state: StateDep):
+async def get_settings_version(revision: int, request: Request, state: StateDep):
+    if not can_edit(request):  # a kept version is a whole document, as the export is
+        raise HTTPException(status_code=401, detail="Sign in to read a kept version")
     draft = await _manager(state).version_draft(revision)
     if draft is None:
         raise HTTPException(status_code=404, detail="That version is no longer kept")

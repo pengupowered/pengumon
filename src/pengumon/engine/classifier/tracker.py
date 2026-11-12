@@ -39,6 +39,9 @@ class IncidentTracker:
         self.latency_failure_counter: int = 0
         self.recovery_counter: int = 0
         self.last_failure_ts: float = 0.0
+        # when the current run of loss / latency rounds began (an incident starts there, whatever the round spacing)
+        self._loss_first_ts: float = 0.0
+        self._latency_first_ts: float = 0.0
         self._stored_load_pct: Optional[float] = None
 
     async def observe(
@@ -57,9 +60,13 @@ class IncidentTracker:
             self.last_failure_ts = ts
 
             if is_loss_or_outage:
+                if self.loss_failure_counter == 0:
+                    self._loss_first_ts = ts
                 self.loss_failure_counter += 1
                 self.failure_counter = self.loss_failure_counter
             else:
+                if self.latency_failure_counter == 0:
+                    self._latency_first_ts = ts
                 self.latency_failure_counter += 1
                 self.failure_counter = self.latency_failure_counter
 
@@ -72,9 +79,9 @@ class IncidentTracker:
             if should_trigger:
                 if not self.active_incident:
                     # Start new incident accurately timed from onset
-                    counter = self.loss_failure_counter if is_loss_or_outage else self.latency_failure_counter
-                    actual_start = round(ts - max(0, counter - 1), 2)
-                    self.active_incident = Incident(
+                    first_ts = self._loss_first_ts if is_loss_or_outage else self._latency_first_ts
+                    actual_start = min(round(first_ts, 2), ts)  # (rounding must not put it after this round)
+                    incident = Incident(
                         start_time=actual_start,
                         kind=verdict.kind,
                         cause_code=verdict.cause,
@@ -85,11 +92,13 @@ class IncidentTracker:
                         resolved=False,
                         load_pct=reading.pct if reading else None,
                     )
-                    self._stored_load_pct = self.active_incident.load_pct
                     if self.repository:
-                        inc_id = await self.repository.create_incident(self.active_incident)
-                        self.active_incident.id = inc_id
-                    outcome.started = self.active_incident
+                        # Stored first: when this raises (database busy), no incident is held that was never
+                        # stored, and the failure counters stay, so the next faulty round tries again.
+                        incident.id = await self.repository.create_incident(incident)
+                    self.active_incident = incident
+                    self._stored_load_pct = incident.load_pct
+                    outcome.started = incident
                     incidents_started.add(1, {"kind": verdict.kind, "severity": verdict.severity})
                 else:
                     # Update active incident if cause escalated
@@ -118,6 +127,7 @@ class IncidentTracker:
                 if self.recovery_counter >= self.config.consecutive_successes_for_recovery:
                     # Resolve incident accurately at the last anomalous sample
                     resolve_ts = self.last_failure_ts if self.last_failure_ts > 0 else ts
+                    resolve_ts = max(resolve_ts, self.active_incident.start_time)  # a clock stepped back
                     await self._close(resolve_ts)
                     outcome.resolved = self.active_incident
                     self.active_incident = None

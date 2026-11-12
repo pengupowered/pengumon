@@ -6,15 +6,18 @@ GET /api/path               {"revision", "hops": [hop...], "managed_by": "dashbo
                             configured device's address matches (engine.device_links), which the editor links
 PUT /api/path               {"base_revision", "hops"} -> the new path; 409 when the path changed since base_revision
 DELETE /api/path/history/{id}   the stored probes of a hop removed from the path
-POST /api/path/test         {"address", "family"} -> one probe: {"kind", "rtt_ms", "responder", "address", "error"}
+POST /api/path/test         {"address", "family"} -> one echo request: {"kind", "rtt_ms", "responder", "address", "error"};
+                            with "probe": "tcp" or "http" (and port, http_scheme, http_path, http_verb) one TCP
+                            connection or HTTP request instead, plus "status" and "connect_ms" in the answer
 GET /api/path/export        the path as YAML (a targets: list in config.yaml syntax)
 POST /api/path/import       that YAML -> {"hops": [...], "device_matches"}, a draft: nothing is applied
 POST /api/path/preview      {"hops"} (a draft, as PUT takes it) -> {"id", "probed"}: its new hops probed for 30 s
 GET /api/path/preview/{id}  {"state", "elapsed_s", "hops": {id: {"sent", "received", "loss_pct", "median_ms",
                             "last_ms", "kind"}}};  DELETE /api/path/preview/{id} stops it
 GET /api/path/versions      the applied versions, newest first: [{"revision", "applied_at", "hop_count", "summary"}]
-GET /api/path/versions/{n}  {"revision", "hops"}: that version as a draft (the editor applies it to restore it)
-GET /api/path/events        the path's events ("address_changed"), oldest first; ?target_id= for one hop's
+GET /api/path/versions/{n}  {"revision", "hops"}: that version as a draft (the editor applies it to restore it); needs
+                            the password (a viewer or the read token: 401), as the export does
+GET /api/path/events        the path's events ("address_changed", "probe_changed"), oldest first; ?target_id= for one hop's
 GET /api/path/drift         the latest background route-change check; POST /api/path/drift/dismiss: seen
 """
 
@@ -37,9 +40,10 @@ from pengumon.engine.device_links import device_matches
 from pengumon.engine.discovery.draft import address_key
 from pengumon.engine.path import PathDraft, PathError, PathManager, PathUpdate, hop_dict, path_manager
 from pengumon.engine.path_preview import PreviewBusy
+from pengumon.engine.probe_rules import refused_address, socket_hop_problem
 from pengumon.models.hosts import validate_host
-from pengumon.models.probes import TargetConfig
-from pengumon.security import rate_limit
+from pengumon.models.probes import ProbeType, TargetConfig, probe_identity
+from pengumon.security import can_edit, rate_limit
 from pengumon.yamlsafe import IMPORT_MAX_BYTES, IMPORT_MAX_DEPTH, check_yaml_plain, load_plain  # noqa: F401
 
 router = APIRouter(prefix="/api")
@@ -64,12 +68,13 @@ async def _matches(manager: PathManager, hops: List[TargetConfig]) -> Dict[str, 
 
 
 @router.get("/path")
-async def get_path(state: StateDep):
-    """The probe path as it is live, in path order (position 0 nearest to this host), and the device each home hop
-    without one would be linked to."""
+async def get_path(request: Request, state: StateDep):
+    """The probe path as it is live, in path order (position 0 nearest to this host), and for an editor the device
+    each home hop without one would be linked to (the path editor's proposal; a viewer cannot open the editor, and
+    the matching may look up host names, so it is not done for every viewer's request)."""
     manager = _manager(state)
     revision, hops = await manager.current()
-    return {**_path_body(revision, hops), "device_matches": await _matches(manager, hops)}
+    return {**_path_body(revision, hops), "device_matches": await _matches(manager, hops) if can_edit(request) else {}}
 
 
 @router.put("/path", dependencies=[Depends(_EDIT_RATE)])
@@ -107,6 +112,12 @@ async def delete_history(target_id: str, state: StateDep):
 class PathTestRequest(BaseModel):
     address: str = Field(..., max_length=255)
     family: Literal[4, 6] = 4  # for a host name: probe its IPv4 or IPv6 address (a literal is probed as it is)
+    # a TCP or HTTP probe instead of the echo request: the same fields and defaults as TargetConfig
+    probe: ProbeType = "icmp"
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    http_scheme: Literal["http", "https"] = "https"
+    http_path: str = Field("/", max_length=255)
+    http_verb: Literal["HEAD", "GET"] = "HEAD"
 
     @field_validator("address")
     @classmethod
@@ -117,10 +128,32 @@ class PathTestRequest(BaseModel):
 @router.post("/path/test", dependencies=[Depends(rate_limit("path_test", 30, 60))])
 async def test_hop(req: PathTestRequest, state: StateDep):
     """One echo request to the address through the app's ICMP backend, as the prober sends it. An IPv6 address while
-    this host has no IPv6 is kind "ipv6_unavailable" (nothing is sent), as the prober treats such a target."""
+    this host has no IPv6 is kind "ipv6_unavailable" (nothing is sent), as the prober treats such a target. With a probe
+    of "tcp" or "http" the same attempt the prober makes (NetworkProber.socket_attempt): kinds reply, refused, timeout,
+    tls, http_error, bad_answer, not_allowed (a loopback, link-local or special-purpose address: 400 for a literal),
+    with "status" and "connect_ms" (HTTP). Only the status code and the timings come back, never headers or a body."""
     if not state.prober:
         raise HTTPException(status_code=503, detail="Prober engine initializing")
-    return await probe_address(state.prober, req.address, req.family)
+    if req.probe == "icmp":
+        return await probe_address(state.prober, req.address, req.family)
+    try:
+        target = TargetConfig(id="path_test", name="Test", category="custom", address=req.address, family=req.family,
+                              probe=req.probe, port=req.port, http_scheme=req.http_scheme, http_path=req.http_path,
+                              http_verb=req.http_verb)
+    except ValidationError as e:
+        detail = e.errors(include_url=False, include_context=False, include_input=False)
+        raise HTTPException(status_code=422, detail=jsonable_encoder(detail)) from None
+    why = refused_address(req.address)
+    if why:
+        raise HTTPException(status_code=400, detail=f"{req.address} is {why}; TCP and HTTP probes never connect there")
+    return await state.prober.socket_attempt(target)
+
+
+async def probe_hop(prober, hop: TargetConfig) -> Dict[str, Any]:
+    """One probe of a hop by its own method: an echo request, or the prober's TCP or HTTP attempt. Records nothing."""
+    if hop.probe == "icmp":
+        return await probe_address(prober, hop.address, hop.family)
+    return await prober.socket_attempt(hop)
 
 
 async def probe_address(prober, address_in: str, family: int) -> Dict[str, Any]:
@@ -164,12 +197,12 @@ async def probe_address(prober, address_in: str, family: int) -> Dict[str, Any]:
 
 # --- preview before apply --------------------------------------------------------------------------------------------
 
-def preview_hops(draft: List[TargetConfig], live: List[TargetConfig]) -> Dict[str, tuple]:
-    """The draft hops a preview probes: enabled, and at an address (and family) no live hop is probed at already
-    (a new hop, or one whose address changed). {hop id: (address, family)}."""
-    probed = {(address_key(t.address), t.family) for t in live if t.enabled}
-    return {t.id: (t.address, t.family) for t in draft
-            if t.enabled and (address_key(t.address), t.family) not in probed}
+def preview_hops(draft: List[TargetConfig], live: List[TargetConfig]) -> Dict[str, TargetConfig]:
+    """The draft hops a preview probes: enabled, and not probed live already by the same method at the same address
+    (a new hop, one whose address changed, or one whose method changed). {hop id: the hop}."""
+    probed = {(address_key(t.address), t.family, probe_identity(t)) for t in live if t.enabled}
+    return {t.id: t for t in draft
+            if t.enabled and (address_key(t.address), t.family, probe_identity(t)) not in probed}
 
 
 def _client(request: Request) -> str:
@@ -183,11 +216,14 @@ async def start_preview(draft: PathDraft, request: Request, state: StateDep):
     manager = _manager(state)
     if not state.prober:
         raise HTTPException(status_code=503, detail="Prober engine initializing")
-    hops = preview_hops(draft.targets(), list(manager.config.targets))
+    targets = draft.targets()
+    problem = socket_hop_problem(targets)  # a loopback TCP hop is refused here as an apply would refuse it
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    hops = preview_hops(targets, list(manager.config.targets))
     prober = state.prober
     try:
-        preview_id = await manager.previews.start(
-            _client(request), hops, lambda address, family: probe_address(prober, address, family))
+        preview_id = await manager.previews.start(_client(request), hops, lambda hop: probe_hop(prober, hop))
     except PreviewBusy:
         raise HTTPException(status_code=429, detail="Two previews are running already; try again in half a minute.",
                             headers={"Retry-After": "30"}) from None
@@ -219,9 +255,13 @@ async def list_versions(state: StateDep):
 
 
 @router.get("/path/versions/{revision}")
-async def get_version(state: StateDep, revision: int = Path(..., ge=0)):
+async def get_version(request: Request, state: StateDep, revision: int = Path(..., ge=0)):
     """A version's hops as a draft for the editor: applying it restores that path (a hop keeps its id, and with it its
-    history). A link to a device that is no longer configured is dropped, as an import drops it."""
+    history). A link to a device that is no longer configured is dropped, as an import drops it. Editors only: a kept
+    version is a whole path document, as the export (in the viewer policy's deny list) is, with hops the dashboard no
+    longer shows; restoring it is an edit anyway (the settings twin, GET /api/settings/versions/{n}, does the same)."""
+    if not can_edit(request):
+        raise HTTPException(status_code=401, detail="Sign in to read a kept version")
     manager = _manager(state)
     hops = await manager.repository.path_version(revision)
     if hops is None:
@@ -238,7 +278,7 @@ async def get_version(state: StateDep, revision: int = Path(..., ge=0)):
 
 @router.get("/path/events")
 async def list_events(state: StateDep, target_id: Optional[str] = Query(None, max_length=64)):
-    """What happened to the path's hops, oldest first: {"at", "kind": "address_changed", "target_id", "old", "new",
+    """What happened to the path's hops, oldest first: {"at", "kind": "address_changed" | "probe_changed", "target_id", "old", "new",
     "revision"}. The target history dialog marks them on its charts."""
     return await _manager(state).repository.path_events(target_id)
 

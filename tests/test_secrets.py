@@ -1,10 +1,9 @@
-"""Device credentials (pengumon.secrets): every source and its precedence, writing new credentials, the one-shot
-conversion of the flat secrets.json keys, and never exposing a password."""
+"""Device credentials (pengumon.secrets): every source and its precedence, writing new credentials, and never
+exposing a password."""
 
 import json
 import logging
 import os
-import stat
 
 import pytest
 from pathlib import Path
@@ -307,80 +306,3 @@ def test_outranking_names_the_source_that_would_override_saved_credentials(tmp_p
     assert outranking(secrets_dir_=secrets_dir) == str(secrets_dir / "pengumon_router_password")
     assert outranking() is None  # only secrets.json: nothing outranks it
     assert outranking(env={"PENGUMON_DEVICE_ROUTER_USERNAME": "root"}) == "environment PENGUMON_DEVICE_ROUTER_USERNAME"
-
-
-# --- one-shot conversion of the flat keys (remove with the conversion) ----------------------------------------------
-
-FLAT = {"modem_username": "cusadmin", "modem_password": "modem-" + SECRET,
-        "router_username": "admin", "router_password": "router-" + SECRET}
-
-
-def _store_file(tmp_path, data, mode=0o600):
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps(data))
-    os.chmod(path, mode)
-    return path
-
-
-def test_the_flat_keys_move_under_the_devices_on_first_read(tmp_path, caplog):
-    path = _store_file(tmp_path, FLAT, mode=0o644)
-    with caplog.at_level(logging.INFO, logger="pengumon.secrets"):
-        store = SecretStore(path)
-        sources = CredentialSources(env={}, secrets_dir=None, store=store)
-        modem, router = sources.resolve(_device("modem")), sources.resolve(_device("router"))
-    expected = {"devices": {"modem": {"username": "cusadmin", "password": "modem-" + SECRET},
-                            "router": {"username": "admin", "password": "router-" + SECRET}}}
-    assert json.loads(path.read_text()) == expected == store.data()
-    assert_mode(path, 0o600)
-    assert not list(tmp_path.glob("*.tmp"))
-    assert (modem.username, modem.password) == ("cusadmin", "modem-" + SECRET)
-    assert (router.username, router.password) == ("admin", "router-" + SECRET)
-    assert router.password_source == f"{path} devices.router.password"
-    infos = [r for r in caplog.records if r.levelno == logging.INFO]
-    assert [r.getMessage() for r in infos] == [
-        f"Moved modem_username, modem_password, router_username, router_password in {path} under devices.modem / "
-        "devices.router"]
-    assert SECRET not in caplog.text
-    # the next start finds nothing to convert
-    caplog.clear()
-    with caplog.at_level(logging.INFO, logger="pengumon.secrets"):
-        assert SecretStore(path).data() == expected
-    assert caplog.records == []
-
-
-def test_a_devices_entry_wins_over_a_flat_key_and_other_keys_stay(tmp_path):
-    path = _store_file(tmp_path, {"router_password": "flat", "modem_password": "m",
-                                  "devices": {"router": {"password": "kept"}, "wan": {"password": "w"}}, "other": 1})
-    assert SecretStore(path).data() == {
-        "devices": {"router": {"password": "kept"}, "wan": {"password": "w"}, "modem": {"password": "m"}}, "other": 1}
-    assert json.loads(path.read_text())["devices"]["router"] == {"password": "kept"}
-
-
-def test_a_file_without_flat_keys_is_not_rewritten(tmp_path):
-    path = _store_file(tmp_path, {"devices": {"router": {"password": "p"}}})
-    old = os.stat(path).st_mtime_ns - 10**9
-    os.utime(path, ns=(old, old))
-    SecretStore(path).data()
-    assert os.stat(path).st_mtime_ns == old
-
-
-def test_a_save_after_the_conversion_does_not_bring_the_flat_keys_back(tmp_path):
-    path = _store_file(tmp_path, FLAT)
-    SecretStore(path).write(credential_updates("router", "root", "new"))
-    assert json.loads(path.read_text()) == {"devices": {
-        "modem": {"username": "cusadmin", "password": "modem-" + SECRET},
-        "router": {"username": "root", "password": "new"}}}
-
-
-def test_a_conversion_that_cannot_be_written_still_serves_the_credentials(tmp_path, caplog, monkeypatch):
-    path = _store_file(tmp_path, FLAT)
-
-    def refuse(data, path=None):
-        raise PermissionError("read-only")
-
-    monkeypatch.setattr(secrets_module, "write_secrets", refuse)
-    with caplog.at_level(logging.WARNING, logger="pengumon.secrets"):
-        creds = CredentialSources(env={}, secrets_dir=None, secrets_file=path).resolve(_device("router"))
-    assert creds.password == "router-" + SECRET
-    assert "could not be rewritten" in caplog.text and SECRET not in caplog.text
-    assert json.loads(path.read_text()) == FLAT

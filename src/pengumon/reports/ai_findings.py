@@ -751,6 +751,13 @@ async def _change_events(repository, start: float, end: float, rules: Rules) -> 
 
 # --- collecting ----------------------------------------------------------------------------------------------------
 
+def _rows_not_in(rows: Sequence[Any], subset: Sequence[Any]) -> List[Any]:
+    """The rows that are not in `subset` (a selection of the same row objects), in linear time: `r not in subset`
+    compares the row with every dict of the subset (millions of comparisons for a week of a flapping line)."""
+    taken = {id(r) for r in subset}
+    return [r for r in rows if id(r) not in taken]
+
+
 def _service_outages(rows: Sequence[Mapping[str, Any]], now: float) -> Dict[str, Tuple[int, float]]:
     """Host-app outages (the services feature's incidents) per app id: how many started in the window, and how long
     they lasted in all."""
@@ -840,39 +847,13 @@ async def _rows_10s(repository, inc: IncidentFact, cols: List[str], rules: Rules
     return [(s, by[s]) for s in stamps]
 
 
-async def collect_pack_facts(repository, config, *, start: float, end: float, events: Sequence[Any] = (),
-                             event_kinds: Any = (), ignoring: Iterable[str] = (), detail: str = "compact",
-                             scope: str = "window", incident_id: Optional[int] = None, tz_offset_minutes: int = 0,
-                             now: Optional[float] = None, rules: Rules = RULES,
-                             tz: Optional[tzinfo] = None) -> PackFacts:
-    """Everything the pack's core states, decided from the stored data for the window [start, end].
-
-    `events`: the modules' ModuleEvents for the window (objects with code, start, end, subject, value);
-    `event_kinds`: their EventKinds (objects with code, phrase, supports, reach_seconds), a mapping by code or an
-    iterable. Both are only read, by attribute: this module imports nothing from the modules.
-    `ignoring`: the hops that ignore ping now (engine.path_rules); `detail`: "compact" or "detailed" (the caps);
-    `scope`: "window", or "incident" with `incident_id` (that incident is first in the close-ups and gets the 10-second
-    rows; `start`..`end` is the window around it). `tz`: the local time zone (a named zone follows its daylight-saving
-    changes); without it, the fixed offset `tz_offset_minutes`, east positive."""
-    now = time.time() if now is None else now
-    tz = tz or timezone(timedelta(minutes=tz_offset_minutes))
-    clock = LocalClock(tz)
-    ignoring = frozenset(ignoring)
-    material = material_loss_points(config)
-    classifier = getattr(config, "classifier", None)
-    degraded_pct = getattr(classifier, "degraded_loss_pct", 15.0)
-    busy_pct = getattr(classifier, "busy_load_pct", 60.0)
-
-    cfg_targets = [t for t in _targets(config) if getattr(t, "enabled", True) is not False]
-    order = [t.id for t in cfg_targets]
-    categories = {t.id: category_of(t) for t in cfg_targets}
-    path = [(t, categories[t]) for t in order]
-
-    # 1. the hops: the baseline window's minute rows, once; the window's are a slice of them
+async def _fold_minute_rows(repository, categories: Mapping[str, str], raw: Sequence[Mapping[str, Any]], start: float,
+                            end: float, now: float, clock: LocalClock, rules: Rules):
+    """Step 1: the baseline window's minute rows, read once and folded per hop (the window's rows are a slice of them).
+    Only the minutes around the incidents `raw` are kept as rows (for the close-ups); the rest are folded sums.
+    Returns the folds by target and every minute that has a probe of any target (for the no-data gaps)."""
     base_start = end - rules.baseline_days * DAY
     w0, w1 = int(start // 60), int(end // 60)
-    # the incidents first: the close-ups read the minutes around them, the only rows kept besides the folded sums
-    raw = await incident_rows(repository, start, end)
     pad = rules.closeup_minutes_around
     wanted: set = set()
     first_minute = int(base_start // 60)
@@ -921,7 +902,12 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
                     a[0].append(r[4])
                 a[1] += r[2]
                 a[2] += r[2] - r[3]
-    per_target: Dict[str, List[MinuteRow]] = {t: f.kept for t, f in folds.items()}
+    return folds, minutes_seen
+
+
+def _hop_facts(order: Sequence[str], folds: Mapping[str, _HopFold], categories: Mapping[str, str],
+               ignoring: frozenset, material: float, rules: Rules) -> List[HopFact]:
+    """Step 1, continued: each hop's baseline and the window's deviation from it, in path order."""
     hops = []
     for t in order:
         f = folds.get(t)
@@ -930,18 +916,13 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         base = _baseline_of(f.sent, f.ok, f.avgs, f.p90s, f.jits, f.minutes, rules)
         win = _deviation(f.w_minutes, f.w_sent, f.w_ok, f.w_avgs, f.w_lossy, base, material, rules)
         hops.append(HopFact(t, categories[t], t in ignoring, base, win))
-    by_minute = _LazyMinutes(per_target)   # only the incidents' close-ups look minutes up
+    return hops
 
-    # 2. the incidents and their episodes (one batched query)
-    # host-app outages are not the network's; by kind once the services feature registered it, by cause always
-    network = [r for r in raw if not is_service_kind(r["kind"])
-               and incident_cause(r["kind"], r["cause_code"], r.get("description")) != "service"]
-    peaks: Dict[Any, Dict[str, float]] = {}
-    episodes = await episode_loss(repository, [(r["id"], r["start_time"], r["end_time"] if r["end_time"] is not None
-                                                else now) for r in network], peaks)
-    normals = {h.target_id: h.baseline.normal_ms for h in hops}
 
-    # 3. events: the modules', the core's changes and its no-data gaps, in start order
+async def _pack_events(repository, events: Sequence[Any], event_kinds: Any, minutes_seen: set, start: float,
+                       end: float, rules: Rules):
+    """Step 3: the events: the modules', the core's changes and its no-data gaps, in start order. Returns the kinds by
+    code, where each kind came from ("core" or "module"), the changes, the gaps and the events."""
     kinds = core_kinds(rules)
     sources = {c: "core" for c in kinds}
     kinds.update(_kinds_map(event_kinds))
@@ -955,11 +936,19 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
     all_events += [SimpleNamespace(code="nodata", start=a, end=b, subject="", value=None) for a, b in gaps]
     all_events = [e for e in all_events if e.code in kinds]
     all_events.sort(key=lambda e: e.start)
+    return kinds, sources, changes, gaps, all_events
+
+
+def _incident_facts(network: Sequence[Mapping[str, Any]], episodes: Mapping[Any, Any],
+                    peaks: Mapping[Any, Mapping[str, float]], normals: Mapping[str, Optional[float]],
+                    path: Sequence[Tuple[str, str]], categories: Mapping[str, str], ignoring: frozenset,
+                    material: float, degraded_pct: float, all_events: Sequence[Any], kinds: Mapping[str, Any],
+                    sources: Mapping[str, str], now: float, rules: Rules):
+    """Step 4: one fact per network incident (shape, matched events, lost time, confidence, score), ranked. Returns the
+    facts and each incident's span (the loss, if longer than the incident)."""
     starts = [e.start for e in all_events]
     max_len = max((e.end - e.start for e in all_events), default=0.0)
     max_reach = max((k.reach_seconds for k in kinds.values()), default=0.0)
-
-    # 4. one fact per incident
     facts: List[IncidentFact] = []
     spans: Dict[int, Tuple[float, float]] = {}
     for r in network:
@@ -993,9 +982,15 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
             confidence=level, confidence_reason=why, score=score(lost_for, shape, r["severity"], rules, duration),
             latency=latency, latency_normal=normal_before, peaks=peaks.get(r["id"], {})))
     rank_incidents(facts)
-    real = [i for i in facts if not i.expected]
+    return facts, spans
 
-    # 5. caps, close-ups
+
+async def _incident_listing(repository, facts: Sequence[IncidentFact], episodes: Mapping[Any, Any],
+                            by_minute: _LazyMinutes, order: List[str], categories: Mapping[str, str], detail: str,
+                            scope: str, incident_id: Optional[int], rules: Rules):
+    """Step 5: which incidents are listed (the caps), which get a close-up, and the close-ups. Returns the focus
+    incident (scope "incident"; else None), the listed ids in time order, the unlisted counts by cause and the
+    close-ups."""
     n_rows, n_close = rules.incident_rows[detail], rules.closeups[detail]
     by_rank = sorted(facts, key=lambda i: i.rank)
     focus = next((i for i in facts if i.id == incident_id), None) if scope == "incident" else None
@@ -1014,8 +1009,12 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         if scope == "incident" and inc is focus:
             cu.rows_10s = await _rows_10s(repository, inc, cu.columns, rules)
         closeups.append(cu)
+    return focus, listed, more, closeups
 
-    # 6. summaries over the unexpected incidents
+
+def _verdict_counts(real: Sequence[IncidentFact]):
+    """Step 6: per cause, how many unexpected incidents the verdict had low, medium and high confidence in; and how
+    many incidents each event code coincided with."""
     verdicts: Dict[str, Dict[str, int]] = {}
     coincided: Counter = Counter()
     for i in real:
@@ -1023,6 +1022,12 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         v[i.confidence] += 1
         v["total"] += 1
         coincided.update({m.code for m in i.events})
+    return verdicts, coincided
+
+
+def _time_of_day_profile(order: Sequence[str], categories: Mapping[str, str], folds: Mapping[str, _HopFold],
+                         rules: Rules) -> List[Dict[str, Any]]:
+    """Step 6, continued: the key hops' median latency and loss by block of the day."""
     key_ids = [next((t for t in order if categories[t] == role and t in folds), None) for role in KEY_ROLES]
     profile = []
     for t in filter(None, key_ids):
@@ -1030,11 +1035,89 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         profile.append({"target_id": t, "blocks": [
             {"hours": (k * rules.block_hours, (k + 1) * rules.block_hours), "median_ms": median(a[0]) if a[0] else None,
              "loss_pct": round(a[2] * 100.0 / a[1], 2) if a[1] else None} for k, a in enumerate(acc)]})
+    return profile
+
+
+def _per_day(real: Sequence[IncidentFact], clock: LocalClock, start: float, end: float) -> List[Dict[str, Any]]:
+    """Step 6, continued: the unexpected incidents and the minutes lost on each local day of the window."""
     days = range(clock.day(start), clock.day(max(start, end - 1e-6)) + 1)
-    per_day = [{"day": day_name(d),
-                "incidents": sum(1 for i in real if clock.day(i.start) == d),
-                "lost_minutes": round(sum(i.lost_for for i in real if clock.day(i.start) == d) / 60.0, 1)}
-               for d in days]
+    return [{"day": day_name(d),
+             "incidents": sum(1 for i in real if clock.day(i.start) == d),
+             "lost_minutes": round(sum(i.lost_for for i in real if clock.day(i.start) == d) / 60.0, 1)}
+            for d in days]
+
+
+def _rules_shown(rules: Rules, material: float, degraded_pct: float, busy_pct: float) -> Dict[str, Any]:
+    """The thresholds the pack states about itself."""
+    return {"slow_factor": rules.slow_factor, "slow_extra_ms": rules.slow_extra_ms,
+            "notable_median_factor": rules.notable_median_factor, "notable_slow_share": rules.notable_slow_share,
+            "notable_loss_factor": rules.notable_loss_factor, "material_loss_points": material,
+            "degraded_loss_pct": degraded_pct, "busy_load_pct": busy_pct, "baseline_days": rules.baseline_days,
+            "cluster_gap_seconds": rules.cluster_gap_seconds}
+
+
+async def collect_pack_facts(repository, config, *, start: float, end: float, events: Sequence[Any] = (),
+                             event_kinds: Any = (), ignoring: Iterable[str] = (), detail: str = "compact",
+                             scope: str = "window", incident_id: Optional[int] = None, tz_offset_minutes: int = 0,
+                             now: Optional[float] = None, rules: Rules = RULES,
+                             tz: Optional[tzinfo] = None) -> PackFacts:
+    """Everything the pack's core states, decided from the stored data for the window [start, end].
+
+    `events`: the modules' ModuleEvents for the window (objects with code, start, end, subject, value);
+    `event_kinds`: their EventKinds (objects with code, phrase, supports, reach_seconds), a mapping by code or an
+    iterable. Both are only read, by attribute: this module imports nothing from the modules.
+    `ignoring`: the hops that ignore ping now (engine.path_rules); `detail`: "compact" or "detailed" (the caps);
+    `scope`: "window", or "incident" with `incident_id` (that incident is first in the close-ups and gets the 10-second
+    rows; `start`..`end` is the window around it). `tz`: the local time zone (a named zone follows its daylight-saving
+    changes); without it, the fixed offset `tz_offset_minutes`, east positive."""
+    now = time.time() if now is None else now
+    tz = tz or timezone(timedelta(minutes=tz_offset_minutes))
+    clock = LocalClock(tz)
+    ignoring = frozenset(ignoring)
+    material = material_loss_points(config)
+    classifier = getattr(config, "classifier", None)
+    degraded_pct = getattr(classifier, "degraded_loss_pct", 15.0)
+    busy_pct = getattr(classifier, "busy_load_pct", 60.0)
+
+    cfg_targets = [t for t in _targets(config) if getattr(t, "enabled", True) is not False]
+    order = [t.id for t in cfg_targets]
+    categories = {t.id: category_of(t) for t in cfg_targets}
+    path = [(t, categories[t]) for t in order]
+
+    # 1. the hops: the baseline window's minute rows, once; the window's are a slice of them
+    # the incidents first: the close-ups read the minutes around them, the only rows kept besides the folded sums
+    raw = await incident_rows(repository, start, end)
+    folds, minutes_seen = await _fold_minute_rows(repository, categories, raw, start, end, now, clock, rules)
+    per_target: Dict[str, List[MinuteRow]] = {t: f.kept for t, f in folds.items()}
+    hops = _hop_facts(order, folds, categories, ignoring, material, rules)
+    by_minute = _LazyMinutes(per_target)   # only the incidents' close-ups look minutes up
+
+    # 2. the incidents and their episodes (one batched query)
+    # host-app outages are not the network's; by kind once the services feature registered it, by cause always
+    network = [r for r in raw if not is_service_kind(r["kind"])
+               and incident_cause(r["kind"], r["cause_code"], r.get("description")) != "service"]
+    peaks: Dict[Any, Dict[str, float]] = {}
+    episodes = await episode_loss(repository, [(r["id"], r["start_time"], r["end_time"] if r["end_time"] is not None
+                                                else now) for r in network], peaks)
+    normals = {h.target_id: h.baseline.normal_ms for h in hops}
+
+    # 3. events: the modules', the core's changes and its no-data gaps, in start order
+    kinds, sources, changes, gaps, all_events = await _pack_events(repository, events, event_kinds, minutes_seen,
+                                                                   start, end, rules)
+
+    # 4. one fact per incident
+    facts, spans = _incident_facts(network, episodes, peaks, normals, path, categories, ignoring, material,
+                                   degraded_pct, all_events, kinds, sources, now, rules)
+    real = [i for i in facts if not i.expected]
+
+    # 5. caps, close-ups
+    focus, listed, more, closeups = await _incident_listing(repository, facts, episodes, by_minute, order, categories,
+                                                            detail, scope, incident_id, rules)
+
+    # 6. summaries over the unexpected incidents
+    verdicts, coincided = _verdict_counts(real)
+    profile = _time_of_day_profile(order, categories, folds, rules)
+    per_day = _per_day(real, clock, start, end)
 
     # 7. the window's first elevated hop (the dossier's rule, device-free)
     dossier = await collect_dossier_facts(repository, config, max(1, math.ceil((end - start) / 3600.0)), end,
@@ -1056,14 +1139,10 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         no_data=gaps, profile=profile, per_day=per_day,
         primary_hop=dossier.primary["target_id"] if dossier.primary else None,
         later_lossy=[h["target_id"] for h in dossier.later_lossy], max_lan_loss=dossier.max_lan_loss,
-        rules={"slow_factor": rules.slow_factor, "slow_extra_ms": rules.slow_extra_ms,
-               "notable_median_factor": rules.notable_median_factor, "notable_slow_share": rules.notable_slow_share,
-               "notable_loss_factor": rules.notable_loss_factor, "material_loss_points": material,
-               "degraded_loss_pct": degraded_pct, "busy_load_pct": busy_pct, "baseline_days": rules.baseline_days,
-               "cluster_gap_seconds": rules.cluster_gap_seconds},
+        rules=_rules_shown(rules, material, degraded_pct, busy_pct),
         event_summaries=summaries, busy_latency=loaded,
         labels_of_events={c: getattr(k, "label", "") or c for c, k in kinds.items()},
-        service_outages=_service_outages([r for r in raw if r not in network], now),
+        service_outages=_service_outages(_rows_not_in(raw, network), now),
         load_codes=tuple(sorted(c for c, k in kinds.items() if "load" in getattr(k, "supports", ()))),
         tz=tz, outages=outages_of(network, config, now), outage_gap_minutes=gap_minutes(config),
     )

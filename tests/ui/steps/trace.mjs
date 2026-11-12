@@ -25,7 +25,7 @@ export const steps = [
             { hop_number: 1, ip: "192.0.2.10", rtt_ms: 0.6, label: "Hop 1" },
             { hop_number: 2, ip: "198.51.100.1", rtt_ms: 9.6, label: "Hop 2" },
             { hop_number: 3, ip: null, rtt_ms: null, label: "Request Timed Out" },
-            { hop_number: 4, ip: body.target_host, rtt_ms: 11.6, label: "Hop 4" }]), { status: 200 }));
+            { hop_number: 4, ip: body.target_host === "dest.example.com" ? "198.51.100.77" : body.target_host, rtt_ms: 11.6, label: "Hop 4" }]), { status: 200 }));
         }
         if (opts && opts.method === "POST" && String(url).endsWith("/api/targets")) { window.__posted.push(["target", body]); return Promise.resolve(new Response("{}", { status: 200 })); }
         return window.__realFetch(url, opts);
@@ -53,6 +53,12 @@ export const steps = [
     await click("#tracerouteResults button[data-arg='1']");
     await until(() => window.__posted.filter((p) => p[0] === "target").length === 2);
     eq("the stage picked is the category sent", await page.evaluate(() => window.__posted.filter((p) => p[0] === "target")[1][1].category), "gateway");
+    // a host name: the hop that ends the trace is the destination, whatever address it has
+    await page.$eval("#traceTargetInput", (i) => { i.value = "dest.example.com"; });
+    await click("#btnRunTrace");
+    await until(() => document.querySelectorAll("#tracerouteResults tbody tr").length === 4 && /198\.51\.100\.77/.test(document.getElementById("tracerouteResults").textContent));
+    eq("for a host name the last hop is offered as the internet", await page.$$eval("#tracerouteResults select", (els) => els.map((e) => e.value).join()), "local,isp,public");
+    ok("a one-line status is announced, not the table", /Trace finished: 4 hops, 3 answered/.test(await text("#traceStatus")) && (await page.$eval("#tracerouteResults", (e) => e.getAttribute("aria-live"))) === null);
     await page.$eval("#traceTargetInput", (i) => { i.value = "bad.example"; });
     await click("#btnRunTrace");
     await until(() => /The trace failed/.test(document.getElementById("tracerouteResults").textContent));

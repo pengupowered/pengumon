@@ -20,6 +20,7 @@ from typing import Callable, List, Optional
 
 from httpx import ASGITransport, AsyncClient
 
+from pengumon.analysis import incident as analysis_incident
 from pengumon.db import probes as probes_module
 from pengumon.db.repository import DatabaseRepository
 from pengumon.state import STATE_ATTR, AppState
@@ -359,6 +360,8 @@ async def run_scenario(name: str, tmp_path, monkeypatch) -> dict:
     s = Seed()
     SCENARIOS[name](s)
     monkeypatch.setattr(probes_module, "time", SimpleNamespace(time=lambda: NOW, monotonic=__import__("time").monotonic))
+    # the inspector's clock: an open incident has lasted until now, and open_incident is inspected 10 s after it began
+    monkeypatch.setattr(analysis_incident, "time", SimpleNamespace(time=lambda: T0 + 10.0))
     repo = DatabaseRepository(db_path=str(tmp_path / f"{name}.db"))
     await repo.initialize()
     await repo.insert_samples(s.samples)

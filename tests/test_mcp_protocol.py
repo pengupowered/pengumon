@@ -61,7 +61,7 @@ async def test_ping_and_tools_list():
     assert (await protocol.handle(rpc("ping", id="a"), AppState())).body == {"jsonrpc": "2.0", "id": "a", "result": {}}
     tools = (await protocol.handle(rpc("tools/list"), AppState())).body["result"]["tools"]
     assert [t["name"] for t in tools] == ["status", "incidents", "incident", "report", "devices", "services", "speed_tests",
-                                       "ai_pack"]
+                                       "traffic", "ai_pack"]
     for tool in tools:
         assert tool["description"].strip() and tool["inputSchema"]["type"] == "object"
         assert tool["inputSchema"]["additionalProperties"] is False

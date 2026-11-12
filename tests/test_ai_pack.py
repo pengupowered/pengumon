@@ -266,3 +266,41 @@ def test_a_timed_list_over_its_budget_gets_shorter_before_any_bullet_goes():
     assert versions[-1] in text and "the last bullet." in text and full not in text
     assert "docsis: bullets shortened 1" in pack.trimmed
 
+
+
+def test_a_hop_probed_by_a_socket_says_so_in_its_note_and_a_ping_hop_is_unchanged():
+    facts = canary_facts()
+    hops = list(facts.hops)
+    tcp = dataclasses.replace(hops[2], probe="TCP port 443")  # the ISP hop, which ignores its probe
+    web = dataclasses.replace(hops[3], probe="HTTPS request")
+    md = render_pack(dataclasses.replace(facts, hops=tuple(hops[:2] + [tcp, web] + hops[4:])), "full").markdown
+    row_tcp = next(line for line in md.split("\n") if "198.51.100.1" in line and line.startswith("|"))
+    assert "probed by TCP port 443" in row_tcp and "ignores its probe" in row_tcp and "ignores ping" not in row_tcp
+    row_web = next(line for line in md.split("\n") if "192.0.2.53" in line and line.startswith("| "))
+    assert "probed by HTTPS request (time to the server's answer, not a round trip)" in row_web
+    plain = render_pack(facts, "full").markdown
+    assert "probed by" not in plain and "ignores ping" in plain
+
+
+async def test_a_pack_built_for_a_path_with_socket_hops_names_the_method_in_the_hop_table_and_the_environment(tmp_path):
+    repo = DatabaseRepository(db_path=str(tmp_path / "socket.db"))
+    real_time = time.time
+    time.time = lambda: END + 30
+    try:
+        await repo.initialize()
+        config = setup_a_config()
+        config.devices = []
+        await seed(repo, config, END)
+        config.targets[3] = config.targets[3].model_copy(update={"probe": "tcp", "port": 443})
+        config.targets[4] = config.targets[4].model_copy(
+            update={"category": "custom", "probe": "http", "http_path": "/secret-path"})
+        out = await build_ai_pack(repo, config, scope="window", hours=24, incident_id=None, level="full",
+                                  detail="short", devices=(), live=None, tz_offset_minutes=-300)
+    finally:
+        time.time = real_time
+        await repo.close()
+    md = out["markdown"]
+    assert "probed by TCP port 443" in md and "probed by HTTPS request (time to the server's answer" in md
+    assert "1 hop is probed by a TCP connection instead of a ping" in md
+    assert "1 is probed by an HTTP request (the time to the server's answer, not a round trip)." in md
+    assert "secret-path" not in md  # the path of a request never reaches the pack

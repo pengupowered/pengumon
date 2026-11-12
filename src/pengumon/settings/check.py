@@ -28,10 +28,11 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from pengumon.config import AppConfig, load_config, read_config_file
-from pengumon.notify.settings import SECRET_PREFIX
+from pengumon.notify.channels import resolve_headers
 from pengumon.secrets import SecretStore, resolve_slot
 from pengumon.settings import lenient, registry
-from pengumon.settings.importer import RECOVERY_KEY, get_path, jsonable, present
+from pengumon.settings.dotted import present
+from pengumon.settings.importer import RECOVERY_KEY, get_path, jsonable
 
 
 def _copy_db(source: Path, target: Path) -> None:
@@ -64,14 +65,8 @@ def _entries(path: Path) -> Dict[str, int]:
 
 def _resolved_headers(headers: Dict[str, str], store: SecretStore) -> Dict[str, Optional[str]]:
     """A webhook's headers with each `secret:<name>` replaced by that secret (to compare, never to print)."""
-    out: Dict[str, Optional[str]] = {}
-    for name, text in headers.items():
-        if isinstance(text, str) and text.startswith(SECRET_PREFIX):
-            out[name] = resolve_slot(f"webhook_header.{text[len(SECRET_PREFIX):]}", store, env={},
-                                     secrets_dir=None)[0]
-        else:
-            out[name] = text
-    return out
+    return resolve_headers(headers, lambda name: resolve_slot(f"webhook_header.{name}", store, env={},
+                                                              secrets_dir=None)[0])
 
 
 def _hooks(config: AppConfig, store: SecretStore) -> List[dict]:
@@ -93,6 +88,48 @@ def _old_config(config_path: Path, out: Callable[[str], None]) -> Tuple[AppConfi
         # the earlier builds confirmed recovery after the onset count (there was no recovery setting)
         config.classifier.consecutive_successes_for_recovery = config.classifier.consecutive_failures_for_incident
     return config, refused
+
+
+def _compare_values(raw: dict, file_keys: List[str], old: AppConfig, new: AppConfig, report: Dict[str, str],
+                    out: Callable[[str], None]) -> int:
+    """Each setting the file sets, then the others, old build against new; returns the number of problems."""
+    problems = 0
+    out(f"values: {len(file_keys)} set in config.yaml")
+    for key in file_keys:
+        if key in report:
+            out(f"  {key}: skipped ({report[key]})")
+            problems += 1
+        elif jsonable(get_path(old, key)) == jsonable(get_path(new, key)):
+            out(f"  {key}: same")
+        else:
+            out(f"  {key}: differs")
+            problems += 1
+    other = [s.key for s in registry.SETTINGS if s.key not in file_keys
+             and jsonable(get_path(old, s.key)) != jsonable(get_path(new, s.key))]
+    out(f"  other keys ({len(registry.SETTINGS) - len(file_keys)}, at their defaults): "
+        + (f"differ: {', '.join(other)}" if other else "same"))
+    return problems + len(other)
+
+
+def _compare_lists(raw: dict, old: AppConfig, new: AppConfig, store: SecretStore, out: Callable[[str], None]) -> int:
+    """Each list item by item, old build against new; returns the number of problems."""
+    problems = 0
+    for name, spec in registry.LISTS.items():
+        if name == "webhooks":
+            before_items, after_items = _hooks(old, store), _hooks(new, store)
+        else:
+            before_items = jsonable(list(get_path(old, spec.path)))
+            after_items = jsonable(list(get_path(new, spec.path)))
+        in_file = present(raw, spec.path)
+        state = "set in config.yaml" if in_file else "default"
+        out(f"list {name} ({state}): {len(before_items)} item(s) before, {len(after_items)} after")
+        if len(before_items) != len(after_items):
+            problems += 1
+        for i in range(max(len(before_items), len(after_items))):
+            same = i < len(before_items) and i < len(after_items) and before_items[i] == after_items[i]
+            out(f"  [{i}]: {'same' if same else 'differs'}")
+            problems += 0 if same else 1
+    return problems
 
 
 async def _run(config_path: Path, db_copy: Path, secrets_copy: Path, live: bool, out: Callable[[str], None]) -> int:
@@ -123,39 +160,9 @@ async def _run(config_path: Path, db_copy: Path, secrets_copy: Path, live: bool,
         new = manager.config
         report = {r.get("key"): r.get("reason") for r in manager.import_report()}
 
-        problems = 0
         file_keys = [s.key for s in registry.SETTINGS if present(raw, s.key)]
-        out(f"values: {len(file_keys)} set in config.yaml")
-        for key in file_keys:
-            if key in report:
-                out(f"  {key}: skipped ({report[key]})")
-                problems += 1
-            elif jsonable(get_path(old, key)) == jsonable(get_path(new, key)):
-                out(f"  {key}: same")
-            else:
-                out(f"  {key}: differs")
-                problems += 1
-        other = [s.key for s in registry.SETTINGS if s.key not in file_keys
-                 and jsonable(get_path(old, s.key)) != jsonable(get_path(new, s.key))]
-        out(f"  other keys ({len(registry.SETTINGS) - len(file_keys)}, at their defaults): "
-            + (f"differ: {', '.join(other)}" if other else "same"))
-        problems += len(other)
-
-        for name, spec in registry.LISTS.items():
-            if name == "webhooks":
-                before_items, after_items = _hooks(old, store), _hooks(new, store)
-            else:
-                before_items = jsonable(list(get_path(old, spec.path)))
-                after_items = jsonable(list(get_path(new, spec.path)))
-            in_file = present(raw, spec.path)
-            state = "set in config.yaml" if in_file else "default"
-            out(f"list {name} ({state}): {len(before_items)} item(s) before, {len(after_items)} after")
-            if len(before_items) != len(after_items):
-                problems += 1
-            for i in range(max(len(before_items), len(after_items))):
-                same = i < len(before_items) and i < len(after_items) and before_items[i] == after_items[i]
-                out(f"  [{i}]: {'same' if same else 'differs'}")
-                problems += 0 if same else 1
+        problems = _compare_values(raw, file_keys, old, new, report, out)
+        problems += _compare_lists(raw, old, new, store, out)
         for key, why in report.items():
             if key not in file_keys:
                 out(f"skipped: {key} ({why})")

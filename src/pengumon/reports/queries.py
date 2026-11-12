@@ -1,15 +1,23 @@
-"""SQL only the reports use, on the per-minute rollups. Each function takes the repository and goes through its public
+"""SQL only the reports use, on the rollups. Each function takes the repository and goes through its public
 `flush_samples()`, `read()`, `target_key()` and `shown()` (hops removed from the path are left out), so the repository
 itself holds no report-specific query.
 
 Days and hours are the wall clock's in the zone the caller passes (timeofday.viewer_zone): a named zone follows daylight
 saving, so the day the clocks go back has 25 hours (its repeated hour counts twice in that hour's bucket) and the day
-they go forward 23."""
+they go forward 23.
 
+The day, hour and block totals read the quarter-hour rollups (rollup_15m) for the whole quarters of the window and the
+per-minute ones (rollup_1m) for its partial quarters (db/rollups.py), which gives the per-minute answer exactly while
+rollup_1m covers the window. Where it no longer does (older than rollup_retention_days), a window edge that is not on a
+quarter is rounded out to the quarter. A zone whose offset is not whole quarter hours (a fixed offset of an odd
+number of minutes) is read from rollup_1m alone, as before."""
+
+import re
 import time
 from datetime import timezone, tzinfo
 from typing import Any, AsyncIterator, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
+from pengumon.db.rollups import local_time_sql, merged_rows_sql, minute_floor, quarter_aligned
 from pengumon.incidents.loss import probe_window
 from pengumon.timeofday import clock_changes, utc_offset
 
@@ -33,21 +41,35 @@ async def loss_grid_rows(repository, start_time: float, tz: tzinfo = timezone.ut
                          per_day: bool = True, now: Optional[float] = None) -> List[Dict[str, Any]]:
     """Probes sent and lost per calendar day and hour on the clock in `tz` since start_time, all targets together but
     the ones in `exclude` (target keys: the hops that ignore ping) and the hops removed from the path, from the
-    per-minute rollups. per_day=False: per hour of the day alone ("day" is ""), the reliability report's loss by hour.
-    Only the hours that have probes are returned."""
+    rollups (see the module docstring). per_day=False: per hour of the day alone ("day" is ""), the reliability
+    report's loss by hour. Only the hours that have probes are returned."""
     await repository.flush_samples()
-    local, params = local_seconds_sql(tz, start_time, now or time.time())
-    day = "strftime('%Y-%m-%d', t, 'unixepoch')" if per_day else "''"
+    end_time = now or time.time()
     async with repository.read() as db:
-        async with db.execute(
-            f"""
-            SELECT {day} AS day, CAST(strftime('%H', t, 'unixepoch') AS INTEGER) AS hour,
-                   target, SUM(n), SUM(n) - SUM(ok)
-            FROM (SELECT {local} AS t, target, n, ok FROM rollup_1m WHERE minute >= ?)
-            GROUP BY day, hour, target
-            """,
-            (*params, int(start_time // 60)),
-        ) as cursor:
+        if quarter_aligned(tz, start_time, end_time):
+            # summed per local hour first (whole quarters), then the hour's date and number from one strftime each
+            rows_sql, rows_params = merged_rows_sql(("n", "ok"), int(start_time // 60), None, await minute_floor(db))
+            local, params = local_time_sql(tz, start_time, end_time)
+            day = "strftime('%Y-%m-%d', h * 3600, 'unixepoch')" if per_day else "''"
+            sql = f"""
+                SELECT {day} AS day, CAST(strftime('%H', h * 3600, 'unixepoch') AS INTEGER) AS hour,
+                       target, SUM(sent), SUM(lost)
+                FROM (SELECT {local} / 3600 AS h, target, SUM(n) AS sent, SUM(n) - SUM(ok) AS lost
+                      FROM ({rows_sql}) GROUP BY h, target)
+                GROUP BY day, hour, target
+            """
+            params = [*params, *rows_params]
+        else:
+            local, params = local_seconds_sql(tz, start_time, end_time)
+            day = "strftime('%Y-%m-%d', t, 'unixepoch')" if per_day else "''"
+            sql = f"""
+                SELECT {day} AS day, CAST(strftime('%H', t, 'unixepoch') AS INTEGER) AS hour,
+                       target, SUM(n), SUM(n) - SUM(ok)
+                FROM (SELECT {local} AS t, target, n, ok FROM rollup_1m WHERE minute >= ?)
+                GROUP BY day, hour, target
+            """
+            params = [*params, int(start_time // 60)]
+        async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
     skip = set(exclude) | set(getattr(repository, "hidden_targets", ()))  # and the hops removed from the path
     cells: Dict[tuple, List[int]] = {}
@@ -71,19 +93,30 @@ async def hourly_loss(repository, start_time: float, tz: tzinfo = timezone.utc, 
 async def daily_availability(repository, start_time: float, tz: tzinfo = timezone.utc,
                              now: Optional[float] = None) -> List[Dict[str, Any]]:
     """Probes sent and answered per target and calendar day (on the clock in `tz`) since start_time, day order, from
-    the per-minute rollups; hops removed from the path are left out."""
+    the rollups (see the module docstring); hops removed from the path are left out."""
     await repository.flush_samples()
-    local, params = local_seconds_sql(tz, start_time, now or time.time())
+    end_time = now or time.time()
     async with repository.read() as db:
-        async with db.execute(
-            f"""
-            SELECT target, strftime('%Y-%m-%d', t, 'unixepoch') AS day, SUM(n), SUM(ok)
-            FROM (SELECT {local} AS t, target, n, ok FROM rollup_1m WHERE minute >= ?)
-            GROUP BY target, day
-            ORDER BY day
-            """,
-            (*params, int(start_time // 60)),
-        ) as cursor:
+        if quarter_aligned(tz, start_time, end_time):
+            rows_sql, rows_params = merged_rows_sql(("n", "ok"), int(start_time // 60), None, await minute_floor(db))
+            local, params = local_time_sql(tz, start_time, end_time)
+            sql = f"""
+                SELECT target, strftime('%Y-%m-%d', d * 86400, 'unixepoch') AS day, sent, ok
+                FROM (SELECT {local} / 86400 AS d, target, SUM(n) AS sent, SUM(ok) AS ok
+                      FROM ({rows_sql}) GROUP BY d, target)
+                ORDER BY day
+            """
+            params = [*params, *rows_params]
+        else:
+            local, params = local_seconds_sql(tz, start_time, end_time)
+            sql = f"""
+                SELECT target, strftime('%Y-%m-%d', t, 'unixepoch') AS day, SUM(n), SUM(ok)
+                FROM (SELECT {local} AS t, target, n, ok FROM rollup_1m WHERE minute >= ?)
+                GROUP BY target, day
+                ORDER BY day
+            """
+            params = [*params, int(start_time // 60)]
+        async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
     return repository.shown([{"target_id": repository.target_key(t), "day": day, "sent": sent, "ok": ok}
                              for t, day, sent, ok in rows])
@@ -91,24 +124,35 @@ async def daily_availability(repository, start_time: float, tz: tzinfo = timezon
 
 async def block_stats(repository, start_time: float, end_time: float, block_seconds: int,
                       tz: tzinfo = timezone.utc) -> List[Dict[str, Any]]:
-    """Probes sent and answered per target and block of the minutes [start_time, end_time), from the per-minute
-    rollups. Block k covers the seconds k * block_seconds to (k + 1) * block_seconds on the clock in `tz` (counted from
-    1970-01-01 00:00 on that clock), so with block_seconds 86400 block k is local day k, 23 or 25 hours long on a day
-    the clocks change. `dead_minutes` counts the minutes in which every probe (of at least 10) was lost. Blocks without
-    rollups are not returned."""
+    """Probes sent and answered per target and block of the minutes [start_time, end_time), from the rollups
+    (quarter hours inside, minutes at the edges: see the module docstring). Block k covers the seconds
+    k * block_seconds to (k + 1) * block_seconds on the clock in `tz` (counted from 1970-01-01 00:00 on that clock), so
+    with block_seconds 86400 block k is local day k, 23 or 25 hours long on a day the clocks change. `dead_minutes`
+    counts the minutes in which every probe (of at least 10) was lost. Blocks without rollups are not returned."""
     await repository.flush_samples()
-    local, params = local_seconds_sql(tz, start_time, end_time)
+    block = int(block_seconds)
     async with repository.read() as db:
-        async with db.execute(
-            f"""
-            SELECT target, {local} / {int(block_seconds)} AS block, SUM(n), SUM(ok),
-                   SUM(CASE WHEN ok = 0 AND n >= 10 THEN 1 ELSE 0 END)
-            FROM rollup_1m
-            WHERE minute >= ? AND minute < ?
-            GROUP BY target, block
-            """,
-            (*params, int(start_time // 60), int(end_time // 60)),
-        ) as cursor:
+        if block % 900 == 0 and quarter_aligned(tz, start_time, end_time):
+            rows_sql, rows_params = merged_rows_sql(("n", "ok", "dead"), int(start_time // 60), int(end_time // 60),
+                                                    await minute_floor(db))
+            local, params = local_time_sql(tz, start_time, end_time)
+            sql = f"""
+                SELECT target, {local} / {block} AS block, SUM(n), SUM(ok), SUM(dead)
+                FROM ({rows_sql})
+                GROUP BY target, block
+            """
+            params = [*params, *rows_params]
+        else:
+            local, params = local_seconds_sql(tz, start_time, end_time)
+            sql = f"""
+                SELECT target, {local} / {block} AS block, SUM(n), SUM(ok),
+                       SUM(CASE WHEN ok = 0 AND n >= 10 THEN 1 ELSE 0 END)
+                FROM rollup_1m
+                WHERE minute >= ? AND minute < ?
+                GROUP BY target, block
+            """
+            params = [*params, int(start_time // 60), int(end_time // 60)]
+        async with db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
     return repository.shown([{"target_id": repository.target_key(t), "block": blk, "sent": n, "ok": ok, "dead_minutes": dead}
                              for t, blk, n, ok, dead in rows])
@@ -226,9 +270,15 @@ async def episode_loss(repository, windows: Sequence[Tuple[Any, float, float]],
     return out
 
 
+# a syntactically valid host name (what a hop may be called in a trace); the MCP tools use the same rule
+DNS_NAME = re.compile(r"[A-Za-z0-9_-]{1,63}(?:\.[A-Za-z0-9_-]{1,63})*\.?")
+
+
 async def path_trace_names(repository, limit: int = 50) -> Dict[str, str]:
     """{address: reverse name} from the path traces stored with the latest `limit` incidents that have one, the newest
-    name of an address winning. The provider's routers have such names; the pack shows them as the hops' names."""
+    name of an address winning. The provider's routers have such names; the pack shows them as the hops' names. A
+    reverse name is whatever the owner of the address's zone wrote, and it goes into a text for an AI model: a name
+    that is not a host name (spaces, "Ignore the above and ...") or longer than DNS allows is left out."""
     import json
     async with repository.read() as db:
         async with db.execute(
@@ -243,5 +293,7 @@ async def path_trace_names(repository, limit: int = 50) -> Dict[str, str]:
             continue
         for hop in trace if isinstance(trace, list) else ():
             if isinstance(hop, dict) and hop.get("ip") and hop.get("hostname"):
-                names.setdefault(str(hop["ip"]), str(hop["hostname"]))
+                name = str(hop["hostname"])
+                if len(name) <= 254 and DNS_NAME.fullmatch(name):
+                    names.setdefault(str(hop["ip"]), name)
     return names

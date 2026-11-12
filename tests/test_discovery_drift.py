@@ -325,6 +325,7 @@ async def test_the_daily_loop_waits_for_its_minute_then_checks():
         waits.append(seconds)
         if len(waits) > 2:
             raise asyncio.CancelledError
+        clock[0] += seconds  # a real sleep moves the clock on
 
     clock = [86400.0 * 100]
     drift, _ = checker(Network(ROUTE_A, APPLIED), sleep=sleep, clock=lambda: clock[0], rng=random.Random(3))
@@ -336,7 +337,7 @@ async def test_the_daily_loop_waits_for_its_minute_then_checks():
     with pytest.raises(asyncio.CancelledError):
         await drift.run_daily()
     assert reasons == ["daily", "daily"]
-    assert waits[0] == drift.next_daily(clock[0]) - clock[0]
+    assert waits[0] == drift.next_daily(86400.0 * 100) - 86400.0 * 100
 
 
 async def test_a_check_follows_an_incident_ten_minutes_later_at_most_once_an_hour():
@@ -457,3 +458,72 @@ async def test_the_default_fake_sleep_ends_a_daily_loop_that_would_spin():
     drift, _ = checker(Network(ROUTE_A, APPLIED))
     with pytest.raises(TooManyWaits):
         await drift.run_daily()
+
+
+async def test_dismissing_does_not_wait_for_a_check_that_is_confirming_R4_L3():
+    net = Network(ROUTE_B, APPLIED)
+    gate = asyncio.Event()
+    waiting = asyncio.Event()
+    slow = []
+
+    async def sleep(seconds):
+        if slow:
+            waiting.set()
+            await gate.wait()
+
+    drift, _ = checker(net, sleep=sleep)
+    await drift.check()
+    assert (await drift.public())["state"] == "changed"
+    slow.append(True)  # the next check stops in its confirm delay
+    running = asyncio.ensure_future(drift.check())
+    await asyncio.wait_for(waiting.wait(), 5)
+    dismissed = await asyncio.wait_for(drift.dismiss(), 5)
+    assert dismissed["state"] == "same"
+    gate.set()
+    await running
+    assert (await drift.public())["state"] == "same"  # the dismissal survived the check that ended after it
+
+
+async def test_a_clock_set_back_while_waiting_does_not_run_the_daily_check_early_or_twice_R4_L4():
+    clock = [1000.0]
+    waits = []
+
+    async def sleep(seconds):
+        waits.append(seconds)
+        if len(waits) == 2:
+            clock[0] = 2000.0  # the second wait ends when the (set back) clock really reaches the time
+        if len(waits) > 3:
+            raise asyncio.CancelledError
+
+    net = Network(ROUTE_A, APPLIED)
+    drift, _ = checker(net, sleep=sleep, clock=lambda: clock[0])
+    drift.next_daily = lambda now: 2000.0 if now < 2000.0 else 90_000.0
+    with pytest.raises(asyncio.CancelledError):
+        await drift.run_daily()
+    assert waits[:2] == [1000.0, 1000.0] and len(net.runs) == 1  # the first wake-up (clock still 1000) ran nothing
+
+
+async def test_an_incident_check_is_not_suppressed_by_a_clock_set_back_R4_L4():
+    clock = [50_000.0]
+
+    async def sleep(seconds):
+        pass
+
+    net = Network(ROUTE_A, APPLIED)
+    drift, _ = checker(net, sleep=sleep, clock=lambda: clock[0])
+    drift._last_started = clock[0] + 7200  # the last check started "in the future": the clock was set back
+    drift.incident_ended()
+    await drift._incident_task
+    assert len(net.runs) == 1
+    await drift.close()
+
+
+async def test_an_applied_isp_hop_probed_by_tcp_that_the_trace_does_not_see_is_no_gone_notice():
+    tcp_isp = TargetConfig(id="isp_2", name="Provider hop 2", address="203.0.113.2", category="isp", probe="tcp",
+                           port=443)
+    net = Network(ROUTE_B, [ROUTER, ISP_1, tcp_isp, *SERVERS])
+    drift, sent = checker(net)
+    public = await drift.check()
+    assert changes(public) == [("new", "203.0.113.3")]  # the new hop is still news; the TCP hop is not gone
+    plain = checker(Network(ROUTE_B, APPLIED))[0]
+    assert ("gone", "203.0.113.2") in changes(await plain.check())

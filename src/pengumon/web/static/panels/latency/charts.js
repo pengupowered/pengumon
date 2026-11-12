@@ -12,12 +12,16 @@
 // renderCharts(), which hands the card a new view model (present()).
 
 import { maxLivePoints, state } from '../../js/state.js';
-import { formatClock, formatMs, getTargetInfo, targetList } from '../../js/util.js';
+import { formatClock } from '../../js/clock.js';
+import { formatMs } from '../../js/format.js';
+import { getTargetInfo, targetList } from '../../js/targets.js';
 import { SERIES, combine, memberNames, seriesMembers, shortLabels } from '../../js/path.js';
 import { createCard } from '../../js/cards.js';
 import { primaryDevice } from '../../js/devices.js';
 import { settingsValues, val } from '../../js/settings-values.js';
 import standard from './view.js';
+import { everyWhileVisible } from '../../js/timers.js';
+import { has } from '../../js/values.js';
 
 export const view = { times: [], series: {}, byTarget: {}, lo: [], hi: [], loss: [], lossBy: [], wan: [] };
 
@@ -32,8 +36,7 @@ let noPings = false; // the live targets say this host cannot send pings (probin
 let incidents = []; // [{start, end, level}] for the shaded windows
 let card = null;
 
-const has = (v) => v !== null && v !== undefined;
-const clock = (ts, seconds) => formatClock(ts * 1000, false, !!seconds); // util's formatters are made once; the chart relabels up to 240 points on every message
+const clock = (ts, seconds) => formatClock(ts * 1000, false, !!seconds); // js/clock.js formatters are made once; the chart relabels up to 240 points on every message
 
 export function resetView() {
   view.times = [];
@@ -111,7 +114,7 @@ function legend(data, mode, all, quiet) {
     pingTargets(all).filter((t) => data.byTarget[t.id]).forEach((t) => {
       items.push({ key: `t:${t.id}`, kind: 'line', color: t.color, label: labels[t.id] || t.name, title: t.name, now: newest(data.byTarget[t.id]) });
     });
-    note = 'One line per pinged target, in path order. DNS lookups time a name lookup, not a round trip: see Hop details.';
+    note = 'One line per probed target, in path order. DNS lookups time a name lookup, not a round trip: see Hop details.';
   } else {
     const members = seriesMembers(all);
     const byId = (id) => all.find((t) => t.id === id);
@@ -169,7 +172,7 @@ export function present({ data = view, mode = lineMode, all = targetList(), live
     note: words.note,
     modes: [
       { action: 'setLatencyView', arg: 'path', label: 'Path', title: 'Three lines: router, line and internet', pressed: mode === 'path' },
-      { action: 'setLatencyView', arg: 'targets', label: 'Each target', title: 'One line per pinged target, ISP hops included', pressed: mode === 'targets' }
+      { action: 'setLatencyView', arg: 'targets', label: 'Each target', title: 'One line per probed target, ISP hops included', pressed: mode === 'targets' }
     ],
     memberLines: (seriesId, index) => memberLines(all, data, seriesId, index),
     lossLabel: (index, pct) => lossLabel(all, data, liveNow(), index, pct)
@@ -196,7 +199,7 @@ export function fixture() {
 
 // Hands the card the data now.
 export function renderCharts() {
-  if (card) card.update(present());
+  if (card) card.update(() => present()); // (made only when the card is drawn: not while it is off screen or on a hidden tab)
 }
 
 // Switches between the three path series and one line per target.
@@ -208,7 +211,7 @@ export function setLineMode(mode) {
 
 // Live: one point per message from the targets and the WAN rate that ride on it. A target's value is its newest probe
 // (null when that probe got no answer; last_ms keeps the last answer, which would hide a loss).
-export function updateLiveCharts(message) {
+function updateLiveCharts(message) {
   noPings = (message.targets || []).some((t) => t.enabled !== false && t.probing_unavailable === true);
   if (state.currentMode !== 'live') return;
   const { timestamp, targets } = message;
@@ -260,15 +263,18 @@ export function updateLiveCharts(message) {
 
 // The card, the 1 s feed, and the incident windows the incident log publishes.
 export function mountCharts(bus, section) {
-  card = createCard({ panel: 'latency', root: section.querySelector('.panel-b'), standard, fixture });
+  card = createCard({ panel: 'latency', root: section.querySelector('.panel-b'), standard, fixture, offscreen: 'defer' });
   renderCharts();
   document.addEventListener('zonechange', renderCharts); // the time axis is on the page's clock (a history view gets no messages)
-  bus.subscribe('incidents:list', (list) => {
-    incidents = (list || []).filter((i) => i.kind !== 'service_down').map((i) => ({
+  let listed = [];
+  const shade = () => {
+    incidents = listed.filter((i) => i.kind !== 'service_down').map((i) => ({
       start: i.start_time, end: i.end_time ?? Date.now() / 1000,
       level: i.expected ? 'busy' : i.severity === 'critical' ? 'crit' : 'warn'
     }));
     renderCharts();
-  });
+  };
+  bus.subscribe('incidents:list', (list) => { listed = list || []; shade(); });
+  everyWhileVisible(shade, 60000); // (an ongoing incident's shading reaches "now")
   return bus.subscribe('message', updateLiveCharts);
 }

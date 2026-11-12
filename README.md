@@ -12,7 +12,7 @@
 
 <p align="center">
   <b>Find out where your internet actually breaks: your Wi-Fi, your modem, your provider, or the internet beyond.</b><br>
-  A self-hosted network monitor that pings every hop once a second, explains each outage, and keeps the evidence.
+  A self-hosted network monitor that probes every hop once a second, explains each outage, and keeps the evidence.
 </p>
 
 <p align="center">
@@ -30,6 +30,8 @@ provider a report instead of a hunch.
 
 - **The whole path, live.** This host → router → modem → each provider hop → the internet, with the median latency,
   loss and jitter of every stage and how much each link adds.
+- **Hops that ignore ping.** A hop can be probed by a TCP connection (judged like a ping hop) or an HTTP(S) request
+  (charted, never blamed for an outage) instead ([probing](https://github.com/pengupowered/pengumon/blob/main/docs/probing.md#tcp-and-http-probes)).
 - **Every outage explained.** A classifier places each problem in your home network, the line, the provider or beyond,
   and records an incident with per-hop evidence, the modem's signal and the line load at the time.
   Drops that belong together, such as a line that flaps for half an hour, are shown and alerted as one outage.
@@ -41,13 +43,14 @@ provider a report instead of a hunch.
   what it cannot see) with instructions, to paste into any chat model; nothing is sent anywhere by Pengumon. Full,
   Vague or Anonymized, from the dashboard (or `GET /api/ai-pack`): [the guide](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md).
 - **Let an AI assistant ask.** An optional, read-only [MCP](https://github.com/pengupowered/pengumon/blob/main/docs/mcp.md) endpoint
-  (`/mcp`, off by default, the same sign-in as the API) answers "is the internet OK?" for Claude Code and other MCP clients.
+  (`/mcp`, off by default, with a read-only token of its own that cannot change anything) answers "is the internet OK?" for Claude Code and other MCP clients.
 - **Is the line as fast as you pay for?** An optional scheduled speed test (off by default, with hard limits on the data it
   uses) against Cloudflare, M-Lab or your own LibreSpeed server; with a router that reports WAN counters, the line's own
   rate during the test, read from the router. Latency under load (bufferbloat), a card, the reports and an alert when a
   test comes in slow: [the guide](https://github.com/pengupowered/pengumon/blob/main/docs/speedtest.md).
-- **Your modem and router.** DOCSIS channel levels and codeword errors; router CPU, memory, WAN traffic, connected
-  clients and mesh nodes. Drivers are pluggable: [add your own device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md).
+- **Your modem and router.** DOCSIS channel levels and codeword errors; router CPU, memory, uptime, WAN traffic, connected
+  clients and mesh nodes; on an ASUS router, which devices used the internet and for what (the **Internet use** card
+  reads the router's own Traffic Analyzer). Drivers are pluggable: [add your own device](https://github.com/pengupowered/pengumon/blob/main/docs/adding-a-device.md).
 - **Your own apps too.** HTTP health checks for self-hosted services, with incidents and alerts by [ntfy](https://ntfy.sh) or webhook.
 - **Small and private.** One process (installed natively or in a container) and one SQLite file. Nothing leaves your network unless you turn on
   notifications, the optional OpenTelemetry export or the optional speed test. Works on a phone.
@@ -150,9 +153,9 @@ host" instead of counting as down. Everything is in [docs/configuration.md](http
 | Driver | Devices | Status | What it reads |
 |---|---|---|---|
 | `xfinity_xb` | Xfinity / Comcast XB6, XB7, XB8 gateways | Tested by the maintainer | DOCSIS downstream and upstream levels, SNR, codeword errors |
-| `asuswrt` | AsusWRT routers (RT-AX and others), with AiMesh | Tested by the maintainer | WAN traffic, CPU, memory, clients by band, mesh nodes |
+| `asuswrt` | AsusWRT routers (RT-AX and others), with AiMesh | Tested by the maintainer | WAN traffic, CPU, memory, clients by band, mesh nodes; uptime, WAN link, CPU temperature; traffic per client, hour and app |
 | `openwrt` | OpenWrt routers (LuCI, or rpcd and uhttpd-mod-ubus) | Tested by the maintainer on OpenWrt 24.10 (x86-64 image) | WAN traffic, CPU, memory, model, clients |
-| `snmp` | Anything with an SNMPv2c agent: routers, switches, NAS boxes | Generic (tested against net-snmp 5.9) | WAN (or uplink) traffic, CPU, memory, model |
+| `snmp` | Anything with an SNMPv2c or SNMPv3 agent: routers, switches, NAS boxes | Generic (tested against net-snmp 5.9) | WAN (or uplink) traffic, CPU, memory, model |
 | `upnp_igd` | Routers and gateways that answer UPnP's Internet Gateway Device profile | Generic (new in 0.24) | WAN traffic |
 
 **Generic** means written from a standard: it should work with any device that follows it, but a particular device may
@@ -188,7 +191,7 @@ the Home Assistant recipe are in [docs/webhooks.md](https://github.com/pengupowe
 
 <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/router.png" alt="The router card: WAN traffic against the line capacity, CPU and memory, clients by band and the mesh nodes" width="640">
 
-**Router.** WAN traffic against the line's capacity, CPU and memory, clients by band and per mesh node.
+**Router.** WAN traffic against the line's capacity, CPU and memory, uptime and temperature, clients by band and per mesh node.
 
 <img src="https://raw.githubusercontent.com/pengupowered/pengumon/main/docs/images/modem.png" alt="The cable modem card: downstream power, SNR and upstream power against their good ranges, codeword errors and channel lock" width="640">
 
@@ -227,7 +230,7 @@ one and changing its colors, or add one as a folder: [docs/themes.md](https://gi
 
 - [Install](https://github.com/pengupowered/pengumon/blob/main/docs/install.md): Windows, macOS, Linux, Raspberry Pi and container: the install scripts, the background service, upgrading, removing, verifying a download
 - [Configuration](https://github.com/pengupowered/pengumon/blob/main/docs/configuration.md): Where the files live, the listen address, the first-start import, environment variables; the settings themselves are on the Settings page
-- [Probing](https://github.com/pengupowered/pengumon/blob/main/docs/probing.md): Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, `pengumon doctor`, the Linux sysctl step
+- [Probing](https://github.com/pengupowered/pengumon/blob/main/docs/probing.md): Ping and traceroute over IPv4 and IPv6 on Linux, macOS and Windows, TCP and HTTP probes for a hop that ignores ping, `pengumon doctor`, the Linux sysctl step
 - [Path editor](https://github.com/pengupowered/pengumon/blob/main/docs/path-editor.md): Edit the probe path in the dashboard: hops, roles, groups, Test, Apply, Rediscover, Export and Import, upgrading from 0.17
 - [Discovery](https://github.com/pengupowered/pengumon/blob/main/docs/discovery.md): Finding the path and who operates each hop: what is sent where, how roles are judged
 - [Devices](https://github.com/pengupowered/pengumon/blob/main/docs/devices.md): Modems and routers on the Settings page: supported devices, drivers, capabilities, TLS, credentials
@@ -237,13 +240,13 @@ one and changing its colors, or add one as a folder: [docs/themes.md](https://gi
 - [Speed test](https://github.com/pengupowered/pengumon/blob/main/docs/speedtest.md): The scheduled download and upload test: what it measures and how, what is sent where, data use, the schedule, the slow-line alert
 - [Themes](https://github.com/pengupowered/pengumon/blob/main/docs/themes.md): Adding a theme: the folder, tokens, skins, effects, restyling or drawing a card, the checks every theme passes
 - [Ask AI](https://github.com/pengupowered/pengumon/blob/main/docs/ai-pack.md): The troubleshooting pack for a chat assistant: what it holds, the three detail levels, device modules
-- [MCP](https://github.com/pengupowered/pengumon/blob/main/docs/mcp.md): The read-only endpoint for AI assistants: how to turn it on, the tools, sign-in, security notes
+- [MCP](https://github.com/pengupowered/pengumon/blob/main/docs/mcp.md): The read-only endpoint for AI assistants: how to turn it on, the read token, the tools and what each hides, security notes
 - [Clients](https://github.com/pengupowered/pengumon/blob/main/docs/clients.md): Connected clients and mesh nodes, privacy settings, what is stored
 - [Services](https://github.com/pengupowered/pengumon/blob/main/docs/services.md): Health checks for your own apps and their notifications
 - [Webhooks](https://github.com/pengupowered/pengumon/blob/main/docs/webhooks.md): Alerts to Discord, Slack, Home Assistant or any URL: config, payload, secrets
 - [Telemetry](https://github.com/pengupowered/pengumon/blob/main/docs/telemetry.md): What is stored and sent, logging, OpenTelemetry, ntfy
-- [Security](https://github.com/pengupowered/pengumon/blob/main/docs/security.md): Sign-in password, HTTPS, request guard, environment variables
-- [Storage](https://github.com/pengupowered/pengumon/blob/main/docs/storage.md): Database layout, migrations, upgrade notes
+- [Security](https://github.com/pengupowered/pengumon/blob/main/docs/security.md): Sign-in password and read token, failed sign-in limits, HTTPS, request guard, what viewers can see, environment variables
+- [Storage](https://github.com/pengupowered/pengumon/blob/main/docs/storage.md): Backups, database layout, retention, migrations, upgrade notes
 - [API](https://github.com/pengupowered/pengumon/blob/main/docs/api.md): Data and operations endpoints
 - [Architecture](https://github.com/pengupowered/pengumon/blob/main/docs/architecture.md): Components, start-up order, the live message
 - [Testing](https://github.com/pengupowered/pengumon/blob/main/docs/testing.md): Unit tests, browser tests and lint

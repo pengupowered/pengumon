@@ -1,6 +1,6 @@
 /* The app layer over the design system (tokens.css, components.css, page.css: ported from the redesign mockup).
    Holds what the app has and the mockup does not: panel groups (one <section data-panel> per panel, one card per
-   instance inside it), the modal as a div toggled by .active (util.js openModal), the segmented control's
+   instance inside it), the modal as a div toggled by .active (js/modal.js openModal), the segmented control's
    .active, and the views not redesigned yet. Reads tokens only. */
 
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
@@ -64,7 +64,7 @@
 }
 .help-popover[hidden] { display: none; }
 
-/* ---------- Modal: a div opened with .active (util.js); dialog look on desktop, bottom sheet on phones ---------- */
+/* ---------- Modal: a div opened with .active (js/modal.js); dialog look on desktop, bottom sheet on phones ---------- */
 .modal {
   position: fixed; inset: 0; z-index: var(--z-modal); display: none; align-items: center; justify-content: center;
   padding: 24px; background: var(--scrim); backdrop-filter: blur(2px);

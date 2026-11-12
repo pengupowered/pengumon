@@ -135,3 +135,16 @@ async def test_an_escalation_callback_that_raises_is_contained():
     assert diagnosis.status == "down" and classifier.active_incident.severity == "critical"
 
 
+
+
+async def test_a_speed_tests_own_load_does_not_start_the_dns_cooldown_R4_L5():
+    core = ClassifierCore(ClassifierConfig())
+    slow = [900.0] * 10
+    stats = _stats(("lan", "local", [1.0] * 10), ("gw", "gateway", [2.0] * 10), ("pub", "public", slow))
+    m = round_metrics(stats, [])
+    assert m.upstream_issue(core.config)
+    result = await core.step(m, 500.0, None, testing=True)
+    assert result.verdict.kind == "busy_speedtest"
+    assert core.last_upstream_issue_ts == 0.0
+    await core.step(m, 501.0, None, testing=False)  # the same latency with no test running is an upstream issue
+    assert core.last_upstream_issue_ts == 501.0

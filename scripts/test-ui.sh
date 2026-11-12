@@ -6,7 +6,7 @@
 #   scripts/test-ui.sh -k lint -x        pytest arguments
 #   scripts/test-ui.sh --command <cmd...>  run this command in the container instead of pytest
 # PENGUMON_JUNIT_DIR=<dir> (CI): pytest also writes <dir>/ui.xml (see scripts/test.sh); the one writable mount.
-# The runs (the `full` variant in three slices, six other variants) go side by side with pytest-xdist:
+# The runs (the `full` variant in four slices, six other variants) go side by side with pytest-xdist:
 #   PENGUMON_UI_WORKERS=<n>     parallel runs (default 4, which suits a 4-vCPU CI runner; 1 or 0: one after another).
 #                               `-n <N>` on the command line wins.
 #   PENGUMON_TEST_MEMORY=<size> memory cap, no swap (default: 1g plus 800m per worker, so 4200m with 4: each run is an
@@ -16,9 +16,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${UI_RUNNER_BASE:-localhost/ui-test-runner:1}"
 RUNNER="${UI_RUNNER_DIR:-}"  # optional: a directory with a run.sh taking <image> <command...>
 
-# One browser run may take 240 s (test_ui_smoke.py), so the hang guard (pyproject.toml) allows 300 here.
+# One browser run may take 420 s (test_ui_smoke.py RUN_TIMEOUT_S), so the hang guard (pyproject.toml) allows 480 here.
 workers="${PENGUMON_UI_WORKERS:-4}"
-cmd=(python -m pytest -q -p no:cacheprovider -o faulthandler_timeout=300)
+cmd=(python -m pytest -q -p no:cacheprovider -o faulthandler_timeout=480)
 if [ "$workers" -gt 1 ]; then
     cmd+=(-n "$workers" --dist worksteal)  # worksteal: a worker that is done takes unstarted runs from the others
 fi

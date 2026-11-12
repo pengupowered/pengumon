@@ -3,22 +3,27 @@
 // the hop figures and the path trace. Every figure and grade is the server's; this file only arranges them.
 
 import { registerActions } from '../../js/dispatch.js';
-import { closeModal, escapeHtml, formatClock, getTargetInfo, icon, keepKeyboard, openModal, setBadge, sortTargetsByCanonical, STATUS, targetList } from '../../js/util.js';
+import { closeModal, keepKeyboard, openModal } from '../../js/modal.js';
+import { escapeHtml, numText } from '../../js/escape.js';
+import { formatBytes } from '../../js/format.js';
+import { formatClock } from '../../js/clock.js';
+import { getTargetInfo, sortTargetsByCanonical, targetList } from '../../js/targets.js';
+import { icon, setBadge, STATUS } from '../../js/dom.js';
 import { shortLabels } from '../../js/path.js';
 import { bus } from '../../js/bus.js';
 import { primaryDevice } from '../../js/devices.js';
 import { causeOf, durationOf, formatDuration, levelOfIncident, loadChip, whenText } from './incidents.js';
 import { renderTracks } from './inspector-charts.js';
+import { has } from '../../js/values.js';
 
 const LANE_CELLS = 90;
 const $ = (id) => document.getElementById(id);
-const has = (v) => v !== null && v !== undefined;
 const clock = (ts, seconds = false) => formatClock(ts * 1000, false, seconds);
 const sign = (s) => `${s < 0 ? '−' : '+'}${formatDuration(Math.abs(Math.round(s)))}`;
 const isLost = (s) => s.success === 0 || (s.packet_loss_pct || 0) > 0 || s.latency_ms === null;
 // A hop lost probes when its counts say so: loss_pct is rounded to 0.1 %, and one lost probe in thousands rounds to 0.
 const lostOf = (h) => Math.max(0, h.sent - h.received);
-const lossText = (h) => (lostOf(h) > 0 && h.loss_pct < 0.1 ? '<0.1%' : `${h.loss_pct}%`);
+const lossText = (h) => (lostOf(h) > 0 && h.loss_pct < 0.1 ? '<0.1%' : `${numText(h.loss_pct)}%`);
 let lastWindow = null;
 
 // A target as the rest of the page names it (Router, Gateway, ISP hop N, Internet ...: path.js shortLabels), its configured
@@ -143,15 +148,19 @@ function renderEvidence(data, inc, hops) {
 }
 
 // ---------- Hop figures and path trace ----------
+// How a hop is probed, as it is now (the live targets): an incident from before the hop's probe was changed shows the
+// current method, not the one it was measured with.
+const probeOf = (tid) => ((bus.last('targets') || []).find((t) => t.target_id === tid) || {}).probe_label || '';
+
 function renderHopTable(hops) {
   $('inspHopTableBody').innerHTML = hops.map((h) => `<tr>
-    <td class="lead"><span class="primary" title="${escapeHtml(h.name)}"><i class="key" style="--c:${escapeHtml(getTargetInfo(h.target_id).color)}"></i> ${escapeHtml(h.short)}</span></td>
+    <td class="lead"><span class="primary" title="${escapeHtml(probeOf(h.target_id) ? `${h.name} · ${probeOf(h.target_id)}` : h.name)}"><i class="key" style="--c:${escapeHtml(getTargetInfo(h.target_id).color)}"></i> ${escapeHtml(h.short)}</span></td>
     <td class="aside"><span class="chip">${escapeHtml(h.category)}</span></td>
     <td data-l="Loss" class="r num ${h.received === 0 && h.sent > 0 ? 'ink-crit' : lostOf(h) > 0 ? 'ink-warn' : ''}"><b>${h.sent ? lossText(h) : '-'}</b></td>
-    <td data-l="Avg" class="r num">${has(h.avg_ms) ? `${h.avg_ms} ms` : '-'}</td>
-    <td data-l="Peak" class="r num">${has(h.max_ms) ? `${h.max_ms} ms` : '-'}</td>
-    <td data-l="Jitter" class="r num hide-narrow">${has(h.jitter_ms) ? `${h.jitter_ms} ms` : '-'}</td>
-    <td data-l="Received / sent" class="r num hide-narrow ink-muted">${h.received} / ${h.sent}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No hop figures for this incident.</td></tr>';
+    <td data-l="Avg" class="r num">${has(h.avg_ms) ? `${numText(h.avg_ms)} ms` : '-'}</td>
+    <td data-l="Peak" class="r num">${has(h.max_ms) ? `${numText(h.max_ms)} ms` : '-'}</td>
+    <td data-l="Jitter" class="r num hide-narrow">${has(h.jitter_ms) ? `${numText(h.jitter_ms)} ms` : '-'}</td>
+    <td data-l="Received / sent" class="r num hide-narrow ink-muted">${numText(h.received)} / ${numText(h.sent)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No hop figures for this incident.</td></tr>';
 }
 
 function renderTrace(inc) {
@@ -159,10 +168,10 @@ function renderTrace(inc) {
   $('inspPathTraceContainer').hidden = !trace;
   if (!trace) return;
   $('inspPathTraceBody').innerHTML = trace.map((h) => `<tr>
-    <td class="lead num"><b>${h.hop}</b></td>
+    <td class="lead num"><b>${numText(h.hop)}</b></td>
     <td class="mono aside"><code>${escapeHtml(h.ip)}</code></td>
     <td data-l="">${escapeHtml(h.hostname || '-')}</td>
-    <td class="r num" data-l="RTT">${has(h.latency_ms) ? `${h.latency_ms} ms` : '<span class="lost">no reply</span>'}</td></tr>`).join('');
+    <td class="r num" data-l="RTT">${has(h.latency_ms) ? `${numText(h.latency_ms)} ms` : '<span class="lost">no reply</span>'}</td></tr>`).join('');
 }
 
 // ---------- The line during the incident (the modem's reading next to the incident) ----------
@@ -205,7 +214,7 @@ function renderLine(data) {
     [level, word] = [cause === 'gateway' ? 'warn' : 'crit', 'Errors during the incident'];
     html = `<strong>Uncorrectable errors on the line:</strong> ${(corr.active_errors_in_window || 0).toLocaleString()} uncorrectable codewords were counted during this incident. ${escapeHtml(ERRORS_MEAN[cause] || 'Noise on the cable plant fits this packet loss.')}`;
   } else {
-    html = `<strong>The line was clean:</strong> no uncorrectable errors were counted during this incident${has(snap.downstream_snr_avg) ? `, and the downstream SNR was ${snap.downstream_snr_avg} dB` : ''}. ${escapeHtml(CLEAN_MEANS[cause] || 'The loss lies beyond the modem.')}`;
+    html = `<strong>The line was clean:</strong> no uncorrectable errors were counted during this incident${has(snap.downstream_snr_avg) ? `, and the downstream SNR was ${numText(snap.downstream_snr_avg)} dB` : ''}. ${escapeHtml(CLEAN_MEANS[cause] || 'The loss lies beyond the modem.')}`;
   }
   setBadge($('inspDocsisBadge'), level, word);
   $('inspDocsisDesc').innerHTML = html;
@@ -234,7 +243,36 @@ function renderLine(data) {
   else set('inspDocsisFecVal', '0 errors (clean)', 'good');
 }
 
+// ---------- The router's traffic in the incident's hours, and its events around the incident ----------
+// Per clock hour the incident touches (the busiest six at most): the WAN's download and upload and the devices that used the
+// most, with their share of the download. An hour the router has not published yet says so ("not yet available"), as does one
+// that was never stored ("no data"): neither is shown as no traffic.
+const TRAFFIC_STATE = {
+  'not yet available': 'not yet available: the router publishes an hour a few minutes after it ends',
+  'no data': 'no data: Pengumon was not reading the router then'
+};
+function renderTraffic(data) {
+  const hours = data.traffic && Array.isArray(data.traffic.hours) ? data.traffic.hours : [];
+  $('inspTrafficCard').hidden = !hours.length;
+  $('inspTraffic').innerHTML = hours.map((h) => {
+    const span = `${clock(h.hour)}-${clock(h.hour + 3600)}`;
+    const total = h.available ? `${formatBytes(h.down)} down · ${formatBytes(h.up)} up` : (TRAFFIC_STATE[h.state] || h.state);
+    const who = !h.available ? '' : h.clients.length
+      ? `<ul class="itraf-who">${h.clients.map((c) => `<li${c.who ? ` title="${escapeHtml(c.who)}"` : ''}><span class="n">${escapeHtml(c.label)}</span><span class="f">${escapeHtml(formatBytes(c.down))} down${has(c.share) ? ` (${Math.round(c.share * 100)} % of all)` : ''}</span></li>`).join('')}</ul>`
+      : '<span class="itraf-none">no single device used a noticeable share</span>';
+    return `<li data-hour="${numText(h.hour)}" data-state="${escapeHtml(h.state)}" title="${escapeHtml(h.text || '')}"><span class="itraf-h"><b>${escapeHtml(span)}</b><span data-v="total">${escapeHtml(total)}</span></span><span>${who}</span></li>`;
+  }).join('');
+}
+
+function renderDeviceEvents(data) {
+  const events = Array.isArray(data.device_events) ? data.device_events : [];
+  $('inspDeviceEventsCard').hidden = !events.length;
+  $('inspDeviceEvents').innerHTML = events.map((e) => `<li><span class="ev-t num">${escapeHtml(clock(e.ts))}</span><span>${escapeHtml(e.text.charAt(0).toUpperCase() + e.text.slice(1))} <span class="muted">(${data.event_start ? `${sign(e.ts - data.event_start)} from the start` : ''})</span></span></li>`).join('');
+}
+
+let inspectSeq = 0; // the newest request: an older answer that lands later is dropped (as traffic/client.js does)
 export async function inspectIncident(incidentId) {
+  const mine = ++inspectSeq;
   openModal('incidentInspectorModal');
   document.querySelector('#incidentInspectorModal .m-close').focus(); // keyboard users land inside the dialog
   $('inspCauseTitle').textContent = 'Loading incident details...';
@@ -243,12 +281,15 @@ export async function inspectIncident(incidentId) {
   $('inspLanes').innerHTML = '';
   $('inspEvents').innerHTML = '';
   $('inspEvidence').innerHTML = '';
+  $('inspTrafficCard').hidden = true;
+  $('inspDeviceEventsCard').hidden = true;
   $('inspHopTableBody').innerHTML = '<tr><td colspan="7" class="muted">Loading hop impact...</td></tr>';
   $('btnInspAskAi').dataset.arg = String(incidentId); // Ask AI covers this incident
   try {
     const res = await fetch(`/api/incidents/${incidentId}/inspect`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (mine !== inspectSeq) return;
     const inc = data.incident;
     const minute = data.hop_resolution === 'minute';
     const note = $('inspHopResolution');
@@ -270,9 +311,12 @@ export async function inspectIncident(incidentId) {
     renderHopTable(hops);
     renderTrace(inc);
     renderLine(data);
+    renderTraffic(data);
+    renderDeviceEvents(data);
     lastWindow = { start: data.window_start, end: data.window_end };
-    setTimeout(() => renderTracks(data), 60); // after the dialog has its size
+    setTimeout(() => { if (mine === inspectSeq) renderTracks(data); }, 60); // after the dialog has its size
   } catch (err) {
+    if (mine !== inspectSeq) return;
     $('inspCauseTitle').textContent = 'Failed to Load Incident';
     $('inspCauseDesc').textContent = err.message;
   }

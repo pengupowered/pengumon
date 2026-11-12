@@ -5,6 +5,7 @@
 // parts as ctx.std.parts.
 
 import { kit } from '../../js/cards.js';
+import { numText } from '../../js/escape.js';
 
 const { el, escapeHtml: esc, icon, mark } = kit;
 
@@ -13,7 +14,7 @@ const { el, escapeHtml: esc, icon, mark } = kit;
 function timelineMarkup(t) {
   const span = (value) => `${value.toFixed(2)}%`;
   return t.lanes.map((lane) => `<div class="tl-lane" data-item="lane-${esc(lane.key)}"><span class="tl-l" data-v="lane">${esc(lane.word)}</span><div class="tl-track">${lane.bars.map((b) => `<button type="button" class="tl-bar st-${b.level}${b.expected ? ' exp' : ''}${b.ongoing ? ' ongoing' : ''}"`
-    + ` style="left:${span(b.left)};width:${span(b.width)}" data-item="bar-${b.id}" data-v="tip" data-action="inspectIncident" data-arg="${b.id}" data-tip="${esc(b.tip)}" aria-label="${esc(b.aria)}"></button>`).join('')}</div></div>`).join('')
+    + ` style="left:${span(b.left)};width:${span(b.width)}" data-item="bar-${numText(b.id)}" data-v="tip" data-action="inspectIncident" data-arg="${numText(b.id)}" data-tip="${esc(b.tip)}" aria-label="${esc(b.aria)}"></button>`).join('')}</div></div>`).join('')
     + `<div class="tl-axis"><span></span><div data-v="days">${t.days.map((d) => `<span>${esc(d)}</span>`).join('')}</div></div>`
     + `<div class="tl-now" style="--now:${t.now.toFixed(4)}"></div>`
     + (t.window ? `<div class="tl-win" style="--a:${t.window.from.toFixed(4)};--b:${t.window.to.toFixed(4)}" aria-hidden="true"></div>` : '');

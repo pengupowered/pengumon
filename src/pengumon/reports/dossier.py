@@ -8,20 +8,23 @@ loss starting at the provider's first router while the gateway answers is the li
 
 import re
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pengumon.lines import docsis
+from pengumon.models.probes import probe_words
 from pengumon.lines.docsis import channel_finding, is_degraded as _is_degraded, uncorrectable_increase as _uncorrectable_increase
 from pengumon.analysis.incident import UNREACHABLE_KINDS
-from pengumon.incidents.taxonomy import incident_cause
+from pengumon.devices.events import DeviceEvent, event_text, events_between
+from pengumon.devices.traffic import NOT_YET, hours_explained
+from pengumon.incidents.taxonomy import is_service_kind
 from pengumon.timeofday import viewer_zone
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.lines.levels import LineSignalConfig
 from pengumon.reports.common import (
-    _canonical_order, _hop_label, _split_incidents, _targets, find_primary_failing_hop, material_loss_points,
+    _canonical_order, _hop_label, _split_incidents, _targets, cause_totals, find_primary_failing_hop, lasted,
+    material_loss_points,
 )
 from pengumon.reports.outages import outage_line, outage_totals, outages_of
 from pengumon.reports.speed import (SpeedSummary, counts_text, direction_text, latency_text, method_text, summarize,
@@ -64,6 +67,12 @@ class DossierFacts:
     zone: tzinfo = timezone.utc                # the clock "Generated" is shown on (timeofday.viewer_zone)
     speed: Optional[SpeedSummary] = None       # the window's speed tests (None: there were none)
     outages: List[Dict[str, Any]] = field(default_factory=list)  # the window's outages, oldest first (incidents.outages)
+    device_events: List[DeviceEvent] = field(default_factory=list)  # restarts and WAN link changes, oldest first
+    # The clock hours of the busy-line incidents (expected, or at busy_pct load or more) with the router's traffic in them
+    # (devices/traffic.py hours_explained, clients by kind only), the busiest first; empty without traffic figures.
+    busy_traffic: List[Dict[str, Any]] = field(default_factory=list)
+    # target id -> how a hop not probed by ping is probed in words ("TCP port 443", "HTTPS request", never the path)
+    probes: Dict[str, str] = field(default_factory=dict)
 
 
 # The incidents' cause categories (incidents.taxonomy) in the provider's terms.
@@ -94,56 +103,33 @@ def place_of(primary: Optional[Dict[str, Any]], categories: Dict[str, Optional[s
 
 
 def hop_note(h: Dict[str, Any], primary: Optional[Dict[str, Any]], ignoring=frozenset(),
-             material: float = material_loss_points(None)) -> str:
+             material: float = material_loss_points(None), probe: str = "") -> str:
+    """The table's note for a hop; `probe` (how a hop not probed by ping is probed) is named in it."""
     if h["target_id"] in ignoring:
+        if probe:
+            return "Ignores its probe (later hops answer, so traffic passes); not counted"
         return "Ignores ping (later hops answer, so traffic passes); not counted"
     if primary and h["target_id"] == primary["target_id"]:
-        return "First hop with elevated loss"
-    if h["loss_pct"] >= material:
-        return "Elevated loss"
-    return "No material loss"
+        note = "First hop with elevated loss"
+    elif h["loss_pct"] >= material:
+        note = "Elevated loss"
+    else:
+        note = "No material loss"
+    return f"{note}; probed by {probe}" if probe else note
 
 
-async def collect_dossier_facts(repository, config, hours: int, now: float, line=None,
-                                ignoring: Iterable[str] = (), *, start: Optional[float] = None,
-                                zone: tzinfo = timezone.utc) -> DossierFacts:
-    """`line` is the line device's DocsisHistory (pengumon.lines.docsis); without one the dossier has no modem
-    readings. `ignoring`: the hops that ignore ping now (engine.path_rules); their loss counts in no finding.
-    `start`: the window begins here instead of `hours` before `now`, and its hop totals stop at `now` (the AI pack's
-    windows end at their own end time)."""
-    ignoring = frozenset(ignoring)
-    start_time = now - hours * 3600 if start is None else start
-
-    rows = await repository.get_incidents_since(start_time)
-    incidents, excluded = _split_incidents(rows)
-    total_incidents = len(incidents)
-
-    def lasted(r):  # an incident still open has no duration yet: it has lasted until now
-        return r["duration_seconds"] if r["duration_seconds"] is not None else max(0.0, now - r.get("start_time", now))
-
-    outages = outages_of(incidents, config, now)
-    total_dur_sec = sum(lasted(r) for r in incidents)
-    total_dur_min = round(total_dur_sec / 60.0, 1)
-    busy_pct = getattr(getattr(config, "classifier", None), "busy_load_pct", 60.0)
-    under_load = sum(1 for r in incidents if (r.get("load_pct") or 0) >= busy_pct)
-    by_cause: Dict[str, List[float]] = defaultdict(lambda: [0, 0.0])
-    for r in incidents:
-        cause = incident_cause(r.get("kind"), r["cause_code"], r.get("description"))
-        by_cause[cause][0] += 1
-        by_cause[cause][1] += lasted(r) / 60.0
-    causes = [(c, n, m) for c, (n, m) in sorted(by_cause.items(), key=lambda kv: -kv[1][0])]
-
-    cfg_targets = _targets(config)
+async def _hop_findings(repository, cfg_targets, categories: Dict[str, Optional[str]], start_time: float, now: float,
+                        open_ended: bool, ignoring: frozenset, material: float):
+    """The per-hop totals in path order, the first hop with elevated loss, the later hops that also lose, each hop's
+    label and the worst loss on the local and gateway hops. `open_ended`: the window has no `start` of its own, so
+    the totals are not cut off at `now`."""
     names = {t.id: t.name for t in cfg_targets}
     addresses = {t.id: getattr(t, "address", "") or "" for t in cfg_targets}
-    categories = {t.id: getattr(t, "category", None) for t in cfg_targets}
     order = _canonical_order(cfg_targets)
-
     # end_time is passed only with `start`: a repository that takes none (the characterization fake) is called as before
-    hop_stats = await (repository.get_hop_stats(start_time) if start is None
+    hop_stats = await (repository.get_hop_stats(start_time) if open_ended
                        else repository.get_hop_stats(start_time, now))
     hop_stats.sort(key=lambda h: order.index(h["target_id"]) if h["target_id"] in order else 999)
-    material = material_loss_points(config)
     primary = find_primary_failing_hop(hop_stats, ignoring, material)
     later_lossy = []
     if primary:
@@ -154,7 +140,12 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     local_hops = [h for h in hop_stats if categories.get(h["target_id"]) in ("local", "gateway") and h["sent"]
                   and h["target_id"] not in ignoring]
     max_lan_loss = max((h["loss_pct"] for h in local_hops), default=None)
+    return hop_stats, primary, later_lossy, labels, max_lan_loss
 
+
+async def _modem_evidence(line, config, start_time: float, now: float):
+    """What the modem shows: the latest snapshot, the window's snapshots, the new uncorrectable codewords, whether the
+    snapshot can be trusted, the levels used, the channels outside them and whether any of it points at the line."""
     docsis_snapshot = None
     window_snaps: List[DocsisSignalSnapshot] = []
     if line is not None:
@@ -173,8 +164,45 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
             reverse=True,
         )
     rf_evidence = bool(degraded_channels or unc_increase > 0)
+    return docsis_snapshot, window_snaps, unc_increase, snap_ok, line_levels, degraded_channels, rf_evidence
+
+
+async def collect_dossier_facts(repository, config, hours: int, now: float, line=None,
+                                ignoring: Iterable[str] = (), *, start: Optional[float] = None,
+                                zone: tzinfo = timezone.utc, traffic=None) -> DossierFacts:
+    """`line` is the line device's DocsisHistory (pengumon.lines.docsis); without one the dossier has no modem
+    readings. `ignoring`: the hops that ignore ping now (engine.path_rules); their loss counts in no finding.
+    `start`: the window begins here instead of `hours` before `now`, and its hop totals stop at `now` (the AI pack's
+    windows end at their own end time). `traffic`: (device id, devices.traffic.Namer in "generic" mode) of the router
+    that reports traffic per client: the busy-line incidents' hours name the top downloader by its kind."""
+    ignoring = frozenset(ignoring)
+    start_time = now - hours * 3600 if start is None else start
+
+    rows = await repository.get_incidents_since(start_time)
+    incidents, excluded = _split_incidents(rows)
+    total_incidents = len(incidents)
+    outages = outages_of(incidents, config, now)
+    total_dur_sec = sum(lasted(r, now) for r in incidents)
+    total_dur_min = round(total_dur_sec / 60.0, 1)
+    busy_pct = getattr(getattr(config, "classifier", None), "busy_load_pct", 60.0)
+    under_load = sum(1 for r in incidents if (r.get("load_pct") or 0) >= busy_pct)
+    causes = [(c, n, m) for c, (n, m) in sorted(cause_totals(incidents, now).items(), key=lambda kv: -kv[1][0])]
+
+    cfg_targets = _targets(config)
+    names = {t.id: t.name for t in cfg_targets}
+    categories = {t.id: getattr(t, "category", None) for t in cfg_targets}
+    probes = {t.id: probe_words(t) for t in cfg_targets if getattr(t, "probe", "icmp") != "icmp"}
+    material = material_loss_points(config)
+    hop_stats, primary, later_lossy, labels, max_lan_loss = await _hop_findings(
+        repository, cfg_targets, categories, start_time, now, start is None, ignoring, material)
+
+    (docsis_snapshot, window_snaps, unc_increase, snap_ok, line_levels, degraded_channels,
+     rf_evidence) = await _modem_evidence(line, config, start_time, now)
 
     speed = await _speed_summary(repository, config, start_time, now)
+    device_events = (await events_between(repository, None, start_time, now)
+                     if hasattr(repository, "get_device_events") else [])
+    busy_traffic = await _busy_traffic(repository, rows, busy_pct, traffic, now, zone)
 
     return DossierFacts(
         hours=hours,
@@ -188,6 +216,7 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         by_cause=causes,
         hop_stats=hop_stats,
         ignoring=ignoring,
+        probes=probes,
         material=material,
         primary=primary,
         primary_place=place_of(primary, categories, hop_stats),
@@ -210,7 +239,33 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         zone=zone,
         speed=speed,
         outages=outages,
+        device_events=device_events,
+        busy_traffic=busy_traffic,
     )
+
+
+BUSY_TRAFFIC_HOURS = 3  # busy hours the dossier names
+
+
+async def _busy_traffic(repository, rows, busy_pct: float, traffic, now: float, zone: tzinfo) -> List[Dict[str, Any]]:
+    """The hours of the window's busy-line incidents with the router's traffic in them, the busiest first (at most
+    BUSY_TRAFFIC_HOURS, and the hours not published yet after them)."""
+    if traffic is None:
+        return []
+    device_id, namer = traffic
+    wanted: set = set()
+    for r in rows:
+        if is_service_kind(r.get("kind")) or not (r.get("expected") or (r.get("load_pct") or 0) >= busy_pct):
+            continue
+        end = r["end_time"] if r.get("end_time") is not None else now
+        wanted.update(range(int(r["start_time"] // 3600) * 3600, int(end // 3600) * 3600 + 1, 3600))
+    if not wanted:
+        return []
+    found = await hours_explained(repository, device_id, min(wanted), max(wanted), namer, max_hours=10**6, tz=zone)
+    seen = {h["hour"]: h for h in found if h["hour"] in wanted}
+    ready = sorted((h for h in seen.values() if h["available"]), key=lambda h: -(h["down"] or 0))
+    pending = [h for h in seen.values() if not h["available"] and h["state"] == NOT_YET]
+    return ready[:BUSY_TRAFFIC_HOURS] + pending[:1]
 
 
 async def _speed_summary(repository, config, start_time: float, end_time: float) -> Optional[SpeedSummary]:
@@ -293,12 +348,10 @@ def _speed_ticket(s: SpeedSummary) -> str:
     return f"Speed tests ({counts_text(s)}): " + "; ".join(parts) + "."
 
 
-def render_dossier_markdown(f: DossierFacts) -> str:
-    """The dossier text: formatting only, no data access and no decisions beyond wording."""
-    hours, primary, docsis_snapshot = f.hours, f.primary, f.docsis_snapshot
-    degraded_channels = [c for c, _ in f.degraded]
-    rf_evidence, snap_ok = f.rf_evidence, f.snap_ok
-    unc_increase, max_lan_loss = f.unc_increase, f.max_lan_loss
+def _header_lines(f: DossierFacts) -> List[str]:
+    """The title, the time and window, and the local-hardware line."""
+    hours = f.hours
+    max_lan_loss = f.max_lan_loss
 
     L: List[str] = [
         "# Broadband Packet Loss Evidence Report",
@@ -311,8 +364,15 @@ def render_dossier_markdown(f: DossierFacts) -> str:
         L.append(f"**Local hardware:** {max_lan_loss}% worst loss across local and gateway hops "
                  f"({'below' if max_lan_loss < f.material else 'at or above'} the {f.material}% "
                  f"threshold)")
+    return L
 
-    L += ["", "## 1. Summary",
+
+def _summary_lines(f: DossierFacts) -> List[str]:
+    """Section 1: the incident totals, outages, busy hours and the first failing hop."""
+    hours = f.hours
+    primary = f.primary
+
+    L: List[str] = ["", "## 1. Summary",
           f"- **Recorded incidents:** {f.total_incidents}",
           f"- **Cumulative duration:** {_span(f.total_dur_sec)}"]
     if f.by_cause:
@@ -325,6 +385,9 @@ def render_dossier_markdown(f: DossierFacts) -> str:
         L += [f"  - {outage_line(o, f.zone, f.now)}" for o in reversed(f.outages) if o["drops"] > 1]
     if f.under_load:
         L.append(f"- {f.under_load} of these occurred while the line was at {f.busy_pct:g}% load or more.")
+    if f.busy_traffic:
+        L.append("- **Busy hours, by the router's own traffic count:** "
+                 + "; ".join(h["text"] for h in f.busy_traffic) + ".")
     if f.excluded:
         L.append(f"- {_plural(f.excluded, 'event')} during heavy line load {'was' if f.excluded == 1 else 'were'} excluded (expected).")
     if primary:
@@ -333,9 +396,15 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     else:
         L.append("- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by "
                  f"{f.material} points or more.")
+    return L
 
-    L += ["", "## 2. Loss per hop",
-          f"Probes are ICMP/DNS requests sent about once per second per target; the table counts every probe "
+
+def _hop_table_lines(f: DossierFacts) -> List[str]:
+    """Section 2: the loss per hop table and the note on later hops."""
+    primary = f.primary
+
+    L: List[str] = ["", "## 2. Loss per hop",
+          f"Probes are {'ICMP echo requests (TCP connections or HTTP requests for the hops noted) and DNS requests' if f.probes else 'ICMP/DNS requests'} sent about once per second per target; the table counts every probe "
           f"in the window, including those during heavy line load. Hops are listed from the premises outward.",
           "",
           "| Hop | Target | Sent | Lost | Loss % | Avg RTT | Max RTT | Note |",
@@ -343,7 +412,7 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     for n, h in enumerate(f.hop_stats, 1):  # the position from the premises outward, not the internal target id
         tid = h["target_id"]
         L.append(f"| Hop {n} | {_hop_name(f.names.get(tid, tid))} | {h['sent']} | {h['lost']} | {h['loss_pct']}% | "
-                 f"{h['avg_ms']} ms | {h['max_ms']} ms | {hop_note(h, primary, f.ignoring, f.material)} |")
+                 f"{h['avg_ms']} ms | {h['max_ms']} ms | {hop_note(h, primary, f.ignoring, f.material, f.probes.get(tid, ''))} |")
     if primary:
         if f.later_lossy:
             L += ["", f"Loss of {f.material} points or more is also present at later hops "
@@ -351,8 +420,17 @@ def render_dossier_markdown(f: DossierFacts) -> str:
         else:
             L += ["", f"Later hops show no comparable loss. Loss at a single intermediate hop can also be "
                       f"that router rate-limiting or deprioritizing ping, rather than traffic being dropped."]
+    return L
 
-    L += ["", "## 3. Modem (DOCSIS) telemetry"]
+
+def _modem_lines(f: DossierFacts) -> List[str]:
+    """Section 3: the modem readings, the channels outside typical levels, router events, speed tests."""
+    docsis_snapshot = f.docsis_snapshot
+    degraded_channels = [c for c, _ in f.degraded]
+    snap_ok = f.snap_ok
+    unc_increase = f.unc_increase
+
+    L: List[str] = ["", "## 3. Modem (DOCSIS) telemetry"]
     if docsis_snapshot is None or docsis_snapshot.status == "unconfigured":
         L.append("- No modem data: modem credentials are not configured in Pengumon.")
     elif docsis_snapshot.status == "error":
@@ -386,10 +464,25 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     elif snap_ok and docsis_snapshot.channels:
         L += ["", "- All bonded channels are within typical power and SNR ranges at the last poll."]
 
+    if f.device_events:
+        L += ["", "### Router events"]
+        L += [f"- {datetime.fromtimestamp(e.ts, f.zone).strftime('%Y-%m-%d %H:%M')}: {e.device_id} "
+              f"{event_text(e, f.zone)}" for e in f.device_events[-10:]]
+
     if f.speed is not None:
         L += _speed_lines(f.speed)
+    return L
 
-    L += ["", "## 4. What the data shows"]
+
+def _findings_lines(f: DossierFacts) -> List[str]:
+    """Section 4: what the data shows, in wording that claims no more than it does."""
+    primary = f.primary
+    degraded_channels = [c for c, _ in f.degraded]
+    rf_evidence = f.rf_evidence
+    snap_ok = f.snap_ok
+    unc_increase = f.unc_increase
+
+    L: List[str] = ["", "## 4. What the data shows"]
     if rf_evidence:
         bits = []
         if degraded_channels:
@@ -407,8 +500,19 @@ def render_dossier_markdown(f: DossierFacts) -> str:
         L.append(f"- Loss first appears at {f.labels[primary['target_id']]}{_place_text(f)}")
     else:
         L.append("- The probes did not isolate a single failing hop.")
+    return L
 
-    L += ["", "## 5. Summary for a support ticket", "```text",
+
+def _ticket_lines(f: DossierFacts) -> List[str]:
+    """Section 5: the summary for a support ticket."""
+    hours = f.hours
+    primary = f.primary
+    degraded_channels = [c for c, _ in f.degraded]
+    rf_evidence = f.rf_evidence
+    unc_increase = f.unc_increase
+    max_lan_loss = f.max_lan_loss
+
+    L: List[str] = ["", "## 5. Summary for a support ticket", "```text",
           f"Over the past {_plural(hours, 'hour')} Pengumon recorded {_plural(f.total_incidents, 'incident')} totaling {_span(f.total_dur_sec)}"
           + (f" ({_plural(f.excluded, 'further event')} during heavy line load {'was' if f.excluded == 1 else 'were'} excluded as expected)." if f.excluded else "."),
           ]
@@ -437,17 +541,27 @@ def render_dossier_markdown(f: DossierFacts) -> str:
     elif f.primary_place == "gateway":
         L.append("Request: if you supplied this gateway, please check it; it stopped answering on its home side.")
     L += ["```"]
+    return L
 
+
+def render_dossier_markdown(f: DossierFacts) -> str:
+    """The dossier text: formatting only, no data access and no decisions beyond wording."""
+    L: List[str] = _header_lines(f)
+    L += _summary_lines(f)
+    L += _hop_table_lines(f)
+    L += _modem_lines(f)
+    L += _findings_lines(f)
+    L += _ticket_lines(f)
     return "\n".join(L)
 
 
 async def build_dossier(repository, config, hours: int, now: Optional[float] = None, line=None,
                         ignoring: Iterable[str] = (), tz_name: Optional[str] = None,
-                        tz_offset_minutes: int = 0) -> Dict[str, Any]:
+                        tz_offset_minutes: int = 0, traffic=None) -> Dict[str, Any]:
     """`tz_name` / `tz_offset_minutes`: the viewer's zone, the fallbacks of timeofday.viewer_zone (Settings wins)."""
     now = now or time.time()
     facts = await collect_dossier_facts(repository, config, hours, now, line, ignoring,
-                                        zone=viewer_zone(config, tz_name, tz_offset_minutes)[0])
+                                        zone=viewer_zone(config, tz_name, tz_offset_minutes)[0], traffic=traffic)
     return {
         "observation_hours": hours,
         "total_incidents": facts.total_incidents,

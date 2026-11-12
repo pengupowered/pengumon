@@ -3,7 +3,7 @@
 // server's. Every value on the page is put into words by one function, `shownValue` (units, choice labels, zones,
 // "none"), and every row's standard value by `standardText`.
 
-import { escapeHtml } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
 import { panelTitles } from '../../js/layout.js';
 import { HOUR_UNITS, choiceFor, fmt, hoursText, isNumeric, parse, problem, readHours, same, speedEstimate, splitHours, toShown } from './model.js';
 import { S, changed, isEnv, inDraft, listItems, roundSeconds, setValue, valueOf, valueState } from './store.js';
@@ -24,7 +24,7 @@ const isUtc = (zone) => !zone || UTC_NAMES.has(zone);
 
 // "New York (America/New_York)", "Buenos Aires, Argentina (America/Argentina/Buenos_Aires)", "UTC", "UTC+01:00 (fixed
 // offset)"; Etc/GMT+5 is five hours *behind* UTC (the POSIX sign), "UTC-05:00 (fixed offset)".
-export function zoneLabel(zone) {
+function zoneLabel(zone) {
   if (isUtc(zone)) return 'UTC';
   if (/^[+-]\d\d:\d\d$/.test(zone)) return `UTC${zone} (fixed offset)`;
   const etc = /^Etc\/GMT([+-])(\d{1,2})$/.exec(zone);
@@ -97,7 +97,7 @@ export function shownValue(spec, v) {
 }
 
 // "Standard: 15 %": the one form of a row's standard (default) value.
-export function standardText(spec) {
+function standardText(spec) {
   if (spec.key === ISP) {
     const pub = S.spec['classifier.public_latency_spike_threshold_ms'];
     return `Standard: same as internet (${shownValue(pub, valueOf(pub.key))})`;
@@ -218,7 +218,7 @@ function stateHtml(keys, resetHtml) {
 
 // The line under the input: the effect on the left; the standard value, badges and Reset under the input; then a
 // warning, the clock of the time zone. Rebuilt after every edit; the input itself is not touched.
-export function metaHtml(spec) {
+function metaHtml(spec) {
   const reset = `<button type="button" class="set-lnk" data-action="settingsReset" data-key="${escapeHtml(spec.key)}" data-needs-edit>Reset to standard</button>`;
   const warn = S.warnings.filter((w) => w.where === `values.${spec.key}`).map((w) => `<span class="set-warn">${escapeHtml(w.message)}</span>`).join('');
   const clock = spec.key === 'alerts.quiet_hours.start' || spec.key === 'alerts.quiet_hours.end' || spec.key === ZONE ? zoneClock() : '';
@@ -238,14 +238,14 @@ function relatedHtml(spec) {
     <button type="button" class="set-lnk" data-action="settingsJump" data-arg="${escapeHtml(other.key)}">Go to that setting</button></span>`;
 }
 
-export function messageText(key) {
+function messageText(key) {
   return S.invalid[key] || S.errors[`values.${key}`] || '';
 }
 
 export function rowHtml(spec, section) {
   const id = inputId(section, spec.key);
   const unit = isNumeric(spec) && spec.unit ? `<span class="set-unit">${escapeHtml(spec.unit)}</span>` : '';
-  return `<div class="set-row" data-key="${escapeHtml(spec.key)}" data-type="${spec.type}" id="${id}-row">
+  return `<div class="set-row" data-key="${escapeHtml(spec.key)}" data-type="${escapeHtml(spec.type)}" id="${id}-row">
     <div class="set-main">
       <label class="set-label" id="${id}-l" for="${id}">${escapeHtml(spec.label)}</label>${relatedHtml(spec)}
       <div class="set-input">${inputHtml(spec, section)}${unit}</div>
@@ -271,7 +271,7 @@ export const isLayoutKey = (key) => LAYOUT_KEYS.includes(key);
 // while M-Lab is the choice, its privacy note in words under the provider (the choice's label says it too, but a
 // closed box shows a cut label on a phone).
 const estimateNow = () => speedEstimate(valueOf('speedtest.interval_hours'), valueOf('speedtest.download_mb'), valueOf('speedtest.upload_mb'), valueOf('speedtest.monthly_cap_mb'), valueOf('line.down_mbps'), valueOf('line.up_mbps'));
-export const MLAB_NOTE = 'M-Lab publishes every result, with your public IP address, as open data.';
+const MLAB_NOTE = 'M-Lab publishes every result, with your public IP address, as open data.';
 
 export function speedEstimateRowHtml() {
   return `<div class="set-row set-note" data-extra="speed-estimate"><p class="set-estimate" data-estimate aria-live="polite">${escapeHtml(estimateNow())}</p></div>`;
@@ -296,7 +296,7 @@ export function layoutRowHtml() {
 // ---------- reading and editing ----------
 
 // The input of `el` read as a stored value: {stored} or {problem}.
-export function readInput(el, spec) {
+function readInput(el, spec) {
   if (spec.type === 'boolean') return { stored: el.checked };
   if (spec.type === 'hours') { // the number and the unit are read together, whichever of the two changed
     const box = el.closest('.set-hours');

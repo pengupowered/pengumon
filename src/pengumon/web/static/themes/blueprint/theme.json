@@ -29,7 +29,7 @@
       "--warn-fill": "#ffd966",
       "--serious": "#ffb07a",
       "--serious-bg": "rgba(255, 176, 122, 0.07)",
-      "--crit": "#ff8a94",
+      "--crit": "#ff9ca4",
       "--crit-bg": "rgba(255, 138, 148, 0.07)",
       "--busy": "#c0b0ff",
       "--busy-bg": "rgba(192, 176, 255, 0.07)",

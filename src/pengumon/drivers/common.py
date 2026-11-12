@@ -10,6 +10,10 @@ CpuCounters = Dict[str, Tuple[int, int]]  # core (or "cpu" for all of them) -> (
 CPU_MIN_INTERVAL_SECONDS = 2.0
 
 TEXT_MAX = 64
+# The most clients and mesh nodes a driver reports from one answer: a home router has tens of clients and a handful of
+# nodes; a broken or hostile answer must not make thousands of rows a minute (mesh_samples gets one per node).
+MAX_CLIENTS = 2048
+MAX_MESH_NODES = 32
 _RE_MAC = re.compile(r"^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$")
 
 
@@ -61,11 +65,16 @@ def proc_stat_cpu(text: str) -> CpuCounters:
     return {}
 
 
+BRACES = str.maketrans("{}", "()")  # what clean_text makes of curly brackets
+
+
 def clean_text(value: object, limit: int = TEXT_MAX) -> Optional[str]:
-    """A name, model or vendor from a device: printable, trimmed and short; None when empty or not a string."""
+    """A name, model or vendor from a device: printable, trimmed and short; None when empty or not a string. Curly
+    brackets become round ones: finding texts carry {when:...} time tokens (reports/ai_pack.py), and a name must not
+    make one."""
     if not isinstance(value, str):
         return None
-    cleaned = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", value)
+    cleaned = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", value).translate(BRACES)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()[:limit].strip()
     return cleaned or None
 

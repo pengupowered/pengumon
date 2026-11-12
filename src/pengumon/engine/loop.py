@@ -74,7 +74,8 @@ async def probe_background_worker(config, prober, classifier, repository, ws=ws_
             # 2. Persist samples to SQLite
             worked = time.perf_counter()
             await repository.insert_samples(samples)
-            record_probes(samples, {target_id: s.category for target_id, s in prober.stats.items()})
+            record_probes(samples, {target_id: s.category for target_id, s in prober.stats.items()},
+                          {target_id: s.probe or "dns" for target_id, s in prober.stats.items()})
             stored = time.perf_counter()
             probe_round_work.record(stored - worked, _STORE)
 

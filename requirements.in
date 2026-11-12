@@ -12,3 +12,8 @@ opentelemetry-sdk>=1.45.1,<2
 opentelemetry-exporter-otlp-proto-http>=1.45.1,<2
 # Windows has no IANA time-zone database of its own: zoneinfo reads this package (quiet hours, the daily check time)
 tzdata>=2024.1; sys_platform == "win32"
+# SNMPv3 privacy (AES-128-CFB, RFC 3826): the snmp driver encrypts and decrypts scoped PDUs with it. Pinned to the exact
+# versions the test image already locks for the MCP client (requirements-dev.in), so no new release enters the image.
+cryptography==50.0.2
+cffi==2.1.1; platform_python_implementation != "PyPy"
+pycparser==3.11; platform_python_implementation != "PyPy" and implementation_name != "PyPy"

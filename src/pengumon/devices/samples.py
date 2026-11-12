@@ -8,7 +8,7 @@ into the RouterMetricsSnapshot that /api/devices/{id}/history and the incident i
 import math
 from typing import Dict, List, Optional
 
-from pengumon.capabilities import BAND_2G, BAND_5G, Capability, ClientsReading, MeshReading
+from pengumon.capabilities import BAND_2G, BAND_5G, Capability, ClientsReading, MeshReading, SystemReading
 from pengumon.db.samples import DeviceSample, MeshCount
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.lines import docsis
@@ -34,11 +34,14 @@ def mesh_counts(device_id: str, ts: float, mesh: MeshReading) -> List[MeshCount]
 
 
 def device_sample(device_id: str, snapshot: RouterMetricsSnapshot,
-                  clients: Optional[ClientsReading] = None) -> DeviceSample:
-    """The stored form of a router snapshot: WAN counters and rates, system readings, the configured model, and the
-    client counts of a poll that read the client list (`clients`)."""
+                  clients: Optional[ClientsReading] = None, system: Optional[SystemReading] = None) -> DeviceSample:
+    """The stored form of a router snapshot: WAN counters and rates, system readings, the configured model, the
+    client counts of a poll that read the client list (`clients`), and the uptime, CPU temperature and WAN link speed
+    this poll read (`system`: the snapshot carries the latest known ones, the stored row only what was read)."""
     return DeviceSample(
         **(client_counts(clients) if clients is not None else {}),
+        **({"uptime_s": system.uptime_s, "cpu_temp_c": system.cpu_temp_c, "wan_link_mbps": system.wan_link_mbps}
+           if system is not None else {}),
         device_id=device_id,
         ts=snapshot.timestamp,
         status=snapshot.status,
@@ -67,6 +70,9 @@ def router_snapshot(sample: DeviceSample) -> RouterMetricsSnapshot:
         cpu_usage_pct=sample.cpu_pct,
         mem_usage_pct=sample.mem_pct,
         client_count=sample.client_count,
+        uptime_s=sample.uptime_s,
+        cpu_temp_c=sample.cpu_temp_c,
+        wan_link_mbps=sample.wan_link_mbps,
         model_name=sample.model,
         status=sample.status or "unconfigured",
         error_kind=sample.error_kind,
@@ -108,7 +114,7 @@ def router_history(devices, repository) -> Optional[RouterHistory]:
 
 
 BUCKET_FIELDS = ("ts", "rx_avg", "rx_max", "tx_avg", "tx_max", "cpu_avg", "cpu_max", "mem_avg", "mem_max",
-                 "clients_avg", "clients_max")
+                 "clients_avg", "clients_max", "temp_avg", "temp_max", "link_min")
 DEFAULT_MAX_POINTS = 400
 MAX_POINTS_LIMIT = 1000
 
@@ -126,9 +132,9 @@ def bucket_width(span_seconds: float, bucket_seconds: Optional[int] = None, max_
 
 
 async def bucketed_router_history(repository, device_id: str, start_time: float, end_time: float, bucket: int) -> list:
-    """Rows [bucket start, then avg and max of rx Mbps, tx Mbps, CPU %, memory %, clients] (BUCKET_FIELDS), oldest
-    first; a figure no poll of the bucket measured is null. Rates, CPU and memory are rounded to 2 decimals, the
-    client average to 1."""
+    """Rows [bucket start, then avg and max of rx Mbps, tx Mbps, CPU %, memory %, clients, CPU temperature °C, then the
+    lowest WAN link speed in Mb/s] (BUCKET_FIELDS), oldest first; a figure no poll of the bucket measured is null.
+    Rates, CPU and memory are rounded to 2 decimals, the client average and the temperatures to 1."""
     rows = await repository.get_device_samples_bucketed(device_id, start_time, end_time, bucket)
     return [[int(r[0]), *(None if v is None else round(v, 1 if i >= 8 else 2) for i, v in enumerate(r[1:]))]
             for r in rows]

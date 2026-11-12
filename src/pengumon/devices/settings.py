@@ -48,7 +48,7 @@ class DeviceConfig(BaseModel):
     driver: str
     url: str = Field(..., max_length=255)
     enabled: bool = True
-    poll_interval_seconds: Optional[float] = Field(default=None, gt=0)  # unset: the driver's default
+    poll_interval_seconds: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)  # unset: the driver's default
     username: str = Field(default="admin", min_length=1, max_length=64)
     tls: TlsConfig = Field(default_factory=TlsConfig)
     model: Optional[str] = Field(default=None, max_length=100)  # display name (the device may not report its model)

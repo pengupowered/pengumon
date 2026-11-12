@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Source = Literal["default", "stored", "env"]
 SecretSource = Literal["env", "secrets_file", "secret_file"]
-VersionSource = Literal["import", "save", "restore", "yaml_import"]
+# "upgrade": a version a schema migration stored (v18 resets an old default); never sent by a client
+VersionSource = Literal["import", "save", "restore", "yaml_import", "upgrade"]
 
 
 class _Model(BaseModel):
@@ -92,6 +93,8 @@ class ItemFieldSpec(Constraints):
     required: bool
     default: Any
     fields: Optional[List["ItemFieldSpec"]] = None  # a nested model's fields (a device's tls)
+    # shown on the page only while each named sibling has the given value (an snmp device's SNMPv3 options: version "3")
+    shown_when: Optional[Dict[str, Any]] = None
 
 
 class DriverSpec(_Model):
@@ -99,6 +102,7 @@ class DriverSpec(_Model):
     default_poll_seconds: float
     min_poll_seconds: float
     default_username: str
+    username_hint: Optional[str] = None  # what the user name is for this driver (snmp: the SNMPv3 user)
     needs_sign_in: bool = True
     url_schemes: List[str]
     options: List[ItemFieldSpec]  # mesh_node_labels is type "map" (MAC -> label)

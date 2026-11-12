@@ -274,6 +274,7 @@ async def test_history_small_buckets_come_from_raw_samples(repo):
 async def test_history_long_ranges_use_rollups(repo):
     start = int(time.time() // 3600) * 3600 - 2 * DAY
     await repo.insert_samples(_samples(start, 1800, fail_every=6))
+    await repo.flush_samples()  # long reads leave the last seconds in the buffer
     # 3 days with 10 s buckets requested: served from rollups in buckets of at least 60 s.
     rows = await repo.get_history(start - DAY, start + 2 * DAY, bucket_seconds=10)
     a = [r for r in rows if r["target_id"] == "a"]
@@ -306,9 +307,19 @@ def _spread_samples(start, minutes, target="a"):
 async def test_latency_band_from_raw_samples_and_from_rollups_agree(repo):
     start = int(time.time() // 3600) * 3600 - 2 * 3600
     await repo.insert_samples(_spread_samples(start, 3))
+    # 10 s buckets: each slot's exact percentiles (20 answered probes, 1..20 ms in the first: nearest rank 2 and 18)
+    tens = await repo.get_history(start, start + 179, bucket_seconds=10)
+    first = [r for r in tens if r["timestamp"] == start][0]
+    assert first["successful_count"] == 20 and first["latency_p10_ms"] == 2.0 and first["latency_p90_ms"] == 18.0
+    # 30 s buckets: the three slots' percentiles averaged, weighted by their answered probes (the exact percentile of
+    # the bucket's 60 probes, 6 and 54, is not kept)
     raw = await repo.get_history(start, start + 179, bucket_seconds=30)
     first = [r for r in raw if r["timestamp"] == start][0]
-    assert first["successful_count"] == 60 and first["latency_p10_ms"] == 6.0 and first["latency_p90_ms"] == 54.0
+    assert first["successful_count"] == 60 and first["latency_p10_ms"] == 22.0 and first["latency_p90_ms"] == 38.0
+    # 15 s is no multiple of 10: the raw samples' exact percentiles, as before
+    raw = await repo.get_history(start, start + 179, bucket_seconds=15)
+    first = [r for r in raw if r["timestamp"] == start][0]
+    assert first["successful_count"] == 30 and first["latency_p10_ms"] == 3.0 and first["latency_p90_ms"] == 27.0
     rolled = await repo.get_history(start, start + 179, bucket_seconds=180)
     assert len(rolled) == 1
     assert (rolled[0]["latency_p10_ms"], rolled[0]["latency_p90_ms"]) == (10.0, 90.0)
@@ -334,8 +345,12 @@ async def test_latency_band_edge_cases(repo):
 async def test_latency_band_is_left_out_of_raw_buckets_for_long_ranges(repo):
     start = int(time.time() // 3600) * 3600 - 20 * 3600
     await repo.insert_samples(_spread_samples(start, 2))
-    rows = await repo.get_history(start, start + 12 * 3600, bucket_seconds=30)  # > 6 h: sorting all probes is too slow
+    await repo.flush_samples()
+    rows = await repo.get_history(start, start + 12 * 3600, bucket_seconds=15)  # > 6 h: sorting all probes is too slow
     assert rows and all(r["latency_p10_ms"] is None and r["latency_p90_ms"] is None for r in rows)
+    # buckets of whole tens of seconds come from the 10-second rollups, which keep each slot's band: any range has it
+    rows = await repo.get_history(start, start + 12 * 3600, bucket_seconds=30)
+    assert rows and all(r["latency_p10_ms"] is not None and r["latency_p90_ms"] is not None for r in rows)
 
 
 @pytest.mark.asyncio
@@ -362,12 +377,13 @@ async def test_v11_migration_computes_percentiles_for_stored_minutes(tmp_path):
 @pytest.mark.asyncio
 async def test_history_is_clipped_to_retention(tmp_path):
     repo = DatabaseRepository(db_path=str(tmp_path / "clip.db"), sample_flush_seconds=3600,
-                              retention_days=1, rollup_retention_days=2)
+                              retention_days=1, rollup_retention_days=2, long_rollup_retention_days=2)
     await repo.initialize()
     now = time.time()
     await repo.insert_samples(_samples(now - 3 * DAY, 120, targets=("a",)))   # beyond both retentions
     await repo.insert_samples(_samples(now - 1.5 * DAY, 120, targets=("a",)))  # rollups only
     await repo.insert_samples(_samples(now - 600, 120, targets=("a",)))
+    await repo.flush_samples()
     rows = await repo.get_history(now - 4 * DAY, now, bucket_seconds=60)
     assert rows and min(r["timestamp"] for r in rows) >= now - 2 * DAY - 60
     assert sum(r["total_count"] for r in rows) == 240
@@ -453,7 +469,11 @@ async def test_time_range_queries_use_the_primary_key_on_a_large_table(repo):
     queries = {
         "samples": [repo._raw_query(now - 3600, now), repo._raw_query(now - 3600, now, [1, 2]),
                     repo._raw_bucket_query(now - 3600, now, 10)],
-        "rollup_1m": [repo._rollup_query(now - DAY, now, 60), repo._rollup_query(now - DAY, now, 600, [3])],
+        "rollup_1m": [repo._rollup_query(now - DAY, now, 60), repo._rollup_query(now - DAY, now, 600, [3]),
+                      repo._quarter_query(now - 30 * DAY + 7, now, 3600, int(now // 60) - 40 * 1440)],
+        "rollup_10s": [repo._slot_query(now - 3600 + 3, now, 10), repo._slot_query(now - 3600, now, 30, [2])],
+        "rollup_15m": [repo._quarter_query(now - 30 * DAY + 7, now, 3600, int(now // 60) - 40 * 1440),
+                       repo._quarter_query(now - 30 * DAY, now, 900, None, [1, 2])],
     }
     for table, items in queries.items():
         for sql, params in items:
@@ -467,7 +487,9 @@ async def test_time_range_queries_use_the_primary_key_on_a_large_table(repo):
     elapsed = time.perf_counter() - started
     con.close()
     assert len(rows) == 36_000
-    assert elapsed < 2.0  # a scan of the whole table would not matter here; the plan check above does
+    # Only a backstop: the plan checks above prove the primary key is used, whatever the machine's load. 36 000 rows
+    # take milliseconds; this bound catches a query that hangs, and a busy machine (two suites at once) cannot reach it.
+    assert elapsed < 30.0
 
 
 # --- connections ---------------------------------------------------------------------------------
@@ -616,6 +638,123 @@ async def test_a_long_answer_for_many_targets_is_capped_at_50_000_rows(repo):
     """5 targets over 30 days at 60 s is 216 000 rows; the buckets widen so that no answer passes 50 000."""
     now = time.time()
     await repo.insert_samples(_samples(now - 120, 60, targets=("a", "b", "c", "d", "e")))
+    await repo.flush_samples()  # a 30-day read leaves the last seconds in the buffer
     rows, width = await repo.get_history_buckets(now - 30 * DAY, now, bucket_seconds=60)
     assert width >= 5 * 30 * DAY / 50_000 and width % 60 == 0
     assert len(rows) <= 50_000
+
+
+# --- incident list cache -------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_incident_list_cache_keeps_current_version_and_few_keys(repo):
+    from pengumon.db.incidents import INCIDENT_CACHE_KEYS
+    await repo.create_incident(Incident(start_time=time.time(), cause_code="unknown_outage", title="t",
+                                        description="d", severity="warning", affected_targets=[]))
+    for limit in range(1, 3 * INCIDENT_CACHE_KEYS):  # paging asks for a new limit each time
+        await repo.get_recent_incidents(limit=limit)
+    assert len(repo._incidents_cache) == INCIDENT_CACHE_KEYS
+    assert (INCIDENT_CACHE_KEYS * 3 - 1, True, "all") in repo._incidents_cache  # the newest stays
+    first = await repo.get_recent_incidents(limit=5)
+    assert await repo.get_recent_incidents(limit=5) is first  # served from the cache
+
+    await repo.create_incident(Incident(start_time=time.time(), cause_code="unknown_outage", title="u",
+                                        description="d", severity="warning", affected_targets=[]))
+    again = await repo.get_recent_incidents(limit=5)
+    assert again is not first and len(again) == 2
+    assert set(repo._incidents_cache) == {(5, True, "all")}  # entries of the old version are gone
+
+
+# --- reads flush only when they could see a buffered sample ----------------------------------------
+
+@pytest.mark.asyncio
+async def test_reads_write_the_buffer_only_when_the_window_reaches_it(repo, monkeypatch):
+    now = time.time()
+    flushes = []
+    real_flush = repo.flush_samples
+
+    async def counting_flush():
+        flushes.append(1)
+        await real_flush()
+
+    monkeypatch.setattr(repo, "flush_samples", counting_flush)
+    await repo.insert_samples(_samples(now - 60, 10))  # buffered (the fixture flushes only on request)
+    assert repo.sample_buffer_size == 20
+
+    # windows that end before the oldest buffered sample cannot see it: no write transaction
+    old_end = now - 3600
+    await repo.get_raw_samples(old_end - 600, old_end)
+    await repo.probe_loss_stats(old_end - 600, old_end, ["a"])
+    await repo.get_sample_stats(old_end - 600, old_end)
+    await repo.get_rollup_stats(old_end - 600, old_end)
+    await repo.get_hop_stats(old_end - 600, old_end)
+    await repo.get_history_buckets(old_end - 600, old_end)
+    assert flushes == [] and repo.sample_buffer_size == 20
+
+    # long windows ending now do not need the last seconds either (rollup readers and the history buckets) ...
+    await repo.get_history_buckets(now - 3 * DAY, now, bucket_seconds=900)
+    await repo.get_rollup_stats(now - 3 * DAY, now)
+    await repo.get_hop_stats(now - 3 * DAY)
+    assert flushes == [] and repo.sample_buffer_size == 20
+
+    # ... but a read that reaches the buffer sees it
+    stats = await repo.get_sample_stats(now - 120, now)
+    assert flushes == [1] and sum(s["sent"] for s in stats) == 20
+    await repo.insert_samples(_samples(now, 5))
+    assert len(await repo.get_raw_samples(now - 10, now + 10)) == 10
+    await repo.insert_samples(_samples(now + 20, 5))
+    rows, _ = await repo.get_history_buckets(now + 20, now + 40)
+    assert len(rows) == 10
+
+
+# --- incident retention --------------------------------------------------------------------------------------------
+
+async def _incident(repo, start, resolved, title):
+    return await repo.create_incident(Incident(
+        start_time=start, end_time=start + 60 if resolved else None, duration_seconds=60.0 if resolved else None,
+        resolved=resolved, cause_code="unknown_outage", title=title, description="d", severity="warning",
+        affected_targets=[]))
+
+
+@pytest.mark.asyncio
+async def test_incidents_are_kept_forever_by_default(repo):
+    now = time.time()
+    await _incident(repo, now - 900 * DAY, True, "ancient")
+    assert repo.incident_retention_days == 0
+    removed = await repo.cleanup_old_samples()
+    assert "incidents" not in removed and [i.title for i in await repo.get_recent_incidents()] == ["ancient"]
+
+
+@pytest.mark.asyncio
+async def test_incident_retention_removes_old_resolved_incidents_and_never_an_open_one(repo):
+    now = time.time()
+    await _incident(repo, now - 500 * DAY, True, "old resolved")
+    await _incident(repo, now - 500 * DAY, False, "old open")
+    await _incident(repo, now - 100 * DAY, True, "recent resolved")
+    shown = await repo.get_recent_incidents()                      # cached, with the version it was read at
+    assert len(shown) == 3
+    version = repo.incidents_version
+    repo.incident_retention_days = 400
+    removed = await repo.cleanup_old_samples()
+    assert removed["incidents"] == 1
+    assert repo.incidents_version > version                        # the list caches refetch
+    assert {i.title for i in await repo.get_recent_incidents()} == {"old open", "recent resolved"}
+    assert await repo.count_incidents() == 2
+    version = repo.incidents_version
+    await repo.cleanup_old_samples()
+    assert repo.incidents_version == version                       # nothing went: nothing to refresh
+
+
+def test_incident_retention_days_in_the_config_and_the_settings():
+    from pengumon.config import DatabaseConfig
+    from pengumon.settings import registry
+
+    assert DatabaseConfig().incident_retention_days == 0
+    assert DatabaseConfig(incident_retention_days=400).incident_retention_days == 400
+    assert DatabaseConfig(long_rollup_retention_days=900, incident_retention_days=900).incident_retention_days == 900
+    with pytest.raises(ValueError, match="incident_retention_days must be 0"):
+        DatabaseConfig(incident_retention_days=399)
+    with pytest.raises(ValueError, match="incident_retention_days must be 0"):
+        DatabaseConfig(long_rollup_retention_days=900, incident_retention_days=400)
+    setting = registry.get("database.incident_retention_days")
+    assert setting.label == "Keep resolved incidents for" and setting.default() == 0 and "forever" in setting.effect

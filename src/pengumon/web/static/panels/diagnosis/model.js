@@ -15,24 +15,26 @@
 // them by identity): `verdict` on a diagnosis message, `path` on a targets message, `banner` when the first-run or
 // route-change notice changes.
 
-import * as util from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { formatMs as fmtMs } from '../../js/format.js';
+import { has, latestMs } from '../../js/values.js';
+import { setClass, setText, STATUS } from '../../js/dom.js';
 import { createCard, kit } from '../../js/cards.js';
-import { registerActions } from '../../js/dispatch.js';
 import { pathNodes } from '../../js/path.js';
-import { deviceLabel, deviceStatus, dismissDrift, fetchDrift, fetchPath, startDiscovery, waitDiscovery } from '../../js/path-api.js';
+import { deviceLabel } from '../../js/device-text.js';
+import { deviceStatus } from '../../js/device-status.js';
+import { fetchPath } from '../../js/path-api.js';
 import { state } from '../../js/state.js';
 import { bus as pageBus } from '../../js/bus.js';
 import standard from './view.js';
-
-const { escapeHtml, formatMs: fmtMs, latestMs, setClass, setText, STATUS } = util;
+import { bindNotices, DRIFT_EVERY_MS, driftBanner, driftNotice, firstRunBanner } from './notices.js';
 
 // The classifier's status -> the design's status level and its word.
 const LEVEL = { healthy: 'good', degraded: 'warn', down: 'crit', busy: 'busy', unknown: 'unknown' };
 const WORD = { healthy: 'Healthy', degraded: 'Degraded', down: 'Down', busy: 'Busy', unknown: 'Not probing' }; // unknown: this host cannot send pings
 
-export const levelOf = (status) => LEVEL[status] || 'unknown';
+const levelOf = (status) => LEVEL[status] || 'unknown';
 
-const has = (v) => v !== null && v !== undefined;
 const fmtPct = (v) => (v >= 100 ? '100%' : `${(+v).toFixed(1)}%`);
 
 // ---------- the verdict ----------
@@ -46,7 +48,7 @@ function verdictText(diagnosis) {
 }
 
 // The verdict as the views draw it: its status, title and sentence, and Inspect while an incident is open.
-export function presentVerdict(diagnosis) {
+function presentVerdict(diagnosis) {
   const id = diagnosis.active_incident && diagnosis.active_incident.id;
   return {
     level: levelOf(diagnosis.status), word: WORD[diagnosis.status] || diagnosis.status, title: diagnosis.title, text: verdictText(diagnosis),
@@ -60,8 +62,8 @@ const STATE = { up: 'good', degraded: 'warn', down: 'crit' };
 // The latency a segment adds, as the link's pill. A later hop that answers faster than the one before it (d < 0) is not
 // a fault: routers de-prioritize replies to pings, and a target set as a later hop may be an anycast server reached by
 // another route. A small such value reads as "about 0"; a large one is shown as it is, with the same explanation.
-export const NEGATIVE_NOISE_MS = 10;
-export function deltaText(d) {
+const NEGATIVE_NOISE_MS = 10;
+function deltaText(d) {
   if (d >= 0) return { text: `+${d.toFixed(1)} ms`, title: 'Latency this segment adds' };
   const why = 'This hop answered faster than the one before it, so the segment adds about nothing. That is normal, not a fault: '
     + 'routers answer pings at low priority, and a target set as a later hop can be a nearby anycast server.';
@@ -127,7 +129,7 @@ function extras(live) {
 
 // The path as the views draw it: every node (`nodes`), the same with the ISP hops folded into one (`folded()`, for a
 // view too narrow for a node per hop), the other targets, and the host's count of targets.
-export function presentPath(targets, raw = pathNodes(targets)) {
+function presentPath(targets, raw = pathNodes(targets)) {
   const live = targets.filter((t) => t.enabled !== false);
   const nodes = decorate(raw, live);
   let folded = null;
@@ -183,11 +185,16 @@ function push(change) {
   if (card) card.update({ ...vm });
 }
 
+let verdictKey = null;
 function onDiagnosis(diagnosis) {
-  const verdict = presentVerdict(diagnosis);
+  let verdict = presentVerdict(diagnosis);
   frame(verdict.level);
   updateHeader(diagnosis, verdict.level);
-  push({ verdict });
+  // the same words again keep the same object: a view compares the parts by identity and redraws only a changed one
+  const key = JSON.stringify(verdict);
+  if (key === verdictKey && vm.verdict !== CONNECTING) verdict = vm.verdict;
+  verdictKey = key;
+  if (verdict !== vm.verdict) push({ verdict });
 }
 
 function onTargets(targets) {
@@ -196,21 +203,13 @@ function onTargets(targets) {
   push({ path: presentPath(targets, raw) });
 }
 
-// ---------- the notices over the chain: first run, route changed ----------
-// A notice: { level, icon, title, text, progress (the text is the discovery's progress), actions: [{action, arg, label,
-// primary, needsEdit}] }; null for none.
-const review = (arg, title, text) => ({
-  level: 'unknown', icon: 'path', title, text, progress: false,
-  actions: [{ action: 'openPathEditor', arg, label: 'Review', primary: true, needsEdit: true }]
-});
-let notice = ''; // which notice shows: 'first' (the first run's) or 'drift'
-
+// ---------- the first run ----------
 // First run (a path never applied: revision 0, the default targets are probed): discovery starts by itself (the server
 // starts it at most once per process; later loads show that run) and the notice offers its draft for review in the path
 // editor (dialogs/path-editor). The automatic run looks up no operators (the ASN lookup sends hop addresses to a public
 // service): the editor's Rediscover, with its disclosure, can. Until Apply the defaults keep probing, so the dashboard is
 // never empty. True when it is a first run.
-export async function firstRun() {
+async function firstRun() {
   let path;
   try { path = await fetchPath(); } catch (_) { return false; }
   hopDevices.clear();
@@ -219,98 +218,6 @@ export async function firstRun() {
   firstRunBanner();
   return true;
 }
-
-async function firstRunBanner() {
-  await util.accessKnown; // the sign-in state first
-  if (!util.canEdit()) { push({ banner: null }); return; } // a viewer without the token: discovery and applying a path are the owner's
-  notice = 'first';
-  const finding = (text) => push({ banner: { level: 'unknown', icon: 'route', title: 'Finding your network path…', text, progress: true, actions: [] } });
-  finding('Tracing the hops to the internet.');
-  try {
-    const id = await startDiscovery({ asnLookup: false, snmp: false, firstRun: true });
-    const run = id ? await waitDiscovery(id, finding) : null;
-    if (run && run.state === 'done') {
-      const homeFound = ((run.draft && run.draft.hops) || []).some((h) => h.category === 'local' || h.category === 'gateway');
-      push({ banner: homeFound
-        ? review(`discovery:${id}`, 'Pengumon found your network path', '· Review it: until you apply it, the default targets are probed.')
-        : review(`discovery:${id}`, 'Pengumon could not find your router', '· Only public servers answered. Review the draft: until you apply a path, the default targets are probed.') });
-      return;
-    }
-  } catch (_) { /* no discovery in this build, or it failed: the defaults can be reviewed all the same */ }
-  push({ banner: review('', 'Review your network path', '· The default targets are probed until you apply a path of your own.') });
-}
-
-// The route changed (GET /api/path/drift: discovery reruns quietly, daily and after an incident): "Your path changed ·
-// Review" opens the editor with that discovery's draft; Dismiss marks these changes seen. Checked at the start and
-// every few minutes; a build without the check shows nothing.
-const DRIFT_EVERY_MS = 5 * 60 * 1000;
-let driftKey = '';
-
-// "03:00", or "5 Nov, 03:00" when it was not today.
-function checkTime(sec) {
-  const ms = sec * 1000;
-  const today = util.localFormat(Date.now(), { day: 'numeric', month: 'short' }) === util.localFormat(ms, { day: 'numeric', month: 'short' });
-  return util.localFormat(ms, today ? { hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-
-// Why a check failed, in words (the server's `error` says it in its own: no addresses in either).
-function failureReason(error) {
-  const e = String(error || '');
-  if (/^No trace reached/i.test(e)) return 'no trace reached the internet, so the connection may have been down';
-  if (/^Discovery failed/i.test(e)) return 'the route discovery hit an error';
-  return 'the check could not run';
-}
-
-// The standing line while the latest background check failed: when, why, and which check the path shown comes from.
-export function failedCheckLine(drift) {
-  const at = drift.checked_at ? ` at ${checkTime(drift.checked_at)}` : '';
-  const from = drift.good_at ? `the path shown is from ${checkTime(drift.good_at)}` : 'no earlier check has succeeded';
-  return `The last route check failed${at} (${failureReason(drift.error)}); ${from}.`;
-}
-
-export function driftBanner(drift, edit) {
-  const failed = drift.state === 'failed';
-  const changes = drift.changes || [];
-  if (!changes.length) { // only the failed check to tell
-    return { level: 'unknown', icon: 'route', title: 'Route check', text: `· ${failedCheckLine(drift)}`, progress: false, actions: [] };
-  }
-  const first = String(changes[0].text || '').replace(/\.$/, '');
-  const more = changes.length > 1 ? ` (and ${changes.length - 1} more)` : '';
-  const actions = [{ action: 'openPathEditor', arg: `discovery:${drift.discovery_id}`, label: 'Review', primary: true, needsEdit: true }];
-  if (edit) actions.push({ action: 'dismissPathDrift', label: 'Dismiss', needsEdit: true });
-  return { level: 'warn', icon: 'route', title: 'Your path changed', text: `· ${first}${more}.${failed ? ` ${failedCheckLine(drift)}` : ''}`, progress: false, actions };
-}
-
-export async function driftNotice() {
-  let drift;
-  try { drift = await fetchDrift(); } catch (_) { return; }
-  // a failed check keeps the changes of the last good one until they are reviewed
-  const changes = drift && (drift.state === 'changed' || drift.state === 'failed') && drift.discovery_id ? (drift.changes || []) : [];
-  if (!changes.length && !(drift && drift.state === 'failed')) {
-    if (notice === 'drift') { notice = ''; push({ banner: null }); }
-    return;
-  }
-  const key = `${drift.discovery_id}|${drift.checked_at}|${drift.state}`;
-  if (key === driftKey && notice === 'drift') return;
-  driftKey = key;
-  notice = 'drift';
-  push({ banner: driftBanner({ ...drift, changes }, util.canEdit()) });
-}
-
-async function dismiss(el) {
-  el.disabled = true;
-  try {
-    await dismissDrift();
-    notice = '';
-    push({ banner: null });
-  } catch (_) {
-    el.disabled = false;
-  }
-}
-
-registerActions('click', { dismissPathDrift: (el) => dismiss(el) });
-// the route-change notice can name a time (the last good check): on the page's clock
-document.addEventListener('zonechange', () => { if (notice === 'drift') { driftKey = ''; driftNotice(); } });
 
 // ---------- the fixture (the parity test of the card's views, tests/ui/steps/core.mjs) ----------
 export function fixture() {
@@ -332,8 +239,9 @@ export function fixture() {
 // ---------- mounting ----------
 export function mountDiagnosis(bus, ctx) {
   const article = document.getElementById('diagnosisBanner');
-  card = createCard({ panel: 'diagnosis', root: article.querySelector('.panel-b'), standard, fixture });
+  card = createCard({ panel: 'diagnosis', root: article.querySelector('.panel-b'), standard, fixture, offscreen: 'defer' });
   push({ busyLegend: !!(ctx && ctx.featureAvailable('line_load')) });
+  bindNotices(push);
   bus.subscribe('targets', onTargets);
   firstRun().then((first) => {
     if (first) return;

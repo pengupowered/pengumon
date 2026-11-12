@@ -1,9 +1,9 @@
+import { has } from '../../js/values.js';
 // The range gauge as data: the bar's zones from the device's ranges, the words under and over it. Shared by the line
 // card's view model (docsis.js `reader`), its standard view (view.js) and the Channels dialog's gauges (docsis.js), so
 // the three draw one gauge the same way. Technology-free: a range is {unit, min, max, good_low, good_high, critical_low,
 // critical_high} from the server.
 
-const has = (v) => v !== null && v !== undefined;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 // The bar as segments, in drawing order: {kind: 'mid' | 'ok' | 'spread' | 'mark', left, width, title}. `lo`/`hi` are the

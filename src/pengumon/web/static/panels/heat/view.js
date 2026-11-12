@@ -3,6 +3,7 @@
 // the keyboard focus gets it back. docs/themes.md, "Drawing a card".
 
 import { kit } from '../../js/cards.js';
+import { numText } from '../../js/escape.js';
 
 const { escapeHtml } = kit;
 
@@ -13,8 +14,8 @@ function gridMarkup(vm) {
   const rows = vm.rows.map((row) => `<span data-item="day-${row.id}" data-v="day">${escapeHtml(row.name)}</span>${row.cells.map((c) => {
     const fill = c.q === null ? 'var(--nodata)' : `var(--q${c.q})`;
     if (c.future) return `<i class="later" style="--f:${fill}" data-item="${c.id}" data-v="tip" aria-label="${escapeHtml(c.aria)}" data-tip="${escapeHtml(c.tip)}"></i>`;
-    return `<button type="button" class="cell" tabindex="${c.id === '0-0' ? 0 : -1}" style="--f:${fill}" data-item="${c.id}" data-v="tip" data-action="showIncidentWindow" data-start="${c.start}" data-end="${c.end}"`
-      + ` data-label="${escapeHtml(c.label)}" data-lost="${c.lost}" data-sent="${c.sent}" data-tip="${escapeHtml(c.tip)}" aria-label="${escapeHtml(c.aria)}"></button>`;
+    return `<button type="button" class="cell" tabindex="${c.id === '0-0' ? 0 : -1}" style="--f:${fill}" data-item="${c.id}" data-v="tip" data-action="showIncidentWindow" data-start="${numText(c.start)}" data-end="${numText(c.end)}"`
+      + ` data-label="${escapeHtml(c.label)}" data-lost="${numText(c.lost)}" data-sent="${numText(c.sent)}" data-tip="${escapeHtml(c.tip)}" aria-label="${escapeHtml(c.aria)}"></button>`;
   }).join('')}`).join('');
   return head + rows;
 }

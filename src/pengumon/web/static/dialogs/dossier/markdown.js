@@ -3,7 +3,7 @@
 // HTML-escaped first, so the server's text (target names, notes) can never become markup. Returns the document's title,
 // its bold "key: value" lines under the title (meta), and the sections (body) as markup.
 
-import { escapeHtml } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
 
 const inline = (text) => escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
 const numeric = (cell) => /^[+\-−]?[\d.,]+( ?(%|ms|s|dB|dBmV|MHz))?$/.test(cell.trim());

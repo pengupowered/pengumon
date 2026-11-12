@@ -7,8 +7,11 @@
 import { createCard } from '../../js/cards.js';
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { copyText, localFormat, STATUS } from '../../js/util.js';
+import { copyText } from '../../js/clipboard.js';
+import { localFormat } from '../../js/clock.js';
+import { STATUS } from '../../js/dom.js';
 import standard from './view.js';
+import { everyWhileVisible } from '../../js/timers.js';
 
 const POLL_MS = 30000;
 const REDRAW_MS = 5000; // keeps "checked Ns ago" honest between polls
@@ -122,7 +125,8 @@ function render() {
   card.update(vm);
   const summary = document.getElementById('servicesSummary');
   if (summary) summary.textContent = vm.summary;
-  document.getElementById('servicesCard').dataset.status = vm.status;
+  const frame = document.getElementById('servicesCard');
+  if (frame.dataset.status !== vm.status) frame.dataset.status = vm.status; // (the same value written again would wake the tab-dot observer)
 }
 
 async function refresh() {
@@ -137,12 +141,12 @@ async function refresh() {
   }
 }
 
-export function toggleServiceHistory(id) {
+function toggleServiceHistory(id) {
   if (openHistory.has(id)) openHistory.delete(id); else openHistory.add(id);
   render();
 }
 
-export function copyServiceUrl(text, button) {
+function copyServiceUrl(text, button) {
   if (!text) return;
   const done = (label) => {
     if (!button) return;
@@ -160,8 +164,8 @@ export function initServices() {
   if (!article || !feature || !feature.available) return;
   card = createCard({ panel: 'services', root: article.querySelector('.panel-b'), standard, fixture });
   refresh();
-  setInterval(refresh, POLL_MS);
-  setInterval(render, REDRAW_MS);
+  everyWhileVisible(refresh, POLL_MS);
+  everyWhileVisible(render, REDRAW_MS);
   document.addEventListener('zonechange', render); // the outages' times are on the page's clock
 }
 

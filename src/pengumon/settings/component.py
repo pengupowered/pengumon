@@ -30,6 +30,10 @@ def live_part(manager: SettingsManager) -> LivePart:
 def _apply_retention(config, repository) -> None:
     repository.retention_days = config.database.retention_days
     repository.rollup_retention_days = config.database.rollup_retention_days
+    repository.long_rollup_retention_days = config.database.long_rollup_retention_days
+    repository.traffic_retention_days = config.database.traffic_retention_days
+    repository.slot_retention_days = config.database.slot_retention_days
+    repository.incident_retention_days = config.database.incident_retention_days
 
 
 def subscribe(hub: SettingsHub, manager: SettingsManager, access: AccessManager) -> None:
@@ -39,11 +43,18 @@ def subscribe(hub: SettingsHub, manager: SettingsManager, access: AccessManager)
     async def _viewers(change):
         await access.apply_viewers(config.access.allow_viewers)
 
-    @hub.on(["database.retention_days", "database.rollup_retention_days"], name="settings.retention")
+    @hub.on(["database.retention_days", "database.rollup_retention_days", "database.long_rollup_retention_days",
+             "database.traffic_retention_days", "database.slot_retention_days",
+             "database.incident_retention_days"],
+            name="settings.retention")
     def _retention(change):
         _apply_retention(config, repository)
         _log.info(f"Retention policy now: raw probe data {config.database.retention_days} days, per-minute rollups "
-                  f"{config.database.rollup_retention_days} days (applied at the next hourly cleanup)")
+                  f"{config.database.rollup_retention_days} days, quarter-hour rollups "
+                  f"{config.database.long_rollup_retention_days} days, 10-second history "
+                  f"{config.database.slot_retention_days} days, router traffic "
+                  f"{config.database.traffic_retention_days} days, incidents "
+                  f"{config.database.incident_retention_days or 'forever'}{' days' if config.database.incident_retention_days else ''} (applied at the next hourly cleanup)")
 
     @hub.on(["server.log_level", "server.log_levels"], name="settings.logging")
     def _logging(change):
@@ -59,7 +70,7 @@ async def register(ctx: Context) -> Component:
     secret_store = SecretStore()  # data/secrets.json, read once and shared by everything that reads or writes it
     hub = SettingsHub()
     manager = SettingsManager(ctx.config, ctx.state.repository, secret_store, hub, config_path=paths.config_path(),
-                              token_set=lambda: bool(getattr(security, "access_token", "")))
+                              token_set=lambda: bool(getattr(security, "token_set", False)))
     await manager.load()
     _apply_retention(ctx.config, ctx.state.repository)  # before the retention component's start-up prune
     apply_levels(ctx.config.server.log_level, ctx.config.server.log_levels)

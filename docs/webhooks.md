@@ -33,7 +33,7 @@ notifications:
 ```
 
 - `url` must be `http` or `https` and carry no `user:password@`; put credentials in `headers`. Redirects are followed
-  only within the same host (at most 3); one to another host fails the delivery.
+  only within the same host (at most 3); one to another host fails the delivery, and so does one from `https` to plain `http` (the header secrets would go out in clear). `http` to `https` on the same host and port is followed.
 - A header value is sent as written, or, when it is `secret:<name>`, replaced by the secret `<name>`, looked up in
   this order: the environment variable `PENGUMON_WEBHOOK_SECRET_<NAME>` (upper case, other characters as `_`), the file
   `/run/secrets/pengumon_webhook_<name>` (Podman or Docker secret), then `webhooks.<name>` in `data/secrets.json`

@@ -192,7 +192,7 @@ def test_release_runs_in_order_and_only_publishes_with_the_permissions_it_needs(
     assert jobs["image"]["permissions"] == {"contents": "read", "packages": "write", "actions": "read"}
     assert jobs["manifest"]["needs"] == "image"
     assert jobs["manifest"]["permissions"] == {"contents": "read", "packages": "write"}
-    assert jobs["release"]["needs"] == ["tested", "manifest", "attest-image", "attest-files"]
+    assert jobs["release"]["needs"] == ["tested", "manifest", "attest-image", "attest-files", "publish-image"]
     assert jobs["release"]["permissions"] == {"contents": "write", "actions": "read"}
 
 
@@ -260,7 +260,7 @@ def test_release_builds_each_architecture_natively_from_the_tested_wheel_and_joi
     downloads = [s for s in jobs["image"]["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact@")]
     assert [d["with"]["name"] for d in downloads] == ["dist"]
     join = next(s["run"] for s in jobs["manifest"]["steps"] if "imagetools create" in s.get("run", ""))
-    assert '-t "$IMAGE:latest"' in join and "-amd64" in join and "-arm64" in join
+    assert "-candidate" in join and "-amd64" in join and "-arm64" in join  # latest comes later (publish-image)
     release = next(s["run"] for s in jobs["release"]["steps"] if "gh release create" in s.get("run", ""))
     assert "release-assets/*" in release  # the wheel, the sdist, the lock, the install scripts and SHA256SUMS
 
@@ -449,3 +449,85 @@ def test_each_provenance_step_is_retried_once_after_a_transient_failure():
         assert first.get("id") == "attest" and first.get("continue-on-error") is True, name
         assert second.get("if") == "steps.attest.outcome == 'failure'" and "continue-on-error" not in second, name
         assert first["with"] == second["with"], name
+
+
+@pytest.mark.parametrize("name", ["docker-compose.yml", "compose.release.yaml"])
+def test_both_compose_files_drop_every_capability_but_net_raw_and_limit_memory_and_processes(name):
+    service = yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))["services"]["pengumon"]
+    assert service["cap_drop"] == ["ALL"] and service["cap_add"] == ["NET_RAW"]
+    assert service["mem_limit"] == "512m" and service["pids_limit"] == 256
+    # no-new-privileges would disable the file capability the image's Python relies on
+    assert "no-new-privileges" not in str(service.get("security_opt", []))
+
+
+# --- A second deploy in the same moment cannot overwrite the first one's rollback point ---------------------------
+
+def _dry_run_deploy(tree: Path, tmp_path: Path, existing_tags: str = ""):
+    """deploy.sh --dry-run with a fake podman (`image exists` is true for localhost/pengumon:latest and `existing_tags`)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    podman = bin_dir / "podman"
+    podman.write_text(
+        '#!/bin/sh\n'
+        'if [ "$1 $2" = "image exists" ]; then\n'
+        f'  case "$3" in localhost/pengumon:latest) exit 0 ;; {existing_tags or "NONE"}) exit 0 ;; esac\n'
+        '  exit 1\nfi\n'
+        'exit 1\n')
+    podman.chmod(0o755)
+    home = tmp_path / "home"
+    (home / "backups").mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DEPGUARD_HOME": str(tmp_path / "nowhere"),
+           "PENGUMON_BACKUPS": str(home / "backups")}
+    env.pop("PENGUMON_REQUIRE_DEPGUARD", None)
+    return subprocess.run(["bash", str(tree / "scripts" / "deploy.sh"), "--dry-run", "--no-build"],
+                          capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, check=False)
+
+
+def test_deploy_stamps_to_the_second(deploy_tree, tmp_path):
+    res = _dry_run_deploy(deploy_tree, tmp_path)
+    assert res.returncode == 0, res.stderr
+    assert re.search(r"pre-deploy-\d{4}-\d{2}-\d{2}-\d{6}\b", res.stdout), res.stdout
+
+
+def test_deploy_refuses_to_reuse_a_rollback_tag(deploy_tree, tmp_path):
+    # every second from now on counts as taken (the tag glob matches any stamp)
+    res = _dry_run_deploy(deploy_tree, tmp_path, existing_tags='"localhost/pengumon:pre-deploy-"*')
+    assert "rollback point" in res.stderr and "already exists" in res.stderr
+    assert "DRYRUN: podman tag" not in res.stdout
+
+
+def test_deploy_refuses_to_reuse_a_backup_folder(deploy_tree, tmp_path):
+    home = tmp_path / "home" / "backups"
+    home.mkdir(parents=True)
+    # a fake `date` pins the stamp, and the folder for that stamp already exists
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    date = fake_bin / "date"
+    date.write_text('#!/bin/sh\ncase "$*" in *%Y-%m-%d-%H%M%S*) echo 2026-01-02-030405 ;; *) exec /bin/date "$@" ;; esac\n')
+    date.chmod(0o755)
+    (home / "2026-01-02-030405").mkdir()
+    res = _dry_run_deploy(deploy_tree, tmp_path)
+    assert res.returncode == 1 and "already exists" in res.stderr
+
+
+def test_deploy_removes_only_folders_it_made_after_a_good_deploy():
+    deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+    assert "-regex" in deploy and "umask 077" in deploy
+
+
+def test_the_image_is_tagged_with_the_version_and_latest_only_after_its_attestation_succeeded():
+    # The tags used to be pushed by the job before the attestation job, so a failed attestation left them public.
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    for name, job in jobs.items():
+        for step in job["steps"]:
+            run = step.get("run", "")
+            if "imagetools create" in run:
+                tags = re.findall(r'-t "\$IMAGE:([^"]+)"', run)
+                if name == "publish-image":
+                    assert tags == ["$version", "latest"] and "attest-image" in job["needs"], name
+                else:
+                    assert tags == ["$version-candidate"] and "latest" not in run, name
+    publish = jobs["publish-image"]
+    assert publish["permissions"] == {"contents": "read", "packages": "write"}
+    assert any(str(s.get("uses", "")).startswith("docker/login-action@") for s in publish["steps"])
+    assert "publish-image" in jobs["release"]["needs"] and "attest-image" in jobs["release"]["needs"]

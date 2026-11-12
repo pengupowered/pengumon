@@ -34,7 +34,7 @@ its fake `sleep` raised an error the code swallowed. Three limits now stop that:
   and `faulthandler_exit_on_timeout` in `pyproject.toml`). This also catches a test that never yields to the event
   loop. Under xdist the guard ends that one worker; the run reports the test as failed ("worker crashed while running")
   with its stack, does not run it again, and fails (`tests/test_hang_guard.py` proves it). The slowest test takes about 9 s. `PENGUMON_TEST_HANG_S` changes the limit for `scripts/test.sh`;
-  `scripts/test-ui.sh` allows 300 s, since one browser run may take 240.
+  `scripts/test-ui.sh` allows 480 s, since one browser run may take 420.
 - **Memory and processes:** the test containers have a memory cap with no swap, so a leak ends in an out-of-memory kill
   (exit code 137). They also have a process cap. For `scripts/test.sh` the cap is 512 MB plus 384 MB per worker (2 GB
   with the default 4; the whole suite peaks under 900 MB with 4 workers); `PENGUMON_TEST_MEMORY` (for example `3g`)
@@ -111,13 +111,19 @@ run in a throwaway container with no network, no capabilities and a read-only ro
 hardening flags set inline in `scripts/test-ui.sh` (or through a shared runner script, when `UI_RUNNER_DIR` has one). Nothing is installed on the host. Only the image builds touch the network. The packages are test
 tooling and never enter the production image (see `docs/supply-chain.md`).
 
-`scripts/test-ui.sh` runs the browser runs side by side with pytest-xdist: `full` as three slices of the step files
-(`smoke.mjs`'s SHARD argument; the files that run last stay together because they build on one another) and the six
-other variants, 4 at a time (`PENGUMON_UI_WORKERS`, `-n <N>` wins). The memory cap is 1 GB plus 800 MB per worker
-(`PENGUMON_TEST_MEMORY`), as each run is an app, Node and Chromium. About 100 s in all, against 320 s one after another.
+`scripts/test-ui.sh` runs the browser runs side by side with pytest-xdist: `full` as four slices of the step files
+(`smoke.mjs`'s SHARD argument; the files that run last stay together because they build on one another), the seven
+other variants and the two Firefox slices (12 runs in all, listed in `RUNS` in `tests/test_ui_smoke.py`), 4 at a time
+(`PENGUMON_UI_WORKERS`, `-n <N>` wins). The memory cap is 1 GB plus 800 MB per worker (`PENGUMON_TEST_MEMORY`), as each
+run is an app, Node and Chromium.
 Tests wait on conditions, not on a fixed time, where there is one (`lib.mjs`: `layoutSettled`, `positionSettled`,
 `nextMessages`, `frames`); a few fixed waits are left on purpose: the sign-out step's 3 s "nothing happens" check, the
 final 2.5 s wait for late errors, and the waits before screenshots.
+Closing a dialog moves nothing in the browser's history (`js/modal.js` marks its entry spent; no `history.go()`, no
+timer), so the harness no longer waits for the history to settle before a reload (the old `settleHistory` wait in
+`lib.mjs` is gone) and a step that closes a dialog and reloads at once is a valid test. The step that goes Back over a
+spent entry waits for the Back to finish moving. `resetPage` clears the page's storage; when the page has no origin that
+allows storage (an error page, a blank document) it goes back to the app first and prints why.
 
 - `tests/test_ui_smoke.py` starts the app on a free port (if another run takes it first, the app fails to bind and it starts again on another) with a seeded database (the fake server is `tests/ui/serve.py`,
   one function per capability's fake data) and drives it in headless Chromium, once per variant (`full`, `bare`,

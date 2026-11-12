@@ -5,7 +5,7 @@
 // nothing here names one (the server finds the panel folders; panels/index.js loads what it found).
 
 import './session.js'; // first: wraps fetch, so a refused sign-in sends the page to /login
-import { initTargets } from './util.js';
+import { initTargets } from './targets.js';
 import { featureAvailable, loadDevices, missingNote, primaryDevice } from './devices.js';
 import { state } from './state.js';
 import { bus } from './bus.js';
@@ -35,7 +35,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   await Promise.all([initTargets(), loadDevices(), initSettingsValues()]);
   initHelp();
   document.getElementById('setupHint').hidden = !state.devicesKnown || state.devices.length > 0;
-  mountLayout(await loadModules(), context());
-  initTabs();
-  connectWebSocket();
+  try {
+    mountLayout(await loadModules(), context());
+    initTabs();
+  } finally {
+    connectWebSocket(); // a panel that fails to mount must not leave the page without live data
+  }
 });

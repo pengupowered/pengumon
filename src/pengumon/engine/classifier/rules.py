@@ -3,6 +3,8 @@
 Every level comes from the ClassifierConfig (the Settings page's outage rules), except the named internal constants
 below: a level written here as a number would ignore its setting."""
 
+from typing import Optional
+
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.classifier.metrics import RoundMetrics
 from pengumon.engine.classifier.verdict import NOMINAL, Verdict
@@ -30,24 +32,11 @@ def _past_gateway(m: RoundMetrics, line: LineWording, causes: str) -> str:
     return causes if m.gateway.measured else f"{line.gateway}, not monitored here; {causes}"
 
 
-def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream_issue_ts: float,
-             line: LineWording = GENERIC) -> Verdict:
-    """Determines the specific root-cause code and explanation. `line` phrases the gateway and the possible causes of
-    a fault on the access line for its technology (pengumon.lines)."""
+def _local_fault(m: RoundMetrics, config: ClassifierConfig) -> Optional[Verdict]:
+    """1. Local Wi-Fi / Mesh Router Issue: loss, then a latency or jitter spike, on the local router."""
     local_loss, local_lat, local_jitter = m.local.loss_pct, m.local.latency_ms, m.local.jitter_ms
-    gateway_loss, gateway_lat, gateway_jitter = m.gateway.loss_pct, m.gateway.latency_ms, m.gateway.jitter_ms
-    isp_loss, isp_lat, isp_jitter = m.isp.loss_pct, m.isp.latency_ms, m.isp.jitter_ms
-    public_loss, public_lat, public_jitter = m.public.loss_pct, m.public.latency_ms, m.public.jitter_ms
-    dns_loss, dns_lat = m.dns.loss_pct, m.dns.latency_ms
     degraded, down = config.degraded_loss_pct, config.down_loss_pct
-    isp_latency_level = config.isp_latency_spike_threshold_ms or config.public_latency_spike_threshold_ms
-
-    # Friendly target names and addresses for the descriptions
     local_name, local_addr = m.local.name("Local Router"), m.local.address("LAN")
-    gw_name, gw_addr = m.gateway.name("Modem / Gateway"), m.gateway.address("Gateway")
-    isp_name, isp_addr = m.isp.name("ISP Regional Hub"), m.isp.address("ISP Network")
-
-    # 1. Local Wi-Fi / Mesh Router Issue
     if local_loss >= down:
         return Verdict(
             kind="local_down",
@@ -81,8 +70,17 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="warning",
             affected=m.failed_targets,
         )
+    return None
 
-    # 2. The gateway (modem), probed on its home-side address. Those probes never use the provider's line, so loss
+
+def _gateway_fault(m: RoundMetrics, config: ClassifierConfig, line: LineWording) -> Optional[Verdict]:
+    """2. The gateway (modem), probed on its home-side address. Those probes never use the provider's line, so loss
+    here is the gateway itself or the link from the router to it, not the line."""
+    local_loss = m.local.loss_pct
+    gateway_loss, gateway_lat, gateway_jitter = m.gateway.loss_pct, m.gateway.latency_ms, m.gateway.jitter_ms
+    degraded, down = config.degraded_loss_pct, config.down_loss_pct
+    local_name = m.local.name("Local Router")
+    gw_name, gw_addr = m.gateway.name("Modem / Gateway"), m.gateway.address("Gateway")
     #    here is the gateway itself or the link from the router to it, not the line.
     gw_side = f"{gw_name} ({gw_addr}), {line.gateway} on its home-side address,"
     if gateway_loss >= down and local_loss < degraded:
@@ -115,9 +113,14 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="warning",
             affected=m.failed_targets,
         )
+    return None
 
-    # 3a. No LAN target at all: loss toward the internet cannot be placed on the line, since nothing shows the
-    #     local network working.
+
+def _unplaced_internet_fault(m: RoundMetrics, config: ClassifierConfig) -> Optional[Verdict]:
+    """3a. No LAN target at all: loss toward the internet cannot be placed on the line, since nothing shows the
+    local network working."""
+    isp_loss, public_loss = m.isp.loss_pct, m.public.loss_pct
+    degraded, down = config.degraded_loss_pct, config.down_loss_pct
     if not m.local.measured and not m.gateway.measured and (isp_loss >= degraded or public_loss >= degraded):
         worst = max(isp_loss, public_loss)
         is_down = worst >= down
@@ -131,10 +134,16 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="critical" if is_down else "warning",
             affected=m.failed_targets,
         )
+    return None
 
-    # 3. Loss from the provider's first hop on while the gateway answers: the line (from the gateway to that hop) or
-    #    the provider's first router. Loss only past it (the ISP hop answers, the internet does not): the provider's
-    #    network beyond, not the line.
+
+def _upstream_outage(m: RoundMetrics, config: ClassifierConfig, line: LineWording) -> Optional[Verdict]:
+    """3. Loss from the provider's first hop on while the gateway answers: the line (from the gateway to that hop) or
+    the provider's first router. Loss only past it (the ISP hop answers, the internet does not): the provider's
+    network beyond, not the line."""
+    local_loss, isp_loss, public_loss = m.local.loss_pct, m.isp.loss_pct, m.public.loss_pct
+    degraded, down = config.degraded_loss_pct, config.down_loss_pct
+    isp_name, isp_addr = m.isp.name("ISP Regional Hub"), m.isp.address("ISP Network")
     if (isp_loss >= down or public_loss >= down) and local_loss < degraded:
         if isp_loss >= ISP_HOP_WORDING_LOSS_PCT:
             cause, title = "access_line_drop", f"Line or {isp_name} Outage"
@@ -156,6 +165,14 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="critical",
             affected=m.failed_targets,
         )
+    return None
+
+
+def _upstream_loss(m: RoundMetrics, config: ClassifierConfig, line: LineWording) -> Optional[Verdict]:
+    """3. The same, below the outage level: packet loss at the ISP hop, or only at the public targets."""
+    isp_loss, public_loss = m.isp.loss_pct, m.public.loss_pct
+    degraded = config.degraded_loss_pct
+    isp_name, isp_addr = m.isp.name("ISP Regional Hub"), m.isp.address("ISP Network")
     if isp_loss >= degraded or public_loss >= degraded:
         if isp_loss >= degraded:
             kind, cause = "isp_loss", "access_line_drop"
@@ -176,6 +193,14 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="warning",
             affected=m.failed_targets,
         )
+    return None
+
+
+def _upstream_latency(m: RoundMetrics, config: ClassifierConfig) -> Optional[Verdict]:
+    """3. A latency or jitter spike toward the ISP hop or the public targets."""
+    isp_lat, isp_jitter = m.isp.latency_ms, m.isp.jitter_ms
+    public_lat, public_jitter = m.public.latency_ms, m.public.jitter_ms
+    isp_latency_level = config.isp_latency_spike_threshold_ms or config.public_latency_spike_threshold_ms
     if (isp_lat and isp_lat > isp_latency_level) or (public_lat and public_lat > config.public_latency_spike_threshold_ms) or (public_jitter and public_jitter > config.public_jitter_spike_threshold_ms):
         lat = max(isp_lat or 0, public_lat or 0)
         jit = max(isp_jitter or 0, public_jitter or 0)
@@ -188,8 +213,16 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
             severity="warning",
             affected=m.failed_targets,
         )
+    return None
 
-    # 4. DNS Resolver Outage (Only evaluated if physical layers: Local, Gateway, and Public IP routing are all healthy!)
+
+def _dns_fault(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream_issue_ts: float
+               ) -> Optional[Verdict]:
+    """4. DNS Resolver Outage (Only evaluated if physical layers: Local, Gateway, and Public IP routing are all healthy!)"""
+    local_loss, gateway_loss = m.local.loss_pct, m.gateway.loss_pct
+    isp_loss, public_loss = m.isp.loss_pct, m.public.loss_pct
+    dns_loss, dns_lat = m.dns.loss_pct, m.dns.latency_ms
+    down = config.down_loss_pct
     guard = DNS_GUARD_LOSS_PCT
     if local_loss < guard and gateway_loss < guard and isp_loss < guard and public_loss < guard:
 
@@ -225,9 +258,23 @@ def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream
                     severity="warning",
                     affected=m.failed_targets,
                 )
+    return None
 
-    # 5. All Systems Nominal
-    return NOMINAL
+
+def diagnose(m: RoundMetrics, config: ClassifierConfig, ts: float, last_upstream_issue_ts: float,
+             line: LineWording = GENERIC) -> Verdict:
+    """Determines the specific root-cause code and explanation. `line` phrases the gateway and the possible causes of
+    a fault on the access line for its technology (pengumon.lines). The layers are asked in order, from the home
+    outwards, and the first that finds a fault answers; 5. All Systems Nominal when none does."""
+    return (_local_fault(m, config)
+            or _gateway_fault(m, config, line)
+            or _unplaced_internet_fault(m, config)
+            or _upstream_outage(m, config, line)
+            or _upstream_loss(m, config, line)
+            or _upstream_latency(m, config)
+            or _dns_fault(m, config, ts, last_upstream_issue_ts)
+            or NOMINAL)
+
 
 
 def apply_speedtest(verdict: Verdict) -> Verdict:

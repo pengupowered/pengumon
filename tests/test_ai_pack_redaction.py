@@ -113,3 +113,89 @@ def test_vague_keeps_provider_and_public_hops_named_after_what_it_shows():
     # a home hop's name stays swept even where the provider's names contain it
     rx = Redactor("vague", hops=[HopFact("r", "local", "edge", "192.168.88.1"), hops[2]])
     assert rx.text("Packet loss at edge") == "Packet loss at Router"
+
+
+# --- the final scan's patterns, form by form -------------------------------------------------------
+
+import time  # noqa: E402
+
+import pytest  # noqa: E402
+
+from pengumon.reports.redact import ANONYMIZED, FULL, LEVELS, REMOVED, VAGUE  # noqa: E402
+
+# Every written form of a MAC address: each must go at every level, with the text around it kept.
+MAC_FORMS = [
+    ("02:00:00:00:00:01", REMOVED),
+    ("src:02:00:00:00:00:01 x", f"src:{REMOVED} x"),          # a ":" before it: a router log line
+    ("MAC:AA:AA:AA:DD:EE:FF dropped", f"MAC:{REMOVED} dropped"),
+    ("host-02:00:00:00:00:01", f"host-{REMOVED}"),             # a letter and a dash before it
+    ("mac=02-00-00-00-00-01", f"mac={REMOVED}"),               # dashes: once cut in two by the address rule
+    ("mac=10-00-00-01-00-02", f"mac={REMOVED}"),               # pairs that read as a 10.x address at Vague
+    ("aabbccddeeff", REMOVED),                                  # twelve bare hex digits
+    ("MAC AABBCCDDEEFF.", f"MAC {REMOVED}."),
+    ("0200.0000.0001", REMOVED),                                # Cisco's dotted form
+    ("(02-00-00-AA-BB-01)", f"({REMOVED})"),
+    ("02:00:00:00:00:01: link up", f"{REMOVED}: link up"),
+]
+# Not MAC addresses: left alone by the MAC rule (at Full, where no address rule runs).
+NOT_MACS = ["2001:db8:aa:aa:aa:dd:ee:ff", "fe80::aa:aa:aa:dd:ee:ff", "02:00:00:ff:fe:00:00:01", "123456789012",
+            "1234567890abc", "12:30:45", "2026-11-10T12:00:00-05:00", "aa:bb:cc:dd:ee", "fade"]
+
+
+@pytest.mark.parametrize("level", LEVELS)
+@pytest.mark.parametrize("text,expected", MAC_FORMS)
+def test_the_final_scan_removes_a_mac_in_every_written_form(level, text, expected):
+    rx = Redactor(level)
+    assert rx.scan(text) == expected
+    assert rx.hits == {"mac": 1}
+    assert Redactor(level).text(text) == expected          # quoted text (titles, module cells) gets the same rules
+
+
+@pytest.mark.parametrize("text", NOT_MACS)
+def test_the_mac_rule_leaves_addresses_times_and_numbers_alone(text):
+    rx = Redactor(FULL)
+    assert rx.scan(text) == text and rx.hits == {}
+
+
+@pytest.mark.parametrize("name", ["x.fritz.box", "MyPhone.example.xyz", "printer.localdomain", "nas.home.arpa",
+                                  "Living-Room.mesh.internal", "cam1.example.cloud"])
+def test_anonymized_removes_any_host_name(name):
+    rx = Redactor(ANONYMIZED)
+    assert rx.scan(f"reached {name}, then lost") == f"reached {REMOVED}, then lost" and rx.hits == {"host name": 1}
+
+
+@pytest.mark.parametrize("text", ["Pengumon 0.27.0", "loss 3.14%", "e.g. the modem", "i.e. the line", "Wi-Fi 2.4 GHz",
+                                  "v1.2.3", "12.5ms at 21:14"])
+def test_the_host_name_rule_leaves_versions_numbers_and_abbreviations_alone(text):
+    rx = Redactor(ANONYMIZED)
+    assert rx.scan(text) == text and rx.hits == {}
+
+
+@pytest.mark.parametrize("level", LEVELS)
+@pytest.mark.parametrize("text,secret", [
+    ("GET http://192.0.2.9/api?token=Cnry0abcd&x=1", "Cnry0abcd"),
+    ("login failed: password=Cnry1hunter2", "Cnry1hunter2"),
+    ("url /cb?api_key=Cnry2XYZ", "Cnry2XYZ"), ("?a=1&key=Cnry3abc", "Cnry3abc"),
+    ("access_token=Cnry4tok rejected", "Cnry4tok"), ("http://admin:Cnry5pw@192.0.2.9/", "Cnry5pw")])
+def test_the_final_scan_removes_secrets_in_urls_and_messages_at_every_level(level, text, secret):
+    rx = Redactor(level)
+    out = rx.scan(text)
+    assert secret not in out and rx.hits.get("secret") == 1, out
+
+
+def test_the_secret_rule_leaves_pengumons_words_alone():
+    for text in ("the role key of a mesh node", "a token bucket", "check its username and password in Settings"):
+        assert Redactor(FULL).scan(text) == text
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_the_scan_stays_linear_on_long_hostile_input(level):
+    """Each input is 200,000 characters of a shape that makes a careless pattern backtrack (a run of hex pairs, a
+    dotted run with no name at its end, digits that never become an address). The bound is far above the linear
+    time and far below a quadratic one (the old host-name rule took minutes on the dotted run)."""
+    inputs = ["0:" * 100_000, "aa:" * 66_666, "aa-" * 66_666, "a" * 200_000, "0" * 200_000, "a." * 100_000,
+              "ab.ab." * 33_333 + "1", "aaaa." * 40_000, "1." * 100_000, "-a" * 100_000, "key" * 66_666]
+    started = time.monotonic()
+    for text in inputs:
+        Redactor(level).scan(text)
+    assert time.monotonic() - started < 10.0

@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from pengumon import cli
+from pengumon.db.migrations import LATEST_VERSION
 from pengumon.db.repository import DatabaseRepository
 
 from settings_helpers import OWNER_SHAPED, WEBHOOKS, make_manager, write_config
@@ -39,11 +40,19 @@ async def _run(capsys, *args) -> tuple:
     return code, capsys.readouterr().out
 
 
-async def test_a_clean_config_comes_across_unchanged_and_the_originals_are_untouched(tmp_path, capsys):
+async def test_a_clean_config_comes_across_unchanged_and_the_originals_are_untouched(tmp_path, capsys, monkeypatch):
+    # The command makes its copies in a folder of its own (tempfile.mkdtemp), so two runs never share one; this test
+    # looks for leftovers in a temp directory of its own too, not in the machine's, where a parallel worker's run
+    # (or anything else) makes and removes folders of the same name pattern.
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    made, real_mkdtemp = [], tempfile.mkdtemp
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda *a, **k: made.append(real_mkdtemp(*a, **k)) or made[-1])
     db, secrets = await _backup(tmp_path)
     config = write_config(tmp_path, OWNER_SHAPED + WEBHOOKS)
     before = (_digest(db), _digest(secrets), sorted(p.name for p in db.parent.iterdir()))
-    temp_before = set(Path(tempfile.gettempdir()).glob("pengumon-check-import-*"))
+    temp_before = set(scratch.glob("pengumon-check-import-*"))
     code, out = await _run(capsys, "--config", str(config), "--db", str(db), "--secrets", str(secrets))
     assert code == 0, out
     assert "result: every value came across unchanged" in out
@@ -51,11 +60,12 @@ async def test_a_clean_config_comes_across_unchanged_and_the_originals_are_untou
     assert "list webhooks (set in config.yaml): 1 item(s) before, 1 after" in out
     assert "note: prober.ping_count_per_probe: does nothing; dropped" in out
     assert "secrets.json (copy): webhook_urls +1 entries, webhooks +1 entries" in out
-    assert "migration: schema v17 -> v17" in out and "import report: 0 entries" in out
+    assert f"migration: schema v{LATEST_VERSION} -> v{LATEST_VERSION}" in out and "import report: 0 entries" in out
     for value in PLANTED:
         assert value not in out, value
     assert (_digest(db), _digest(secrets), sorted(p.name for p in db.parent.iterdir())) == before
-    assert set(Path(tempfile.gettempdir()).glob("pengumon-check-import-*")) == temp_before  # copies deleted
+    assert set(scratch.glob("pengumon-check-import-*")) == temp_before == set()  # copies deleted
+    assert len(made) == 1 and Path(made[0]).parent == scratch and not Path(made[0]).exists()  # it did make one there
     repo = DatabaseRepository(db_path=str(db))
     await repo.initialize()
     assert not await repo.settings_initialized()

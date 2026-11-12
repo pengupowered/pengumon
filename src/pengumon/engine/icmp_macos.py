@@ -27,6 +27,8 @@ icmp_packet.parse_icmp6, shared with Linux.
 """
 
 import asyncio
+import errno
+import logging
 import os
 import socket
 import struct
@@ -51,6 +53,8 @@ IPPROTO_ICMP_NUM = 1
 _TIMEVAL_MIN = 12  # Darwin struct timeval: int64 tv_sec, int32 tv_usec, 4 bytes padding (16 in all)
 _CMSG_SPACE = socket.CMSG_SPACE(16) if hasattr(socket, "CMSG_SPACE") else 0
 _RECV_SIZE = 2048
+_MAX_RECV_ERRORS = 50  # wakeups in a row whose read fails: more than a stray error, a dead socket
+logger = logging.getLogger("pengumon.icmp")
 _MAX_READS_PER_WAKEUP = 512  # bounds one wakeup if the socket is flooded with foreign ICMP
 
 
@@ -177,6 +181,7 @@ class MacIcmpBackend:
         self._pending: Dict[int, Tuple[asyncio.Future, str, bytes, int, int]] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._closed = False
+        self._recv_errors = 0
 
     def _ensure_reader(self):
         loop = asyncio.get_running_loop()
@@ -220,14 +225,31 @@ class MacIcmpBackend:
         finally:
             self._pending.pop(seq, None)
 
+    def _reader_failed(self, exc: OSError) -> None:
+        """The socket cannot be read: stop the event loop's reader (once), say so; the next probe adds it again."""
+        self._recv_errors = 0
+        if self._loop is not None:
+            logger.warning(f"Reading the ICMP socket fails ({exc}); pausing the reader until the next probe")
+            try:
+                self._loop.remove_reader(self._sock.fileno())
+            except (OSError, ValueError, RuntimeError):
+                pass
+            self._loop = None
+
     def _on_readable(self):
         for _ in range(_MAX_READS_PER_WAKEUP):
             try:
                 packet, ancdata, _flags, addr = self._sock.recvmsg(_RECV_SIZE, _CMSG_SPACE)
             except (BlockingIOError, InterruptedError):
+                self._recv_errors = 0
                 return
-            except OSError:
+            except OSError as exc:
+                # The reader is level-triggered: a read that keeps failing would be called again at once, for ever.
+                self._recv_errors += 1
+                if self._recv_errors >= _MAX_RECV_ERRORS:
+                    self._reader_failed(exc)
                 return
+            self._recv_errors = 0
             wake_ns = time.perf_counter_ns()
             try:
                 parsed = parse_packet(packet) if self.family == 4 else parse_packet6(packet, _source6(addr))
@@ -284,7 +306,8 @@ class MacIcmpBackend:
             self._loop = None
         for fut, *_ in list(self._pending.values()):
             if not fut.done():
-                fut.cancel()
+                # an error, not a cancel: see icmp_linux.py close()
+                fut.set_exception(OSError(errno.EBADF, "ICMP backend is closed"))
         self._pending.clear()
         try:
             self._sock.close()

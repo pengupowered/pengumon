@@ -5,9 +5,10 @@
 
 import { kit } from '../../js/cards.js';
 import { errorPart } from '../../js/device-view.js';
+import { numText } from '../../js/escape.js';
+import { has } from '../../js/values.js';
 
 const { el, escapeHtml, html, icon, list, mark, text } = kit;
-const has = (v) => v !== null && v !== undefined;
 
 const COLORS = { warn: 'var(--warn)', crit: 'var(--crit)' };
 const info = (key, label) => `<button type="button" class="info" data-action="toggleHelp" data-help="${key}" aria-label="${label}">${icon('info')}</button>`;
@@ -95,15 +96,55 @@ function wan(box) {
   };
 }
 
-// System: CPU and memory.
+// One fact the router reports about itself (uptime, CPU temperature, WAN link speed): its name, the figure, a quiet line under it
+// and, when it is not as usual, a status (icon and word).
+function fact(f) {
+  const li = el('li');
+  li.innerHTML = '<span class="sf-l"></span><span class="sf-v"></span><span class="sf-s"></span>';
+  mark(li.querySelector('.sf-l'), 'label').textContent = f.label;
+  const v = mark(li.querySelector('.sf-v'), 'value');
+  v.textContent = f.value;
+  if (f.title) li.title = f.title;
+  const sub = mark(li.querySelector('.sf-s'), 'sub');
+  if (f.status) {
+    li.classList.add(`st-${f.status.level}`);
+    const badge = el('b', 'sf-st');
+    kit.status(mark(badge, 'status'), f.status.level, f.status.word, { icon: f.status.icon });
+    sub.append(badge, f.sub ? ` ${f.sub}` : '');
+  } else sub.textContent = f.sub;
+  return li;
+}
+
+// One recent event: when, and what, with a mark in the status color (an event is not always bad: the word says).
+function event(e) {
+  const li = el('li', `st-${e.level}`);
+  li.innerHTML = '<span class="ev-w num"></span><span class="ev-x"></span>';
+  mark(li.querySelector('.ev-w'), 'when').textContent = e.when;
+  mark(li.querySelector('.ev-x'), 'text').textContent = e.text;
+  return li;
+}
+
+// System: CPU and memory, what the router says about itself (uptime, temperature, WAN link) and its recent events.
 function system(box) {
-  box.innerHTML = `<h3 class="rb-t">${icon('cpu', 'sm')}<span class="rb-n">System</span></h3><div data-f="cpu"></div><div data-f="mem"></div>`;
+  box.innerHTML = `<h3 class="rb-t">${icon('cpu', 'sm')}<span class="rb-n">System</span></h3><div data-f="cpu"></div><div data-f="mem"></div>
+    <ul class="sysfacts" data-f="facts"></ul>
+    <div class="sysevents" data-f="events"><h4 class="rb-s">Recent events <span class="muted">last 7 days</span></h4><ul data-f="eventList"></ul><p class="fine" data-f="eventMore" hidden></p></div>`;
   const cpu = meter(box.querySelector('[data-f=cpu]'));
   const mem = meter(box.querySelector('[data-f=mem]'));
+  const facts = box.querySelector('[data-f=facts]');
+  const events = box.querySelector('[data-f=events]');
+  const eventList = box.querySelector('[data-f=eventList]');
+  const more = mark(box.querySelector('[data-f=eventMore]'), 'moreEvents');
   return {
     update(s) {
       cpu.update(s.cpu);
       mem.update(s.mem);
+      facts.hidden = !s.facts.length;
+      list(facts, s.facts, { key: (f) => f.key, render: fact });
+      events.hidden = !s.events.length;
+      list(eventList, s.events, { key: (e) => e.key, render: event });
+      more.hidden = !s.moreEvents;
+      text(more, s.moreEvents ? `${s.moreEvents} more in the last 7 days` : '');
     },
     unmount() {}
   };
@@ -120,9 +161,9 @@ function clients(box) {
   return {
     update(c) {
       text(count, c.count);
-      html(bands, c.bands.map((b) => `<i style="flex:${b.n};--c:var(${b.color})" title="${escapeHtml(b.title)}"></i>`).join(''));
+      html(bands, c.bands.map((b) => `<i style="flex:${numText(b.n)};--c:var(${b.color})" title="${escapeHtml(b.title)}"></i>`).join(''));
       bands.setAttribute('aria-label', c.aria);
-      html(legend, c.bands.map((b) => `<span><i class="key" style="--c:var(${b.color})"></i>${escapeHtml(b.name)} <b class="num">${b.n}</b></span>`).join(''));
+      html(legend, c.bands.map((b) => `<span><i class="key" style="--c:var(${b.color})"></i>${escapeHtml(b.name)} <b class="num">${numText(b.n)}</b></span>`).join(''));
     },
     unmount() {}
   };

@@ -1,13 +1,18 @@
 """The client list and its history: GET /api/devices/{id}/clients and /api/devices/{id}/clients/history.
 
-Both need a device offering CLIENT_INVENTORY (400 otherwise, 404 for an unknown id). The list is the one thing in
-pengumon that names people's devices, so what it shows is decided here, on the server (`privacy.client_details`):
-with the default "token" the names, IP and MAC addresses are sent only to a request that carries the access token (so
-not without one, and not to a viewer without the token: PENGUMON_VIEW_WITHOUT_TOKEN); otherwise, or when "masked" is
-set, a client is its vendor and the last four hex digits of its MAC. The answer says which
-applied. Client rows are never logged, and they are kept in memory only (the monitor's latest reading): not in
+Both need a device offering CLIENT_INVENTORY (400 otherwise, 404 for an unknown id). The list (and the router's traffic
+per client, api/traffic.py, which applies the same rule) is what in pengumon names people's devices, so what it
+shows is decided here, on the server (`privacy.client_details`): with the default "token" the names, IP and MAC
+addresses are sent only to a request that carries the access token (so not without one, and not to a viewer without
+the token: PENGUMON_VIEW_WITHOUT_TOKEN); otherwise, or when "masked" is set, a client is its vendor and the last four
+hex digits of its MAC. The answer says which applied. Client rows are never logged, and they are kept in memory only (the monitor's latest reading): not in
 /metrics, reports, the dossier, the websocket or the database. The history and the live summary (devices.summary)
-are counts only.
+are counts only. The exceptions are the router's traffic per client (schema v19), stored by MAC so its history
+exists, and the names the owner gives devices (v20, clients/names.py; shown, like the router's names, only in full);
+the dossier and the AI pack describe a client only by its kind ("a game console"), never by name or MAC.
+
+PUT /api/devices/{id}/clients/{client}/name gives a client a name in Pengumon (or takes it away): only to a request
+that may see names (privacy "full"), which also means one that may edit when a password is set.
 """
 
 import hashlib
@@ -25,6 +30,7 @@ from pengumon.devices.device import Device
 from pengumon.grades import signal_grade
 from pengumon.devices.samples import bucket_width
 from pengumon.devices.summary import mesh_nodes, summarize_clients
+from pengumon.devices.traffic import traffic_hints
 from pengumon.security import can_edit, rate_limit
 
 router = APIRouter(prefix="/api")
@@ -42,13 +48,13 @@ VIEWER_HINT = "Names, IP and MAC addresses are hidden. Sign in with the password
 
 def _token_set(request: Request) -> bool:
     guards = getattr(request.app.state, "security_config", None)
-    return guards is not None and bool(guards.access_token)
+    return guards is not None and bool(getattr(guards, "token_set", False))  # as text or as a hash
 
 
 def privacy_mode(request: Request, state: AppState) -> str:
     """"full" or "masked": what this request is shown of the clients. With "token", "full" needs a token to be set and
     this request to carry it (a viewer without the token, PENGUMON_VIEW_WITHOUT_TOKEN, gets "masked")."""
-    configured = state.config.privacy.client_details if state.config is not None else "token"
+    configured = getattr(getattr(state.config, "privacy", None), "client_details", "token")
     if configured == "token":
         return "full" if _token_set(request) and can_edit(request) else "masked"
     return configured
@@ -70,13 +76,23 @@ def _suffix(mac: Optional[str]) -> str:
     return digits[-4:].upper()
 
 
-def _row(client: Client, full: bool) -> Dict[str, Any]:
+def client_key(key: str) -> str:
+    """A client's opaque row key: the same for the same client (its driver key, a MAC in normal form for a router)
+    until the next start, and no way back to the MAC. The traffic routes key their rows the same way."""
+    return hashlib.sha256(_KEY_SALT + key.encode()).hexdigest()[:12]
+
+
+def _row(client: Client, full: bool, hint: Optional[str] = None, names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     suffix = _suffix(client.mac)
     vendor = client.vendor or "Device"
     masked_label = f"{vendor} {suffix}".strip()
+    router_label = client.label_parts[0] if client.label_parts else masked_label
+    given = (names or {}).get(client.mac or "") if full else None
     row: Dict[str, Any] = {
-        "key": hashlib.sha256(_KEY_SALT + client.key.encode()).hexdigest()[:12],
-        "label": (client.label_parts[0] if client.label_parts else masked_label) if full else masked_label,
+        "key": client_key(client.key),
+        "label": (given or router_label) if full else masked_label,
+        # with a name given in Pengumon: the router's own name for it (full only), else null
+        "router_label": router_label if given else None,
         "vendor": client.vendor,
         "kind": client.kind,
         "connection": client.connection,
@@ -88,6 +104,8 @@ def _row(client: Client, full: bool) -> Dict[str, Any]:
         "link_rx_mbps": client.link_rx_mbps,
         "connected_s": client.connected_s,
         "online": client.online,
+        # the app the router counted at least 80 % of its last 24 hours' traffic as (devices/traffic.py), or null
+        "traffic_hint": hint,
     }
     if full:
         row["ip"], row["mac"] = client.ip, client.mac
@@ -116,10 +134,14 @@ async def get_clients(device_id: str, request: Request, state: StateDep):
     reading, mesh, read_at = _monitor_readings(device)
     mode = privacy_mode(request, state)
     reading = reading if reading is not None else ClientsReading()
+    hints: Dict[str, str] = {}
+    if Capability.TRAFFIC_USAGE in device.driver.offers and state.repository is not None:
+        hints = await traffic_hints(state.repository, device.id)
+    names = await state.client_names.load(state.repository) if mode == "full" else {}
     body = {
         "ts": read_at,
         "nodes": mesh_nodes(mesh),
-        "clients": [_row(c, mode == "full") for c in reading.clients],
+        "clients": [_row(c, mode == "full", hints.get(c.mac or ""), names) for c in reading.clients],
         "summary": summarize_clients(reading),
         "privacy": {"configured": state.config.privacy.client_details if state.config else "token",
                     "applied": mode, "hint": privacy_hint(request, state, mode)},
@@ -137,8 +159,8 @@ def bucket_seconds(start: float, end: float) -> int:
 async def get_clients_history(
     device_id: str,
     state: StateDep,
-    start_time: Optional[float] = Query(None),
-    end_time: Optional[float] = Query(None),
+    start_time: Optional[float] = Query(None, allow_inf_nan=False),
+    end_time: Optional[float] = Query(None, allow_inf_nan=False),
 ):
     """Client counts over time (default: the last 24 hours), bucketed on the server to at most 300 points: each point
     is the mean of the readings in its bucket. Counts only, no client. `nodes` lists the mesh nodes seen in the range

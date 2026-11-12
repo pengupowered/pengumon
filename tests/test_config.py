@@ -98,3 +98,17 @@ def test_a_line_break_never_rides_along_in_an_id_or_a_color():
     with pytest.raises(ValidationError):
         TargetConfig(id="router", name="Router", address="192.0.2.1", color="#3987e5\n")
     assert TargetConfig(id="router", name="Router", address="192.0.2.1", color="#3987E5").color == "#3987e5"
+
+
+def test_more_than_eight_socket_probed_targets_are_refused():
+    import pytest
+    from pydantic import ValidationError
+    from pengumon.config import AppConfig
+
+    def tcp(n):
+        return {"id": f"t{n}", "name": f"T{n}", "category": "public", "address": f"192.0.2.{n + 1}", "probe": "tcp",
+                "port": 443}
+    ping = {"id": "p", "name": "P", "address": "192.0.2.99"}
+    assert len(AppConfig(targets=[tcp(n) for n in range(8)] + [ping]).targets) == 9
+    with pytest.raises(ValidationError, match="at most 8"):
+        AppConfig(targets=[tcp(n) for n in range(9)])

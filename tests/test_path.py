@@ -158,6 +158,12 @@ async def test_deleting_history_only_works_for_removed_hops(tmp_path):
     assert await repo.removed_path_ids() == set()
     repo.hidden_targets = set()
     assert {r["target_id"] for r in await repo.get_history(now - 60, now + 60)} == {"gw"}
+    isp = repo._target_ids["isp_1"]  # every table that holds its probes, rollups of all three widths included
+    with sqlite3.connect(repo.db_path) as db:
+        assert [(t, db.execute(f"SELECT COUNT(*) FROM {t} WHERE target = ?", (isp,)).fetchone()[0],
+                 db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] > 0)
+                for t in ("samples", "rollup_10s", "rollup_1m", "rollup_15m")] == [
+            ("samples", 0, True), ("rollup_10s", 0, True), ("rollup_1m", 0, True), ("rollup_15m", 0, True)]
     assert not await repo.delete_path_history("isp_1")
 
 
@@ -651,3 +657,203 @@ async def test_a_fresh_start_with_the_example_config_has_no_path_and_is_at_revis
     await PathManager(config, repo).load()
     assert await repo.path_revision() == 0 and not await repo.path_initialized()  # first run: discovery
     assert [t.id for t in config.targets][0] == "local_router" and "isp_hop_1" not in {t.id for t in config.targets}
+
+
+async def test_deleting_history_goes_in_batches_so_the_sample_flush_is_not_held_for_all_of_it(tmp_path, monkeypatch):
+    from pengumon.db import path as path_module
+    monkeypatch.setattr(path_module, "HISTORY_BATCHES", (("samples", "ts", 10), ("rollup_10s", "slot", 1),
+                                                         ("rollup_1m", "minute", 1), ("rollup_15m", "quarter", 1)))
+    repo = await _repo(tmp_path)
+    await repo.import_path([GW, ISP])
+    now = time.time()
+    await repo.insert_samples([ProbeSample(target_id=t.id, timestamp=now - 100 + k, success=True, latency_ms=1.0)
+                               for t in (GW, ISP) for k in range(60)])
+    await repo.flush_samples()
+    await repo.save_path(1, [GW])
+    transactions = 0
+    original = repo._db.write
+
+    def counting():
+        nonlocal transactions
+        transactions += 1
+        return original()
+
+    monkeypatch.setattr(repo._db, "write", counting)
+    assert await repo.delete_path_history("isp_1")
+    assert transactions >= 6  # 60 s of samples in 10 s batches, not one transaction for the lot
+    isp = repo._target_ids["isp_1"]
+    gw = repo._target_ids["gw"]
+    with sqlite3.connect(repo.db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM samples WHERE target = ?", (isp,)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM samples WHERE target = ?", (gw,)).fetchone()[0] == 60  # the others stay
+        assert db.execute("SELECT COUNT(*) FROM rollup_1m WHERE target = ?", (gw,)).fetchone()[0] > 0
+
+
+async def test_a_hop_put_back_on_the_path_while_its_history_is_deleted_stops_the_delete(tmp_path, monkeypatch):
+    from pengumon.db import path as path_module
+    monkeypatch.setattr(path_module, "HISTORY_BATCHES", (("samples", "ts", 10),))
+    repo = await _repo(tmp_path)
+    await repo.import_path([GW, ISP])
+    now = time.time()
+    await repo.insert_samples([ProbeSample(target_id="isp_1", timestamp=now - 100 + k, success=True, latency_ms=1.0)
+                               for k in range(60)])
+    await repo.flush_samples()
+    await repo.save_path(1, [GW])
+    original = repo._db.write
+    calls = 0
+
+    def putting_back():
+        nonlocal calls
+        calls += 1
+        if calls == 3:  # between two batches the owner applies a path with the hop again
+            with sqlite3.connect(repo.db_path) as db:
+                db.execute("UPDATE path_targets SET deleted_at = NULL WHERE id = 'isp_1'")
+        return original()
+
+    monkeypatch.setattr(repo._db, "write", putting_back)
+    assert not await repo.delete_path_history("isp_1")
+    with sqlite3.connect(repo.db_path) as db:
+        left = db.execute("SELECT COUNT(*) FROM samples WHERE target = ?", (repo._target_ids["isp_1"],)).fetchone()[0]
+    assert 0 < left < 60  # stopped after the first batches; the rest of the history is kept
+    assert "isp_1" not in await repo.removed_path_ids()
+
+
+# --- TCP and HTTP hops: the policy, the cap, the round trip ----------------------------------------------------------
+
+TCP = TargetConfig(id="cf_tcp", name="Cloudflare (TCP)", category="public", address="198.51.100.77", probe="tcp",
+                   port=443)
+SITE = TargetConfig(id="site", name="My site", category="custom", address="example.com", probe="http",
+                    http_path="/health")
+
+
+async def test_a_tcp_and_an_http_hop_go_through_put_live_and_stored_and_round_trip_through_export(path_app):
+    ac, state = path_app
+    hops = [_hop(GW, 0), _hop(TCP, 1), _hop(SITE, 2), _hop(PUB, 3)]
+    res = await ac.put("/api/path", json={"base_revision": 1, "hops": hops})
+    assert res.status_code == 200, res.text
+    by_id = {h["id"]: h for h in res.json()["hops"]}
+    assert (by_id["cf_tcp"]["probe"], by_id["cf_tcp"]["port"]) == ("tcp", 443)
+    assert (by_id["site"]["probe"], by_id["site"]["http_path"], by_id["site"]["http_verb"]) == ("http", "/health", "HEAD")
+    assert [(t.id, t.probe) for t in state.config.targets] == [("gw", "icmp"), ("cf_tcp", "tcp"), ("site", "http"),
+                                                               ("pub", "icmp")]
+    _, stored = await state.repository.load_path()
+    assert [t for t in stored if t.id in ("cf_tcp", "site")] == [TCP, SITE]
+    exported = (await ac.get("/api/path/export")).text
+    assert "probe: tcp" in exported and "port: 443" in exported and "http_path: /health" in exported
+    plain = export_yaml([GW, ISP, PUB])  # a ping hop exports as before: none of the new keys
+    assert not any(key in plain for key in ("probe:", "port:", "http_"))
+    again = await ac.post("/api/path/import", content=exported.encode())
+    assert again.status_code == 200, again.text
+    assert [(h["id"], h["probe"], h["port"]) for h in again.json()["hops"]] == [
+        ("gw", "icmp", None), ("cf_tcp", "tcp", 443), ("site", "http", None), ("pub", "icmp", None)]
+
+
+@pytest.mark.parametrize("hop, status, says", [
+    (dict(TCP.model_dump(), port=None), 422, "needs a port"),
+    (dict(TCP.model_dump(), port=25), 422, "port 25 is refused"),
+    (dict(SITE.model_dump(), category="isp"), 422, "role custom"),
+    (dict(SITE.model_dump(), http_path="/health?x=1"), 422, "query string"),
+    (dict(TCP.model_dump(), address="127.0.0.1"), 400, "loopback address"),
+    (dict(TCP.model_dump(), address="::ffff:127.0.0.1"), 400, "special-purpose"),
+    (dict(TCP.model_dump(), address="169.254.169.254"), 400, "link-local"),
+    (dict(SITE.model_dump(), address="localhost"), 400, "loopback name"),
+])
+async def test_put_refuses_a_bad_socket_hop_and_keeps_the_live_path(path_app, hop, status, says):
+    ac, state = path_app
+    res = await ac.put("/api/path", json={"base_revision": 1, "hops": [_hop(GW, 0), {**hop, "position": 1}]})
+    assert res.status_code == status and says in res.text, res.text
+    assert [t.id for t in state.config.targets] == ["gw", "pub"]
+
+
+async def test_nine_socket_hops_are_refused_and_eight_are_not(path_app):
+    ac, state = path_app
+
+    def many(n):
+        return [_hop(TCP.model_copy(update={"id": f"t{i}", "address": f"198.51.100.{i + 10}"}), i) for i in range(n)]
+    res = await ac.put("/api/path", json={"base_revision": 1, "hops": many(9)})
+    assert res.status_code == 400 and "At most 8" in res.text
+    assert (await ac.put("/api/path", json={"base_revision": 1, "hops": many(8)})).status_code == 200
+
+
+async def test_the_other_ways_in_refuse_a_loopback_socket_hop_and_a_query_too(path_app):
+    ac, state = path_app
+    assert (await ac.post("/api/targets", json={**TCP.model_dump(), "address": "127.0.0.1"})).status_code == 400
+    assert (await ac.post("/api/targets", json=TCP.model_dump())).status_code == 200
+    loop = export_yaml([TCP.model_copy(update={"address": "127.0.0.1"})])
+    assert (await ac.post("/api/path/import", content=loop.encode())).status_code == 422
+    query = export_yaml([SITE]).replace("http_path: /health", "http_path: /health?x=1")
+    res = await ac.post("/api/path/import", content=query.encode())
+    assert res.status_code == 422 and "query string" in res.text
+    assert [t.id for t in state.config.targets if t.id == "cf_tcp"] == ["cf_tcp"]  # the POST added it
+
+
+def test_the_socket_policy_words():
+    from pengumon.engine.probe_rules import refused_address, socket_hop_problem
+    assert refused_address("127.0.0.1") == "a loopback address" and refused_address("::1") == "a loopback address"
+    assert refused_address("LocalHost") == "a loopback name" and refused_address("a.localhost") == "a loopback name"
+    assert refused_address("0.0.0.0") and refused_address("224.0.0.1") and refused_address("fe80::1%eth0")
+    for fine in ("198.51.100.1", "192.168.88.1", "10.0.0.1", "100.64.0.1", "example.com", "fd00::1", "localhost.example"):
+        assert refused_address(fine) is None, fine
+    assert socket_hop_problem([GW.model_copy(update={"address": "127.0.0.1"})]) is None  # a ping hop is not the policy's
+
+
+@pytest.mark.parametrize("hidden", ["64:ff9b::a9fe:a9fe", "::127.0.0.1", "::ffff:0:7f00:1", "64:ff9b::7f00:1"])
+def test_ipv6_ranges_that_carry_an_ipv4_address_are_special_and_refused(hidden):
+    """NAT64, IPv4-compatible and IPv4-translated addresses are not the host they look like."""
+    from pengumon.engine.discovery.addresses import SPECIAL, address_class
+    from pengumon.engine.probe_rules import refused_address
+    assert address_class(hidden) == SPECIAL
+    assert refused_address(hidden) == "a special-purpose address"
+
+
+async def test_the_test_route_refuses_a_loopback_tcp_hop_and_a_bad_probe_and_keeps_the_echo_answer(path_app):
+    ac, state = path_app
+    res = await ac.post("/api/path/test", json={"address": "127.0.0.1", "probe": "tcp", "port": 443})
+    assert res.status_code == 400 and "loopback address" in res.text
+    assert (await ac.post("/api/path/test", json={"address": "169.254.169.254", "probe": "http"})).status_code == 400
+    assert (await ac.post("/api/path/test", json={"address": "198.51.100.9", "probe": "tcp"})).status_code == 422  # no port
+    assert (await ac.post("/api/path/test", json={"address": "198.51.100.9", "probe": "tcp", "port": 25})).status_code == 422
+    assert (await ac.post("/api/path/test", json={"address": "198.51.100.9", "probe": "nope"})).status_code == 422
+    assert state.prober._backend.sent == []
+    res = await ac.post("/api/path/test", json={"address": "198.51.100.9"})
+    assert res.json() == {"kind": "reply", "rtt_ms": 1.0, "responder": "198.51.100.9", "address": "198.51.100.9",
+                          "error": None}  # unchanged: no status, no connect_ms
+
+
+async def test_the_test_route_probes_a_loopback_listener_when_the_policy_is_off(path_app, monkeypatch):
+    ac, state = path_app
+    requests = []
+
+    async def handle(reader, writer):
+        requests.append(await reader.readuntil(b"\r\n\r\n"))
+        writer.write(b"HTTP/1.1 204 No Content\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr("pengumon.api.path.refused_address", lambda address: None)
+    state.prober.socket_policy = lambda address: None
+    try:
+        tcp = (await ac.post("/api/path/test", json={"address": "127.0.0.1", "probe": "tcp", "port": port})).json()
+        http = (await ac.post("/api/path/test", json={"address": "127.0.0.1", "probe": "http", "port": port,
+                                                        "http_scheme": "http", "http_path": "/x"})).json()
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert tcp["kind"] == "reply" and tcp["rtt_ms"] > 0 and tcp["status"] is None and tcp["connect_ms"] is None
+    assert http["kind"] == "reply" and http["status"] == 204 and 0 < http["connect_ms"] <= http["rtt_ms"]
+    assert set(http) == {"kind", "rtt_ms", "responder", "address", "error", "status", "connect_ms"}
+    assert requests[0].startswith(b"HEAD /x HTTP/1.1\r\n")
+    assert state.prober._backend.sent == []  # no echo request went out for either
+
+
+async def test_the_test_route_names_a_name_that_resolves_to_the_host_itself(path_app, monkeypatch):
+    ac, _ = path_app
+
+    async def resolve(host, timeout, family=4):
+        return "127.0.0.1", 4
+    monkeypatch.setattr("pengumon.engine.prober.resolve_address", resolve)
+    res = await ac.post("/api/path/test", json={"address": "rebind.example.com", "probe": "tcp", "port": 443})
+    assert res.status_code == 200 and res.json()["kind"] == "not_allowed"
+    assert "resolves to 127.0.0.1, a loopback address" in res.json()["error"]

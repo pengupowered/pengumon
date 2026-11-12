@@ -137,11 +137,13 @@ def round_metrics(stats: Dict[str, TargetStats], samples: List[ProbeSample],
     cat_samples: Dict[str, List[ProbeSample]] = {c: [] for c in CATEGORIES}
     failed = []
     for s in samples:
-        quiet = stats.get(s.target_id) is not None and stats[s.target_id].ignores_ping
-        # a hop that ignores ping (engine.path_rules) is no affected target; no verdict reads this list, only `affected`
-        if not quiet and (not s.success or (s.latency_ms and s.latency_ms > AFFECTED_LATENCY_MS)):
-            failed.append(s.target_id)
         st = stats.get(s.target_id)
+        quiet = st is not None and st.ignores_ping
+        # an HTTP hop's time includes the server's own work and is not a round trip: only a failed request counts
+        slow = bool(s.latency_ms and s.latency_ms > AFFECTED_LATENCY_MS) and not (st is not None and getattr(st, "probe", None) == "http")
+        # a hop that ignores ping (engine.path_rules) is no affected target; no verdict reads this list, only `affected`
+        if not quiet and (not s.success or slow):
+            failed.append(s.target_id)
         if st is not None and st.category in cat_samples:
             cat_samples[st.category].append(s)
 

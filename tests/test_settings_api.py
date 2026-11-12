@@ -55,6 +55,12 @@ async def test_schema_serves_the_registry_with_ranges_and_an_etag(app_state, tmp
     assert (retention.min, retention.max, retention.default, retention.unit) == (1, 90, 7, "days")
     assert set(body.lists) == {"devices", "services", "webhooks", "dns_probes", "themes"}
     assert "url" not in {f.name for f in body.lists["webhooks"].item_fields}
+    snmp = {f.name: f for f in body.lists["devices"].drivers["snmp"].options}  # the SNMPv3 fields: only for version 3
+    assert (snmp["version"].choices, snmp["version"].default, snmp["version"].shown_when) == (["2c", "3"], "2c", None)
+    assert {name for name, f in snmp.items() if f.shown_when == {"version": "3"}} == {
+        "security_level", "auth_protocol", "priv_protocol", "context_name"}
+    assert snmp["auth_protocol"].choices == ["SHA", "SHA-224", "SHA-256", "SHA-384", "SHA-512"]
+    assert snmp["priv_protocol"].choices == ["AES"]
 
 
 async def test_state_reports_stored_values_sources_lists_and_secrets_without_values(app_state, tmp_path):
@@ -239,3 +245,132 @@ async def test_import_keeps_a_refused_value_and_says_what_it_left_out(app_state,
     notes = " | ".join(body.notes)
     assert "Busy line from: Enter at most 100" in notes and "Input should" not in notes
     assert "ntfy.url: secrets are entered on the page" in notes and "bogus.thing: not a setting" in notes
+
+
+async def test_a_viewer_gets_the_lists_without_what_only_the_owner_needs(app_state, tmp_path, monkeypatch):
+    """A device's user name and mesh labels, a check's path, query and CA path, a webhook's headers and the host
+    of every secret URL stay with the owner; the ids, names and addresses the dashboard shows stay."""
+    text = OWNER_SHAPED.replace(
+        "    - {id: app1, name: App One, url: \"http://192.0.2.10:8080/health\"}",
+        "    - {id: app1, name: App One, url: \"http://192.0.2.10:8080/health?apikey=example-key-123\"}") + WEBHOOKS
+    await _install(app_state, tmp_path, text, environ={"PENGUMON_NOTIFY_URL": "https://ntfy.example.com/private-topic"})
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    monkeypatch.setattr(security_config, "view_without_token", True)
+    async with _client() as ac:
+        viewer = (await ac.get("/api/settings")).json()
+        editor = (await ac.get("/api/settings", headers=BEARER)).json()
+    shown = json.dumps(viewer)
+    for hidden in ("Attic", "02:00:00:00:00:01", "apikey", "example-key-123", "X-Ref", "X-Plain", "ha_token",
+                   "ntfy.example.com", "hooks.example.com"):
+        assert hidden not in shown, hidden
+    assert [d["id"] for d in viewer["lists"]["devices"]["items"]] == ["modem", "router"]
+    assert viewer["lists"]["devices"]["items"][1]["url"] == "http://192.168.88.1"
+    assert viewer["lists"]["devices"]["items"][1]["username"] == ""
+    assert viewer["lists"]["services"]["items"][0]["url"] == "http://192.0.2.10:8080"
+    assert viewer["lists"]["webhooks"]["items"][0]["name"] == "Home"
+    assert all(s["host"] is None for s in viewer["secrets"].values())
+    assert any(s["set"] for s in viewer["secrets"].values())
+    assert viewer["values"] == editor["values"]  # the read-only page and the help texts still get every value
+    editor_shown = json.dumps(editor)
+    assert "Attic" in editor_shown and "example-key-123" in editor_shown and "hooks.example.com" in editor_shown
+
+
+async def test_a_viewer_cannot_read_a_kept_version(app_state, tmp_path, monkeypatch):
+    await _install(app_state, tmp_path, OWNER_SHAPED + WEBHOOKS)
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    monkeypatch.setattr(security_config, "view_without_token", True)
+    async with _client() as ac:
+        listed = await ac.get("/api/settings/versions")
+        viewer = await ac.get("/api/settings/versions/1")
+        editor = await ac.get("/api/settings/versions/1", headers=BEARER)
+    assert listed.status_code == 200 and viewer.status_code == 401
+    assert editor.status_code == 200 and "Attic" in editor.text
+
+
+# --- viewing without the password: only with the current one ----------------------------------------------------
+
+async def test_turning_viewing_on_needs_the_current_password_whichever_way_it_is_saved(app_state, tmp_path, monkeypatch):
+    """A browser left signed in (a copied cookie) must not open the dashboard to everyone on the network: a save that
+    turns access.allow_viewers on needs the current password, as a save, a restored version or an imported file."""
+    manager = await _install(app_state, tmp_path)
+    monkeypatch.setattr(security_config, "access_token", TOKEN)
+    cookie = {"Cookie": f"{security.SESSION_COOKIE}={security_config.issue_session()}"}
+    on = {"access.allow_viewers": True}
+    async with _client() as ac:
+        for source in ("save", "restore", "yaml_import"):
+            res = await ac.put(f"/api/settings?source={source}", json={"base_revision": 1, "values": on}, headers=cookie)
+            body = SettingsError.model_validate(res.json())
+            assert res.status_code == 403 and "Enter the current password" in body.detail, source
+            assert [e.where for e in body.errors] == ["values.access.allow_viewers"]
+        wrong = await ac.put("/api/settings", json={"base_revision": 1, "values": on, "current_password": "a-guess-1"},
+                             headers=cookie)
+        assert wrong.status_code == 403 and "not right" in wrong.json()["detail"]
+        assert manager.revision == 1 and manager.values()["access.allow_viewers"] is False
+        sneaky = await ac.put("/api/settings", json={"base_revision": 1, "values": {"access.allow_viewers": "yes"}},
+                              headers=cookie)  # anything but off or a reset counts as turning it on
+        assert sneaky.status_code == 403
+        ok = await ac.put("/api/settings", json={"base_revision": 1, "values": on, "current_password": TOKEN},
+                          headers=cookie)
+        assert ok.status_code == 200 and manager.values()["access.allow_viewers"] is True
+        # already on: saving it again, or anything else, asks nothing; turning it off asks nothing
+        again = await ac.put("/api/settings", json={"base_revision": 2, "values": {**on, "line.isp_name": "X"}},
+                             headers=cookie)
+        assert again.status_code == 200
+        off = await ac.put("/api/settings", json={"base_revision": 3, "values": {"access.allow_viewers": None}},
+                           headers=cookie)
+        assert off.status_code == 200 and manager.values()["access.allow_viewers"] is False
+        too_long = await ac.put("/api/settings", json={"base_revision": 4, "values": on, "current_password": "x" * 2000},
+                                headers=cookie)
+        assert too_long.status_code == 422 and "x" * 2000 not in too_long.text  # a 422 never repeats it
+
+
+async def test_without_a_password_viewing_is_turned_on_without_one(app_state, tmp_path):
+    """No password: nothing to ask (and the setting does nothing until one is set; then the owner sees it on)."""
+    manager = await _install(app_state, tmp_path)
+    async with _client() as ac:
+        res = await ac.put("/api/settings", json={"base_revision": 1, "values": {"access.allow_viewers": True}})
+    assert res.status_code == 200 and manager.values()["access.allow_viewers"] is True
+
+
+async def test_a_viewer_reads_the_version_lines_without_the_header_secrets_names(app_state, tmp_path, monkeypatch):
+    """/api/settings keeps the header secrets' slot names from a viewer (they name the header); the version
+    list, which viewers may read, did not."""
+    manager = await _install(app_state, tmp_path, OWNER_SHAPED + WEBHOOKS, secrets={"webhooks": {"ha_token": "unused"}})
+    async with _client() as ac:
+        saved = await ac.put("/api/settings", json={
+            "base_revision": 1, "values": {},
+            "lists": {"webhooks": manager.list_items("webhooks") + [
+                {"name": "Second", "headers": {"Authorization": "secret:second_auth"}}]},
+            "secrets": {"webhook.Second.url": "https://hooks.example.com/second",
+                        "webhook_header.second_auth": "hdr-made-up"}})
+        assert saved.status_code == 200, saved.text
+        monkeypatch.setattr(security_config, "access_token", TOKEN)
+        monkeypatch.setattr(security_config, "view_without_token", True)
+        viewer = (await ac.get("/api/settings/versions")).json()
+        editor = (await ac.get("/api/settings/versions", headers=BEARER)).json()
+    assert "secret webhook_header.second_auth changed" in editor[0]["summary"]
+    assert "second_auth" not in json.dumps(viewer) and "webhook_header" not in json.dumps(viewer)
+    assert "secret of a webhook header changed" in viewer[0]["summary"]
+    assert "secret webhook.Second.url changed" in viewer[0]["summary"]  # a slot a viewer sees in /api/settings too
+    assert [v["revision"] for v in viewer] == [v["revision"] for v in editor]
+
+
+def test_the_version_line_shaping_handles_every_position():
+    from pengumon.api.settings import _summary_for_viewer
+    assert _summary_for_viewer("Secret webhook_header.a changed") == "Secret of a webhook header changed"
+    assert _summary_for_viewer("Line: x; secret webhook_header.a b changed; secret ntfy.url changed") == (
+        "Line: x; secret of a webhook header changed; secret ntfy.url changed")
+    assert _summary_for_viewer("No changes") == "No changes"
+
+
+async def test_the_version_an_upgrade_stored_is_listed(app_state, tmp_path):
+    """The v18 migration stores a settings version with source "upgrade" (it resets an old default): the list must
+    show it. It answered 500, and the Settings dialog's version list failed, on every install that had been upgraded."""
+    manager = await _install(app_state, tmp_path)
+    async with manager.repository._db.write() as db:
+        await db.execute("UPDATE settings_versions SET source = 'upgrade', summary = 'Per-minute history: the old default' "
+                         "WHERE revision = (SELECT MAX(revision) FROM settings_versions)")
+    async with _client() as ac:
+        listed = await ac.get("/api/settings/versions")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["source"] == "upgrade"

@@ -22,6 +22,7 @@ class Capability(str, Enum):
     ROUTER_SYSTEM = "router_system"  # router CPU, memory, connected clients
     CLIENT_INVENTORY = "client_inventory"  # the connected devices: connection type, band, signal, link rate, mesh node
     MESH = "mesh"                          # the mesh nodes and how many clients each carries
+    TRAFFIC_USAGE = "traffic_usage"        # bytes per client and clock hour, and per app, as the device counted them
 
 
 ErrorKind = Literal["unconfigured", "auth", "unreachable", "timeout", "protocol", "unsupported", "internal"]
@@ -49,15 +50,36 @@ class WanCounters:
     read_at: Optional[float] = None  # wall-clock time of the answer that carried them (else: the end of the poll)
 
 
+# An uptime longer than this (20 years) is not an uptime but a bad number from the device: it is dropped.
+MAX_UPTIME_SECONDS = 20 * 365 * 86400
+
+
+def valid_uptime(value: object) -> Optional[int]:
+    """`value` as an uptime in whole seconds when it is one (a number from 0 to MAX_UPTIME_SECONDS), else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not 0 <= value <= MAX_UPTIME_SECONDS:  # (False for NaN too)
+        return None
+    return int(value)
+
+
 @dataclass(frozen=True)
 class SystemReading:
     """CPU and memory use in percent, the connected-client count, and `model`: what the device calls itself (its board
-    or system description), when it says; the `model` of its config entry is shown instead when one is set."""
+    or system description), when it says; the `model` of its config entry is shown instead when one is set. A driver
+    that reads the uptime, the CPU temperature or the WAN link speed less often than every poll leaves them None on
+    the polls in between (they are "read at this poll", not "the latest known"). `uptime_wrap_s` is set by a driver
+    whose uptime counter wraps (SNMP sysUpTime: 2^32 hundredths of a second, about 497 days): an uptime that went back
+    by that much is the counter wrapping, not a restart."""
 
     cpu_pct: Optional[float] = None
     mem_pct: Optional[float] = None
     client_count: Optional[int] = None
     model: Optional[str] = None
+    uptime_s: Optional[int] = None        # seconds since the device last started, 0 to MAX_UPTIME_SECONDS
+    cpu_temp_c: Optional[float] = None    # CPU temperature, °C
+    wan_link_mbps: Optional[int] = None   # the WAN port's link speed; 0: no link
+    uptime_wrap_s: Optional[float] = None  # the uptime goes back to 0 after this many seconds (None: it does not)
 
 
 @dataclass(frozen=True)
@@ -137,7 +159,39 @@ class MeshReading:
     nodes: Tuple[MeshNode, ...] = ()
 
 
-Reading = object  # WanCounters | SystemReading | LineReading | ClientsReading | MeshReading
+@dataclass(frozen=True)
+class TrafficHour:
+    """Bytes one client (or the whole WAN: `client` "") moved in one clock hour, as the device counted them. `client`
+    is a MAC in normal form (drivers.common.normal_mac); `hour` the hour's start (epoch seconds)."""
+
+    client: str
+    hour: int
+    up: int
+    down: int
+
+
+@dataclass(frozen=True)
+class TrafficApps:
+    """Bytes per application (the device's own app names) of one client ("" = every client) over the 24 hours that end
+    at `window_end` (the start of the hour in progress when it was read: that hour is never counted). `apps` are
+    (name, up, down), as the device listed them."""
+
+    client: str
+    window_end: int
+    apps: Tuple[Tuple[str, int, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class TrafficReading:
+    """What one poll read of the device's traffic statistics (TRAFFIC_USAGE): a reading round spans several polls, and
+    each poll hands on what it got. Hours that were read again replace what was stored for them."""
+
+    read_at: float
+    hours: Tuple[TrafficHour, ...] = ()
+    apps: Tuple[TrafficApps, ...] = ()
+
+
+Reading = object  # WanCounters | SystemReading | LineReading | ClientsReading | MeshReading | TrafficReading
 
 
 @dataclass(frozen=True)

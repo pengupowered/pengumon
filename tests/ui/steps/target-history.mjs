@@ -42,7 +42,8 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=targetHistModal]");
   }],
 
-  ["target detail dialog: stats, latency chart with band, loss, 24 h strip; five ranges; Live refreshes; Escape closes", async ({ click, count, eq, ok, page, shots, until }) => {
+  ["target detail dialog: stats, latency chart with band, loss, 24 h strip; five ranges; Live refreshes; Escape closes", async ({ click, count, eq, ok, page, shots, showCard, until }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await click('#pathChain .node[data-node^="Gateway"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
     eq("five ranges", await count("#targetHistRanges button"), 5);
@@ -66,7 +67,8 @@ export const steps = [
     await until(() => !document.getElementById("targetHistModal").classList.contains("active"));
   }],
 
-  ["the Internet node opens its three servers together: All draws a line each and the median, the switcher shows one alone as a single target; keyboard and phone width", async ({ click, eq, layoutSettled, ok, page, shots, text, until, waitCount, noSideScroll }) => {
+  ["the Internet node opens its three servers together: All draws a line each and the median, the switcher shows one alone as a single target; keyboard and phone width", async ({ click, eq, layoutSettled, noSideScroll, ok, page, shots, showCard, text, until, waitCount }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await waitCount("#pathChain .node[data-node]", 6);
     await click('#pathChain .node[data-node^="Internet"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
@@ -119,7 +121,7 @@ export const steps = [
       ok(`row ${row} is a DNS lookup (${name})`, /DNS/i.test(name));
       await click(`#hopMatrixBody tr:nth-child(${row})`);
       await until((n) => document.getElementById("targetHistModal")?.classList.contains("active") && document.getElementById("targetHistTitle").textContent === n, name);
-      // the color the dialog draws this target in is the one the page gives it (util.js getTargetInfo)
+      // the color the dialog draws this target in is the one the page gives it (js/targets.js getTargetInfo)
       await until(() => /points|No samples/.test(document.getElementById("targetHistStatus").textContent));
       colors.push(await page.evaluate(() => Chart.getChart(document.getElementById("targetHistLatency")).data.datasets[0].borderColor));
       await click("[data-action=closeModal][data-arg=targetHistModal]");
@@ -129,7 +131,8 @@ export const steps = [
     ok(`the DNS lookups have distinct series colors (${colors}, gray ${gray})`, colors[0] !== colors[1] && !colors.includes(gray));
   }, { variants: ["longpath"] }],
 
-  ["a folded run of ISP hops opens its hops together; a single public server still opens alone", async ({ click, eq, ok, page, text, until }) => {
+  ["a folded run of ISP hops opens its hops together; a single public server still opens alone", async ({ click, eq, ok, page, showCard, text, until }) => {
+    await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await click('#pathChain .node[data-node^="Internet"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
     ok("one public server: its own history, no switcher", /Cloudflare/.test(await text("#targetHistTitle")) && await page.$eval("#targetHistSwitch", (e) => e.hidden));

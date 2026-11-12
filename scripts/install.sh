@@ -14,7 +14,9 @@
 #   3. on an upgrade, runs `pengumon backup` and stops the old service (its --host and --port are kept: the new
 #      definition reads them from the one it replaces);
 #   4. installs Python 3.12 (managed by uv, kept inside the app folder) and a virtual environment, then the locked
-#      dependencies with `uv pip install --require-hashes --only-binary :all:`, then the wheel;
+#      dependencies with `uv pip install --require-hashes --only-binary :all:`, then the wheel. An upgrade moves the
+#      working environment aside first (to venv.old, kept until the next install) and puts it back, and starts the
+#      old service again, if anything fails before the new program has started once;
 #   5. runs `pengumon service install`, waits until it answers, and opens the browser.
 #
 # Where things go (system install / --user):
@@ -66,6 +68,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 case "$PORT" in ''|*[!0-9]*) [ -z "$PORT" ] || die "--port must be a number" ;; esac
+[ -z "$PORT" ] || { [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; } 2> /dev/null || die "--port must be between 1 and 65535"
 nonl() {  # nonl NAME VALUE: a newline in a value that ends up in a file or a command is refused
     case "$2" in *'
 '*) die "$1 must not contain a newline" ;; esac
@@ -118,8 +121,10 @@ else
     fi
     RUN_ROOT=""
 fi
+case "$DATA/" in "$APP/"*) die "the data folder ($DATA) is inside the program folder ($APP): set XDG_DATA_HOME and XDG_STATE_HOME to different folders" ;; esac
 SCOPE_FLAG="--$SCOPE"
 VENV="$APP/venv"
+OLD_VENV="$APP/venv.old"
 PENGUMON="$VENV/bin/pengumon"
 
 root() { if [ -n "$RUN_ROOT" ]; then "$RUN_ROOT" "$@"; else "$@"; fi; }
@@ -253,7 +258,7 @@ fi
 
 fetch() {  # fetch URL FILE
     if command -v curl > /dev/null 2>&1; then
-        curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1" || die "cannot download $1"
+        curl -fsSL --proto-redir '=https' --retry 3 --connect-timeout 20 -o "$2" "$1" || die "cannot download $1"
     elif command -v wget > /dev/null 2>&1; then
         wget -q -O "$2" "$1" || die "cannot download $1"
     else
@@ -262,8 +267,29 @@ fetch() {  # fetch URL FILE
 }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pengumon-install.XXXXXX")"
-cleanup() { rm -rf "$WORK"; }
-trap cleanup EXIT INT TERM
+# An upgrade is armed (ROLLBACK=1) once the old service is stopped and disarmed when the new program has started
+# once: whatever ends the script in between (a failed step, Ctrl-C, TERM) puts the old environment back and starts
+# the old service again.
+HAD_OLD=0
+ROLLBACK=0
+rollback() {
+    ROLLBACK=0
+    printf '%s\n' "The install did not finish; putting the previous version back." >&2
+    if [ "$HAD_OLD" = 1 ]; then
+        if [ -d "$OLD_VENV" ]; then root rm -rf "$VENV"; root mv "$OLD_VENV" "$VENV"; fi
+        root "$PENGUMON" service install "$SCOPE_FLAG" > /dev/null 2>&1 || printf '%s\n' "The old service could not be started again; run: $PENGUMON service install $SCOPE_FLAG" >&2
+    else
+        root rm -rf "$VENV"
+    fi
+}
+cleanup() {
+    [ "$ROLLBACK" = 1 ] && rollback
+    rm -rf "$WORK"
+}
+# Without the exits the INT and TERM handlers would return to the interrupted command and the script would go on.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ---- the release ---------------------------------------------------------------------------------------------------
 
@@ -328,6 +354,7 @@ explain_sudo
 umask 022
 if [ -x "$PENGUMON" ]; then
     say "Pengumon is already installed here ($("$PENGUMON" version 2> /dev/null || echo unknown)): upgrading."
+    HAD_OLD=1
     backup_status=0
     out="$(backup_data 2>&1)" || backup_status=$?
     if [ "$backup_status" -eq 0 ]; then
@@ -344,17 +371,32 @@ fi
 
 # ---- install ---------------------------------------------------------------------------------------------------------
 
+APP_IS_NEW=0
+[ -e "$APP" ] || APP_IS_NEW=1
 root mkdir -p "$APP"
+if [ "$SCOPE" = system ]; then
+    # A folder this run made is given the owner and mode it must have, whatever the umask or an inherited ACL made of
+    # it. One that was already there is only checked: owned by root, not writable by everyone, and writable by its
+    # group only when that group is root's (gid 0).
+    if [ "$APP_IS_NEW" = 1 ]; then root chown 0:0 "$APP" && root chmod 755 "$APP"; fi
+    if [ -n "$(root find "$APP" -maxdepth 0 \( ! -user 0 -o -perm -002 -o \( -perm -020 ! -group 0 \) \) 2> /dev/null)" ]; then
+        die "$APP is not owned by root or can be written by others ($(ls -ld "$APP" 2> /dev/null)), so the program there could not be trusted; fix it (sudo chown root $APP && sudo chmod 755 $APP) or remove it, and run again"
+    fi
+fi
+root rm -rf "$OLD_VENV"  # the copy from the install before this one
 # Python is kept inside the app folder (a service that cannot see /home must still find it); no cache is left behind
 uvr() { root env "UV_PYTHON_INSTALL_DIR=$APP/python" "UV_PYTHON_PREFERENCE=only-managed" "$UV" --no-config --no-cache "$@"; }
 
 say "Installing Python $PYTHON_VERSION and the locked dependencies into $APP ..."
+ROLLBACK=1
 uvr python install "$PYTHON_VERSION"
-uvr venv --clear --python "$PYTHON_VERSION" "$VENV"
+if [ -e "$VENV" ]; then root mv "$VENV" "$OLD_VENV"; fi  # the working one stays on disk until the new one has started
+uvr venv --python "$PYTHON_VERSION" "$VENV"
 uvr pip install --python "$VENV/bin/python" --require-hashes --only-binary :all: --no-deps --compile-bytecode -r "$WORK/$LOCK"
 verify "$WHEEL"   # again, right before it is used
 uvr pip install --python "$VENV/bin/python" --no-deps --compile-bytecode "$WORK/$WHEEL"
 "$PENGUMON" version > /dev/null || die "the installed pengumon does not start"
+ROLLBACK=0
 say "Installed $("$PENGUMON" version)."
 
 # ---- the command ------------------------------------------------------------------------------------------------------
@@ -388,7 +430,7 @@ fi
 # ---- service ------------------------------------------------------------------------------------------------------------
 
 answers() {
-    if command -v curl > /dev/null 2>&1; then curl -fsS -m 3 -o /dev/null "$1" 2> /dev/null
+    if command -v curl > /dev/null 2>&1; then curl -fsS --noproxy '*' -m 3 -o /dev/null "$1" 2> /dev/null
     else wget -q -T 3 -O /dev/null "$1" 2> /dev/null; fi
 }
 LISTEN_PORT="${PORT:-8000}"

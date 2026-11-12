@@ -3,7 +3,8 @@
 // GET /api/devices/{id}/channels/history, fetched when the tab opens and when the range changes.
 
 import { registerActions } from '../../js/dispatch.js';
-import { formatClock, setText } from '../../js/util.js';
+import { formatClock } from '../../js/clock.js';
+import { setText } from '../../js/dom.js';
 import { state } from '../../js/state.js';
 import { gradeByRange } from '../../js/grades.js';
 import { series, token } from '../../js/chart-theme.js';
@@ -28,7 +29,7 @@ const GRADE_TOKEN = { good: '--good', warn: '--warn-fill', critical: '--crit' };
 
 // A cell's color: the reading graded by the device's ranges from the server (SNR for downstream SNR, power by
 // direction); gray without a reading or a range.
-export function cellColor(dir, metricName, row) {
+function cellColor(dir, metricName, row) {
   const [, , , power, snr] = row;
   const ranges = (device && device.ranges) || {};
   const grade = metricName === 'snr' ? gradeByRange(ranges.ds_snr, snr)
@@ -54,7 +55,7 @@ function groupChannels(rows, start, end) {
 
 const label = (c) => `${c.dir === 'd' ? 'DS' : 'US'} ${c.id}`;
 
-export function drawHeatmap() {
+function drawHeatmap() {
   const canvas = document.getElementById('chHistCanvas');
   const empty = document.getElementById('chHistEmpty');
   if (!canvas || !data) return;
@@ -219,14 +220,14 @@ export function showChannelsTab(name) {
   }
 }
 
-export function setChannelHistoryRange(seconds) {
+function setChannelHistoryRange(seconds) {
   if (!RANGES[seconds]) return;
   rangeSeconds = seconds;
   markButtons();
   load();
 }
 
-export function setChannelHistoryMetric(name) {
+function setChannelHistoryMetric(name) {
   if (name !== 'snr' && name !== 'power') return;
   metric = name;
   markButtons();

@@ -1,7 +1,7 @@
 // Sign out: the confirmation step of "Sign out everywhere" (the dialog's forms post to /logout themselves).
 
 import { registerActions } from '../../js/dispatch.js';
-import { keepKeyboard } from '../../js/util.js';
+import { keepKeyboard } from '../../js/modal.js';
 
 function confirming(on, focus = true) {
   const ask = document.getElementById('btnSignOutEverywhere');

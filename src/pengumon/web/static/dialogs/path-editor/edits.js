@@ -1,10 +1,14 @@
 // The path editor's edits of the draft: rename, role, move, merge, remove, add, replace an address, test, device links.
 
-import { cleanName, errorText } from '../../js/path-api.js';
+import { cleanName } from '../../js/path.js';
+import { errorText } from '../../js/path-api.js';
 import { NO_IPV6, NO_IPV6_WHY } from '../../js/path.js';
 import { state } from '../../js/state.js';
-import { escapeHtml, hostProblem, icon } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { hostProblem } from '../../js/host.js';
+import { icon } from '../../js/dom.js';
 import { $, autoLink, freshId, hopById, isName, note, pe } from './draft.js';
+import { editProbe, isProbeField, PROBES, probeKey, probeOf } from './probe.js';
 import { paintLive, render, renderClean } from './render.js';
 
 // ---------- edits ----------
@@ -31,7 +35,10 @@ export function edit(el) {
     if (fx) fx.textContent = bad ? 'Enter a number above 0 and up to 10000.' : 'Only this hop\'s color. Incidents still use the role\'s level.';
     return;
   }
-  if (field === 'category') {
+  if (isProbeField(field)) { // how the hop is probed: its earlier test is for another probe
+    pe.tests.delete(h.id);
+    if (!editProbe(h, field, el)) return;
+  } else if (field === 'category') {
     h.category = el.value;
     h.group = null; // a group belongs to the old role
     h.joined = false;
@@ -97,16 +104,22 @@ export function addHop(ev) {
   $('pathAddForm').classList.toggle('invalid', !!msg);
   if (msg) { hint.textContent = msg; $('pathAddAddress').focus(); return; }
   if (pe.draft.hops.length >= 64) { hint.textContent = 'A path has at most 64 hops.'; return; }
-  const category = $('pathAddRole').value;
+  const category = $('pathAddProbe').value === 'http' ? 'custom' : $('pathAddRole').value; // an HTTP hop is always Other
   const where = $('pathAddPosition').value;
   const at = where === 'end' ? pe.draft.hops.length : Number(where);
   const family = isName(address) && $('pathAddFamily').value === '6' ? 6 : 4;
+  const probe = PROBES.some(([v]) => v === $('pathAddProbe').value) ? $('pathAddProbe').value : 'icmp';
+  const portText = $('pathAddPort').value.trim();
+  if (probe === 'tcp' && !/^\d+$/.test(portText)) { hint.textContent = 'A TCP probe needs a port (1 to 65535).'; $('pathAddPort').focus(); return; }
+  if (probe !== 'icmp' && portText !== '' && !/^\d+$/.test(portText)) { hint.textContent = 'A port is a number from 1 to 65535.'; $('pathAddPort').focus(); return; }
   const twin = pe.draft.hops.find((h) => h.address.toLowerCase() === address.toLowerCase());
   const hop = { id: freshId(category, address), name: address.slice(0, 100), address, family, category, enabled: true, record_type: 'A', nameserver: null, color: null,
-    group: null, device_id: null, joined: false, added: true };
+    group: null, device_id: null, joined: false, added: true,
+    probe, port: probe === 'icmp' || portText === '' ? null : Number(portText), http_scheme: 'https', http_path: '/', http_verb: 'HEAD' };
   autoLink(hop);
   pe.draft.hops.splice(at, 0, hop);
   $('pathAddAddress').value = '';
+  $('pathAddPort').value = ''; // the port belongs to the hop just added
   hint.textContent = twin ? `Added, but ${twin.name} already has this address. Test or preview it, then Apply.` : 'Added to the draft. Test or preview it, then Apply.';
   render({ id: hop.id });
 }
@@ -147,20 +160,47 @@ export function cancelAddress(id) {
   render({ id, selector: '[data-action=editPathAddress]' });
 }
 
+// The body of POST /api/path/test: the address and family, and for a TCP or HTTP hop how to probe it too.
+function testBody(h) {
+  const body = { address: h.address, family: isName(h.address) ? (h.family || 4) : 4 };
+  const method = probeOf(h);
+  if (method === 'icmp') return body;
+  const port = h.port === '' ? null : h.port;
+  return { ...body, probe: method, port, ...(method === 'http' ? { http_scheme: h.http_scheme, http_path: h.http_path, http_verb: h.http_verb } : {}) };
+}
+
+// A TCP or HTTP test's answer in words (the kinds are the server's: NetworkProber.socket_attempt).
+function socketResult(r, h) {
+  const method = probeOf(h);
+  const bad = (text) => `<span class="bad">${icon('down', 'sm')}${escapeHtml(text)}</span>`;
+  if (r.kind === 'reply') {
+    const connect = method === 'http' && r.connect_ms !== null && r.connect_ms !== undefined ? ` (connect ${escapeHtml(String(r.connect_ms))} ms)` : '';
+    const what = method === 'http' ? `HTTP ${escapeHtml(String(r.status))} in` : 'Connected in';
+    return `<span class="ok">${icon('ok', 'sm')}${what} <b class="num">${escapeHtml(String(r.rtt_ms))} ms</b>${connect}</span>`;
+  }
+  if (r.kind === 'refused') return bad(`Refused on port ${h.port ?? (method === 'http' ? (h.http_scheme === 'http' ? 80 : 443) : '')}`.trim());
+  if (r.kind === 'timeout') return bad('No answer in time');
+  if (r.kind === 'ipv6_unavailable') return `<span class="quiet" title="${escapeHtml(NO_IPV6_WHY)}">${icon('unknown', 'sm')}${escapeHtml(NO_IPV6)}: not probed, not an outage</span>`;
+  return `<span class="bad">${icon('warn', 'sm')}${escapeHtml(r.error || 'The test failed')}</span>`;
+}
+
 export async function test(el) {
   const h = hopById(el.dataset.arg);
   if (!h) return;
   el.disabled = true;
   pe.tests.set(h.id, 'Testing…');
   paintLive();
+  const tested = `${h.address}|${probeKey(h)}`;
+  const method = probeOf(h);
   let html;
   try {
-    const res = await fetch('/api/path/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: h.address, family: isName(h.address) ? (h.family || 4) : 4 }) });
+    const res = await fetch('/api/path/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(testBody(h)) });
     if (!res.ok) throw new Error(await errorText(res));
     const r = await res.json();
     const by = escapeHtml(r.responder || 'a router');
     const again = `<button type="button" class="btn sm" data-action="testPathHop" data-needs-edit data-arg="${escapeHtml(h.id)}">Test again</button>`;
-    html = (r.kind === 'reply' ? `<span class="ok">${icon('ok', 'sm')}Answered in <b class="num">${r.rtt_ms} ms</b></span>`
+    html = (method !== 'icmp' ? socketResult(r, h)
+      : r.kind === 'reply' ? `<span class="ok">${icon('ok', 'sm')}Answered in <b class="num">${escapeHtml(String(r.rtt_ms))} ms</b></span>`
       : r.kind === 'timeout' ? `<span class="bad">${icon('down', 'sm')}No reply (it may ignore ping)</span>`
         : r.kind === 'ttl_exceeded' ? `<span class="bad">${icon('warn', 'sm')}Time exceeded at ${by}</span>`
           : r.kind === 'unreachable' ? `<span class="bad">${icon('down', 'sm')}Unreachable (reported by ${by})</span>`
@@ -169,6 +209,8 @@ export async function test(el) {
   } catch (e) {
     html = `<span class="bad">${icon('warn', 'sm')}${escapeHtml(e.message)}</span>`;
   }
+  const now = hopById(h.id);
+  if (!now || `${now.address}|${probeKey(now)}` !== tested) return; // the address or the probe was changed while the test ran: the answer is for the old one
   pe.tests.set(h.id, html);
   paintLive();
 }

@@ -4,7 +4,8 @@
 // rows become cards (components.css .dlist). docs/themes.md, "Drawing a card".
 
 import { kit } from '../../js/cards.js';
-import { getTargetInfo, setClass, setText } from '../../js/util.js';
+import { getTargetInfo } from '../../js/targets.js';
+import { setClass, setText } from '../../js/dom.js';
 import { createSparkline, drawSparkline } from '../../js/sparkline.js';
 
 const { mark } = kit;
@@ -15,7 +16,7 @@ function build(r) {
   const tr = document.createElement('tr');
   tr.className = 'row-click';
   tr.innerHTML = `
-    <td class="lead"><span class="primary" data-f="label"></span><span class="sub" data-f="sub"><span data-f="name"></span><span data-f="addrWrap"> · <span class="mono" data-f="addr"></span></span></span></td>
+    <td class="lead"><span class="primary" data-f="label"></span><span class="sub" data-f="sub"><span data-f="name"></span><span data-f="addrWrap"> · <span class="mono" data-f="addr"></span></span><span data-f="probeWrap" hidden> · <span data-f="probe"></span></span></span></td>
     <td class="aside"><span class="chip" data-f="loss"></span></td>
     <td class="wide"><span class="range" role="img" data-f="range"><i data-f="band"></i><b data-f="mark"></b></span><span class="range-n num" data-f="rangeText"></span></td>
     <td class="r num" data-l="Last"><b data-f="last"></b></td>
@@ -29,7 +30,7 @@ function build(r) {
   tr.querySelectorAll('[data-f]').forEach((el) => { p[el.dataset.f] = el; });
   p.spark = createSparkline(r.spark.label);
   p.sparkCell.appendChild(p.spark);
-  [['label', 'label'], ['name', 'name'], ['addr', 'address'], ['loss', 'loss'], ['rangeText', 'range'], ['range', 'rangeAria'], ['last', 'last'],
+  [['label', 'label'], ['name', 'name'], ['addr', 'address'], ['probe', 'probe'], ['loss', 'loss'], ['rangeText', 'range'], ['range', 'rangeAria'], ['last', 'last'],
     ['jitter', 'jitter'], ['total', 'total'], ['spark', 'sparkline']].forEach(([f, key]) => mark(p[f], key));
   refs.set(tr, p);
   return tr;
@@ -42,6 +43,8 @@ function patch(tr, r) {
   setText(p.name, r.name);
   setText(p.addr, r.addr);
   p.addrWrap.hidden = !r.sayAddr;
+  setText(p.probe, r.probe);
+  p.probeWrap.hidden = !r.probe;
   p.label.title = r.labelTitle;
   p.sub.title = r.subTitle;
   setClass(p.loss, r.loss.chip ? `chip st st-${r.loss.level}` : 'chip');

@@ -15,13 +15,11 @@ to a trickle; the Meter leaves both out. A refusal fails the direction with a re
 """
 
 import time
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 import httpx
 
-from pengumon.speedtest.providers.base import (TIMEOUTS, UPLOAD_ROUNDS, USER_AGENT, Meter, ProviderError,
-                                               SpeedProvider, Transfer, payload, refused, request_size, run_streams)
-from pengumon.speedtest.providers.wire import BulkTransport
+from pengumon.speedtest.providers.base import HttpProvider, ProviderError, refused
 
 BASE = "https://speed.cloudflare.com"
 WHO = "Cloudflare"
@@ -36,54 +34,25 @@ def _refused(status: int) -> ProviderError:
     return refused(status, WHO)
 
 
-class CloudflareProvider(SpeedProvider):
+class CloudflareProvider(HttpProvider):
     name = "cloudflare"
+    DOWN_PATH = "/__down"
+    UP_PATH = "/__up"
+    _who = WHO
 
     def __init__(self, clock: Callable[[], float] = time.perf_counter, transport: Optional[httpx.AsyncBaseTransport] = None,
                  base: str = BASE):
-        super().__init__(clock)
-        self.base = base
-        self._client = httpx.AsyncClient(timeout=TIMEOUTS, follow_redirects=False,
-                                         transport=transport if transport is not None else BulkTransport(),
-                                         headers={"User-Agent": USER_AGENT})
+        super().__init__(base, clock, transport)
 
     def _label(self, response: httpx.Response) -> None:
         colo = response.headers.get("colo") or response.headers.get("cf-meta-colo") or ""
         self.server = colo.strip()[:16] or self.server or WHO
 
-    async def download(self, cap_bytes: int, time_limit_s: float, target_s: Optional[float] = None) -> Transfer:
-        meter = self._meter(cap_bytes, time_limit_s, target_s=target_s)
+    def _server(self) -> Optional[str]:
+        return self.server or WHO
 
-        async def step(meter: Meter, size: int) -> None:
-            key = meter.request()
-            want = size
-            async with self._client.stream("GET", f"{self.base}/__down", params={"bytes": size}) as response:
-                if response.status_code != 200:
-                    raise _refused(response.status_code)
-                self._label(response)
-                async for data in response.aiter_bytes():
-                    want -= meter.add(min(len(data), want), key)  # a response with more than asked for is cut off here
-                    if want <= 0 or meter.done:
-                        return  # leaving the block closes the connection with whatever is unread
+    def _download_request(self, size: int) -> Optional[Tuple[Dict[str, int], int]]:
+        return {"bytes": size}, size
 
-        await run_streams(step, meter, request_size(cap_bytes), WHO)
-        return meter.transfer(self.server or WHO)
-
-    async def upload(self, cap_bytes: int, time_limit_s: float, target_s: Optional[float] = None) -> Transfer:
-        meter = self._meter(cap_bytes, time_limit_s, ramp=0.0, target_s=target_s)
-
-        async def step(meter: Meter, size: int) -> None:
-            key = meter.request()
-            response = await self._client.post(f"{self.base}/__up", content=payload(meter, size, key),
-                                               headers={"Content-Length": str(size),
-                                                        "Content-Type": "application/octet-stream"})
-            if response.status_code >= 300:
-                raise _refused(response.status_code)
-            meter.mark(key)  # the answer: the server has the whole body
-            self._label(response)
-
-        await run_streams(step, meter, request_size(cap_bytes, rounds=UPLOAD_ROUNDS), WHO, finish=True)
-        return meter.transfer(self.server or WHO)
-
-    async def aclose(self) -> None:
-        await self._client.aclose()
+    def _refused(self, status: int) -> ProviderError:
+        return _refused(status)

@@ -32,6 +32,7 @@ sockaddr_in6 offender (ipv6(7); the kernel's net/ipv6/datagram.c, ipv6_icmp_erro
 
 import asyncio
 import errno
+import logging
 import os
 import socket
 import struct
@@ -74,8 +75,10 @@ _ERROR_KINDS = {ICMP_TIME_EXCEEDED: "ttl_exceeded", ICMP_DEST_UNREACH: "unreacha
 _RECV_SIZE = 2048
 _ANC_SIZE = 512  # a timestamp (16 bytes) and a sock_extended_err + sockaddr_in6 (44 bytes), with their headers
 _MAX_PER_WAKEUP = 256  # packets read per wakeup; the rest waits for the next one (the socket stays readable)
+_MAX_RECV_ERRORS = 8  # reads in a row that fail: one is a pending ICMP error (cleared by the read), many are a dead socket
 _MAX_PENDING = 0xFF00  # probes in flight: the sequence is 16 bits, so this is the hard bound
 _IS_32BIT = struct.calcsize("P") == 4
+logger = logging.getLogger("pengumon.icmp")
 PING_GROUP_RANGE = Path("/proc/sys/net/ipv4/ping_group_range")
 SYSCTL_FIX = ("echo 'net.ipv4.ping_group_range = 0 2147483647' | sudo tee /etc/sysctl.d/60-unprivileged-ping.conf"
               " && sudo sysctl --system")
@@ -390,19 +393,37 @@ class LinuxIcmpBackend:
         self._drain(0, budget)
 
     def _drain(self, flags: int, budget: int) -> int:
+        failures = 0
         while budget > 0:
             try:
                 packet, ancdata, _flags, address = self._sock.recvmsg(_RECV_SIZE, _ANC_SIZE, flags)
             except (BlockingIOError, InterruptedError):
                 return budget
-            except OSError:
+            except OSError as exc:
                 # With IP_RECVERR a pending ICMP error is also reported once by a normal read (the socket's sk_err);
-                # the read clears it, so keep reading.
+                # the read clears it, so keep reading. An error that does not clear (a socket in a hard error state)
+                # would make the event loop call this again at once, for ever: stop reading instead.
+                failures += 1
+                if failures >= _MAX_RECV_ERRORS:
+                    self._reader_failed(exc)
+                    return 0
                 budget -= 1
                 continue
+            failures = 0
             budget -= 1
             self._handle(packet, ancdata, address, errqueue=bool(flags & MSG_ERRQUEUE))
         return budget
+
+    def _reader_failed(self, exc: OSError) -> None:
+        """The socket cannot be read: stop the event loop's reader (once), say so; the next probe adds it again."""
+        if self._loop is not None:
+            logger.warning(f"Reading the ICMP socket fails ({exc}); pausing the reader until the next probe")
+            if not self._loop.is_closed():
+                try:
+                    self._loop.remove_reader(self._sock.fileno())
+                except (NotImplementedError, OSError, ValueError):
+                    pass
+            self._loop = None
 
     def _parse(self, packet: bytes, ancdata, src: Optional[str], errqueue: bool):
         """(kind, id, seq, responder, the destination the answer is about, the echoed data or None) or None."""
@@ -476,6 +497,8 @@ class LinuxIcmpBackend:
             self._loop = None
         for entry in self._pending.values():
             if not entry.future.done() and not entry.future.get_loop().is_closed():
-                entry.future.cancel()
+                # an error, not a cancel: a cancel would surface as CancelledError in whoever awaits the probe, which
+                # looks like that task being cancelled (as icmp_windows.py explains)
+                entry.future.set_exception(OSError(errno.EBADF, "ICMP backend is closed"))
         self._pending.clear()
         self._sock.close()

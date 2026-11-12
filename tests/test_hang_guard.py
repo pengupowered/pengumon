@@ -92,7 +92,7 @@ def test_the_test_containers_have_a_timeout_a_memory_cap_and_a_process_cap():
     for flag in ("--timeout", "--memory", "--memory-swap", "--pids-limit", '-n "$workers"'):
         assert flag in unit, flag
     ui = (ROOT / "scripts" / "test-ui.sh").read_text()
-    for flag in ("--timeout", "--memory \"$memory\"", "--pids-limit", "faulthandler_timeout=300"):
+    for flag in ("--timeout", "--memory \"$memory\"", "--pids-limit", "faulthandler_timeout=480"):
         assert flag in ui, flag
     container = (ROOT / "scripts" / "test-container.sh").read_text()
     assert container.count('"${backstop[@]}"') == 3

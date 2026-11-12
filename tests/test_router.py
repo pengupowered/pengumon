@@ -3,6 +3,9 @@
 import base64
 import json
 import logging
+import random
+import re
+import time
 from urllib.parse import parse_qs
 
 import httpx
@@ -10,7 +13,11 @@ import pytest
 from pengumon.capabilities import Capability, DriverError, SystemReading, WanCounters
 from pengumon.devices.wan import WanRates
 from pengumon.devices.registry import unconfigured_messages
-from pengumon.drivers.asuswrt import AsusWrtDriver, _parse_clients, _parse_cpu, _parse_mem, _parse_netdev
+from pengumon.drivers import asuswrt, asuswrt_parse
+from pengumon.drivers.asuswrt import AsusWrtDriver
+from pengumon.drivers.asuswrt_parse import (
+    _parse_clients, _parse_cpu, _parse_mem, _parse_netdev, _parse_update_netdev,
+)
 from pengumon.drivers.common import CPU_MIN_INTERVAL_SECONDS
 from pengumon.drivers.common import cpu_pct as _cpu_pct
 from pengumon.devices.snapshots import RouterMetricsSnapshot
@@ -47,7 +54,8 @@ def test_asus_collector_read_only_guarantee():
     # Must only have safe telemetry collection methods
     for name in member_names:
         assert name in ("poll", "read_wan_counters", "aclose", "set_credentials", "missing_configuration", "host", "name", "offers",
-                        "http", "from_config", "options_model", "default_poll_seconds", "label", "pack_notes"), f"Unexpected member: {name}"
+                        "http", "from_config", "options_model", "default_poll_seconds", "label", "pack_notes",
+                        "traffic_interval_seconds", "pause_reads"), f"Unexpected member: {name}"
 
     # Verify no references to apply.cgi or nvram set in code
     import inspect
@@ -85,7 +93,9 @@ CLIENTS = {"get_clientlist": {
     "AA:AA:AA:AA:AA:01": {"isOnline": "1"}, "AA:AA:AA:AA:AA:02": {"isOnline": "1"},
     "AA:AA:AA:AA:AA:03": {"isOnline": "0"}, "maclist": ["AA:AA:AA:AA:AA:01"],
 }}
-ANSWERS = {"netdev()": NETDEV, "cpu_usage()": CPU, "memory_usage()": MEM, "get_clientlist()": CLIENTS}
+UPTIME = {"uptime": "Tue, 03 Nov 2026 18:50:56 -0500(6122380 secs since boot)"}
+ANSWERS = {"netdev()": NETDEV, "cpu_usage()": CPU, "memory_usage()": MEM, "get_clientlist()": CLIENTS,
+           "uptime()": UPTIME}
 
 
 class FakeRouter:
@@ -96,7 +106,8 @@ class FakeRouter:
         self.valid_token = valid_token
         self.hook_requests = []  # the hook string of every appGet.cgi request
         self.logins = 0
-        self.other = []  # paths of anything else (update.cgi, ...)
+        self.other = []  # paths of anything else (update.cgi, ...) but the status and traffic pages (.asp)
+        self.pages = []  # the .asp pages asked for: this router has none (404), as an older firmware
         self.cpu_reads = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -105,6 +116,9 @@ class FakeRouter:
             self.logins += 1
             self.valid_token = "fresh"
             return httpx.Response(200, json={"asus_token": "fresh"})
+        if path.endswith(".asp"):
+            self.pages.append(path)
+            return httpx.Response(404, text="<HTML><BODY>404 Not Found</BODY></HTML>")
         if not path.endswith("appGet.cgi"):
             self.other.append(path)
             return httpx.Response(404)
@@ -125,8 +139,18 @@ class FakeRouter:
         return httpx.Response(200, json=body)
 
 
+def without_pages(handler):
+    """`handler` behind a router without the status and traffic pages: they answer 404, as on older firmware (the tests
+    of those pages are tests/test_router_traffic.py)."""
+    def wrapped(request):
+        if request.url.path.endswith(".asp"):
+            return httpx.Response(404)
+        return handler(request)
+    return wrapped
+
+
 def _collector(router, clock=None, **config):
-    client = httpx.AsyncClient(transport=httpx.MockTransport(router))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(without_pages(router)))
     device = build_router(username="u", password="p", **config, client=client, clock=clock or Clock())
     device.driver._token = "tok"
     return device
@@ -137,7 +161,7 @@ async def test_one_combined_request_per_poll_and_clients_only_every_60_seconds()
     collector = _collector(router, clock)
 
     first = await collector.poll(force=True)
-    assert router.hook_requests == ["netdev();cpu_usage();memory_usage();get_clientlist()"]
+    assert router.hook_requests == ["netdev();cpu_usage();memory_usage();get_clientlist();uptime()"]
     assert (first.wan_rx_bytes, first.wan_tx_bytes) == (100_000_000, 50_000_000)
     assert first.cpu_usage_pct is None and first.mem_usage_pct == 60.0  # CPU % needs a second reading
     assert first.client_count == 2
@@ -150,8 +174,48 @@ async def test_one_combined_request_per_poll_and_clients_only_every_60_seconds()
 
     clock.now += 10  # 60 s after the last read
     await collector.poll(force=True)
-    assert router.hook_requests[-1] == "netdev();cpu_usage();memory_usage();get_clientlist()"
+    assert router.hook_requests[-1] == "netdev();cpu_usage();memory_usage();get_clientlist();uptime()"
     assert len(router.hook_requests) == 7 and router.other == []
+
+
+async def test_a_client_named_error_status_is_a_client_not_a_refused_token(monkeypatch):
+    """The refusal is told from the answer's own error_status field, never from the word anywhere in it: a client's
+    name and vendor are the device's own choice."""
+    named = {**CLIENTS["get_clientlist"], "AA:AA:AA:AA:AA:04": {"isOnline": "1", "name": "error_status",
+                                                               "vendor": "error_status"}}
+    monkeypatch.setitem(ANSWERS, "get_clientlist()", {"get_clientlist": named})
+    router = FakeRouter()
+    snap = await _collector(router).poll(force=True)
+    assert snap.status == "healthy" and snap.client_count == 3
+    assert router.logins == 0 and len(router.hook_requests) == 1
+
+
+@pytest.mark.parametrize("body, refused", [
+    ('{"error_status":"2"}', True), ('error_status=2', True), ('{"get_clientlist":{"x":{"name":"error_status"}}}', False),
+    ("error_status" + " " * 2000, False), ('{"netdev":{}}', False),
+])
+def test_what_counts_as_a_refused_token(body, refused):
+    assert asuswrt._token_refused(body) is refused
+
+
+async def test_a_client_list_poll_parses_the_client_list_and_the_mesh_answer_once(monkeypatch):
+    clients = {"get_clientlist": {
+        "02:00:00:00:00:01": {"isOnline": "1", "mac": "02:00:00:00:00:01", "amesh_papMac": "02:00:00:00:aa:01"},
+        "02:00:00:00:00:02": {"isOnline": "1", "mac": "02:00:00:00:00:02", "amesh_papMac": "02:00:00:00:bb:01"}}}
+    mesh = {"get_cfg_clientlist": [{"mac": "02:00:00:00:aa:01", "alias": "Hall", "online": "1"},
+                                   {"mac": "02:00:00:00:bb:01", "alias": "Attic", "online": "1"}]}
+    monkeypatch.setitem(ANSWERS, "get_clientlist()", clients)
+    monkeypatch.setitem(ANSWERS, "get_cfg_clientlist()", mesh)
+    sections, objects = [], []
+    real_section, real_object = asuswrt_parse._object_section, asuswrt_parse._json_object
+    monkeypatch.setattr(asuswrt_parse, "_object_section", lambda text, key: sections.append(key) or real_section(text, key))
+    monkeypatch.setattr(asuswrt_parse, "_json_object", lambda text: objects.append(text) or real_object(text))
+    driver = _collector(FakeRouter()).driver
+    result = await driver.poll()
+    assert result.readings[Capability.ROUTER_SYSTEM].client_count == 2
+    assert [n.label for n in result.readings[Capability.MESH].nodes] == ["Hall", "Attic"]
+    assert sections == ["get_clientlist"]  # (twice before: the count, then the list)
+    assert sum("get_cfg_clientlist" in t for t in objects) == 1  # (twice before: the names, then the nodes)
 
 
 async def test_clientlist_interval_is_configurable():
@@ -162,7 +226,7 @@ async def test_clientlist_interval_is_configurable():
     await collector.poll(force=True)
     clock.now += 10
     await collector.poll(force=True)
-    assert [h.endswith("get_clientlist()") for h in router.hook_requests] == [True, False, True]
+    assert ["get_clientlist()" in h for h in router.hook_requests] == [True, False, True]
 
 
 async def test_falls_back_to_separate_requests_and_remembers(caplog):
@@ -175,14 +239,14 @@ async def test_falls_back_to_separate_requests_and_remembers(caplog):
 
     assert collector.driver._combined_ok is False
     assert router.hook_requests == [
-        "netdev();cpu_usage();memory_usage();get_clientlist()",  # combined attempt, answered without counters
-        "netdev()", "cpu_usage()", "memory_usage()", "get_clientlist()",
+        "netdev();cpu_usage();memory_usage();get_clientlist();uptime()",  # combined attempt, answered without counters
+        "netdev()", "cpu_usage()", "memory_usage()", "get_clientlist()", "uptime()",
         "netdev()", "cpu_usage()", "memory_usage()",  # later polls skip the combined form (and the client list)
     ]
     assert (first.cpu_usage_pct, first.mem_usage_pct, first.client_count) == (None, 60.0, 2)
     assert second.cpu_usage_pct == 50.0
     assert second.wan_rx_bytes == 100_000_000 and second.client_count == 2
-    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING and r.name == "pengumon.drivers.asuswrt"]) == 1
 
 
 async def test_combined_requests_are_retried_every_hour_and_come_back_when_they_work():
@@ -207,7 +271,7 @@ async def test_combined_requests_are_retried_every_hour_and_come_back_when_they_
     clock.now += 3601
     snap = await collector.poll(force=True)
     assert collector.driver._combined_ok is True
-    assert router.hook_requests == ["netdev();cpu_usage();memory_usage();get_clientlist()"]
+    assert router.hook_requests == ["netdev();cpu_usage();memory_usage();get_clientlist();uptime()"]
     assert snap.wan_rx_bytes == 100_000_000 and snap.cpu_usage_pct == 50.0
     router.hook_requests.clear()
     clock.now += 10
@@ -230,7 +294,7 @@ async def test_one_502_page_is_a_failed_poll_not_a_mode_change():
     assert snap.status == "error" and snap.wan_rx_bytes is None
     assert "appGet answered HTTP 502" in snap.error_message
     assert collector.driver._combined_ok is True
-    assert router.hook_requests == ["netdev();cpu_usage();memory_usage();get_clientlist()"]  # no per-hook retries
+    assert router.hook_requests == ["netdev();cpu_usage();memory_usage();get_clientlist();uptime()"]  # no per-hook retries
 
     failing["on"] = False
     router.hook_requests.clear()
@@ -263,7 +327,7 @@ async def test_transport_error_does_not_disable_combined_requests():
     assert snap.status == "error" and snap.error_message.startswith("Failed to communicate with router:")
     assert snap.wan_rx_bytes is None
     assert collector.driver._combined_ok is True
-    assert calls[0] == "netdev();cpu_usage();memory_usage();get_clientlist()"
+    assert calls[0] == "netdev();cpu_usage();memory_usage();get_clientlist();uptime()"
     assert all(";" not in c for c in calls[1:])  # only the update.cgi fallback, no per-hook retries
 
 
@@ -282,6 +346,8 @@ async def test_relogin_on_401():
     def handler(request):
         if request.url.path.endswith("login.cgi"):
             return httpx.Response(200, json={"asus_token": "fresh"})
+        if not request.url.path.endswith("appGet.cgi"):
+            return httpx.Response(404)
         state["calls"] += 1
         if request.headers.get("asus_token") != "fresh":
             return httpx.Response(401)
@@ -381,8 +447,18 @@ def test_parse_clients():
 MESH_WITHOUT_COUNTERS = MESH_COMBINED.replace('"netdev": "INTERNET_rx":"0x5f5e100","INTERNET_tx":"0x2faf080"\n,', "")
 
 
+async def test_a_refused_login_names_the_routers_error_status_in_a_few_characters():
+    def refuses(request):
+        return httpx.Response(200, json={"error_status": ["x" * 100_000]})
+    driver = _driver(refuses)
+    driver._token = None
+    with pytest.raises(DriverError) as err:
+        await driver.poll()
+    assert err.value.kind == "auth" and len(err.value.message) < 200
+
+
 def _driver(handler, clock=None, **kwargs):
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(without_pages(handler)))
     driver = AsusWrtDriver("http://192.168.1.1", "u", "p", client=client, clock=clock or Clock(), **kwargs)
     driver._token = "tok"
     return driver
@@ -418,7 +494,7 @@ async def test_a_combined_answer_without_counters_is_a_healthy_snapshot_without_
         return _mesh_without_counters(request)
 
     device = build_router(username="u", password="p",
-                          client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), clock=Clock())
+                          client=httpx.AsyncClient(transport=httpx.MockTransport(without_pages(handler))), clock=Clock())
     device.driver._token = "tok"
     snap = await device.poll(force=True)
     assert snap.status == "healthy" and snap.error_message is None
@@ -449,7 +525,7 @@ async def test_counters_read_earlier_in_a_per_hook_poll_survive_a_refused_relogi
     assert "login" in calls and calls.index("netdev()") < calls.index("cpu_usage()")
 
     device = build_router(username="u", password="p",
-                          client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), clock=Clock())
+                          client=httpx.AsyncClient(transport=httpx.MockTransport(without_pages(handler))), clock=Clock())
     device.driver._token = "tok"
     snap = await device.poll(force=True)
     assert snap.status == "healthy" and snap.wan_rx_bytes == 100_000_000 and snap.wan_tx_bytes == 50_000_000
@@ -460,7 +536,7 @@ async def test_a_transport_error_while_logging_in_is_an_error_snapshot():
         raise httpx.ConnectError("no route to host")
 
     device = build_router(username="u", password="p",
-                          client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), clock=Clock())
+                          client=httpx.AsyncClient(transport=httpx.MockTransport(without_pages(handler))), clock=Clock())
     assert device.driver._token is None
     snap = await device.poll(force=True)
     assert snap.status == "error" and snap.error_message.startswith("Failed to communicate with router:")
@@ -478,7 +554,7 @@ async def test_new_credentials_reset_the_token_and_the_next_poll_logs_in_with_th
         return httpx.Response(200, json={**NETDEV, **CPU, **MEM, **CLIENTS})
 
     device = build_router(username="admin", password="old",
-                          client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), clock=Clock())
+                          client=httpx.AsyncClient(transport=httpx.MockTransport(without_pages(handler))), clock=Clock())
     await device.poll(force=True)
     await device.poll(force=True)
     assert len(logins) == 1 and device.driver._token == "tok1"  # the token is reused
@@ -612,3 +688,164 @@ async def test_a_counter_read_without_counters_is_none_and_a_refused_one_raises(
                       else httpx.Response(200, json={"error_status": "3"}))
     with pytest.raises(DriverError):
         await refused.read_wan_counters()
+
+
+# --- hostile answers (0.27 security review) -------------------------------------------------------------------------
+# The appGet and update.cgi answers are read up to a cap and parsed in linear time. The CPU and update.cgi parsers
+# replace patterns that backtracked (`.*?` and `[^}]*?` between two numbers); they must find exactly what those found.
+
+OLD_RE_CPU = re.compile(r'cpu(\d+)_total["\']?\s*:\s*["\']?(\d+)["\']?.*?cpu\1_usage["\']?\s*:\s*["\']?(\d+)')
+OLD_RE_UPDATE_NETDEV = re.compile(
+    r'["\']?(?:INTERNET|eth0|vlan2|wan0)["\']?\s*:\s*\{[^}]*?rx["\']?\s*:\s*["\']?(\d+)[^}]*?tx["\']?\s*:\s*["\']?(\d+)')
+
+
+def old_parse_cpu(text):
+    return {core: (int(total), int(busy)) for core, total, busy in OLD_RE_CPU.findall(text)}
+
+
+def old_parse_update(text):
+    m = OLD_RE_UPDATE_NETDEV.search(text)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+# Fragments of the shapes the patterns look for (whole `key: value` pieces, so the random bodies do hold matches) and
+# the noise between them: line breaks, brackets, quotes, broken pieces.
+CPU_TOKENS = ([f"cpu{c}_{kind}{sep}{n}" for c in ("1", "2", "12") for kind in ("total", "usage")
+               for sep in (":", '":"', "' : '") for n in ("1000", "7")]
+              + ["cpu1_total", "cpu1_usage", "cpu1", "_usage", ":", '"', " ", "\n", "\r", ",", "250", "{", "}", "x"] * 3)
+UPDATE_TOKENS = (['"INTERNET":{', "INTERNET : {", "eth0:{", "'wan0':{", "vlan2 :{", "br0:{", "rx:12", '"rx":"3456"',
+                  "rx : 0", "tx:7", '"tx":"89"', "rx_bytes:5", "tx_bytes:6"]
+                 + ["}", "{", ",", " ", "\n", ":", "rx", "tx", "x", '"'] * 2)
+
+
+def random_bodies(tokens, n, seed):
+    rnd = random.Random(seed)
+    return ["".join(rnd.choice(tokens) for _ in range(rnd.randint(0, 30))) for _ in range(n)]
+
+
+def test_the_cpu_parser_finds_what_the_old_pattern_found():
+    fixed = [json.dumps(CPU), json.dumps(cpu_answer(3)), MESH_COMBINED, json.dumps({**NETDEV, **CPU, **MEM, **CLIENTS}),
+             "{}", "cpu1_total:5\ncpu1_usage:1", "cpu1_total:5 cpu1_total:6 cpu1_usage:2 cpu1_usage:3",
+             "cpu1_total:1 cpu2_total:2 cpu2_usage:1 cpu1_usage:1", "cpu1_total:9 cpu11_usage:1 cpu1_usage:4"]
+    bodies = fixed + random_bodies(CPU_TOKENS, 20000, seed=27)
+    assert sum(bool(old_parse_cpu(b)) for b in bodies) > 1000  # the random bodies do find pairs
+    for body in bodies:
+        assert _parse_cpu(body) == old_parse_cpu(body), body
+
+
+def test_the_update_cgi_parser_finds_what_the_old_pattern_found():
+    fixed = ['{"INTERNET": {"rx": "123456", "tx": "7890"}, "eth0": {"rx": "1"}}', "netdev = {'INTERNET':{rx:1,tx:2}}",
+             '"INTERNET": {"rx": 1} "eth0": {"rx": 5, "tx": 6}', '"INTERNET":{ "eth0":{rx:1,tx:2}', "{}"]
+    bodies = fixed + random_bodies(UPDATE_TOKENS, 20000, seed=27)
+    assert sum(old_parse_update(b) is not None for b in bodies) > 300
+    for body in bodies:
+        assert _parse_update_netdev(body) == old_parse_update(body), body
+
+
+def filled(unit: str, head: str = "", size: int = 400_000) -> str:
+    return head + unit * ((size - len(head)) // len(unit))
+
+
+HOSTILE = [
+    ("cpu: totals without a busy count", _parse_cpu, filled("cpu1_total:1,"), {}),
+    ("cpu: totals, the busy counts on the next line", _parse_cpu,
+     filled("cpu1_total:1,") + "\n" + filled("cpu1_usage:1,"), {}),
+    ("cpu: totals of many cores, one busy count", _parse_cpu,
+     "".join(f"cpu{i}_total:1," for i in range(30000)) + "cpu1_usage:1", {"1": (1, 1)}),
+    ("update: objects opened again and again", _parse_update_netdev, filled('"INTERNET":{'), None),
+    ("update: rx without tx", _parse_update_netdev, filled("rx:1,", '"INTERNET":{'), None),
+    ("update: openings then rx without tx", _parse_update_netdev, filled('"wan0":{rx:1,'), None),
+    ("netdev: the name again and again", _parse_netdev, filled("INTERNET_rx:"), None),
+    ("memory: the name again and again", _parse_mem, filled("mem_total:"), None),
+    ("clients: the section opened again and again", _parse_clients, filled('"get_clientlist":{'), None),
+]
+
+
+@pytest.mark.parametrize("name, fn, body, expected", HOSTILE, ids=[h[0] for h in HOSTILE])
+def test_a_hostile_answer_of_a_few_hundred_kb_parses_in_well_under_a_second(name, fn, body, expected):
+    """Before 0.27's fix: 200 KB of "cpu1_total:1," took 17 s, update.cgi's pattern 34 s (objects opened again and
+    again) and 81 s (rx without tx); the client-list section opened again and again raised RecursionError."""
+    started = time.perf_counter()
+    value = fn(body)
+    seconds = time.perf_counter() - started
+    # a few tens of ms here; 5 s leaves room for a slow, busy CI runner (the Windows one took 2.3 s for one case, the
+    # parsers being linear) and is still far from the seconds to minutes of the patterns this replaced
+    assert value == expected and seconds < 5.0, (name, seconds)
+
+
+@pytest.mark.parametrize("dev, expected", [
+    ('{"rx": Infinity, "tx": 1}', None), ('{"rx": -5, "tx": 1.5}', None), ('{"rx": true, "tx": 1}', None),
+    ('{"rx": 0, "tx": 7, "rx_bytes": 99}', (0, 7)), ('{"rx": "12", "tx": "34"}', (12, 34)),
+    ('{"rx_bytes": 5, "tx_bytes": 6}', (5, 6)), ('{"rx": "\u00b2", "tx": 1}', None),
+    ('{"rx": 1' + "0" * 25 + ', "tx": 1}', None),
+], ids=["infinity", "negative-and-fraction", "boolean", "zero", "strings", "bytes-names", "superscript", "too-long"])
+def test_the_json_interface_table_takes_only_counters(dev, expected):
+    assert _parse_netdev('{"netdev": {"eth0": ' + dev + "}}") == expected
+
+
+@pytest.mark.parametrize("charset", ["idna", "rot13", "base64", "no-such-charset", "utf-8"])
+def test_a_charset_that_is_no_text_encoding_falls_back_to_utf8(charset):
+    headers = httpx.Headers({"content-type": f"text/html; charset={charset}"})
+    assert asuswrt._decode(headers, "caf\u00e9".encode("utf-8")) == "caf\u00e9"
+
+
+def test_numbers_too_long_for_a_counter_and_deep_nesting_are_no_value_not_an_error():
+    long = "1" * 5000  # int() refuses over 4300 digits
+    assert _parse_netdev(f"INTERNET_rx:{long},INTERNET_tx:1") is None
+    assert _parse_netdev("INTERNET_rx:0x" + "f" * 17 + ",INTERNET_tx:1") is None
+    assert _parse_netdev("INTERNET_rx:" + "9" * 20 + ",INTERNET_tx:1") == (10**20 - 1, 1)  # 20 digits still are
+    assert _parse_cpu(f"cpu1_total:{long},cpu1_usage:1 cpu2_total:4,cpu2_usage:1") == {"2": (4, 1)}
+    assert _parse_mem(f"mem_total:{long},mem_used:1") is None
+    assert _parse_update_netdev(f'"INTERNET":{{rx:{long},tx:1}}') is None
+    deep = "[" * 200_000 + "]" * 200_000
+    assert _parse_clients('{"get_clientlist":{"a":' + deep + "}}") is None
+    assert _parse_netdev('{"netdev":' + deep + "}") is None
+    assert asuswrt._json_object(deep) is None
+
+
+def streamed(chunks: int, pulled: list) -> httpx.Response:
+    """A 200 whose body is `chunks` chunks of 64 KiB, counting in `pulled` how many were taken from it."""
+    async def body():
+        for _ in range(chunks):
+            pulled.append(1)
+            yield b" " * 65536
+    return httpx.Response(200, content=body(), headers={"content-type": "application/json"})
+
+
+async def test_an_appget_answer_longer_than_the_cap_is_the_polls_problem_said_once(caplog):
+    pulled = []
+    update = {"answer": None}
+
+    def handler(request):
+        if request.url.path.endswith("update.cgi"):
+            return update["answer"] or streamed(64, pulled)  # 4 MiB: over its own 1 MiB cap too
+        return streamed(128, pulled)  # 8 MiB
+
+    driver = _driver(handler)
+    with caplog.at_level(logging.WARNING, logger="pengumon.drivers.asuswrt"):
+        for _ in range(3):
+            with pytest.raises(DriverError, match="more than 4 MiB: not read") as err:
+                await driver.poll()
+            assert err.value.kind == "protocol"
+        update["answer"] = httpx.Response(200, text='{"INTERNET": {"rx": "123456", "tx": "7890"}}')
+        result = await driver.poll()  # the fallback's counters still make a poll
+    assert result.readings[Capability.WAN_COUNTERS].rx_bytes == 123456
+    assert sum("more than 4 MiB" in r.getMessage() for r in caplog.records) == 1
+    # each read stopped at its cap: appGet at 4 MiB (64 chunks and the one past it), update.cgi at 1 MiB (16 and 1)
+    assert len(pulled) <= 4 * (asuswrt.APPGET_MAX_BYTES // 65536 + 1) + 3 * (asuswrt.UPDATE_MAX_BYTES // 65536 + 1)
+    assert asuswrt.APPGET_MAX_BYTES == 4 * 1024 * 1024 and asuswrt.UPDATE_MAX_BYTES == 1024 * 1024
+
+
+async def test_an_appget_answer_in_another_charset_is_decoded_as_it_says():
+    body = json.dumps({**NETDEV, **CPU, **MEM, "get_clientlist": {"AA:AA:AA:AA:AA:01": {"isOnline": "1", "name": "Café"}}},
+                      ensure_ascii=False)
+
+    def handler(request):
+        if request.url.path.endswith("appGet.cgi"):
+            return httpx.Response(200, content=body.encode("latin-1"),
+                                  headers={"content-type": "application/json; charset=ISO-8859-1"})
+        return httpx.Response(404)
+
+    result = await _driver(handler).poll()
+    clients = result.readings[Capability.CLIENT_INVENTORY].clients
+    assert [c.label_parts for c in clients] == [("Café",)]

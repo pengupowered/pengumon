@@ -10,8 +10,9 @@ none. Every later job downloads that run's artifacts (`dist`, `release-assets`) 
 release publishes the very files that were tested. Then:
 
 1. builds the image from that same wheel on a native runner for `linux/amd64` and `linux/arm64` (no QEMU) and joins the
-   two into one multi-architecture image at `ghcr.io/pengupowered/pengumon` as `X.Y.Z` and `latest` (the per-architecture
-   tags `X.Y.Z-amd64` and `X.Y.Z-arm64` stay in the registry; use `X.Y.Z`);
+   two into one multi-architecture image at `ghcr.io/pengupowered/pengumon`, first under the staging tag `X.Y.Z-candidate`
+   (the per-architecture tags `X.Y.Z-amd64` and `X.Y.Z-arm64` and the staging tag stay in the registry; use `X.Y.Z`).
+   `X.Y.Z` and `latest` are put on that same digest only after step 2 has attested it;
 2. makes signed build provenance attestations (`actions/attest-build-provenance`) for the release files and for the image
    digest;
 3. creates the GitHub release with that version's section of `CHANGELOG.md` as its notes and these files attached:

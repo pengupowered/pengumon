@@ -29,7 +29,7 @@ PORT=8000
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPGUARD_HOME="${DEPGUARD_HOME:-$HOME/src/depguard}"
 BACKUPS="${PENGUMON_BACKUPS:-$HOME/backups/pengumon}"
-STAMP="$(date +%Y-%m-%d-%H%M)"
+STAMP="$(date +%Y-%m-%d-%H%M%S)"  # to the second: a second deploy cannot reuse the first one's rollback point
 
 NO_BUILD=0; GATE_ONLY=0; DRY_RUN=0
 for a in "$@"; do
@@ -70,6 +70,12 @@ fi
 [ $GATE_ONLY = 1 ] && exit 0
 
 # ---- rollback point ----
+# Never reuse one: a tag or a folder that exists is the first deploy's rollback point, and writing over it would
+# replace the pre-migration image and database with the already migrated ones.
+if podman image exists "localhost/pengumon:pre-deploy-$STAMP" 2>/dev/null || [ -e "$BACKUPS/$STAMP" ]; then
+    fail "a rollback point named $STAMP already exists (two deploys in the same second?); wait a second and run again. Nothing was changed."
+fi
+OLD_UMASK="$(umask)"; umask 077  # the backup folder is never readable by others, not even while it is being filled
 running=0
 podman container exists "$NAME" 2>/dev/null && [ "$(podman inspect -f '{{.State.Running}}' "$NAME")" = true ] && running=1
 if podman image exists "$IMAGE" 2>/dev/null; then
@@ -82,7 +88,8 @@ if [ $running = 1 ]; then
     if podman exec "$NAME" pengumon version >/dev/null 2>&1; then
         # `pengumon backup` follows the configured database location and writes pengumon.db (VACUUM INTO),
         # secrets.json and sessions.json into a timestamped folder; copy its contents to the host folder.
-        TMPBK="/tmp/pre-deploy-$STAMP"
+        # in the data volume (disk), not /tmp: the container's /tmp is memory and counts against its memory limit
+        TMPBK="/app/data/.pre-deploy-$STAMP"
         if [ $DRY_RUN = 1 ]; then
             printf '\033[33mDRYRUN: podman exec %s pengumon backup --to %s   (then podman cp the folder it prints to %s)\033[0m\n' "$NAME" "$TMPBK" "$BACKUPS/$STAMP"
         else
@@ -103,6 +110,7 @@ if [ $running = 1 ]; then
     fi
     run chmod -R go-rwx "$BACKUPS/$STAMP"
 fi
+umask "$OLD_UMASK"
 
 # ---- the host's time zone, for the container (docker-compose.yml passes TZ) ----
 # The image runs in UTC; without this, quiet hours and the daily route check would follow UTC, not the household's
@@ -146,7 +154,8 @@ if [ $DRY_RUN = 1 ]; then step "Dry run finished: nothing was changed"; exit 0; 
 # migrate the database first (minutes at most).
 step "Waiting for the API (up to 5 minutes)"
 for _ in $(seq 1 100); do
-    if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+    # plain http, or https with the private certificate when PENGUMON_TLS_CERT/KEY make the app serve https only
+    if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || curl -fsSk "https://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
         printf '\033[32mPengumon is up: http://%s:%s\033[0m\n' "$(hostname -I | awk '{print $1}')" "$PORT"
         # one rollback point per project: drop the older ones, but only once this run made a new one
         if podman image exists "localhost/pengumon:pre-deploy-$STAMP"; then
@@ -154,7 +163,8 @@ for _ in $(seq 1 100); do
                 | grep -v ":pre-deploy-$STAMP\$" | xargs -r podman rmi >/dev/null 2>&1
         fi
         if [ -f "$BACKUPS/$STAMP/pengumon.db" ]; then
-            find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d ! -name "$STAMP" -exec rm -rf {} + 2>/dev/null
+            # only folders this script made (a stamp to the minute or the second), never another folder in a shared place
+            find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d ! -name "$STAMP" -regex '.*/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-[0-9]\{4,6\}' -exec rm -rf {} + 2>/dev/null
         fi
         exit 0
     fi

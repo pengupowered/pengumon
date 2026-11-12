@@ -31,7 +31,8 @@
 // (createCard's `fixture`) and fails when a theme view lacks a mark of the standard one.
 
 import { currentLook, loadView, lookInfo } from './themes.js';
-import { escapeHtml, icon, iconEl, STATUS } from './util.js';
+import { escapeHtml } from './escape.js';
+import { icon, iconEl, STATUS } from './dom.js';
 
 const cards = new Set(); // every card on the page
 const registry = new Map(); // panel id -> { standard, fixture } (the first instance of a panel)
@@ -133,8 +134,12 @@ function refocus(root, key) {
 // element with focus is not taken out of the page.
 function list(container, items, { key, render, sig = (item) => JSON.stringify(item) }) {
   const old = new Map([...container.children].filter((c) => c.dataset.item !== undefined).map((c) => [c.dataset.item, c]));
+  const used = new Map(); // a key given twice gets a suffix on its repeats: two rows with one key would leave one of them behind
   const want = items.map((item) => {
-    const k = String(key(item));
+    let k = String(key(item));
+    const times = used.get(k) || 0;
+    used.set(k, times + 1);
+    if (times) k = `${k}~${times}`;
     const s = sig(item);
     let node = old.get(k);
     if (!node || signed.get(node) !== s) {
@@ -211,7 +216,7 @@ export function compareMarks(ours, theirs) {
 
 // ---------- views ----------
 // The URL of the current (or a given) theme's view of a panel, '' for the standard view.
-export function viewUrl(panel, look = currentLook()) {
+function viewUrl(panel, look = currentLook()) {
   const info = lookInfo(look);
   return (info && info.views && info.views[panel]) || '';
 }
@@ -225,7 +230,7 @@ function failed(url, e) {
 // The context a view gets: the panel, the look it draws for, the card (<article>, its frame included: read it, do not
 // change it), the standard view (its `parts` are the standard part renderers, to reuse), the kit and the view model now.
 function context(c, look) {
-  return { panel: c.panel, look, card: c.card, section: c.section, std: c.standard, kit, vm: () => c.vm };
+  return { panel: c.panel, look, card: c.card, section: c.section, std: c.standard, kit, vm: () => { resolve(c); return c.vm; } };
 }
 
 // Puts `view` (from `url`; '' is the standard view) into the card's body.
@@ -245,6 +250,7 @@ function mount(c, view, url) {
   c.prev = undefined;
   try {
     c.inst = view.mount(c.root, context(c, look)) || {};
+    resolve(c);
     if (c.vm !== undefined) draw(c);
   } catch (e) {
     if (!url) throw e;
@@ -254,6 +260,14 @@ function mount(c, view, url) {
   }
   if (scroll) c.root.scrollTop = scroll;
   refocus(c.root, focus);
+}
+
+// A view model handed over as a function is made when it is first needed (drawn or read).
+function resolve(c) {
+  if (!c.lazy) return;
+  const make = c.lazy;
+  c.lazy = null;
+  c.vm = make();
 }
 
 // True when the view drew the card's view model (false: no view yet, or nothing to draw before the first view model).
@@ -267,6 +281,7 @@ function draw(c) {
 
 // Draws the card's latest view model; a theme view that throws gives way to the standard view (which draws it).
 function redraw(c) {
+  resolve(c);
   try { return draw(c); } catch (e) {
     if (!c.url) throw e;
     failed(c.url, e);
@@ -308,7 +323,7 @@ function choose(c) {
 export function createCard({ panel, root, standard, fixture, offscreen }) {
   const c = {
     panel, root, standard, card: root.closest('.panel'), section: root.closest('[data-panel]'),
-    pristine: root.cloneNode(true), inst: null, url: '', vm: undefined, prev: undefined, seq: 0, drawn: false,
+    pristine: root.cloneNode(true), inst: null, url: '', vm: undefined, lazy: null, prev: undefined, seq: 0, drawn: false,
     shown: true, stale: false // shown: on screen (always, unless the card defers); stale: a view model waits to be drawn
   };
   cards.add(c);
@@ -320,13 +335,15 @@ export function createCard({ panel, root, standard, fixture, offscreen }) {
   choose(c);
   return {
     // a new view model: drawn by the view now (or as soon as its view is loaded; a card that defers: when it is on
-    // screen). True when it was drawn now.
+    // screen). True when it was drawn now. `vm` may be a function that makes it (called when the card is drawn).
     update(vm) {
-      c.vm = vm;
+      // a function makes the view model when it is drawn: a card that is off screen skips the work until it shows
+      if (typeof vm === 'function') c.lazy = vm;
+      else { c.vm = vm; c.lazy = null; }
       if (!c.shown && c.prev !== undefined && !c.root.contains(document.activeElement)) { c.stale = true; return false; }
       return redraw(c);
     },
-    get vm() { return c.vm; },
+    get vm() { resolve(c); return c.vm; },
     get look() { return c.root.dataset.view; }
   };
 }

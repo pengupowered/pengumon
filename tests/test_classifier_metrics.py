@@ -119,3 +119,14 @@ def test_round_predicates():
     assert slow.upstream_issue(at_120) and not slow.upstream_issue(ClassifierConfig(public_latency_spike_threshold_ms=130.0))
 
 
+
+
+def test_a_slow_http_answer_is_not_an_affected_target_but_a_failed_one_and_a_slow_tcp_one_are():
+    def socket_stat(tid, probe):
+        return TargetStats(target_id=tid, name=tid, category="custom" if probe == "http" else "public",
+                           address=f"{tid}.addr", enabled=True, probe=probe)
+    stats = {"web": socket_stat("web", "http"), "tcp": socket_stat("tcp", "tcp"), "ping": stat("ping", "public", [])}
+    slow = round_metrics(stats, [sample("web", latency=400.0), sample("tcp", latency=400.0),
+                                 sample("ping", latency=400.0)])
+    assert slow.failed_targets == ("tcp", "ping")
+    assert round_metrics(stats, [sample("web", success=False)]).failed_targets == ("web",)

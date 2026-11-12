@@ -7,7 +7,7 @@
 //
 // Sign out: the header button shows only for a browser signed in with the access token (/api/info `session`).
 // View only: a viewer without the token (/api/info `can_edit` false) sees "View only · Sign in to edit" in the header,
-// and every edit control is disabled with that tooltip (util.js setCanEdit).
+// and every edit control is disabled with that tooltip (js/view-only.js setCanEdit).
 //
 // Menus: a button with data-action="toggleMenu" data-arg="<menu id>" opens that .menu under itself; a click
 // elsewhere, Escape or a choice closes it. The phone header's "more" menu is a copy of the header's tool buttons.
@@ -15,7 +15,9 @@
 import { registerActions } from './dispatch.js';
 import { state } from './state.js';
 import { fillThemeMenu, initThemes } from './themes.js';
-import { VIEW_ONLY_TIP, copyText, setCanEdit, setPageZone } from './util.js';
+import { VIEW_ONLY_TIP, setCanEdit } from './view-only.js';
+import { copyText } from './clipboard.js';
+import { setPageZone } from './clock.js';
 
 
 // ---------- the LAN address chip (/api/info) ----------
@@ -87,10 +89,22 @@ function watchHeader() {
   const queue = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; fitHeader(); }); } };
   new ResizeObserver(queue).observe(document.querySelector('.tb-inner'));
   // the status pill's words and the View only / Sign out chips change what is left for the address
-  new MutationObserver(queue).observe(document.getElementById('topbar'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden'] });
+  // The pill's figures ("12.3 ms to internet") are rewritten about every second; they change the fit only when their
+  // length does, so a rewrite of the same length is not measured (it was a forced layout a second, forever).
+  const metrics = document.getElementById('statusPillMetrics');
+  let metricsLength = metrics ? metrics.textContent.length : 0;
+  new MutationObserver((records) => {
+    let measure = false;
+    for (const r of records) {
+      if (!metrics || !metrics.contains(r.target)) { measure = true; break; }
+    }
+    if (!measure && metrics && metrics.textContent.length !== metricsLength) measure = true;
+    if (metrics) metricsLength = metrics.textContent.length;
+    if (measure) queue();
+  }).observe(document.getElementById('topbar'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden'] });
 }
 
-// ---------- view only (util.js canEdit) ----------
+// ---------- view only (js/view-only.js canEdit) ----------
 function showAccess(editable) {
   setCanEdit(editable);
   const chip = document.getElementById('viewOnly');
@@ -155,7 +169,7 @@ export function showMenu(menu, button, anchor = button) {
   menu.querySelector('a, button:not([disabled])')?.focus();
 }
 
-export function toggleMenu(button) {
+function toggleMenu(button) {
   const menu = document.getElementById(button.dataset.arg);
   if (!menu) return;
   if (menu.id === 'headerMenu') { fillHeaderMenu(menu); lanMenuItem(menu); }

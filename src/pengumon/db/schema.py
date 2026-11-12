@@ -285,8 +285,9 @@ CREATE TABLE IF NOT EXISTS path_versions (
 );
 """
 
-# Things that happened to a hop that its history should show: so far "address_changed" (the owner replaced a hop's
-# address, keeping its id and so its history), with the old and the new address.
+# Things that happened to a hop that its history should show: "address_changed" (the owner replaced a hop's
+# address, keeping its id and so its history), with the old and the new address, and "probe_changed" (the hop is probed
+# another way now), with the old and the new method as the path editor words them ("ping", "TCP 443").
 CREATE_PATH_EVENTS_TABLE = """
 CREATE TABLE IF NOT EXISTS path_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -368,4 +369,161 @@ CREATE TABLE IF NOT EXISTS speed_tests (
 
 CREATE_SPEED_TESTS_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_speed_tests_ts ON speed_tests(ts);
+"""
+
+# --- schema v18: 10-second and quarter-hour rollups ----------------------------------------------------------------------
+#
+# rollup_10s: the columns of rollup_1m per target and 10-second slot (`slot` = ts // 10, counted in its own unit like
+# rollup_1m's `minute`, so a bucket of b seconds is (slot * 10 / b) * b). The sub-minute history buckets read it instead
+# of sorting raw samples; lat_p10 and lat_p90 are that slot's exact percentiles. Kept as long as the raw samples.
+CREATE_ROLLUP_10S_TABLE = """
+CREATE TABLE IF NOT EXISTS rollup_10s (
+    slot INTEGER NOT NULL,
+    target INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    ok INTEGER NOT NULL,
+    lat_sum REAL,
+    lat_min REAL,
+    lat_max REAL,
+    jit_sum REAL,
+    jit_n INTEGER NOT NULL DEFAULT 0,
+    lat_p10 REAL,
+    lat_p90 REAL,
+    PRIMARY KEY (slot, target)
+) WITHOUT ROWID;
+"""
+
+# rollup_15m: rollup_1m summed per target and quarter hour (`quarter` = ts // 900 = minute / 15). Every time zone's
+# offset is a multiple of 15 minutes, so a local hour or day is whole quarters. The band is kept as the weighted sums
+# _rollup_query divides (p10_sum = SUM(lat_p10 * ok), p10_ok = the ok of the minutes that have a lat_p10; p90 alike),
+# so re-aggregating quarters gives the per-minute band; dead_minutes counts the minutes with every probe (of at least
+# 10) lost, as the uptime strips do. Kept for long_rollup_retention_days, past the per-minute rollups.
+CREATE_ROLLUP_15M_TABLE = """
+CREATE TABLE IF NOT EXISTS rollup_15m (
+    quarter INTEGER NOT NULL,
+    target INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    ok INTEGER NOT NULL,
+    lat_sum REAL,
+    lat_min REAL,
+    lat_max REAL,
+    jit_sum REAL,
+    jit_n INTEGER NOT NULL DEFAULT 0,
+    p10_sum REAL,
+    p10_ok INTEGER,
+    p90_sum REAL,
+    p90_ok INTEGER,
+    dead_minutes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (quarter, target)
+) WITHOUT ROWID;
+"""
+
+
+def slot_rows_from_samples(where: str) -> str:
+    """A SELECT of rollup_10s rows (slot, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)
+    computed from the raw samples that match `where` (a condition on ts), by the rules of UPSERT_ROLLUP_1M_FROM_SAMPLES:
+    the percentiles are nearest rank over the slot's answered probes."""
+    return f"""
+SELECT slot, target, COUNT(*), SUM(ok),
+       SUM(CASE WHEN ok = 1 THEN latency_ms END),
+       MIN(CASE WHEN ok = 1 THEN latency_ms END),
+       MAX(CASE WHEN ok = 1 THEN latency_ms END),
+       SUM(jitter_ms), COUNT(jitter_ms),
+       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered THEN latency_ms END),
+       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered * 9 THEN latency_ms END)
+FROM (
+    SELECT CAST(ts / 10 AS INTEGER) AS slot, target, ok, latency_ms, jitter_ms,
+           ROW_NUMBER() OVER w AS rank, COUNT(*) OVER (PARTITION BY CAST(ts / 10 AS INTEGER), target, ok) AS answered
+    FROM samples
+    WHERE {where}
+    WINDOW w AS (PARTITION BY CAST(ts / 10 AS INTEGER), target, ok ORDER BY latency_ms)
+)
+GROUP BY slot, target
+"""
+
+
+# (Re)computes the rollup_10s rows of every slot in [?, ?) (seconds, both multiples of 10) from the raw samples.
+UPSERT_ROLLUP_10S_FROM_SAMPLES = (
+    "INSERT OR REPLACE INTO rollup_10s (slot, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)"
+    + slot_rows_from_samples("ts >= ? AND ts < ?")
+)
+
+# (Re)computes the rollup_15m rows of every quarter in the minutes [?, ?) (both multiples of 15) from rollup_1m.
+UPSERT_ROLLUP_15M_FROM_1M = """
+INSERT OR REPLACE INTO rollup_15m (quarter, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n,
+                                   p10_sum, p10_ok, p90_sum, p90_ok, dead_minutes)
+SELECT minute / 15 AS quarter, target, SUM(n), SUM(ok), SUM(lat_sum), MIN(lat_min), MAX(lat_max), SUM(jit_sum), SUM(jit_n),
+       SUM(lat_p10 * ok), SUM(CASE WHEN lat_p10 IS NOT NULL THEN ok END),
+       SUM(lat_p90 * ok), SUM(CASE WHEN lat_p90 IS NOT NULL THEN ok END),
+       SUM(CASE WHEN ok = 0 AND n >= 10 THEN 1 ELSE 0 END)
+FROM rollup_1m
+WHERE minute >= ? AND minute < ?
+GROUP BY quarter, target
+"""
+
+# --- schema v19: router uptime, temperature and WAN link; device events; traffic per client and hour ----------------
+#
+# Three scalar readings of router_system become nullable columns of device_samples (added by ALTER TABLE in the
+# migration, as in v10): set on the polls that read them, NULL on the others.
+DEVICE_SAMPLES_V19_COLUMNS = (("uptime_s", "INTEGER"), ("cpu_temp_c", "REAL"), ("wan_link_mbps", "INTEGER"))
+
+# Things that happened to a device, decided from its readings: "restarted" (its uptime went back) and "wan_link" (its
+# WAN port's link speed changed, or the link went down or up). `detail` is compact JSON (devices/events.py writes it).
+CREATE_DEVICE_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS device_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    ts REAL NOT NULL,
+    kind TEXT NOT NULL,
+    detail TEXT NOT NULL
+);
+"""
+
+CREATE_DEVICE_EVENTS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_device_events_device_ts ON device_events(device_id, ts);
+"""
+
+# Bytes per client and clock hour as the router counted them (its traffic statistics, read once an hour). `client` is
+# a MAC in normal form, '' for the whole WAN; `hour` the hour's start (epoch seconds). A later read of the same hour
+# replaces the row (the router may publish an hour late or correct it). Clustered by device and hour: a range of hours
+# for every client is one primary-key range scan.
+CREATE_TRAFFIC_HOURLY_TABLE = """
+CREATE TABLE IF NOT EXISTS traffic_hourly (
+    device_id TEXT NOT NULL,
+    hour INTEGER NOT NULL,
+    client TEXT NOT NULL,
+    up INTEGER NOT NULL,
+    down INTEGER NOT NULL,
+    read_at REAL NOT NULL,
+    PRIMARY KEY (device_id, hour, client)
+) WITHOUT ROWID;
+"""
+
+# Bytes per application over a 24-hour window, per client ('' = every client): the router keeps app figures only as
+# windows of 24 hours. `day` '' is the latest window read (replaced at every read); a date (YYYY-MM-DD, local) is the
+# window that ends at that day's midnight (the whole day), kept so app history exists by day. `apps` is compact JSON
+# [[name, up, down], ...]. A rowid table: a long app list would spill out of a WITHOUT ROWID row.
+CREATE_TRAFFIC_APPS_TABLE = """
+CREATE TABLE IF NOT EXISTS traffic_apps (
+    device_id TEXT NOT NULL,
+    client TEXT NOT NULL,
+    day TEXT NOT NULL,
+    window_end INTEGER NOT NULL,
+    read_at REAL NOT NULL,
+    apps TEXT NOT NULL
+);
+"""
+
+CREATE_TRAFFIC_APPS_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_traffic_apps_key ON traffic_apps(device_id, client, day);
+"""
+
+# The names the owner gave connected devices in Pengumon (clients/names.py), by MAC in normal form: shown instead of the
+# router's name wherever a client's name is shown in full. A handful of rows; never pruned.
+CREATE_CLIENT_NAMES_TABLE = """
+CREATE TABLE IF NOT EXISTS client_names (
+    mac TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    updated_at REAL NOT NULL
+) WITHOUT ROWID;
 """

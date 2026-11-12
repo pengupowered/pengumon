@@ -1,4 +1,4 @@
-"""The probe path (the ICMP targets), owned by the dashboard: loaded from the database at start, edited through the
+"""The probe path (the targets probed by ping, TCP or HTTP), owned by the dashboard: loaded from the database at start, edited through the
 path editor (api/path.py) and applied without a restart.
 
 One source of truth while the app runs: `config.targets`, the list the probe loop, the classifier (known_targets),
@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 from pengumon.db.path import PathConflict
 from pengumon.engine.device_links import link_devices
 from pengumon.engine.path_preview import PreviewStore
+from pengumon.engine.probe_rules import socket_hop_problem
 from pengumon.models.probes import TargetConfig
 from pengumon.observability import get_logger
 
@@ -148,6 +149,9 @@ class PathManager:
         ids = [t.id for t in targets]
         if len(set(ids)) != len(ids):
             raise PathError("Target ID already exists")
+        problem = socket_hop_problem(targets)  # at most 8 TCP/HTTP hops, none aimed at this host itself
+        if problem:
+            raise PathError(problem)
         dns = {d.id for d in self.config.dns_probes}
         clash = sorted(dns.intersection(ids))
         if clash:

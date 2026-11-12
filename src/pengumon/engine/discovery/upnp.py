@@ -34,7 +34,8 @@ from pengumon.observability import get_logger
 _log = get_logger("pengumon.discovery")
 
 SEARCH_WAIT_S = 2.0
-MAX_ANSWERS = 16
+MAX_ANSWERS = 64
+MAX_ANSWERS_PER_SOURCE = 4  # a device answers once per search type; one noisy source cannot crowd the others out
 # service type prefix -> the read-only actions asked of it
 SERVICE_ACTIONS = {
     IP_CONNECTION: ("GetExternalIPAddress", "GetStatusInfo"),
@@ -103,21 +104,24 @@ class _Collector(asyncio.DatagramProtocol):
         self.answers: List[Tuple[str, bytes]] = []
 
     def datagram_received(self, data, addr):
-        if len(self.answers) < MAX_ANSWERS:
+        from_source = sum(1 for source, _ in self.answers if source == addr[0])
+        if len(self.answers) < MAX_ANSWERS and from_source < MAX_ANSWERS_PER_SOURCE:
             self.answers.append((addr[0], data[:DATAGRAM_MAX + 1]))
 
 
 def lan_source_address() -> Optional[str]:
     """The address this host would send the SSDP multicast from (connect() on a UDP socket sends nothing), or None."""
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe = None
     try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         probe.connect(SSDP_GROUP)
         address = probe.getsockname()[0]
         return None if address in ("0.0.0.0", "") else address
     except OSError:
         return None
     finally:
-        probe.close()
+        if probe is not None:
+            probe.close()
 
 
 async def ssdp_search(wait: float = SEARCH_WAIT_S) -> List[Tuple[str, bytes]]:
@@ -128,16 +132,20 @@ async def ssdp_search(wait: float = SEARCH_WAIT_S) -> List[Tuple[str, bytes]]:
     if not source:
         return []
     loop = asyncio.get_running_loop()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock = None
     try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
         sock.setblocking(False)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(source))
         sock.bind((source, 0))
         transport, collector = await loop.create_datagram_endpoint(_Collector, sock=sock)
-    except OSError:
-        sock.close()
-        return []
+    except BaseException as exc:  # a socket error, or a cancel between creating the endpoint and returning
+        if sock is not None:
+            sock.close()
+        if isinstance(exc, OSError):
+            return []
+        raise
     try:
         for st in IGD_TYPES:
             transport.sendto(msearch(st), SSDP_GROUP)

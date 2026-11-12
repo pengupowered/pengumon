@@ -108,6 +108,30 @@ async def test_the_time_cap_kills_the_process_and_says_why():
     assert not alive(pid)
 
 
+async def test_a_reader_that_breaks_ends_the_job_and_kills_the_process(monkeypatch):
+    """A stdout line over the read limit made the reader raise; the loop ended, the pipes were no longer drained
+    and `proc.wait()` (no cap) left the job running for ever, so every later preview got a 429."""
+    from pengumon.settings import preview
+    monkeypatch.setattr(preview, "READ_LIMIT", 1000)
+    store = jobs("import sys,time; sys.stdin.read(); print('x' * 5000, flush=True); time.sleep(120)", cap_seconds=30)
+    job = store.start("k", SPEC)
+    await asyncio.sleep(0.3)
+    pid = job.process.pid
+    assert await settle(job, 5.0) == "failed"
+    assert store.describe(job).error == "The preview failed"
+    await job.task
+    assert not alive(pid)
+
+
+async def test_a_progress_that_is_not_a_number_is_ignored():
+    bad = ("import sys,json; sys.stdin.read(); print('{\"progress\": \"half\"}', flush=True); "
+           f"print(json.dumps({{'result': {RESULT!r}}}), flush=True)")
+    store = jobs(bad)
+    job = store.start("k", SPEC)
+    assert await settle(job) == "done"
+    await store.aclose()
+
+
 async def test_cancel_kills_the_process_before_it_answers_and_forgets_the_job():
     store = jobs(HANG)
     job = store.start("k", SPEC)

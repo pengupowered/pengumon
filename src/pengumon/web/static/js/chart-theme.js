@@ -12,7 +12,7 @@
 // <section data-colors>): pass an element of the card as `el` and the token is read there, so its chart follows.
 let tokenCache = new Map();
 let cardCache = new WeakMap(); // card section -> Map
-export const clearTokenCache = () => { tokenCache = new Map(); cardCache = new WeakMap(); };
+const clearTokenCache = () => { tokenCache = new Map(); cardCache = new WeakMap(); };
 export function token(name, el) {
   const card = el && el.closest ? el.closest('[data-colors]') : null;
   let cache = tokenCache;

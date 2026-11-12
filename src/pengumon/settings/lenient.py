@@ -24,6 +24,7 @@ M = TypeVar("M", bound=BaseModel)
 Path = Tuple[Any, ...]  # keys (str) and list indexes (int) into the mapping
 
 MAX_ROUNDS = 500
+MAX_TRIALS = 150  # candidates tried against a rule across values: each costs a whole validation
 REASON_MAX = 200
 
 
@@ -121,9 +122,13 @@ def _same(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
 
 def culprits(model: Type[BaseModel], data: Any, error: Dict[str, Any], prefix: Path,
              candidates: Optional[List[Path]] = None) -> List[Path]:
-    """The candidates (default: every leaf under `prefix`) whose removal alone clears `error`, in document order."""
+    """The candidates (default: every leaf under `prefix`) whose removal alone clears `error`, in document order.
+    Only the last MAX_TRIALS candidates are tried (each is a whole validation, and the last one in the file is the one
+    given up anyway); with more, the earlier ones are not named."""
     found = []
-    for path in (candidates if candidates is not None else list(leaves(data, prefix))):
+    tries = candidates if candidates is not None else list(leaves(data, prefix))
+    tries = tries[-MAX_TRIALS:]
+    for path in tries:
         trial = copy.deepcopy(data)
         try:
             _remove(trial, path)

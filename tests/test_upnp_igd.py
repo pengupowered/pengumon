@@ -177,6 +177,18 @@ async def test_only_the_configured_host_is_contacted_and_unsafe_answers_are_refu
     assert all(r[0] in ("GET", "POST") and r[1] != "/ctl/CmnIfCfg" for r in igd.requests)
 
 
+async def test_a_long_control_url_is_used_whole_and_one_with_a_control_character_is_not_used():
+    long_path = "/ctl/" + "a" * 150 + "/IPConn"  # (cut at 100 characters before)
+    igd = FakeIgd(description=DESCRIPTION.replace(b"/ctl/IPConn", long_path.encode()))
+    gw = driver(igd)
+    await gw.poll()
+    posted = {path for method, path, _ in igd.requests if method == "POST"}
+    assert posted == {long_path, "/ctl/CmnIfCfg"}
+    from pengumon.drivers.upnp_wire import parse_description
+    broken = DESCRIPTION.replace(b"/ctl/IPConn", b"/ctl/IP&#9;Conn").replace(b"/ctl/CmnIfCfg", b"/ctl/" + b"x" * 600)
+    assert parse_description(broken).services == []
+
+
 async def test_a_32_bit_counter_that_goes_back_is_a_wrap_but_a_restart_is_not():
     igd = FakeIgd(rx=2**32 - 1_000_000, tx=0, uptime=500)
     now = [1000.0]

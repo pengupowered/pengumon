@@ -8,3 +8,5 @@
 :root[data-look="mission-control"] [data-panel="router"] .stackbar { height: 14px; border-radius: 2px; }
 :root[data-look="mission-control"] [data-panel="router"] .n-c b { font-size: var(--fs-lg); }
 :root[data-look="mission-control"] [data-panel="router"] .cap-note { color: var(--ink-3); }
+:root[data-look="mission-control"] [data-panel="router"] .sf-v { font-size: var(--fs-lg); }
+:root[data-look="mission-control"] [data-panel="router"] .sf-l, :root[data-look="mission-control"] [data-panel="router"] .sf-s { color: var(--ink-3); }

@@ -134,6 +134,10 @@ from the next probe round and never relabels stored incidents.
 - **Internal, not settings:** DNS is judged only while every lower layer loses under 10 %; an ISP outage names the
   ISP hop from 30 % ISP-hop loss, otherwise peering; a sample over 150 ms makes its target an affected one.
 
+A hop the owner probes by TCP is judged exactly like a ping hop (a handshake is one round trip). A hop probed by an
+HTTP request has the role Other: the time to the server's answer is not a round trip, so it is charted but never judged
+as a stage, and only a failed request (not a slow one) makes it an affected target.
+
 A hop's own "warn above" level in the path editor (`warn_latency_ms`) changes only that hop's color on the
 dashboard; the incident rules above still judge its role's median.
 

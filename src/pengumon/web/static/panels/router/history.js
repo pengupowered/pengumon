@@ -3,7 +3,10 @@
 
 import { registerActions } from '../../js/dispatch.js';
 import { state } from '../../js/state.js';
-import { deviceName, formatClock, keepKeyboard, openModal, setText, zoneOffsetMs } from '../../js/util.js';
+import { deviceName } from '../../js/device-text.js';
+import { formatClock, zoneOffsetMs } from '../../js/clock.js';
+import { keepKeyboard, openModal } from '../../js/modal.js';
+import { setText } from '../../js/dom.js';
 import { series as tone, token } from '../../js/chart-theme.js';
 
 const RANGES = { 3600: true, 21600: true, 86400: true, 604800: true };
@@ -118,7 +121,7 @@ function niceTicks(scale) {
   scale.ticks = ticks;
 }
 
-function lineChart(id, datasets, yTitle, yMax) {
+function lineChart(id, datasets, yTitle, yMax, fromZero = true) {
   const canvas = document.getElementById(id);
   if (charts[id]) charts[id].destroy();
   if (!canvas.dataset.kb) {
@@ -145,12 +148,12 @@ function lineChart(id, datasets, yTitle, yMax) {
           ticks: { font: { size: 10 }, maxRotation: 0, callback: (v) => formatClock(v, rangeSeconds > 86400) }
         },
         y: {
-          beginAtZero: true,
+          beginAtZero: fromZero,
           suggestedMax: yMax,
           afterFit: (scale) => { scale.width = Y_WIDTH; },
           title: { display: false },
           grid: {},
-          ticks: { font: { size: 10 }, maxTicksLimit: 5, callback: (v) => `${v}${yTitle === '%' ? ' %' : ''}` }
+          ticks: { font: { size: 10 }, maxTicksLimit: 5, callback: (v) => `${v}${yTitle === '%' ? ' %' : yTitle === '°C' ? ' °C' : ''}` }
         }
       },
       plugins: { legend: { display: false }, tooltip: { enabled: false } }
@@ -237,7 +240,16 @@ export function renderRouterHistory(body) {
     legend('routerHistWanLegend', [['Download', 'var(--s1)'], ['Upload', 'var(--s2)']]);
     readers.routerHistWanChart = (i) => `Download ${fmtMbps(at('rx_avg')(i))} (peak ${fmtMbps(at('rx_max')(i))})  ·  Upload ${fmtMbps(at('tx_avg')(i))} (peak ${fmtMbps(at('tx_max')(i))}) Mbps`;
   }
-  // One time axis for all three charts.
+  // The CPU temperature, when the router reports one (the section is left out otherwise, and for a device without a reading in the range)
+  const hasTemp = showSystem && fields.includes('temp_avg') && rows.some((r) => r[fields.indexOf('temp_avg')] !== null && r[fields.indexOf('temp_avg')] !== undefined);
+  document.getElementById('routerHistTempBox').style.display = hasTemp ? '' : 'none';
+  if (hasTemp) {
+    const temp = tone(3);
+    lineChart('routerHistTempChart', [series('Temperature avg', temp, col('temp_avg')), peak('Temperature max', temp, col('temp_max'))], '°C', undefined, false);
+    legend('routerHistTempLegend', [['CPU temperature', 'var(--s4)']]);
+    readers.routerHistTempChart = (i) => `${fmtNum(at('temp_avg')(i))} °C (peak ${fmtNum(at('temp_max')(i))} °C)`;
+  }
+  // One time axis for all the charts.
   for (const chart of Object.values(charts)) {
     chart.options.scales.x.min = xMin;
     chart.options.scales.x.max = xMax;

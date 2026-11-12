@@ -217,3 +217,40 @@ def test_with_no_incident_the_events_of_a_timed_kind_say_when_in_the_day():
         "Mesh nodes falling to 0 clients: 5 of 6 between 18:00 and 00:00, 1 between 00:00 and 06:00.",
         "Smaller counts: not during an incident."]
 
+
+
+def test_the_service_rows_are_found_in_linear_time():
+    """The window's rows less the network ones: `r not in network` compared dicts pairwise, millions of comparisons for
+    a week of a flapping line, on the event loop."""
+    from pengumon.reports.ai_findings import _rows_not_in
+
+    raw = [{"id": k, "kind": "service_down" if k % 2 else "isp_outage", "start_time": float(k), "title": "x"}
+           for k in range(20_000)]
+    network = [r for r in raw if r["kind"] == "isp_outage"]
+    started = time.monotonic()
+    rest = _rows_not_in(raw, network)
+    assert time.monotonic() - started < 2.0
+    assert [r["id"] for r in rest] == list(range(1, 20_000, 2))
+    same = dict(raw[1])          # an equal row that is not one of them is still a row of its own
+    assert _rows_not_in([same], network) == [same] and _rows_not_in(raw[:2], raw[:2]) == []
+
+
+def test_the_redactor_is_built_once_per_pack(monkeypatch):
+    """render_pack renders two to about six passes (trimming, then the final size): each built its own redactor, with the
+    sweep's alternation of every identifier. Each pass still counts its own redactions."""
+    from pengumon.reports.redact import Redactor
+    from ai_pack_helpers import canary_facts
+
+    built = []
+
+    class Counting(Redactor):
+        def __post_init__(self):
+            built.append(self.level)
+            super().__post_init__()
+
+    expected = render_pack(canary_facts(leaky=True), "vague")
+    monkeypatch.setattr(ai_pack, "Redactor", Counting)
+    pack = render_pack(canary_facts(leaky=True), "vague")
+    assert built == ["vague"]
+    assert (pack.markdown, pack.roles, pack.swept, pack.hits) == (expected.markdown, expected.roles, expected.swept,
+                                                                   expected.hits)

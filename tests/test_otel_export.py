@@ -240,6 +240,22 @@ def test_each_probe_counts_by_result_and_answered_ones_record_their_latency(monk
     assert histogram.calls == [(0.0125, {"target": "gw", "category": "gateway"})]
 
 
+def test_the_probe_attribute_names_the_method_and_a_lookup_is_dns(monkeypatch):
+    counter, histogram = Recorder(), Recorder()
+    monkeypatch.setattr(telemetry, "probes", counter)
+    monkeypatch.setattr(telemetry, "probe_latency", histogram)
+    telemetry.record_probes([ProbeSample(target_id="gw", success=True, latency_ms=2.0),
+                             ProbeSample(target_id="web", success=True, latency_ms=40.0),
+                             ProbeSample(target_id="dns", success=False, packet_loss_pct=100.0)],
+                            {"gw": "gateway", "web": "custom", "dns": "dns"},
+                            {"gw": "icmp", "web": "http"})
+    assert counter.calls == [(1, {"target": "gw", "category": "gateway", "probe": "icmp", "result": "answered"}),
+                             (1, {"target": "web", "category": "custom", "probe": "http", "result": "answered"}),
+                             (1, {"target": "dns", "category": "dns", "probe": "dns", "result": "lost"})]
+    assert histogram.calls == [(0.002, {"target": "gw", "category": "gateway", "probe": "icmp"}),
+                               (0.04, {"target": "web", "category": "custom", "probe": "http"})]
+
+
 # --- Grafana links --------------------------------------------------------------------------------------------------
 
 def _pane(url):

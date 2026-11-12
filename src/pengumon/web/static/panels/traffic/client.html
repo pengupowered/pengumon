@@ -1,0 +1,31 @@
+<!-- Internet use: one device's traffic over 24 hours, 7 days or 30 days (the card's range when opened), its apps over the range and its apps by day, and its name in Pengumon (the pencil; client.js) -->
+<div class="modal" id="trafficClientModal" role="dialog" aria-modal="true" aria-labelledby="trafficClientTitle">
+  <div class="modal-content" style="--w: 900px">
+    <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg><h2 class="modal-t" id="trafficClientTitle">Device traffic</h2><button type="button" class="btn icon sm" id="trafficClientRename" data-action="trafficClientRename" aria-label="Rename this device" title="Rename this device" hidden><svg class="i" aria-hidden="true"><use href="#i-edit"/></svg></button><span class="modal-m" id="trafficClientMeta"></span>
+      <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="trafficClientModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div class="modal-b">
+      <form class="tcl-name" id="trafficClientNameForm" data-submit="trafficClientNameSave" novalidate hidden>
+        <label for="trafficClientNameInput">Name in Pengumon</label>
+        <input type="text" id="trafficClientNameInput" maxlength="40" autocomplete="off" spellcheck="false">
+        <button type="submit" class="btn primary sm">Save</button>
+        <button type="button" class="btn sm" data-action="trafficClientRenameCancel">Cancel</button>
+        <button type="button" class="btn sm" id="trafficClientNameClear" data-action="trafficClientNameClear" hidden>Use the router's name</button>
+        <p class="tcl-name-note fine" id="trafficClientNameNote"></p>
+        <p class="tcl-name-err" id="trafficClientNameError" role="alert" hidden></p>
+      </form>
+      <p class="empty" id="trafficClientStatus" role="status">Loading...</p>
+      <div id="trafficClientBody" hidden>
+        <div class="tcl-range"><span class="seg" role="group" aria-label="Range" id="trafficClientRange"></span></div>
+        <div class="tcl-stats" id="trafficClientStats"></div>
+        <section class="sect"><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg><span id="trafficClientPer">Per hour</span><span class="muted" id="trafficClientSpan">last 7 days</span><span class="tools trf-legend" id="trafficClientLegend"></span></h3>
+          <div class="chart-box" style="--h: 200px"><canvas id="trafficClientChart" role="img" aria-label="Traffic of this device per hour"></canvas></div>
+          <div class="trf-notes" id="trafficClientNotes"></div></section>
+        <section class="sect"><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-activity"/></svg>Apps<span class="muted" id="trafficClientAppsWindow"></span><button type="button" class="info" data-action="toggleHelp" data-help="traffic.apps" aria-label="About the apps"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></h3>
+          <div class="trf-rows" id="trafficClientApps"></div></section>
+        <section class="sect"><h3 class="section-t"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>Apps by day<span class="muted">the router's 24-hour totals, one reading a day</span></h3>
+          <ul class="tcl-days" id="trafficClientDays"></ul></section>
+      </div>
+    </div>
+    <footer class="modal-f"><button type="button" class="btn primary" data-action="closeModal" data-arg="trafficClientModal">Done</button></footer>
+  </div>
+</div>

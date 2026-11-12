@@ -14,16 +14,16 @@ export const steps = [
     await dialogKeys("#headerTools [data-action=openLayoutDialog]", "layoutModal");
     eq("usual order", (await panelOrder()).join(), USUAL_PANELS.join());
     await openLayout();
-    eq("one row per available panel", await count("#layoutList .lay-row"), bare ? 9 : 11);
-    eq("panels without a device are listed apart", await count("#layoutUnavailable .lay-row"), bare ? 2 : 0);
+    eq("one row per available panel", await count("#layoutList .lay-row"), bare ? 9 : 12);
+    eq("panels without a device are listed apart", await count("#layoutUnavailable .lay-row"), bare ? 3 : 0);
     if (bare) {
-      for (const id of ["line", "router"]) eq(`${id} is not shown`, await panelShown(page, id), false);
+      for (const id of ["line", "router", "traffic"]) eq(`${id} is not shown`, await panelShown(page, id), false);
       const reasons = await page.$$eval("#layoutUnavailable .layout-reason", (e) => e.map((x) => x.textContent));
-      ok(`the reason says where to fix it, in plain words (${reasons.join(" | ")})`, reasons.length === 2 && reasons.every((t) => /Settings > Devices and services/.test(t) && !/access_line|service_checks|[a-z]+_[a-z]+|no enabled device/.test(t)));
+      ok(`the reason says where to fix it, in plain words (${reasons.join(" | ")})`, reasons.length === 3 && reasons.every((t) => /Settings > Devices and services/.test(t) && !/access_line|service_checks|[a-z]+_[a-z]+|no enabled device/.test(t)));
     }
     await click("#layoutList [data-action=movePanel][data-arg=report][data-arg2=up]");
     await click("#layoutList [data-change=togglePanel][data-arg=services]");
-    const moved = [...USUAL_PANELS.slice(0, 8), "report", "incidents", "matrix"].join();
+    const moved = [...USUAL_PANELS.slice(0, 9), "report", "incidents", "matrix"].join();
     eq("report moved above the incident log", (await panelOrder()).join(), moved);
     eq("host services hidden", await panelShown(page, "services"), false);
     ok("the choice is stored", /"hidden":\["services"\]/.test(await storedLayout(page)));

@@ -90,11 +90,11 @@ async def test_buckets_average_and_max_with_edges_and_nulls(app_state, repo):
     body = res.json()
     assert body["bucket_seconds"] == 60
     assert body["fields"] == ["ts", "rx_avg", "rx_max", "tx_avg", "tx_max", "cpu_avg", "cpu_max", "mem_avg", "mem_max",
-                              "clients_avg", "clients_max"]
+                              "clients_avg", "clients_max", "temp_avg", "temp_max", "link_min"]
     assert body["rows"] == [
-        [base, 20.0, 30.0, 2.0, 3.0, 30.0, 40.0, 60.0, 70.0, 11.0, 12],
-        [base + 60, 100.0, 100.0, 5.0, 5.0, 90.0, 90.0, 80.0, 80.0, 20.0, 20],
-        [base + 180, 7.0, 7.0, 0.5, 0.5, 1.0, 1.0, 2.0, 2.0, 3.0, 3],
+        [base, 20.0, 30.0, 2.0, 3.0, 30.0, 40.0, 60.0, 70.0, 11.0, 12, None, None, None],
+        [base + 60, 100.0, 100.0, 5.0, 5.0, 90.0, 90.0, 80.0, 80.0, 20.0, 20, None, None, None],
+        [base + 180, 7.0, 7.0, 0.5, 0.5, 1.0, 1.0, 2.0, 2.0, 3.0, 3, None, None, None],
     ]
     assert body["capacity"] == {"down_mbps": None, "up_mbps": None}
 
@@ -106,7 +106,7 @@ async def test_a_bucket_of_failed_polls_has_null_figures(app_state, repo):
     async with _client() as ac:
         res = await ac.get("/api/devices/router/history", params={"start_time": base, "end_time": base + 60,
                                                                   "bucket_seconds": 60})
-    assert res.json()["rows"] == [[base, None, None, None, None, None, None, None, None, None, None]]
+    assert res.json()["rows"] == [[base] + [None] * 13]
 
 
 async def test_empty_and_inverted_ranges_answer_no_rows(app_state, repo):

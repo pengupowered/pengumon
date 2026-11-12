@@ -31,10 +31,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import quote
 
 from pengumon import __version__, paths, service
 from pengumon.config import DatabaseConfig, ServerConfig, read_config_file
+from pengumon.db.snapshot import snapshot_database
 
 
 def _file_settings():
@@ -198,14 +198,7 @@ def _backup(to: Optional[str], system: bool = False) -> Path:
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     folder.mkdir(mode=0o700)
     try:
-        # Read-only connection + VACUUM INTO: a consistent snapshot even while the app writes (WAL), never a lock
-        # on the live file beyond a read transaction.
-        con = sqlite3.connect(f"file:{quote(str(db.resolve()))}?mode=ro", uri=True, timeout=30)
-        try:
-            con.execute("VACUUM INTO ?", (str(folder / "pengumon.db"),))
-        finally:
-            con.close()
-        os.chmod(folder / "pengumon.db", 0o600)
+        snapshot_database(db, folder / "pengumon.db")  # a consistent copy even while the app writes (db/snapshot.py)
         for source in (paths.secrets_path(), paths.sessions_path()):
             if source.is_symlink() or source.is_file():
                 target = folder / source.name

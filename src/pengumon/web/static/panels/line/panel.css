@@ -8,7 +8,6 @@
 .chan-strip { height: 12px; }
 .sync { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-2) 0 var(--sp-3); border-bottom: 1px solid var(--line); }
 .empty.compact { padding: var(--sp-3); margin-bottom: var(--sp-2); }
-.row-btns { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-2); }
 .empty + .dim, .empty + .gauge { margin-top: var(--sp-3); }
 .skel-stack { display: flex; flex-direction: column; gap: 10px; padding: 6px 0; }
 .gauge-skel { display: flex; flex-direction: column; gap: 22px; }

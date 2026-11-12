@@ -52,7 +52,7 @@
 :root[data-look="amber-crt"] [data-panel="incidents"] .ac-state { color: var(--ink-1); font-weight: var(--fw-semi); }
 :root[data-look="amber-crt"] [data-panel="incidents"] .ac-maint { border: 1px dashed var(--line-strong); padding: 0 6px; color: var(--ink-2); cursor: help; }
 :root[data-look="amber-crt"] [data-panel="incidents"] .ac-drop { padding-left: calc(var(--sp-2) + 3ch); border-left-style: dashed; }
-:root[data-look="amber-crt"] [data-panel="incidents"] .ac-drop .ac-what { font-weight: var(--fw-normal, 400); }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-drop .ac-what { font-weight: 400; }
 
 @media (max-width: 900px) {
   :root[data-look="amber-crt"] [data-panel="incidents"] .ac-cols { display: none; }

@@ -13,7 +13,9 @@
 #   2. downloads uv (version and sha256 pinned below, per platform) and checks it;
 #   3. on an upgrade, runs `pengumon backup` and stops the old sign-in task (its --host and --port are kept);
 #   4. installs Python 3.12 (managed by uv, kept inside the app folder) and a virtual environment, then the locked
-#      dependencies with `uv pip install --require-hashes --only-binary :all:`, then the wheel;
+#      dependencies with `uv pip install --require-hashes --only-binary :all:`, then the wheel. An upgrade moves
+#      the working environment aside first (to venv.old, kept until the next install) and puts it back, and starts
+#      the old task again, if anything fails before the new program has started once;
 #   5. runs `pengumon service install` (a Task Scheduler task that starts Pengumon, without a window, when you sign
 #      in), waits until it answers, and opens the browser.
 #
@@ -27,6 +29,13 @@ param(
     [switch]$Uninstall
 )
 
+# `irm ... | iex` runs in the caller's session: what is set here is put back when the script ends
+$SavedEap, $SavedProgress = $ErrorActionPreference, $ProgressPreference
+$SavedUvDir, $SavedUvPreference = $env:UV_PYTHON_INSTALL_DIR, $env:UV_PYTHON_PREFERENCE
+function Restore-Session {
+    $script:ErrorActionPreference, $script:ProgressPreference = $SavedEap, $SavedProgress
+    $env:UV_PYTHON_INSTALL_DIR, $env:UV_PYTHON_PREFERENCE = $SavedUvDir, $SavedUvPreference
+}
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with its progress bar on Windows PowerShell 5.1
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
@@ -69,6 +78,7 @@ if ($Uninstall) {
     } else {
         Say "Nothing to remove: $Pengumon does not exist."
     }
+    Restore-Session
     return
 }
 
@@ -100,7 +110,7 @@ try {
         if (-not $BaseUrl) { $BaseUrl = "https://github.com/$Repo/releases/download/v$Version" }
     }
     $Version = $Version -replace '^v', ''
-    if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { Fail "not a version number: $Version" }
+    if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+\z') { Fail "not a version number: $Version" }
     $Wheel = "pengumon-$Version-py3-none-any.whl"
     $Lock = "pengumon-$Version.lock"
     Say "Pengumon $Version"
@@ -138,7 +148,8 @@ try {
     Say "uv $UvVersion checked."
 
     # ---- upgrade: back up, stop --------------------------------------------------------------------------------------
-    if (Test-Path $Pengumon) {
+    $HadOld = Test-Path $Pengumon
+    if ($HadOld) {
         Say "Pengumon is already installed ($(& $Pengumon version)): upgrading."
         # Windows PowerShell 5.1 turns a native program's stderr into a terminating error when it is redirected
         $ErrorActionPreference = 'Continue'
@@ -169,12 +180,36 @@ try {
     $VenvPython = Join-Path $Venv 'Scripts\python.exe'
 
     Say "Installing Python $PythonVersion and the locked dependencies into $App ..."
-    Invoke-Native $Uv @('--no-config', '--no-cache', 'python', 'install', $PythonVersion)
-    Invoke-Native $Uv @('--no-config', '--no-cache', 'venv', '--clear', '--python', $PythonVersion, $Venv)
-    Invoke-Native $Uv @('--no-config', '--no-cache', 'pip', 'install', '--python', $VenvPython, '--require-hashes', '--only-binary', ':all:', '--no-deps', '--compile-bytecode', '-r', (Join-Path $Work $Lock))
-    Confirm-Sha256 $Wheel   # again, right before it is used
-    Invoke-Native $Uv @('--no-config', '--no-cache', 'pip', 'install', '--python', $VenvPython, '--no-deps', '--compile-bytecode', (Join-Path $Work $Wheel))
-    Invoke-Native $Pengumon @('version')
+    # The working environment stays on disk (as venv.old) until the new one has started once; if anything fails
+    # before that, it is put back and the old task is started again.
+    $OldVenv = Join-Path $App 'venv.old'
+    Remove-Item -Recurse -Force -LiteralPath $OldVenv -ErrorAction SilentlyContinue   # the copy from the install before this one
+    $Armed = $true
+    try {
+        Invoke-Native $Uv @('--no-config', '--no-cache', 'python', 'install', $PythonVersion)
+        if (Test-Path -LiteralPath $Venv) { Move-Item -LiteralPath $Venv -Destination $OldVenv }
+        Invoke-Native $Uv @('--no-config', '--no-cache', 'venv', '--python', $PythonVersion, $Venv)
+        Invoke-Native $Uv @('--no-config', '--no-cache', 'pip', 'install', '--python', $VenvPython, '--require-hashes', '--only-binary', ':all:', '--no-deps', '--compile-bytecode', '-r', (Join-Path $Work $Lock))
+        Confirm-Sha256 $Wheel   # again, right before it is used
+        Invoke-Native $Uv @('--no-config', '--no-cache', 'pip', 'install', '--python', $VenvPython, '--no-deps', '--compile-bytecode', (Join-Path $Work $Wheel))
+        Invoke-Native $Pengumon @('version')
+        $Armed = $false
+    } finally {
+        if ($Armed) {
+            Write-Host 'The install did not finish; putting the previous version back.'
+            if ($HadOld) {
+                if (Test-Path -LiteralPath $OldVenv) {
+                    Remove-Item -Recurse -Force -LiteralPath $Venv -ErrorAction SilentlyContinue
+                    Move-Item -LiteralPath $OldVenv -Destination $Venv
+                }
+                $ErrorActionPreference = 'Continue'
+                & $Pengumon service install *> $null
+                $ErrorActionPreference = 'Stop'
+            } else {
+                Remove-Item -Recurse -Force -LiteralPath $Venv -ErrorAction SilentlyContinue
+            }
+        }
+    }
 
     # ---- service -----------------------------------------------------------------------------------------------------
     $ListenPort = 8000
@@ -211,4 +246,5 @@ try {
     Say "Check it any time with: $Pengumon service status"
 } finally {
     Remove-Item -Recurse -Force -LiteralPath $Work -ErrorAction SilentlyContinue
+    Restore-Session
 }

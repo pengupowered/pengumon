@@ -15,7 +15,9 @@
 
 import { registerActions } from '../../../js/dispatch.js';
 import { state } from '../../../js/state.js';
-import { escapeHtml, icon } from '../../../js/util.js';
+import { escapeHtml } from '../../../js/escape.js';
+import { icon } from '../../../js/dom.js';
+import { clone } from '../model.js';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const e = escapeHtml;
@@ -31,7 +33,6 @@ let seq = 0;
 
 const spec = () => (ctx && ctx.schema && ctx.schema.lists && ctx.schema.lists.devices) || { drivers: {}, item_fields: [] };
 const driverOf = (item) => drivers[item.driver] || { label: item.driver, options: [], url_schemes: ['http', 'https'], default_poll_seconds: null, min_poll_seconds: 0, default_username: 'admin', needs_sign_in: true };
-const clone = (v) => JSON.parse(JSON.stringify(v));
 
 function fromSaved(raw) {
   return { ...clone(raw), tls: { verify: true, ca_file: null, ...(raw.tls || {}) }, options: { ...(raw.options || {}) }, _key: `d${++seq}`, _saved: true };
@@ -89,6 +90,15 @@ function field(item, name, label, control, hint = '') {
     + `<span class="dv-err" data-err="${e(name)}" role="${message ? 'alert' : 'none'}">${e(message)}</span></div>`;
 }
 
+// A map option's rows in the order they are on the page, as [key, value] pairs: an object would order integer-like
+// keys first and drop the rows whose key is still empty, so the row a person points at would not be entry N of the object.
+function pairsOf(item, name) {
+  item._maps = item._maps || {};
+  if (!item._maps[name]) item._maps[name] = Object.entries(item.options[name] || {});
+  return item._maps[name];
+}
+const mapOf = (pairs) => Object.fromEntries(pairs.filter(([k]) => k !== ''));
+
 function optionControl(item, opt) {
   const current = item.options[opt.name];
   const common = `data-opt="${e(opt.name)}"`;
@@ -97,7 +107,7 @@ function optionControl(item, opt) {
     return `<input type="checkbox" ${common} ${on ? 'checked' : ''}>`;
   }
   if (opt.type === 'map') {
-    const rows = Object.entries(current || {});
+    const rows = pairsOf(item, opt.name);
     return `<div class="dv-map" ${common}>${rows.map(([k, v], n) => `<div class="dv-map-row"><input class="input" data-map-k="${n}" value="${e(k)}" placeholder="Key" aria-label="Key"><input class="input" data-map-v="${n}" value="${e(v)}" placeholder="Value" aria-label="Value">`
       + `<button type="button" class="btn sm icon" data-action="settingsDeviceAct" data-act="map-del" data-opt="${e(opt.name)}" data-n="${n}" aria-label="Remove this entry" data-needs-edit>${icon('close')}</button></div>`).join('')}`
       + `<button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="map-add" data-opt="${e(opt.name)}" data-needs-edit>${icon('plus')}Add an entry</button></div>`;
@@ -115,8 +125,20 @@ function optionControl(item, opt) {
 
 const OPTION_LABEL = (name) => name.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
+// An option with `shown_when` ({sibling: value}) is shown, and saved, only while each named sibling has that value (an
+// snmp device's SNMPv3 options: version "3"); a sibling not set counts as its default.
+function optionValue(item, name) {
+  const opt = (driverOf(item).options || []).find((o) => o.name === name);
+  const value = item.options[name];
+  return value === undefined ? (opt ? opt.default : undefined) : value;
+}
+const optionShown = (item, opt) => !opt.shown_when || Object.entries(opt.shown_when).every(([name, want]) => String(optionValue(item, name)) === String(want));
+const shownOptions = (item) => (driverOf(item).options || []).filter((opt) => optionShown(item, opt));
+// The options others depend on: changing one draws the card again
+const controlling = (item) => new Set((driverOf(item).options || []).flatMap((opt) => Object.keys(opt.shown_when || {})));
+
 function optionsMarkup(item) {
-  const options = driverOf(item).options || [];
+  const options = shownOptions(item);
   if (!options.length) return '';
   return `<fieldset class="dv-opts"><legend>${e(driverOf(item).label)} options</legend>${options.map((opt) => {
     const wrap = `<div class="field dv-f${opt.type === 'boolean' ? ' dv-check' : ''}"><label>${opt.type === 'boolean' ? `${optionControl(item, opt)}<span>${e(OPTION_LABEL(opt.name))}</span>` : `${e(OPTION_LABEL(opt.name))}${opt.type === 'map' ? '' : optionControl(item, opt)}`}</label>`
@@ -141,15 +163,15 @@ function formMarkup(item) {
       + (signIn ? 'No user name or password: the sign-in is entered with Set up.'
         : 'The router\'s address is enough; if it does not answer, use the address of its UPnP description, such as http://192.0.2.1:5000/rootDesc.xml. This device needs no password.'))
     + field(item, 'model', 'Display name', `<input class="input" data-f="model" value="${e(item.model || '')}" maxlength="100" placeholder="Optional">`, 'Shown on the device card when the device does not report a model.')
-    + (signIn ? field(item, 'username', 'User name', `<input class="input" data-f="username" value="${e(item.username || '')}" maxlength="64" placeholder="${e(d.default_username || 'admin')}" autocomplete="off">`) : '')
+    + (signIn && ctx.canEdit() ? field(item, 'username', 'User name', `<input class="input" data-f="username" value="${e(item.username || '')}" maxlength="64" placeholder="${e(d.default_username || 'admin')}" autocomplete="off">`, d.username_hint ? e(d.username_hint) : '') : '')
     + field(item, 'poll_interval_seconds', 'Poll every (seconds)', `<input class="input" type="number" inputmode="decimal" min="0" step="any" data-f="poll_interval_seconds" value="${item.poll_interval_seconds === null || item.poll_interval_seconds === undefined ? '' : e(item.poll_interval_seconds)}" placeholder="Standard: ${e(d.default_poll_seconds)}">`,
       `Standard: ${e(d.default_poll_seconds)} s.${floor}`)
     + `<div class="field dv-f dv-check"><label><input type="checkbox" data-f="enabled"${item.enabled === false ? '' : ' checked'}><span>Poll this device</span></label><span class="hint">Switched off, it stays listed and says so.</span></div>`
     + `<fieldset class="dv-opts"><legend>Certificate (https addresses)</legend>`
     + `<div class="field dv-f dv-check"><label><input type="checkbox" data-f="tls.verify"${item.tls.verify === false ? '' : ' checked'}><span>Check the device's certificate</span></label><span class="hint">Turn off for a certificate the device made itself.</span></div>`
-    + field(item, 'tls.ca_file', 'CA file', `<input class="input mono" data-f="tls.ca_file" value="${e(item.tls.ca_file || '')}" placeholder="Optional, a path on this host">`, 'A PEM file to check the certificate against, for a home CA or the device\'s own certificate.')
+    + (ctx.canEdit() ? field(item, 'tls.ca_file', 'CA file', `<input class="input mono" data-f="tls.ca_file" value="${e(item.tls.ca_file || '')}" placeholder="Optional, a path on this host">`, 'A PEM file to check the certificate against, for a home CA or the device\'s own certificate.') : '')
     + `</fieldset>`
-    + optionsMarkup(item)
+    + (ctx.canEdit() ? optionsMarkup(item) : '<p class="hint">The sign-in user name, the CA file and the device\'s own options are shown to the signed-in owner only.</p>')
     + `</div>`;
 }
 
@@ -169,22 +191,25 @@ function summaryMarkup(item) {
 }
 
 function cardMarkup(item, index) {
-  const expanded = open.has(item._key);
+  const expanded = open.has(item._key) || !ctx.canEdit();
+  const live = (state.devices || []).find((x) => x.id === item.id); // an SNMPv3 noAuthNoPriv device has no sign-in
   const failure = (ctx.itemErrors || {})[item.id];
   const local = Object.values(localProblems(item)).length || Object.keys(serverErrors[item._key] || {}).length;
   return `<li class="dv-card${expanded ? ' open' : ''}${local ? ' bad' : ''}" data-key="${e(item._key)}">`
-    + `<div class="dv-head"><button type="button" class="dv-toggle" data-action="settingsDeviceAct" data-act="toggle" aria-expanded="${expanded}" aria-controls="dv-body-${e(item._key)}">${icon('chevron')}<span class="dv-title">${e(nameOf(item))}</span></button>`
+    // a viewer's cards are all open, with a plain title: a button inside the disabled settings fieldset takes no click
+    + `<div class="dv-head">${ctx.canEdit() ? `<button type="button" class="dv-toggle" data-action="settingsDeviceAct" data-act="toggle" aria-expanded="${expanded}" aria-controls="dv-body-${e(item._key)}">${icon('chevron')}<span class="dv-title">${e(nameOf(item))}</span></button>`
+      : `<span class="dv-toggle"><span class="dv-title">${e(nameOf(item))}</span></span>`}`
     + `<span class="dv-chips">${summaryMarkup(item)}</span>`
-    + `<span class="dv-tools"><button type="button" class="btn sm icon" data-action="settingsDeviceAct" data-act="up" aria-label="Move ${e(nameOf(item))} up"${index === 0 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button>`
-    + `<button type="button" class="btn sm icon dv-down" data-action="settingsDeviceAct" data-act="down" aria-label="Move ${e(nameOf(item))} down"${index === items.length - 1 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button></span></div>`
+    + (ctx.canEdit() ? `<span class="dv-tools"><button type="button" class="btn sm icon" data-action="settingsDeviceAct" data-act="up" aria-label="Move ${e(nameOf(item))} up"${index === 0 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button>`
+    + `<button type="button" class="btn sm icon dv-down" data-action="settingsDeviceAct" data-act="down" aria-label="Move ${e(nameOf(item))} down"${index === items.length - 1 ? ' disabled' : ''} data-needs-edit>${icon('up')}</button></span>` : '') + `</div>`
     + (failure ? `<div class="dv-fail" role="alert">${icon('warn')}<span>${e(failure)}</span></div>` : '')
     + (local ? `<div class="dv-fail" role="alert">${icon('warn')}<span>${e(Object.values(localProblems(item))[0] || Object.values(serverErrors[item._key])[0])}</span></div>` : '')
     + `<div class="dv-body" id="dv-body-${e(item._key)}"${expanded ? '' : ' hidden'}>${expanded ? formMarkup(item) : ''}`
-    + `<div class="dv-actions">`
-    + (driverOf(item).needs_sign_in === false ? ''
+    + (ctx.canEdit() ? `<div class="dv-actions">`
+    + (driverOf(item).needs_sign_in === false || (live && live.needs_sign_in === false) ? ''
       : item._saved ? `<button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="setup" data-needs-edit>${icon('lock')}Set up the sign-in</button>`
       : '<span class="hint">Save first, then use Set up to enter the device\'s password.</span>')
-    + `<button type="button" class="btn sm danger" data-action="settingsDeviceAct" data-act="remove" data-needs-edit>Remove</button></div></div></li>`;
+    + `<button type="button" class="btn sm danger" data-action="settingsDeviceAct" data-act="remove" data-needs-edit>Remove</button></div>` : '') + `</div></li>`;
 }
 
 // What Save does to the path hops that read this device (the path editor's "device" link): they are unlinked, not deleted.
@@ -208,9 +233,9 @@ function draw() {
   const removedMarkup = removed.length
     ? `<ul class="dv-removed">${removed.map((r, n) => `<li><span><b>${e(nameOf(r))}</b> will be removed when you save. Its stored readings stay until retention removes them. ${hopsText(r)}</span> <button type="button" class="btn sm" data-action="settingsDeviceAct" data-act="undo" data-n="${n}" data-needs-edit>Undo</button></li>`).join('')}</ul>` : '';
   root.innerHTML = `<div class="dv"><ul class="dv-list">${items.map(cardMarkup).join('')}</ul>`
-    + (items.length ? '' : '<p class="empty compact">No devices yet. Pengumon then monitors only the probes of the path.</p>')
+    + (items.length ? '' : `<p class="empty compact">${ctx.canEdit() ? 'No devices yet. Pengumon then monitors only the probes of the path.' : 'No devices.'}</p>`)
     + removedMarkup
-    + `<div class="dv-add"><button type="button" class="btn" data-action="settingsDeviceAct" data-act="add" data-needs-edit>${icon('plus')}Add a device</button></div></div>`;
+    + (ctx.canEdit() ? `<div class="dv-add"><button type="button" class="btn" data-action="settingsDeviceAct" data-act="add" data-needs-edit>${icon('plus')}Add a device</button></div>` : '') + `</div>`;
   if (!ctx.canEdit()) {
     root.querySelectorAll('input, select, button[data-needs-edit]').forEach((el) => { if (el.dataset.act !== 'toggle') el.disabled = true; });
   }
@@ -228,7 +253,7 @@ function refreshCard(item) {
   if (!card) return;
   card.querySelector('.dv-chips').innerHTML = summaryMarkup(item);
   card.querySelector('.dv-title').textContent = nameOf(item);
-  card.classList.toggle('bad', !!Object.keys(localProblems(item)).length);
+  card.classList.toggle('bad', !!Object.keys(localProblems(item)).length || !!Object.keys(serverErrors[item._key] || {}).length);
   card.querySelectorAll('[data-err]').forEach((el) => {
     const message = problemOf(item, el.dataset.err);
     el.textContent = message;
@@ -250,7 +275,7 @@ function onInput(ev) {
     let value = el.type === 'checkbox' ? el.checked : el.value;
     if (f === 'poll_interval_seconds') value = el.value === '' ? null : Number(el.value);
     else if (f === 'tls.ca_file' || f === 'model') value = el.value === '' ? null : el.value;
-    if (f === 'driver') { item.driver = value; item.options = {}; open.add(item._key); draw(); ctx.markDirty(); return; }
+    if (f === 'driver') { item.driver = value; item.options = {}; item._maps = {}; open.add(item._key); draw(); ctx.markDirty(); return; }
     setPath(item, f, value);
     if (serverErrors[item._key]) delete serverErrors[item._key][f];
   } else if (el.dataset.opt && !el.closest('.dv-map')) {
@@ -258,10 +283,17 @@ function onInput(ev) {
     if (el.type === 'checkbox') item.options[name] = el.checked;
     else if (el.value === '') delete item.options[name];
     else item.options[name] = el.type === 'number' ? Number(el.value) : el.value;
+    if (controlling(item).has(name)) {
+      draw();
+      root.querySelector(`.dv-card[data-key="${item._key}"] [data-opt="${name}"]`)?.focus();
+      ctx.markDirty();
+      return;
+    }
   } else if (el.dataset.mapK !== undefined || el.dataset.mapV !== undefined) {
     const map = el.closest('.dv-map');
     const rows = [...map.querySelectorAll('.dv-map-row')].map((r) => [r.querySelector('[data-map-k]').value.trim(), r.querySelector('[data-map-v]').value]);
-    item.options[map.dataset.opt] = Object.fromEntries(rows.filter(([k]) => k));
+    (item._maps = item._maps || {})[map.dataset.opt] = rows;
+    item.options[map.dataset.opt] = mapOf(rows);
   } else return;
   refreshCard(item);
   ctx.markDirty();
@@ -308,10 +340,11 @@ function onClick(el) {
   else if (act === 'down' && item) move(item, 1);
   else if (act === 'setup' && item) ctx.openDeviceSetup(item.id);
   else if ((act === 'map-add' || act === 'map-del') && item) {
-    const map = { ...(item.options[el.dataset.opt] || {}) };
-    if (act === 'map-add') map[''] = '';
-    else delete map[Object.keys(map)[Number(el.dataset.n)]];
-    item.options[el.dataset.opt] = map;
+    const rows = pairsOf(item, el.dataset.opt).slice();
+    if (act === 'map-add') rows.push(['', '']);
+    else rows.splice(Number(el.dataset.n), 1);
+    item._maps[el.dataset.opt] = rows;
+    item.options[el.dataset.opt] = mapOf(rows);
     draw();
     ctx.markDirty();
   }
@@ -332,8 +365,9 @@ function cleaned(item) {
   if (item.tls.ca_file && item.tls.ca_file.trim()) tls.ca_file = item.tls.ca_file.trim();
   if (!tls.verify || tls.ca_file) out.tls = tls;
   const options = {};
+  const hidden = new Set((driverOf(item).options || []).filter((opt) => !optionShown(item, opt)).map((opt) => opt.name));
   for (const [name, v] of Object.entries(item.options || {})) {
-    if (v === '' || v === null || v === undefined) continue;
+    if (v === '' || v === null || v === undefined || hidden.has(name)) continue; // a hidden option is not saved
     if (typeof v === 'object' && !Array.isArray(v)) {  // a map: rows without a key are not entries
       const rows = Object.fromEntries(Object.entries(v).filter(([k]) => k !== ''));
       if (Object.keys(rows).length) options[name] = rows;
@@ -373,6 +407,7 @@ export default {
   },
 
   problems(errors) {
+    const before = JSON.stringify([serverErrors, [...open]]);
     serverErrors = {};
     const unplaced = [];
     for (const err of errors || []) {
@@ -386,7 +421,20 @@ export default {
       (serverErrors[item._key] = serverErrors[item._key] || {})[fieldName || 'id'] = err.message;
       open.add(item._key);
     }
+    // Every validation answer comes here, several per minute while a person types: draw again only when the messages or
+    // the open cards changed, and then give the focus and caret back, so the field being typed in is not lost.
+    if (before === JSON.stringify([serverErrors, [...open]])) { items.forEach(refreshCard); return unplaced; }
+    const at = root && root.contains(document.activeElement) ? document.activeElement : null;
+    const where = at && { key: at.closest('.dv-card')?.dataset.key, f: at.dataset.f, opt: at.dataset.opt, k: at.dataset.mapK, v: at.dataset.mapV, from: at.selectionStart, to: at.selectionEnd };
     draw();
+    if (where && where.key) {
+      const sel = where.f ? `[data-f="${where.f}"]` : where.opt && where.k !== undefined ? `[data-opt="${where.opt}"] [data-map-k="${where.k}"]` : where.opt && where.v !== undefined ? `[data-opt="${where.opt}"] [data-map-v="${where.v}"]` : where.opt ? `[data-opt="${where.opt}"]` : '';
+      const again = sel && root.querySelector(`.dv-card[data-key="${where.key}"] ${sel}`);
+      if (again) {
+        again.focus();
+        try { if (where.from !== null && where.from !== undefined) again.setSelectionRange(where.from, where.to); } catch { /* a type without a caret */ }
+      }
+    }
     return unplaced;
   }
 };

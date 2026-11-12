@@ -8,6 +8,7 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pengumon.observability.grafana import check_url
+from pengumon.web import theme_checks
 from pengumon.web import themes as theme_rules
 from pengumon.web.ui import panel_ids
 
@@ -111,7 +112,28 @@ class DisplayConfig(BaseModel):
             raise ValueError("a theme id is lower-case letters, digits and dashes")
         return value
 
+    @field_validator("themes")
+    @classmethod
+    def _unique_theme_ids(cls, items: List[ThemeItem]) -> List[ThemeItem]:
+        ids = [t.id for t in items]
+        for i in ids:
+            if ids.count(i) > 1:
+                raise ValueError(f"two custom themes have the id {i!r}; each id is used once")
+        return items
+
     @field_validator("grafana_url")
     @classmethod
     def _grafana(cls, value: Optional[str]) -> Optional[str]:
         return check_url(value or "", "grafana_url") or None
+
+
+def theme_warnings(items: List[ThemeItem]) -> List[Dict[str, str]]:
+    """What the readability rules of the built-in themes (web/theme_checks.py: text contrast, status colors and series
+    colors apart) find wrong in the custom themes, as warnings: {"where": "values.display.themes", "message": ...}.
+    Not an error: the colors are the owner's call (docs/themes.md), but a theme whose text matches its background
+    hides the page for every browser that uses it."""
+    out: List[Dict[str, str]] = []
+    for theme in theme_rules.custom_themes(list(items)):
+        for problem in theme_checks.problems(theme):
+            out.append({"where": "values.display.themes", "message": f"Custom theme {problem}"})
+    return out

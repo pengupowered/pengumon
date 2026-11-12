@@ -201,13 +201,13 @@ export const steps = [
       ok(`${how}: one Back reached the page before`, await page.evaluate(() => history.state.e0 === 1 && location.hash === ""));
     };
     const draft = () => settingsType(page, LOSS, "5");
-    // no draft: no entry is added at all
+    // no draft: the dialog's own entry only (a draft adds none); one Back goes past it
     await fresh();
     const length = await page.evaluate(() => history.length);
     await settingsOpen(ctx);
     await ctx.click("#btnSettingsCancel");
     await closed();
-    eq("no draft: the history is as long as before", await page.evaluate(() => history.length), length);
+    eq("no draft: the dialog's own entry (spent now) is the only one added", await page.evaluate(() => history.length), length + 1);
     await oneBack("no draft");
     // a draft, Cancel > Discard
     await fresh();
@@ -578,8 +578,13 @@ export const steps = [
     await settingsType(page, LOSS, "abc");
     const two = await ctx.text("#settingsProblemText");
     ok(`two problems: the setting by its label first (${two})`, /^2 problems: .*Loss outage starts after: .+; Host app checks: Extra app: /.test(two));
+    // the server's answer to this edit redraws the messages and the notes: let it land before the page is scrolled, or
+    // on a slow machine it arrives after "Go to the first" and moves what was just brought into view
+    const validated = page.waitForResponse((r) => r.url().includes("/api/settings/validate"), { timeout: 10000 }).catch(() => null);
     await settingsType(page, LOSS, "3"); // the standard value: no change left
     await until(() => /^1 problem:/.test(document.getElementById("settingsProblemText").textContent));
+    await validated;
+    await new Promise((r) => setTimeout(r, 100));
     await page.$eval(card, (c) => { c.open = false; c.scrollIntoView(); });
     await ctx.click("#settingsProblems button");
     ok("Go to the first opens the card", await page.$eval(card, (c) => c.open));
@@ -587,7 +592,11 @@ export const steps = [
     const msg = `${card} [data-lmsg$='timeout_seconds']`;
     let seen = false; // (the scroll may be smooth: Firefox animates it, so give it a moment to land)
     for (let i = 0; i < 30 && !(seen = await inView(page, msg)); i++) await new Promise((r) => setTimeout(r, 100));
-    ok("and brings the problem into view", seen);
+    const where = seen ? "" : await page.$eval(msg, (e) => {
+      const r = e.getBoundingClientRect(), b = document.getElementById("settingsBody").getBoundingClientRect();
+      return ` (message top ${Math.round(r.top)}, height ${Math.round(r.height)}; dialog body ${Math.round(b.top)}-${Math.round(b.bottom)}; card open ${e.closest("details")?.open})`;
+    }).catch((e) => ` (${e.message})`);
+    ok(`and brings the problem into view${where}`, seen);
     await page.$eval(`${card} [data-f=timeout_seconds]`, (e) => { e.focus(); e.select(); });
     await page.type(`${card} [data-f=timeout_seconds]`, "4");
     await until(() => !document.getElementById("btnSettingsSave").disabled);
@@ -638,6 +647,45 @@ export const steps = [
     await settingsDiscard(ctx);
   }],
 
+  ["webhooks: header slots keep their label, take any name but one that cannot be a key, never share a stored secret", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    await settingsOpen(ctx);
+    await ctx.click("#settingsRail [data-arg=alerts]");
+    const addWebhook = async (name) => {
+      await ctx.click("[data-list=webhooks] [data-la=add]");
+      const card = "[data-list=webhooks] .set-card:last-of-type";
+      await page.$eval(`${card} [data-f=name]`, (e) => { e.focus(); e.select(); });
+      await page.type(`${card} [data-f=name]`, name);
+      await page.$eval(`${card} [data-f=name]`, (e) => e.dispatchEvent(new Event("change", { bubbles: true })));
+      const id = await page.$eval(card, (e) => e.dataset.id);
+      return `[data-list=webhooks] .set-card[data-id="${id}"]`;
+    };
+    const addHeader = async (card, name) => {
+      await page.$eval(`${card} [data-hdr-name]`, (e) => { e.value = ""; });
+      await page.type(`${card} [data-hdr-name]`, name);
+      await ctx.click(`${card} [data-la=header-add]`);
+    };
+    const first = await addWebhook("a b");
+    await addHeader(first, "Authorization");
+    const label = () => page.$$eval(`${first} .set-hdr .set-label`, (els) => els.map((e) => e.textContent));
+    eq("the header row is labeled as a header", (await label()).join(), "Header Authorization");
+    await page.$eval(`${first} [data-f=timeout_seconds]`, (e) => { e.value = "7"; e.dispatchEvent(new Event("input", { bubbles: true })); }); // any edit redraws the slots
+    eq("and still is after the draft changed", (await label()).join(), "Header Authorization");
+    await addHeader(first, "constructor");
+    eq("a name such as constructor is a header like any other", (await label()).join(), "Header Authorization,Header constructor");
+    await addHeader(first, "__proto__");
+    ok("a name that cannot be a key is refused with a message", /cannot be used/.test(await page.$eval(`${first} [data-hdr-msg]`, (e) => e.textContent)));
+    await addHeader(first, "constructor");
+    ok("a header that is there already says so", /already/.test(await page.$eval(`${first} [data-hdr-msg]`, (e) => e.textContent)));
+    // webhook "a" with header "b c" and webhook "a b" with header "c" would both be webhook_header.a_b_c
+    await addHeader(first, "c");
+    const second = await addWebhook("a");
+    await addHeader(second, "b c");
+    const slots = await page.$$eval(`${first} .set-hdr .set-slot, ${second} .set-hdr .set-slot`, (els) => els.map((e) => e.dataset.slot));
+    eq("every header has a stored secret of its own", new Set(slots).size, slots.length);
+    await settingsDiscard(ctx);
+  }],
+
   ["Versions: an earlier one loads as a draft and Save restores it", async (ctx) => {
     const { eq, ok, page, until } = ctx;
     await settingsOpen(ctx);
@@ -662,6 +710,23 @@ export const steps = [
     eq("restored", (await settingsValuesNow(page)).values[LOSS], 3);
     await ctx.click("#btnSettingsCancel");
   }],
+
+  ["About this install offers a database backup to an editor as a plain download link, and the download is a SQLite file named for the version", async (ctx) => {
+    const { count, eq, ok, page, until, outDir, fs, path } = ctx;
+    const files = () => fs.readdirSync(outDir).filter((f) => /^pengumon-.*\.db$/.test(f));
+    files().forEach((f) => fs.rmSync(path.join(outDir, f), { force: true }));
+    await settingsOpen(ctx);
+    eq("one backup link", await count("#set-sec-about a[data-backup]"), 1);
+    eq("it goes to the API, by navigation (not a fetch into memory)", await page.$eval("#set-sec-about a[data-backup]", (e) => [e.getAttribute("href"), e.hasAttribute("download")].join()), "/api/backup,true");
+    ok("the sentence says what is in it and where to restore it", /history and the settings, with no passwords/.test(await ctx.text("#set-sec-about")) && /Backups in docs\/storage\.md/.test(await ctx.text("#set-sec-about")));
+    await ctx.click("#set-sec-about a[data-backup]");
+    for (let i = 0; i < 100 && !(files().length && !fs.readdirSync(outDir).some((f) => f.endsWith(".crdownload"))); i++) await new Promise((r) => setTimeout(r, 100));
+    eq("one file arrived", files().length, 1);
+    ok("named pengumon-<version>-<UTC stamp>.db", /^pengumon-\d+\.\d+\.\d+\S*-\d{8}T\d{6}Z\.db$/.test(files()[0]));
+    const head = fs.readFileSync(path.join(outDir, files()[0])).subarray(0, 16).toString("latin1");
+    eq("it is a SQLite database", head, "SQLite format 3\0");
+    await ctx.click("#btnSettingsCancel");
+  }, { chromiumOnly: "the download folder is set over CDP (Firefox saves to its own default folder)" }],
 
   ["Export downloads YAML without the webhook URL; Import makes a draft with its notes and applies nothing", async (ctx) => {
     const { eq, ok, page, until, outDir, fs, path } = ctx;
@@ -902,6 +967,28 @@ export const steps = [
     await page.evaluate(() => localStorage.clear());
   }, { variants: ["bare"] }], // the full variant's steps save 18 times a minute; Save allows 20 (api/settings.py)
 
+  ["Themes: a custom theme whose text matches its background gets a warning at the themes list, and it goes with the cause (not an error: Save stays possible)", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    await settingsOpen(ctx);
+    await ctx.click("#settingsRail [data-arg=display]");
+    await until(() => document.querySelector("[data-list=themes] .th-row"));
+    await ctx.click("[data-list=themes] [data-ta=duplicate-builtin][data-arg=nord]");
+    await until(() => document.querySelector("[data-list=themes] .th-card"));
+    const setDark = (name, value) => page.$eval(`[data-list=themes] .th-card input[data-tc="dark ${name}"]`, (e, v) => { e.value = v; e.dispatchEvent(new Event("change", { bubbles: true })); }, value);
+    const bg = await page.$eval('[data-list=themes] .th-card input[data-tc="dark --bg"]', (e) => e.value);
+    await setDark("--ink-1", bg);
+    await until(() => document.querySelector("[data-list=themes] [data-th-warn]"));
+    const warning = await ctx.text("[data-list=themes] [data-th-warn]");
+    ok(`the warning names the theme and the colors (${warning})`, /^Custom theme custom-nord-copy dark: --ink-1 on/.test(warning));
+    eq("it sits in the themes list, above the cards", await page.evaluate(() => document.querySelector("[data-list=themes] [data-th-warn]").closest("[data-list=themes]") !== null), true);
+    eq("it is not an error: no card needs a fix", await ctx.count("[data-list=themes] .th-card .st-crit"), 0);
+    ok("Save is still possible", await page.$eval("#btnSettingsSave", (b) => !b.disabled));
+    await setDark("--ink-1", "#eceff4");
+    await until(() => !document.querySelector("[data-list=themes] [data-th-warn]"));
+    ok("the warning went with its cause", true);
+    await settingsDiscard(ctx);
+  }, { variants: ["bare"] }],
+
   ["Themes: Export gives any theme as a file; Import reads one as a draft and says what it filled in and left out", async (ctx) => {
     const { eq, fs, ok, outDir, page, path, until } = ctx;
     await settingsOpen(ctx);
@@ -919,8 +1006,41 @@ export const steps = [
     ok(`the note says what came from where (${note})`, /missing colors come from the standard theme/.test(note) && /left out/.test(note));
     eq("light only", await ctx.text("[data-list=themes] .th-card .set-card-s"), "light only");
     eq("one change, nothing saved", await settingsSaveLabel(page), "Save 1 change");
+    // a short hex or rgb() color shows as the color it is in the picker, not as black
+    const pale = path.join(outDir, "pale.theme.json");
+    fs.writeFileSync(pale, JSON.stringify({ name: "Pale", modes: ["light"], tokens: { light: { "--bg": "#abc", "--ink-1": "rgb(250, 250, 250)" } } }));
+    await (await page.$("#themeImportFile")).uploadFile(pale);
+    await until(() => [...document.querySelectorAll("[data-list=themes] .th-card .set-card-t")].some((t) => t.textContent === "Pale"));
+    const swatch = (name) => page.$eval(`[data-list=themes] .th-card[data-id="custom-pale"] [data-tc="light ${name}"]`, (e) => e.value);
+    eq("#abc is #aabbcc", await swatch("--bg"), "#aabbcc");
+    eq("rgb(250, 250, 250) is #fafafa", await swatch("--ink-1"), "#fafafa");
+    // a file that is no theme by its size is not read at all
+    const big = path.join(outDir, "big.theme.json");
+    fs.writeFileSync(big, JSON.stringify({ name: "Big", modes: ["light"], pad: "x".repeat(300 * 1024) }));
+    await (await page.$("#themeImportFile")).uploadFile(big);
+    await until(() => /is not a theme file/.test(document.querySelector("[data-list=themes]").textContent));
+    ok("no card was made of it", !(await page.$$eval("[data-list=themes] .th-card .set-card-t", (ts) => ts.some((t) => t.textContent === "Big"))));
     await settingsDiscard(ctx);
   }, { chromiumOnly: "uploadFile is CDP only" }],
+
+  ["Settings: closed before its state arrives, it stays closed and empty", async (ctx) => {
+    const { eq, page, until } = ctx;
+    await page.evaluate(() => { // the state takes a second
+      window.__stateFetch = window.fetch;
+      window.fetch = async (input, init) => {
+        const res = await window.__stateFetch(input, init);
+        if (String(input) === "/api/settings" && !(init && init.method)) await new Promise((r) => setTimeout(r, 1200));
+        return res;
+      };
+    });
+    await ctx.click("#btnSettings");
+    await until(() => document.getElementById("settingsModal").classList.contains("active"));
+    await ctx.click("#btnSettingsCancel");
+    await until(() => !document.getElementById("settingsModal").classList.contains("active"));
+    await new Promise((r) => setTimeout(r, 2000));
+    eq("nothing was drawn into the closed dialog", await page.$$eval("#settingsSections .set-row", (r) => r.length), 0);
+    await page.evaluate(() => { window.fetch = window.__stateFetch; });
+  }],
 
   ["at 390 px: one column, a jump list, no sideways scroll, with a list card expanded; both themes look right", async (ctx) => {
     const { eq, ok, page, phone, setTheme } = ctx;
@@ -982,6 +1102,76 @@ export const steps = [
     await until(() => !document.getElementById("settingsModal").classList.contains("active"));
   }],
 
+  ["devices editor in Settings: a validation answer does not take the focus or the caret from the field being typed in", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    await settingsOpen(ctx);
+    await ctx.click("#settingsRail [data-arg=devices]");
+    await until(() => document.querySelectorAll("[data-box=devices] .dv-card").length > 0);
+    await page.evaluate(() => document.querySelector("[data-box=devices] [data-act=toggle]").click());
+    const url = "[data-box=devices] .dv-card.open [data-f=url]";
+    await page.evaluate(() => { // count the validation answers the page has taken
+      window.__validated = 0;
+      const was = window.fetch;
+      window.fetch = async (input, init) => {
+        const res = await was(input, init);
+        if (String(input).endsWith("/api/settings/validate")) setTimeout(() => { window.__validated += 1; }, 150);
+        return res;
+      };
+    });
+    for (const [what, text, errorShown] of [["a valid address", "http://192.0.2.77", false], ["an address the server refuses", "ftp://192.0.2.77", true]]) {
+      await page.focus(url);
+      await page.$eval(url, (e) => { e.select(); window.__field = e; });
+      await page.keyboard.press("Backspace");
+      await page.type(url, text);
+      await page.$eval(url, (e) => e.setSelectionRange(4, 4)); // the caret in the middle: a redraw would put it at the end or lose it
+      const seen = await page.evaluate(() => window.__validated);
+      await until((n) => window.__validated > n, seen);
+      // with nothing new to say the card is not drawn again; with a message to show it is, and the focus and caret come back
+      if (!errorShown) eq(`${what}: the field is the same element`, await page.evaluate(() => document.querySelector("[data-box=devices] .dv-card.open [data-f=url]") === window.__field), true);
+      eq(`${what}: it still has the focus`, await page.evaluate(() => document.activeElement === document.querySelector("[data-box=devices] .dv-card.open [data-f=url]")), true);
+      eq(`${what}: the caret stays`, await page.evaluate(() => { const f = document.activeElement; return [f.selectionStart, f.selectionEnd].join(); }), "4,4");
+      if (errorShown) ok("the server's message is shown under the field", await page.$eval("[data-box=devices] .dv-card.open [data-err=url]", (e) => e.textContent.trim().length > 0));
+      await page.keyboard.type("x"); // the next keystroke lands in the field
+      await page.$eval(url, (e) => { window.__field = e; });
+      ok(`${what}: the next keystroke lands in the field`, (await page.$eval(url, (e) => e.value)).charAt(4) === "x");
+    }
+    await settingsDiscard(ctx);
+  }],
+
+  ["Settings: nothing typed while a Save is in flight is lost without a word", async (ctx) => {
+    const { eq, page, until } = ctx;
+    await settingsOpen(ctx);
+    await page.evaluate(() => { // the PUT's answer takes 1.5 s
+      window.__putFetch = window.fetch;
+      window.fetch = async (input, init) => {
+        const res = await window.__putFetch(input, init);
+        if (String(input).startsWith("/api/settings") && init && init.method === "PUT") await new Promise((r) => setTimeout(r, 1500));
+        return res;
+      };
+    });
+    await settingsType(page, LOSS, "7");
+    await settingsType(page, "classifier.busy_load_pct", "61");
+    await page.evaluate(() => document.querySelector("#btnSettingsSave").click());
+    await until(() => document.querySelector("#btnSettingsSave").disabled);
+    const sel = `${settingsRow("classifier.busy_load_pct")} input[data-key]`;
+    eq("the settings cannot be edited while the Save is in flight", await page.evaluate(() => document.getElementById("settingsFields").disabled), true);
+    await page.focus(sel).catch(() => {}); // a person tries to type in another box
+    await page.keyboard.type("9");
+    await until(() => document.getElementById("toast")?.classList.contains("on") && document.querySelector("#btnSettingsSave").textContent.trim() === "Save");
+    eq("editable again after the answer", await page.evaluate(() => document.getElementById("settingsFields").disabled), false);
+    eq("the box holds what was saved, no digit was typed into the void", await page.$eval(sel, (e) => e.value), "61");
+    eq("saved", String((await settingsValuesNow(page)).values["classifier.busy_load_pct"]), "61");
+    await page.evaluate(() => { window.fetch = window.__putFetch; });
+    await ctx.click("#btnSettingsCancel");
+    await until(() => !document.getElementById("settingsModal").classList.contains("active"));
+    // put the two settings back to their defaults for the steps after this one
+    eq("put back", await page.evaluate(async (k) => {
+      const state = await (await fetch("/api/settings")).json();
+      const res = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: state.revision, values: { [k]: null, "classifier.busy_load_pct": null }, lists: {}, secrets: {} }) });
+      return res.status;
+    }, LOSS), 200);
+  }, { variants: ["bare"] }], // a Save: the full variant's steps are at the limit of 20 a minute (api/settings.py)
+
   // ---------------- the devices list editor (mounted on its own with the page's schema) ----------------
   ["devices list editor: cards from the saved devices, a failing device shown in red, form generated from the driver, id read-only once saved", async ({ eq, ok, page, shots, until }) => {
     await page.evaluate(async () => {
@@ -1026,6 +1216,15 @@ export const steps = [
     eq("two map entries", Object.keys(items[1].options.mesh_node_labels).length, 2);
     await page.evaluate(() => document.querySelector("#dvScratch [data-act=map-del]").click());
     eq("one map entry again", Object.keys((await collect())[1].options.mesh_node_labels).length, 1);
+    // the row a person deletes is the row that goes, also when its key sorts after a number
+    for (const key of ["b", "10"]) {
+      await page.evaluate(() => document.querySelector("#dvScratch [data-act=map-add]").click());
+      await page.$$eval("#dvScratch [data-map-k]", (ins, k) => { const i = ins[ins.length - 1]; i.value = k; i.dispatchEvent(new Event("input", { bubbles: true })); }, key);
+    }
+    eq("rows in typing order", await page.$$eval("#dvScratch [data-map-k]", (ins) => ins.map((i) => i.value).join()), "02:00:00:00:00:02,b,10");
+    await page.evaluate(() => document.querySelectorAll("#dvScratch [data-act=map-del]")[1].click()); // the "b" row
+    eq("b is gone, 10 stays", Object.keys((await collect())[1].options.mesh_node_labels).sort().join(), "02:00:00:00:00:02,10");
+    await page.evaluate(() => document.querySelectorAll("#dvScratch [data-act=map-del]")[1].click()); // the "10" row
     // Set up
     await page.evaluate(() => document.querySelectorAll("#dvScratch [data-act=setup]")[1].click());
     eq("Set up opens the dialog for the saved id", await page.evaluate(() => window.__dv.opened.join()), "router");
@@ -1087,11 +1286,58 @@ export const steps = [
       host.id = "dvScratch";
       document.body.appendChild(host);
       mod.render(host, [{ id: "router", driver: "asuswrt", url: "http://192.0.2.1", enabled: true }], { schema, markDirty() {}, canEdit: () => false, openDeviceSetup() {}, itemErrors: {} });
+    });
+    // a viewer's card is open at once (its toggle would be a button in the disabled fieldset, which takes no click)
+    ok("view only: the card is open and every field is disabled", await page.$$eval("#dvScratch input, #dvScratch select", (els) => els.length > 0 && els.every((e) => e.disabled)));
+    eq("view only: no edit button is offered at all (Add, Remove, Move, Set up)", await page.evaluate(() => document.querySelectorAll("#dvScratch [data-needs-edit], #dvScratch [data-act=add]").length), 0);
+    await page.evaluate(() => document.querySelectorAll("#dvScratch").forEach((e) => e.remove()));  // the page's own editor is not this one
+  }],
+
+  ["devices list editor: an snmp device shows and saves its SNMPv3 options only with version 3; phone width, both themes", async ({ eq, ok, page, phone, shots }) => {
+    const mount = () => page.evaluate(async () => {
+      const base = document.querySelector("link[rel=stylesheet][href*='/static/v/']").href.replace(/[^/]*$/, "");
+      const mod = (await import(`${base}dialogs/settings/lists/devices.js`)).default;
+      const schema = await (await fetch("/api/settings/schema")).json();
+      document.querySelectorAll("#dvScratch").forEach((e) => e.remove());
+      const host = document.createElement("div");
+      host.id = "dvScratch";
+      host.style.cssText = "position:fixed;inset:0;overflow:auto;background:var(--surface-1);z-index:9999;padding:16px";
+      document.body.appendChild(host);
+      window.__dv = { mod, host, dirty: 0 };
+      mod.render(host, [{ id: "core-sw", driver: "snmp", url: "snmp://192.0.2.2", enabled: true }],
+        { schema, markDirty: () => { window.__dv.dirty += 1; }, canEdit: () => true, openDeviceSetup() {}, itemErrors: {} });
       host.querySelector("[data-act=toggle]").click();
     });
-    ok("view only: every field and edit button is disabled", await page.$$eval("#dvScratch input, #dvScratch select, #dvScratch [data-needs-edit]", (els) => els.length > 0 && els.every((e) => e.disabled)));
-    eq("view only: nothing to collect changes", await page.evaluate(() => document.querySelector("#dvScratch [data-act=add]").disabled), true);
-    await page.evaluate(() => document.querySelectorAll("#dvScratch").forEach((e) => e.remove()));  // the page's own editor is not this one
+    const opts = () => page.$$eval("#dvScratch [data-opt]", (els) => els.map((e) => e.dataset.opt));
+    const v3 = ["security_level", "auth_protocol", "priv_protocol", "context_name"];
+    const collected = () => page.evaluate(() => window.__dv.mod.collect()[0].options || {});
+    await mount();
+    eq("SNMPv2c (the default): the version and no SNMPv3 option", await page.$eval("#dvScratch [data-opt=version]", (s) => s.value), "2c");
+    ok("no SNMPv3 option shown", !(await opts()).some((o) => v3.includes(o)));
+    ok("the user name says what it is for snmp", /SNMPv3: the user name/.test(await page.$eval("#dvScratch [data-f=username]", (i) => i.closest(".field").textContent)));
+    await page.select("#dvScratch [data-opt=version]", "3");
+    const shownNow = await opts();
+    ok(`version 3 shows the SNMPv3 options (${shownNow})`, v3.every((o) => shownNow.includes(o)));
+    eq("the version select keeps the focus", await page.evaluate(() => document.activeElement?.dataset.opt), "version");
+    eq("the standard level and protocols", await page.$$eval("#dvScratch [data-opt=security_level], #dvScratch [data-opt=auth_protocol], #dvScratch [data-opt=priv_protocol]", (els) => els.map((e) => e.value).join()), "authPriv,SHA,AES");
+    ok("no MD5 and no DES", !(await page.$$eval("#dvScratch option", (els) => els.map((e) => e.value))).some((v) => /MD5|DES/.test(v)));
+    await page.select("#dvScratch [data-opt=auth_protocol]", "SHA-256");
+    await page.$eval("#dvScratch [data-opt=context_name]", (i) => { i.value = "lab"; i.dispatchEvent(new Event("input", { bubbles: true })); });
+    eq("collected with version 3", JSON.stringify(await collected()), JSON.stringify({ version: "3", auth_protocol: "SHA-256", context_name: "lab" }));
+    ok("the draft is dirty", await page.evaluate(() => window.__dv.dirty) > 0);
+    await shots("settings-devices-snmpv3");
+    await page.select("#dvScratch [data-opt=version]", "2c");
+    ok("back to 2c: hidden again", !(await opts()).some((o) => v3.includes(o)));
+    eq("and not saved", JSON.stringify(await collected()), JSON.stringify({ version: "2c" }));
+    await page.select("#dvScratch [data-opt=version]", "3");
+    eq("the draft kept them meanwhile", JSON.stringify(await collected()), JSON.stringify({ version: "3", auth_protocol: "SHA-256", context_name: "lab" }));
+    await phone(async () => {
+      await mount();
+      await page.select("#dvScratch [data-opt=version]", "3");
+      ok("phone width: no horizontal scroll", await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth && document.getElementById("dvScratch").scrollWidth <= document.getElementById("dvScratch").clientWidth));
+      ok("phone width: every control fits", await page.$$eval("#dvScratch .dv-card input, #dvScratch .dv-card select", (els) => els.every((e) => e.getBoundingClientRect().right <= window.innerWidth)));
+    });
+    await page.evaluate(() => document.querySelectorAll("#dvScratch").forEach((e) => e.remove()));
   }],
 
   // ---------------- the `viewonly` variant ----------------
@@ -1120,17 +1366,69 @@ export const steps = [
     eq("a viewer's import", await refused("POST", "/api/settings/import", {}), 401);
     eq("a viewer's validate", await refused("POST", "/api/settings/validate", { values: {}, lists: {} }), 401);
     eq("the export", await refused("GET", "/api/settings/export"), 401);
+    eq("a viewer's backup", await refused("GET", "/api/backup"), 401);
+    eq("no backup button for a viewer", await ctx.count("#set-sec-about [data-backup]"), 0);
     eq("reading is allowed", await refused("GET", "/api/settings"), 200);
     await ctx.shots("settings-viewonly");
     // signing in raises editaccess (the page navigates in a real sign-in; this is the event itself)
-    await page.evaluate(async (url) => { (await import(url)).setCanEdit(true); }, await moduleUrl("util.js"));
+    await page.evaluate(async (url) => { (await import(url)).setCanEdit(true); }, await moduleUrl("view-only.js"));
     eq("the fieldset is on", await page.$eval("#settingsFields", (e) => e.disabled), false);
     eq("the bar is gone", await page.$eval("#settingsReadOnly", (e) => e.hidden), true);
     eq("Export is shown", await page.$eval("#settingsExport", (e) => e.hidden), false);
     eq("Import is on", await page.$eval("#settingsModal [data-action=settingsImport]", (e) => e.getAttribute("aria-disabled")), null);
-    await page.evaluate(async (url) => { (await import(url)).setCanEdit(false); }, await moduleUrl("util.js"));
+    await page.evaluate(async (url) => { (await import(url)).setCanEdit(false); }, await moduleUrl("view-only.js"));
     eq("off again", await page.$eval("#settingsFields", (e) => e.disabled), true);
     await ctx.click("#btnSettingsCancel");
+  }, { variants: ["viewonly"] }],
+
+  ["view only: the device, host-app and webhook cards read sensibly (what the server blanks is not shown as an empty value, and nothing that changes them is offered)", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    await until(() => document.documentElement.hasAttribute("data-view-only"));
+    // a webhook, as the viewer shaping of GET /api/settings sends it (no headers, the address only as set)
+    await page.evaluate(() => {
+      const real = window.fetch;
+      window.__realFetch = real;
+      window.fetch = async (url, ...rest) => {
+        const res = await real(url, ...rest);
+        if (String(url).endsWith("/api/settings") && !rest[0]?.method) {
+          const body = await res.json();
+          body.lists.webhooks.items = [{ id: "hook", name: "Phone alerts", format: "slack", headers: {}, timeout_seconds: 5 }];
+          body.secrets["webhook.hook.url"] = { set: true, source: "stored", host: null };
+          return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return res;
+      };
+    });
+    try {
+      await settingsOpen(ctx);
+      await until(() => document.querySelector("[data-list=webhooks] .set-card") !== null);
+      await page.evaluate(() => document.querySelectorAll("[data-list] details.set-card").forEach((d) => { d.open = true; })); // (a viewer opens the host app and webhook cards with the mouse)
+      eq("the device cards are all open for a viewer (their toggle would be a dead button)", await ctx.count(".dv-card.open"), await ctx.count(".dv-card"));
+      eq("and nothing that looks like a toggle", await ctx.count("button.dv-toggle"), 0);
+      const all = await ctx.text("#settingsSections");
+      ok("no undefined, null or [object] anywhere in the sections", !/undefined|\bnull\b|\[object/.test(all));
+      // devices
+      ok("a device card is there", (await ctx.count(".dv-card")) >= 2);
+      eq("no user name, CA file or device option field (the server blanks them)", await ctx.count('.dv-card [data-f=username], .dv-card [data-f="tls.ca_file"], .dv-card [data-opt]'), 0);
+      ok("the card says they are for the owner", /shown to the signed-in owner only/.test(await ctx.text(".dv-card .dv-body")));
+      eq("no option fieldset named after a driver", await page.$$eval(".dv-card .dv-opts legend", (l) => l.map((x) => x.textContent).filter((t) => / options$/.test(t)).length), 0);
+      // host apps and webhooks
+      ok("a host app check is there", (await ctx.count("[data-list=services] .set-card")) >= 1);
+      eq("no CA file field on a host app check", await ctx.count("[data-list=services] [data-f=ca_file]"), 0);
+      ok("its note says the path is not shown", /without their path/.test(await ctx.text("[data-list=services] .fine")));
+      const hook = "[data-list=webhooks] .set-card";
+      ok("the webhook is there with its format", /Phone alerts/.test(await ctx.text(hook)) && /Slack/.test(await ctx.text(hook)));
+      ok("its address is a secret that is set", /Address/.test(await ctx.text(hook)) && !/URL needed/.test(await ctx.text(hook)));
+      ok("headers are not claimed to be absent", !/No headers/.test(await ctx.text(hook)) && /owner only/.test(await ctx.text(hook)));
+      eq("no field to add a header", await ctx.count("[data-list=webhooks] [data-hdr-name]"), 0);
+      // nothing that changes a list is there, and nothing in them takes input
+      eq("no Add, Remove, Move or Set up control", await ctx.count('.dv [data-act]:not([data-act=toggle]), .set-list [data-la]'), 0);
+      eq("no 'Add' or 'Remove all' button text", await page.$$eval(".dv button, .set-list button, .set-lnk", (b) => b.filter((x) => /^(Add |Remove all|Back to the)/.test(x.textContent.trim())).length), 0);
+      ok("every input, select and button in the lists is off (but the card toggles)", await page.$$eval(".dv input, .dv select, .set-list input, .set-list select, .set-list .btn, .dv .btn", (els) => els.every((e) => e.matches(":disabled"))));
+    } finally {
+      await page.evaluate(() => { if (window.__realFetch) window.fetch = window.__realFetch; });
+      await ctx.click("#btnSettingsCancel");
+    }
   }, { variants: ["viewonly"] }],
 
   ["view only at 390 px: the bar and the page fit", async (ctx) => {

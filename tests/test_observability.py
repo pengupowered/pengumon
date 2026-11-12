@@ -402,3 +402,23 @@ async def test_a_websocket_handshake_never_logs_its_credentials(clean_root, monk
     assert COOKIE_SECRET not in text and BEARER_SECRET not in text
     assert "< cookie: [redacted]" in text and "< authorization: [redacted]" in text    # (the line stays, its value not)
     assert "< user-agent: " in text                                                    # (other headers are untouched)
+
+
+# --- addresses with a token in the path or query ----------------------------------------------------------
+
+async def test_httpx_request_lines_never_log_a_path_or_query(caplog):
+    """`server.log_levels = httpx=info` makes httpx log "HTTP Request: POST <url>" for every alert: a webhook's token
+    sits in that path, the ntfy topic is the path, a host-app check may carry an API key in the query."""
+    import httpx
+    secret_path, secret_query = "T000/path-canary-77aa", "apikey=query-canary-55bb"
+    handler = httpx.MockTransport(lambda request: httpx.Response(200))
+    caplog.set_level(logging.INFO, logger="httpx")
+    async with httpx.AsyncClient(transport=handler) as client:
+        await client.post(f"https://hooks.example.test:8443/{secret_path}?{secret_query}", content=b"x")
+        await client.get(f"http://192.0.2.10:8080/health?{secret_query}")
+    lines = [r.getMessage() for r in caplog.records if r.name == "httpx"]
+    assert len(lines) == 2
+    text = "\n".join(lines)
+    assert "path-canary" not in text and "query-canary" not in text
+    assert "https://hooks.example.test:8443/[path hidden]" in text and "http://192.0.2.10:8080/[path hidden]" in text
+    assert "POST" in text and "200" in text

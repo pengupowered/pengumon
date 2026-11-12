@@ -297,6 +297,32 @@ async def test_a_huge_page_is_read_only_up_to_the_cap():
     assert page.title is None
 
 
+async def test_a_page_of_endless_title_starts_is_searched_in_linear_time_R4_H1():
+    import time
+    body = "<title>" * (devices.PAGE_MAX // 7)
+    async with _client(lambda r: httpx.Response(200, content=body.encode())) as client:
+        started = time.perf_counter()
+        page = await devices.fetch_page("192.168.1.1", client)
+        took = time.perf_counter() - started
+    assert page.title is None and page.status == 200
+    assert took < 1.0  # the lazy regex took seconds
+
+
+async def test_titles_are_found_in_any_case_and_with_attributes_R4_H1():
+    body = "<html><HEAD><TiTle lang=en>Hello</TITLE></head></html>"
+    async with _client(lambda r: httpx.Response(200, text=body)) as client:
+        page = await devices.fetch_page("192.168.1.1", client)
+    assert page.title == "Hello"
+
+
+@pytest.mark.parametrize("charset", ["idna", "undefined", "punycode", "nonsense", "rot13"])
+async def test_an_odd_charset_does_not_break_the_page_check_R4_M1(charset):
+    headers = {"content-type": f"text/html; charset={charset}"}
+    async with _client(lambda r: httpx.Response(200, content=b"<title>Odd</title>", headers=headers)) as client:
+        page = await devices.fetch_page("192.168.1.1", client)
+    assert page is not None and page.status == 200
+
+
 async def test_the_discovery_client_never_follows_redirects_or_reads_proxy_settings():
     async with devices.new_client() as client:
         assert client.follow_redirects is False and client.trust_env is False
@@ -542,6 +568,31 @@ async def test_the_ssdp_search_listens_only_on_the_lan_interface_it_sends_from(m
     monkeypatch.setattr(upnp.socket, "socket", Recording)
     await upnp.ssdp_search(wait=0.05)
     assert bound and bound[0][0] == "127.0.0.1"
+
+
+def test_sixteen_noisy_answers_do_not_crowd_the_real_gateway_out_R4_L2():
+    from pengumon.engine.discovery import upnp
+    collector = upnp._Collector()
+    for n in range(15):
+        for _ in range(3):
+            collector.datagram_received(ssdp(f"192.168.1.{100 + n}"), (f"192.168.1.{100 + n}", 1900))
+    for _ in range(50):
+        collector.datagram_received(b"noise", ("192.168.1.250", 1900))
+    collector.datagram_received(ssdp("192.168.1.1"), ("192.168.1.1", 1900))
+    sources = [a for a, _ in collector.answers]
+    assert "192.168.1.1" in sources and sources.count("192.168.1.250") <= upnp.MAX_ANSWERS_PER_SOURCE
+
+
+async def test_a_socket_that_cannot_be_created_is_no_answer_not_an_error_R4_L1(monkeypatch):
+    from pengumon.engine.discovery import upnp
+
+    def no_sockets(*_a, **_k):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(upnp.socket, "socket", no_sockets)
+    assert upnp.lan_source_address() is None
+    monkeypatch.setattr(upnp, "lan_source_address", lambda: "127.0.0.1")
+    assert await upnp.ssdp_search(wait=0.01) == []
 
 
 def test_the_lan_source_address_is_a_real_address_or_none():

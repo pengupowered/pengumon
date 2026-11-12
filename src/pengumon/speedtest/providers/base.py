@@ -20,10 +20,13 @@ The rules every provider keeps:
   the cap and the record.
 * **Honest client.** User-Agent `Pengumon/<version>`, explicit httpx timeouts, no redirects (a 3xx is a failure, so a
   server cannot send the test to another host).
+* **Bodies as sent, bounded.** Every request asks for no compression (`HEADERS`), every answer is read through
+  `drivers.http.CappedBody` (never more than asked for, counted after decoding), and a download that comes compressed
+  anyway is refused (`download_body`): it would count bytes that never crossed the line, and a few hundred KB of gzip
+  inflate to gigabytes.
 """
 
 import asyncio
-import math
 import os
 import time
 import urllib.request
@@ -33,8 +36,12 @@ from typing import AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tup
 import httpx
 
 from pengumon import __version__
+from pengumon.drivers.http import CappedBody
+from pengumon.speedtest.providers.wire import BulkTransport
 
 USER_AGENT = f"Pengumon/{__version__}"
+HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "identity"}  # every provider's client sends these
+ANSWER_MAX = 64 * 1024  # the most read of an answer that is not test data (an upload's answer, M-Lab's locate answer)
 STREAMS = 8
 UPLOAD_ROUNDS = 4  # an upload's cap is spread over this many rounds of the streams (request_size)
 UPLOAD_SETTLE = 0.2  # an upload's speed leaves out the first fifth of the flow time (Meter._steady_upload)
@@ -99,6 +106,7 @@ class Meter:
         self.target = target_s  # data has flowed long enough after this many seconds from the first byte (None: no aim)
         self.started = clock()
         self.total = 0
+        self.over = 0  # bytes received past the cap (M-Lab's last whole message): counted as data, not for the speed
         self.first_at: Optional[float] = None  # seconds since start of the first counted byte
         self._points: List[Tuple[float, int]] = []  # (seconds since start, cumulative bytes)
         # request -> [first byte, last activity, bytes of the first chunk, bytes]
@@ -228,7 +236,7 @@ class Meter:
         return (last[1] - start[1]) * 8 / (last[0] - start[0]) / 1e6
 
     def transfer(self, server: Optional[str]) -> Transfer:
-        return Transfer(self.total, self.elapsed, self.mbps(), server, round(self.active, 3))
+        return Transfer(self.total + self.over, self.elapsed, self.mbps(), server, round(self.active, 3))
 
 
 def request_size(cap_bytes: int, streams: int = STREAMS, rounds: int = 1, max_request: int = MAX_REQUEST,
@@ -266,7 +274,7 @@ class SpeedProvider:
 
     def moved(self) -> int:
         """The bytes of the direction running now (or the last one): what an interrupted test still has to count."""
-        return self.meter.total if self.meter is not None else 0
+        return self.meter.total + self.meter.over if self.meter is not None else 0
 
     async def download(self, cap_bytes: int, time_limit_s: float, target_s: Optional[float] = None) -> Transfer:
         """Moves at most `cap_bytes` down and stops after `time_limit_s`, or once data has flowed for `target_s`."""
@@ -287,6 +295,20 @@ def refused(status: int, who: str) -> ProviderError:
     if 300 <= status < 400:
         return ProviderError(f"{who} answered with a redirect (HTTP {status}), which is not followed")
     return ProviderError(f"{who} answered HTTP {status}")
+
+
+def download_body(response: httpx.Response, want: int, who: str) -> CappedBody:
+    """A download's body, read up to `want` bytes; a compressed one is refused (ProviderError): the test counts bytes as
+    they crossed the line."""
+    try:
+        return CappedBody(response, want, compressed=False)
+    except httpx.DecodingError:
+        raise ProviderError(f"{who} sent the test data compressed, which a speed test cannot count") from None
+
+
+async def read_answer(response: httpx.Response) -> bytes:
+    """An answer that is not test data, read up to ANSWER_MAX bytes (the rest is left unread)."""
+    return await CappedBody(response, ANSWER_MAX).read()
 
 
 PROXY_NOTE = ("a proxy is set for Pengumon, but the speed test connects directly: a test through a proxy would measure "
@@ -318,6 +340,8 @@ def failure(exc: BaseException, who: str) -> ProviderError:
         return ProviderError(f"{who} did not answer in time")
     if isinstance(exc, httpx.ConnectError):
         return ProviderError(f"could not connect to {who}: {exc.__class__.__name__}")
+    if isinstance(exc, httpx.DecodingError):  # (its text is the reader's or zlib's: no URL)
+        return ProviderError(f"{who}: {exc}"[:200])
     if isinstance(exc, httpx.HTTPError):
         return ProviderError(f"{who}: {exc.__class__.__name__}")
     return ProviderError(f"{who}: {exc.__class__.__name__}: {exc}")
@@ -422,3 +446,79 @@ async def run_streams(step: Step, meter: Meter, size: int, who: str, streams: in
         raise error
     if not meter.total:
         raise ProviderError(f"{who} did not answer in time" if pending else f"{who} sent no data")
+
+
+class HttpProvider(SpeedProvider):
+    """A provider that downloads with GET requests and uploads with POST requests of declared length, over parallel
+    streams (`run_streams`): what Cloudflare and LibreSpeed share. A subclass names its two paths, its size unit and
+    the parameters of a download request; it may also say how a refusal reads (`_refused`) and what an answer tells
+    about the server (`_label`)."""
+
+    DOWN_PATH = ""   # appended to `base`
+    UP_PATH = ""
+    UNIT = 1         # a download request asks for whole units of this many bytes (a LibreSpeed MiB)
+    _who = ""        # the server as the log and the reasons name it
+
+    def __init__(self, base: str, clock: Callable[[], float], transport: Optional[httpx.AsyncBaseTransport]):
+        super().__init__(clock)
+        self.base = base
+        self._client = httpx.AsyncClient(timeout=TIMEOUTS, follow_redirects=False,
+                                         transport=transport if transport is not None else BulkTransport(),
+                                         headers=HEADERS)
+
+    def _download_request(self, size: int) -> Optional[Tuple[Dict[str, int], int]]:
+        """(the query parameters of a download request for up to `size` bytes, how many bytes it is to carry), or None
+        when nothing can be asked for."""
+        raise NotImplementedError
+
+    def _refused(self, status: int) -> ProviderError:
+        """The reason for an error answer."""
+        return refused(status, self._who)
+
+    def _label(self, response: httpx.Response) -> None:
+        """Takes what an answer tells about the server (nothing, unless a subclass uses it)."""
+
+    def _server(self) -> Optional[str]:
+        """The server's label for the finished direction."""
+        return self.server
+
+    async def download(self, cap_bytes: int, time_limit_s: float, target_s: Optional[float] = None) -> Transfer:
+        meter = self._meter(cap_bytes, time_limit_s, target_s=target_s)
+
+        async def step(meter: Meter, size: int) -> None:
+            key = meter.request()
+            asked = self._download_request(size)
+            if asked is None:
+                return
+            params, want = asked
+            async with self._client.stream("GET", f"{self.base}{self.DOWN_PATH}", params=params) as response:
+                if response.status_code != 200:
+                    raise self._refused(response.status_code)
+                self._label(response)
+                async for data in download_body(response, want, self._who).pieces():  # never more than asked for
+                    want -= meter.add(len(data), key)  # a response with more than asked for is cut off here
+                    if want <= 0 or meter.done:
+                        return  # leaving the block closes the connection with whatever is unread
+
+        await run_streams(step, meter, request_size(cap_bytes, unit=self.UNIT), self._who, unit=self.UNIT)
+        return meter.transfer(self._server())
+
+    async def upload(self, cap_bytes: int, time_limit_s: float, target_s: Optional[float] = None) -> Transfer:
+        meter = self._meter(cap_bytes, time_limit_s, ramp=0.0, target_s=target_s)
+
+        async def step(meter: Meter, size: int) -> None:
+            key = meter.request()
+            async with self._client.stream("POST", f"{self.base}{self.UP_PATH}", content=payload(meter, size, key),
+                                           headers={"Content-Length": str(size),
+                                                    "Content-Type": "application/octet-stream"}) as response:
+                if response.status_code >= 300:
+                    raise self._refused(response.status_code)
+                await read_answer(response)
+            meter.mark(key)  # the answer: the server has the whole body
+            self._label(response)
+
+        await run_streams(step, meter, request_size(cap_bytes, rounds=UPLOAD_ROUNDS), self._who, finish=True)
+        return meter.transfer(self._server())
+
+    async def aclose(self) -> None:
+        await self._client.aclose()

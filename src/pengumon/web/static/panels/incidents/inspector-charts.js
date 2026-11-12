@@ -2,7 +2,9 @@
 // axis (one label per second of the window), the same left and right gutters, the shaded band of the incident and a
 // crosshair that follows the pointer on every chart. Colors come from the design tokens (chart-theme.js).
 
-import { escapeHtml, localFormat, getTargetInfo, sortTargetsByCanonical, targetList } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { localFormat } from '../../js/clock.js';
+import { getTargetInfo, sortTargetsByCanonical, targetList } from '../../js/targets.js';
 import { shortLabels } from '../../js/path.js';
 import { series, token } from '../../js/chart-theme.js';
 
@@ -130,10 +132,12 @@ function kill() {
   });
 }
 
-const key = (color, text, dash, title) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="key line" style="--c:${color}${dash ? ';background:none;border-top:2px dashed var(--c);height:0' : ''}"></i>${escapeHtml(text)}</span>`;
+const key = (color, text, dash, title) => `<span${title ? ` title="${escapeHtml(title)}"` : ''}><i class="key line" style="--c:${escapeHtml(color)}${dash ? ';background:none;border-top:2px dashed var(--c);height:0' : ''}"></i>${escapeHtml(text)}</span>`;
 
 // Draws the tracks for one inspection; returns nothing. data is the /inspect response.
+let lastData = null; // the inspection drawn, for a redraw in new colors
 export function renderTracks(data) {
+  lastData = data;
   kill();
   hover = null;
   const canvasLat = document.getElementById('incidentZoomChart');
@@ -249,3 +253,8 @@ function routerTrack(data, times, labels, plugins) {
     options: o, plugins
   });
 }
+
+// A theme switch with the inspector open: the colors are read when a chart is made, so the tracks are made again.
+document.addEventListener('themechange', () => {
+  if (lastData && charts.lat && document.getElementById('incidentInspectorModal')?.classList.contains('active')) renderTracks(lastData);
+});

@@ -57,7 +57,7 @@
 :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-spark { grid-area: spark; justify-self: end; color: var(--st); font-size: var(--fs-xs); letter-spacing: 0; white-space: nowrap; overflow: hidden; max-width: 100%; }
 
 :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-extra { padding-top: var(--sp-2); }
-:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-extra-h { color: var(--ink-3); font-size: var(--fs-xs); font-weight: var(--fw-regular, 400); margin-bottom: 4px; }
+:root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-extra-h { color: var(--ink-3); font-size: var(--fs-xs); font-weight: 400; margin-bottom: 4px; }
 :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-extra-list { display: flex; flex-wrap: wrap; gap: 4px var(--sp-3); }
 :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-pe { display: inline-flex; align-items: center; gap: 6px; font: inherit; color: var(--ink-2); background: none; border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 2px 8px; cursor: pointer; }
 :root[data-look="digital-rain"] [data-panel="diagnosis"] .dr-pe svg.i { color: var(--st); }

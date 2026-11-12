@@ -30,3 +30,14 @@
 .events li > span:last-child { overflow-wrap: anywhere; }
 .insp-head > div { min-width: 0; }
 @media (max-width: 640px) { .lanes { grid-template-columns: 84px minmax(0, 1fr); } }
+/* traffic in the incident's hours, and the router's events */
+.itraf { list-style: none; display: flex; flex-direction: column; gap: var(--sp-2); margin: 0; padding: 0; }
+.itraf > li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: var(--sp-3); padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); font-size: var(--fs-sm); }
+.itraf-h { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.itraf-h b { color: var(--ink-1); }
+.itraf-h span, .itraf-none { color: var(--ink-3); font-size: var(--fs-xs); }
+.itraf-who { list-style: none; display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; min-width: 0; }
+.itraf-who li { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
+.itraf-who .n { color: var(--ink-1); font-weight: var(--fw-semi); overflow-wrap: anywhere; }
+.itraf-who .f { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+@container (max-width: 640px) { .itraf > li { grid-template-columns: minmax(0, 1fr); gap: 4px; } }

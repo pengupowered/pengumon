@@ -3,7 +3,7 @@
 // Save the box is empty again and the row shows "Set · host".
 
 import { registerActions } from '../../js/dispatch.js';
-import { escapeHtml } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
 import { S, setSecret } from './store.js';
 
 const editing = new Set(); // slots whose password box is open
@@ -22,7 +22,7 @@ function stateText(slot, spec) {
 }
 
 // The inside of a slot box. `spec` is the schema's secret entry (label, kind, env) or a small stand-in for a header.
-export function slotInner(slot, spec) {
+function slotInner(slot, spec) {
   const st = slotState(slot);
   const env = st.source === 'env' || st.source === 'secret_file';
   const pending = slot in S.draft.secrets;

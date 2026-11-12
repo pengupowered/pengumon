@@ -4,13 +4,14 @@
 // is the Channels dialog (channels.js). Every DOCSIS name and number lives here and in that view; the line card itself
 // knows no technology.
 
-import { escapeHtml, icon, setText, STATUS } from '../../js/util.js';
+import { escapeHtml } from '../../js/escape.js';
+import { icon, setText, STATUS } from '../../js/dom.js';
 import { gradeOf, levelOfGrade, rangeOf, worstGrade } from '../../js/grades.js';
 import { barMarkup, gaugeText, goodText, segments } from './gauge.js';
+import { has } from '../../js/values.js';
 import './channels.js'; // the adapter's detail view (registers openChannelsModal)
 
 export const DEFAULT_TITLE = 'Cable modem';
-const has = (v) => v !== null && v !== undefined;
 const HISTORY = 60; // readings kept for the error bars (since the page opened)
 
 export { goodText };
@@ -26,7 +27,7 @@ function paintGauge(el, refs, name, range, value, grade, spread) {
   const words = gaugeText(name, range, value, spread);
   refs.bar.innerHTML = barMarkup(segments(range, value, spread && spread[0], spread && spread[1]));
   refs.bar.setAttribute('aria-label', words.aria);
-  refs.scale.innerHTML = `<span>${words.scale.min}</span><span class="good">${escapeHtml(words.scale.good)}</span><span>${words.scale.max}</span>`;
+  refs.scale.innerHTML = `<span>${escapeHtml(words.scale.min)}</span><span class="good">${escapeHtml(words.scale.good)}</span><span>${escapeHtml(words.scale.max)}</span>`;
 }
 
 // A whole gauge as markup (the Channels dialog's summary).
