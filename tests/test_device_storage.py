@@ -409,6 +409,7 @@ async def test_ranges_are_inclusive_and_padded(repo):
 # --- retention and the WAN-rate queries -------------------------------------------------------------------------------
 
 async def test_retention_prunes_both_tables_for_every_device(repo):
+    """Device readings go at retention_days (7), the cable line's at its own line_retention_days (30 here)."""
     now = time.time()
     for age_days in (40, 8, 1, 0):
         ts = now - age_days * DAY
@@ -416,10 +417,10 @@ async def test_retention_prunes_both_tables_for_every_device(repo):
             await repo.insert_device_sample(DeviceSample(device_id=device_id, ts=ts, status="healthy"))
             await repo.insert_line_sample(LineSample(device_id=device_id, ts=ts, technology="docsis",
                                                      status="healthy", detail='{"v":1,"ch":[]}'))
-    removed = await repo.cleanup_old_samples(retention_days=7)
-    assert (removed["device_samples"], removed["line_samples"]) == (4, 4)
+    removed = await repo.cleanup_old_samples(retention_days=7, line_retention_days=30)
+    assert (removed["device_samples"], removed["line_samples"]) == (4, 2)
     assert len(await repo.get_device_samples("a", 0, now + 1)) == 2
-    assert len(await repo.get_line_samples("b", 0, now + 1)) == 2
+    assert len(await repo.get_line_samples("b", 0, now + 1)) == 3
 
 
 def _nearest_rank(values, fraction):

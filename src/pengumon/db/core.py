@@ -22,6 +22,12 @@ logger = logging.getLogger("pengumon.db")
 DAY = 86400
 PRUNE_BATCH_ROWS = 5000  # rows one retention delete removes per write transaction (tens of milliseconds)
 PRUNE_VACUUM_PAGES = 2000  # free pages one incremental_vacuum step returns to the file per write transaction
+TRAFFIC_APP_HOURS_DAYS = 31  # the hourly app lists (traffic_app_hours) are kept this long
+# The retention settings the repository holds (days), by name: the fixed full-detail tiers, then one per kind of data.
+FULL_DETAIL_SETTINGS = ("retention_days", "slot_retention_days", "rollup_retention_days")
+KIND_SETTINGS = ("latency_retention_days", "router_retention_days", "mesh_retention_days", "line_retention_days",
+                 "traffic_retention_days", "speedtest_retention_days", "incident_retention_days")
+RETENTION_SETTINGS = FULL_DETAIL_SETTINGS + KIND_SETTINGS
 SPEED_TEST_MIN_DAYS = 32  # speed tests are kept at least this long (the monthly data cap needs the whole month)
 
 
@@ -34,20 +40,31 @@ class RepositoryCore:
         db_path: Optional[str] = None,
         sample_flush_seconds: float = 10.0,
         retention_days: int = 7,
-        rollup_retention_days: int = 90,
-        long_rollup_retention_days: int = 400,
-        traffic_retention_days: int = 400,
+        rollup_retention_days: int = 30,
+        latency_retention_days: int = 180,
+        traffic_retention_days: int = 180,
         slot_retention_days: int = 7,
-        incident_retention_days: int = 0,
+        incident_retention_days: int = 180,
+        router_retention_days: int = 180,
+        mesh_retention_days: int = 180,
+        line_retention_days: int = 180,
+        speedtest_retention_days: int = 180,
     ):
         self.db_path = paths.db_path(db_path)
         self._ensure_dir()
         self.retention_days = retention_days
         self.rollup_retention_days = rollup_retention_days
-        self.long_rollup_retention_days = long_rollup_retention_days
+        self.latency_retention_days = latency_retention_days
+        self.router_retention_days = router_retention_days
+        self.mesh_retention_days = mesh_retention_days
+        self.line_retention_days = line_retention_days
         self.traffic_retention_days = traffic_retention_days
+        self.speedtest_retention_days = speedtest_retention_days
         self.slot_retention_days = slot_retention_days  # the 10-second rollups; keeping them while raw is shorter is its point
         self.incident_retention_days = incident_retention_days  # 0: resolved incidents are kept forever
+        # The probe round in force (prober.interval_seconds; the probing component keeps it current): the dead-minute
+        # rule (probe_interval.dead_minute_probes) reads it when quarters are written and when uptime is read.
+        self.probe_interval_seconds: float = 1.0
         # targets table cache (key <-> id); tiny, and only grows when a new target first reports.
         self._target_ids: Dict[str, int] = {}
         self._target_keys: Dict[int, str] = {}
@@ -182,24 +199,36 @@ class RepositoryCore:
         async with self._db.write() as db:
             await db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
 
-    async def cleanup_old_samples(
-        self, retention_days: Optional[int] = None, rollup_retention_days: Optional[int] = None,
-        long_rollup_retention_days: Optional[int] = None,
-    ) -> Dict[str, int]:
-        """Prunes raw telemetry older than retention_days (probe samples, device and line samples), 10-second rollups
-        older than slot_retention_days, per-minute rollups older than rollup_retention_days and quarter-hour rollups (and speed tests and
-        device events) older than long_rollup_retention_days, then returns the freed pages to the file system.
+    def probe_history_days(self) -> int:
+        """How far back the probes' history reaches: the longer of the per-minute and quarter-hour tiers."""
+        return max(self.latency_retention_days, self.rollup_retention_days)
 
-        Incidents are kept unless database.incident_retention_days is set: they're the record of outages and are tiny
-        (hundreds of rows). Then resolved ones older than that go, open ones never."""
-        if retention_days is None:
-            retention_days = self.retention_days
-        if rollup_retention_days is None:
-            rollup_retention_days = self.rollup_retention_days
-        if long_rollup_retention_days is None:
-            long_rollup_retention_days = self.long_rollup_retention_days
+    def router_history_days(self) -> int:
+        """How far back the router's history reaches (raw, per-minute and quarter-hour tiers: db/device_tiers.py)."""
+        return max(self.router_retention_days, self.rollup_retention_days)
+
+    def mesh_history_days(self) -> int:
+        """How far back the mesh nodes' client counts reach (raw, then quarter hours)."""
+        return max(self.mesh_retention_days, self.retention_days)
+
+    async def cleanup_old_samples(self, **overrides: int) -> Dict[str, int]:
+        """Prunes what is older than its kind's retention, then returns the freed pages to the file system:
+
+        - the fixed full detail: raw probe samples and the router, mesh and line raw readings of the device tables
+          (`retention_days`, except line_samples: `line_retention_days`), the 10-second rollups (`slot_retention_days`)
+          and the per-minute rollups of probes and devices (`rollup_retention_days`);
+        - by kind past that: probes' quarter-hours (`latency_retention_days`), the router's (`router_retention_days`),
+          the mesh's (`mesh_retention_days`), the cable line's readings (`line_retention_days`), the router's traffic
+          (`traffic_retention_days`), speed tests and device events (`speedtest_retention_days`, speed tests never under
+          SPEED_TEST_MIN_DAYS) and resolved incidents with their evidence (`incident_retention_days`, 0: forever).
+
+        `overrides` (RETENTION_SETTINGS names, in days) replace the repository's own value for this call."""
+        unknown = set(overrides) - set(RETENTION_SETTINGS)
+        if unknown:
+            raise TypeError(f"unknown retention setting: {', '.join(sorted(unknown))}")
+        policy = {name: overrides.get(name, getattr(self, name)) for name in RETENTION_SETTINGS}
         with tracer.start_as_current_span("db.retention") as span:
-            removed = await self._prune(retention_days, rollup_retention_days, long_rollup_retention_days)
+            removed = await self._prune(policy)
             span.set_attributes({f"db.removed.{table}": n for table, n in removed.items()})
         return removed
 
@@ -226,45 +255,61 @@ class RepositoryCore:
         async with db.execute("PRAGMA freelist_count") as cursor:
             return (await cursor.fetchone())[0]
 
-    async def _prune(self, retention_days: int, rollup_retention_days: int,
-                     long_rollup_retention_days: int) -> Dict[str, int]:
+    async def _prune(self, policy: Dict[str, int]) -> Dict[str, int]:
         await self.flush_samples()  # so buffered samples are pruned by the same rule
         started = time.monotonic()
         now = time.time()
-        cutoff_ts = now - (retention_days * DAY)
-        slot_cutoff = now - max(self.slot_retention_days, retention_days) * DAY
+        days = policy
+        cutoff_ts = now - (days["retention_days"] * DAY)
+        slot_cutoff = now - max(days["slot_retention_days"], days["retention_days"]) * DAY
+        minute_cutoff = int((now - days["rollup_retention_days"] * DAY) // 60)
+
+        def quarter(kind_days: int) -> int:
+            return int((now - kind_days * DAY) // 900)
+
         removed: Dict[str, int] = {}
         delete = self._delete_old
+        # full detail: the same for every kind of data
         removed["samples"] = await delete("samples", "ts < ?", (cutoff_ts,), "ts, target")
         removed["rollup_10s"] = await delete("rollup_10s", "slot < ?", (int(slot_cutoff // 10),), "slot, target")
-        removed["rollup_1m"] = await delete(
-            "rollup_1m", "minute < ?", (int((now - rollup_retention_days * DAY) // 60),), "minute, target")
-        removed["rollup_15m"] = await delete(
-            "rollup_15m", "quarter < ?", (int((now - long_rollup_retention_days * DAY) // 900),), "quarter, target")
-        # the speed tests are a few rows a day, kept as long as the longest rollups, and never less than a
-        # calendar month and a day: the monthly data cap sums this month's tests
-        removed["speed_tests"] = await delete(
-            "speed_tests", "ts < ?", (now - max(long_rollup_retention_days, SPEED_TEST_MIN_DAYS) * DAY,), "rowid")
-        # every device at once
+        removed["rollup_1m"] = await delete("rollup_1m", "minute < ?", (minute_cutoff,), "minute, target")
+        removed["device_rollup_1m"] = await delete(
+            "device_rollup_1m", "minute < ?", (minute_cutoff,), "device_id, minute")
         removed["device_samples"] = await delete("device_samples", "ts < ?", (cutoff_ts,), "device_id, ts")
-        removed["line_samples"] = await delete("line_samples", "ts < ?", (cutoff_ts,), "rowid")
         removed["mesh_samples"] = await delete("mesh_samples", "ts < ?", (cutoff_ts,), "device_id, ts, node_id")
-        # the router's traffic: database.traffic_retention_days (the latest app windows go with their age too)
-        traffic_cutoff = now - self.traffic_retention_days * DAY
+        removed["traffic_app_hours"] = await delete(
+            "traffic_app_hours", "window_end < ?", (int(now - TRAFFIC_APP_HOURS_DAYS * DAY),),
+            "device_id, client, window_end")
+        # past it, by kind
+        removed["rollup_15m"] = await delete(
+            "rollup_15m", "quarter < ?", (quarter(days["latency_retention_days"]),), "quarter, target")
+        removed["device_rollup_15m"] = await delete(
+            "device_rollup_15m", "quarter < ?", (quarter(days["router_retention_days"]),), "device_id, quarter")
+        removed["mesh_rollup_15m"] = await delete(
+            "mesh_rollup_15m", "quarter < ?", (quarter(days["mesh_retention_days"]),), "device_id, quarter, node_id")
+        removed["line_samples"] = await delete(
+            "line_samples", "ts < ?", (now - days["line_retention_days"] * DAY,), "rowid")
+        # the speed tests are a few rows a day and never kept less than a calendar month and a day: the monthly data
+        # cap sums this month's tests
+        removed["speed_tests"] = await delete(
+            "speed_tests", "ts < ?", (now - max(days["speedtest_retention_days"], SPEED_TEST_MIN_DAYS) * DAY,),
+            "rowid")
+        # device events (restarts, WAN link changes) are a few rows a month and explain old incidents
+        removed["device_events"] = await delete(
+            "device_events", "ts < ?", (now - days["speedtest_retention_days"] * DAY,), "rowid")
+        traffic_cutoff = now - days["traffic_retention_days"] * DAY
         removed["traffic_hourly"] = await delete(
             "traffic_hourly", "hour < ?", (int(traffic_cutoff),), "device_id, hour, client")
         removed["traffic_apps"] = await delete("traffic_apps", "window_end < ?", (int(traffic_cutoff),), "rowid")
-        # device events (restarts, WAN link changes) are a few rows a month and explain old incidents: kept as long
-        # as the quarter-hour rollups
-        removed["device_events"] = await delete(
-            "device_events", "ts < ?", (now - long_rollup_retention_days * DAY,), "rowid")
-        if self.incident_retention_days > 0:
+        if days["incident_retention_days"] > 0:
             # resolved incidents only: an open one is the outage going on, whatever its age
             removed["incidents"] = await delete(
                 "incidents", "resolved = 1 AND COALESCE(end_time, start_time) < ?",
-                (now - self.incident_retention_days * DAY,), "rowid")
+                (now - days["incident_retention_days"] * DAY,), "rowid")
             if removed["incidents"]:
                 self._incidents_version += 1  # the incident-list caches and the dashboards refetch
+        # an incident's evidence goes with it (db/evidence.py); no other retention touches it
+        removed["incident_evidence"] = await self.prune_incident_evidence()
         async with self._db.write() as db:
             freed = await self._free_pages(db)
         # Each step of the pragma frees pages, so it has to be stepped to the end: in bounded steps, each its own
@@ -285,11 +330,13 @@ class RepositoryCore:
         if freed > 0:
             db_vacuum_pages.add(freed)
         db_retention_duration.record(time.monotonic() - started)
-        logger.info(
-            f"Retention ({retention_days} days raw, {rollup_retention_days} days per-minute, "
-            f"{long_rollup_retention_days} days quarter-hour): removed "
-            + ", ".join(f"{n:,} {t}" for t, n in removed.items() if n)
-            + f" in {(time.monotonic() - started) * 1000:.0f} ms"
-            if any(removed.values()) else f"Retention ({retention_days} days): nothing to remove"
-        )
+        kinds = ", ".join(f"{name.removesuffix('_retention_days')} {days[name] or 'forever'}" for name in KIND_SETTINGS)
+        if any(removed.values()):
+            logger.info(f"Retention (full detail {days['retention_days']} / {days['slot_retention_days']} / "
+                        f"{days['rollup_retention_days']} days; kept for, in days: {kinds}): removed "
+                        + ", ".join(f"{n:,} {t}" for t, n in removed.items() if n)
+                        + f" in {(time.monotonic() - started) * 1000:.0f} ms")
+        else:
+            logger.info(f"Retention (full detail {days['retention_days']} / {days['slot_retention_days']} / "
+                        f"{days['rollup_retention_days']} days; kept for, in days: {kinds}): nothing to remove")
         return removed

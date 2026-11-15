@@ -12,8 +12,9 @@
 // renderCharts(), which hands the card a new view model (present()).
 
 import { maxLivePoints, state } from '../../js/state.js';
-import { formatClock } from '../../js/clock.js';
+import { formatClock, localFormat } from '../../js/clock.js';
 import { formatMs } from '../../js/format.js';
+import { monthsPast, stepWords } from '../../js/ranges.js';
 import { getTargetInfo, targetList } from '../../js/targets.js';
 import { SERIES, combine, memberNames, seriesMembers, shortLabels } from '../../js/path.js';
 import { createCard } from '../../js/cards.js';
@@ -36,7 +37,10 @@ let noPings = false; // the live targets say this host cannot send pings (probin
 let incidents = []; // [{start, end, level}] for the shaded windows
 let card = null;
 
-const clock = (ts, seconds) => formatClock(ts * 1000, false, !!seconds); // js/clock.js formatters are made once; the chart relabels up to 240 points on every message
+const TITLE_AT = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+const MONTH_YEAR = { month: 'short', year: 'numeric' };
+// (months past 90 days: "Nov 2026"; weeks: dates; several days: dates and hours; a day: the clock)
+const clock = (ts, seconds, date = false, dayOnly = false, monthOnly = false) => (monthOnly ? localFormat(ts * 1000, MONTH_YEAR) : dayOnly ? localFormat(ts * 1000, { month: 'short', day: 'numeric' }) : formatClock(ts * 1000, date, !!seconds)); // js/clock.js formatters are made once; the chart relabels up to 240 points on every message
 
 export function resetView() {
   view.times = [];
@@ -158,10 +162,13 @@ export function present({ data = view, mode = lineMode, all = targetList(), live
   const liveNow = () => (fixed === undefined ? state.currentMode === 'live' : fixed);
   live = liveNow();
   const span = data.times.length > 1 ? data.times[data.times.length - 1] - data.times[0] : 0;
+  // the days the chart covers: what the data drawn spans (All starts at the oldest stored probe), not the range's name
+  const days = span / 86400;
+  const step = data.times.length > 1 ? data.times[1] - data.times[0] : 0; // (the history views' buckets are all one width)
   const { lines: drawn, band } = lines(data, mode, all);
   const words = legend(data, mode, all, quiet);
   return {
-    labels: data.times.map((t) => clock(t, live || span < 7200)),
+    labels: data.times.map((t) => clock(t, (live || span < 7200) && days <= 1, days > 1, days >= 20, monthsPast(span))),
     times: data.times,
     lines: drawn,
     band,
@@ -174,6 +181,9 @@ export function present({ data = view, mode = lineMode, all = targetList(), live
       { action: 'setLatencyView', arg: 'path', label: 'Path', title: 'Three lines: router, line and internet', pressed: mode === 'path' },
       { action: 'setLatencyView', arg: 'targets', label: 'Each target', title: 'One line per probed target, ISP hops included', pressed: mode === 'targets' }
     ],
+    // a stored view's tooltip names its bucket: "Nov 3, 12:00 · 6 h average" (a long range's axis labels hold the date only)
+    titleAt: (index) => (live || data.times.length < 2 || step < 3600 ? null
+      : `${localFormat(data.times[index] * 1000, step >= 86400 ? { month: 'short', day: 'numeric' } : TITLE_AT)} · ${stepWords(step)} average`),
     memberLines: (seriesId, index) => memberLines(all, data, seriesId, index),
     lossLabel: (index, pct) => lossLabel(all, data, liveNow(), index, pct)
   };
@@ -276,5 +286,31 @@ export function mountCharts(bus, section) {
   };
   bus.subscribe('incidents:list', (list) => { listed = list || []; shade(); });
   everyWhileVisible(shade, 60000); // (an ongoing incident's shading reaches "now")
-  return bus.subscribe('message', updateLiveCharts);
+  return bus.subscribe('message', (message) => { remember(message); updateLiveCharts(message); });
+}
+
+// The live feed's last messages, kept whatever range the chart shows. A live window loaded from the server (a page load,
+// a reload, back to Live) holds only the rounds stored before it was asked for, and the messages that arrived while it
+// loaded were drawn on the view it replaced: joinLive adds every kept message after `after` to it, so there is no gap
+// between the stored rounds and the feed.
+const recent = [];
+let feedWaiters = [];
+function remember(message) {
+  recent.push(message);
+  if (recent.length > maxLivePoints) recent.shift();
+  feedWaiters.forEach((done) => done());
+  feedWaiters = [];
+}
+// Resolves once the feed has delivered a message (at once if it has), or after `ms`. A live window asked for before
+// then could miss the round in progress when it was asked for: not stored yet, and its message sent before this page
+// was listening.
+export function liveFeedReady(ms) {
+  if (recent.length) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    feedWaiters.push(() => { clearTimeout(timer); resolve(true); });
+  });
+}
+export function joinLive(after) {
+  recent.filter((m) => m.timestamp > after).forEach(updateLiveCharts);
 }

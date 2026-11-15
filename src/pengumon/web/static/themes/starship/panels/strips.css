@@ -36,9 +36,11 @@
 
 /* narrow: the name and the availability over the strip */
 @container (max-width: 560px) {
-  :root[data-look="starship"] [data-panel="strips"] .strips { grid-template-columns: minmax(0, 1fr) auto; }
+  :root[data-look="starship"] [data-panel="strips"] .strips { grid-template-columns: 1fr auto; } /* (1fr: the strips' 7 px blocks widen it, panels/strips/panel.css) */
   :root[data-look="starship"] [data-panel="strips"] .s-hd:nth-child(2) { display: none; }
-  :root[data-look="starship"] [data-panel="strips"] .s-name { grid-column: 1; justify-self: start; max-width: 100%; margin-top: 4px; border-radius: 0; }
+  :root[data-look="starship"] [data-panel="strips"] .s-name { grid-column: 1; justify-self: start; max-width: calc(100cqw - 100px); margin-top: 4px; border-radius: 0; }
+  :root[data-look="starship"] [data-panel="strips"] .s-name span { flex: none; max-width: 100%; } /* the row's label whole, the configured name cut first */
+  :root[data-look="starship"] [data-panel="strips"] .s-pct { align-self: center; margin-top: 4px; }
   :root[data-look="starship"] [data-panel="strips"] .s-name small { display: inline; }
   :root[data-look="starship"] [data-panel="strips"] .s-pct { grid-column: 2; }
   :root[data-look="starship"] [data-panel="strips"] .strips .strip,

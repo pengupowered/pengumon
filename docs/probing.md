@@ -146,7 +146,7 @@ is blocked past the deadline is counted as lost; ping has the same limit.
 
 Limits (docs/security.md has the reasons):
 
-- At most 8 hops per path use TCP or HTTP: each opens a connection every second.
+- At most 8 hops per path use TCP or HTTP: each opens a connection every probe round (every second at the default interval).
 - Loopback, link-local and special-purpose addresses (`127.0.0.1`, `169.254.169.254`, `::ffff:127.0.0.1`, multicast,
   `localhost`) are refused when the path is edited and again on the address a name resolves to at every probe. This
   host's own apps are watched by Service checks (Settings), not by the path.
@@ -175,6 +175,35 @@ What a lost TCP or HTTP probe says (the text stored with the sample and shown by
 Without any ICMP hop on the path the dashboard does not say "pings are not allowed": TCP and HTTP hops are still
 probed and judged. With a mix, and pings not allowed, the verdict stays "Not probing" (the ping hops have no evidence),
 while the TCP and HTTP hops are still probed and recorded.
+
+## How often: the probe interval
+
+Every hop of the path is probed once per round, and the round is Settings > Probing > **Probe every**: 1, 2, 5, 10, 30
+or 60 seconds (the default is 1 s). A change applies at the next round, without a restart. Hops stay in the same round
+whatever their method (ping, TCP or HTTP), because Pengumon finds where a fault is by comparing hops probed at the same
+moment (router fine and ISP lost: the ISP).
+
+- **DNS lookups** have their own choice, **DNS lookups every**: the same choices, not shorter than the probe interval and
+  a whole multiple of it (unset: every round). A lookup that is not due in a round is *not probed*: no sample, never
+  counted as lost, and a DNS incident rule counts lookups, not rounds. When a change of the probe interval leaves the
+  lookups' interval invalid (3 s probes cannot have 5 s lookups), Settings says so and refuses to save until it is fixed.
+- **The rules stay counted in probes.** "Loss outage starts after 3 lost probes in a row", "Latency incident starts after
+  10 slow probes in a row", "Recovery confirmed after 3 healthy probes" and "Judge each hop by its last 10 probes" keep
+  their stored numbers; the page shows the time they mean at the current interval beside them (3 probes: 3 s at 1 s,
+  30 s at 10 s). A time rule at a long interval would fire on one measurement, so the count is the evidence.
+- **What it costs, shown where you choose it:** the effect on the rules ("At 10 s: outages open after about 30 s, latency
+  incidents after about 100 s"), "Drops shorter than about N s may go unseen", the internet traffic a month and the
+  storage a day. Traffic counts the hops past the gateway: an ICMP echo of 56 data bytes is 84 B each way over IPv4
+  (104 B over IPv6) plus 38 B of Ethernet framing each way; a DNS lookup about 150 B there and back; a TCP check about
+  0.7 KB and an HTTPS check about 5 KB. With 12 hops past the modem that is about 6.3 GB a month at 1 s, 3.2 GB at 2 s and
+  0.6 GB at 10 s. Storage is about 40 bytes per stored probe (measured on a live database: 326 MB over 8.2 million
+  rows): a path of 14 targets is about 48 MB a day at 1 s and 5 MB at 10 s. Only the raw samples scale; the 10-second,
+  per-minute and quarter-hour rows have one row per bucket whatever the interval.
+- **Rows already stored keep their meaning.** Loss is probes answered over probes sent, so history across a change stays
+  right. A *dead minute* (every probe lost) needs at least `min(10, ceil(30 / interval))` probes in it: 10 at 1 s and
+  2 s, 6 at 5 s, 3 at 10 s, 1 at 30 s and 60 s; the quarter-hour rows use the interval in force when they were written
+  and the uptime strips the interval in force now. An uptime block needs `min(10, block length / interval / 2)` probes
+  (at least 1) to be judged at all.
 
 ## The default gateway
 

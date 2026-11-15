@@ -64,11 +64,13 @@ async def get_traffic(
     days: Optional[int] = Query(None, ge=1, le=traffic.MAX_DAYS),
     top: Optional[int] = Query(None, ge=1, le=500),
 ):
-    """The last `hours` complete clock hours of the router's traffic, or (with `days`, which `hours` then yields to) the
-    last `days` whole days up to the last midnight, in the zone set in Settings, with the WAN's totals per day: hourly
-    WAN totals, clients ranked by download (with their top apps and hint) and the apps of every client together ranked
-    by download. The apps are the router's latest 24-hour window over a day or less, and the sum of the whole days
-    in the range over more (`apps_days`). `available`/`reason` say whether the router gives these figures at all."""
+    """The last `hours` hours of the router's traffic (`days` N means 24 * N hours and wins over `hours`): a rolling
+    window ending at the newest hour the router published (or the current hour when that is older than an hour):
+    hourly WAN totals (left out over 7 days), `daily` totals per calendar day inside the window (the first and last
+    `partial`, with the `hours` they hold), clients ranked by download (with their top apps and hint) and the apps of
+    every client together ranked by download. The apps are the router's 24-hour windows that lie inside the window
+    (`apps_covered`); `apps_unattributed` is the rest of the total, not broken down by app. `available`/`reason` say
+    whether the router gives these figures at all."""
     device = _require_traffic(state, device_id)
     namer = await _namer(request, state, device)
     body = await traffic.summary(state.repository, device.id, hours, namer, top=top, days=days,
@@ -102,8 +104,9 @@ async def get_client_traffic(
     hours: int = Query(168, ge=1, le=traffic.MAX_HOURS),
     days: Optional[int] = Query(None, ge=1, le=traffic.MAX_DAYS),
 ):
-    """One client's hourly series over the last `hours` complete hours, or the last `days` whole days (as /traffic, with
-    `daily`), its apps over the range as /traffic counts them and its apps by whole day. 404 for a client with no stored traffic and not in the client list."""
+    """One client over the same rolling window as /traffic (`hours`, or `days` * 24): its hourly series (left out over
+    7 days), `daily` totals, its apps over the window as /traffic counts them (`apps_covered`, `apps_unattributed`) and
+    its apps by whole day. 404 for a client with no stored traffic and not in the client list."""
     device = _require_traffic(state, device_id)
     namer = await _namer(request, state, device)
     mac = await _resolve(state, device, client, namer.mode == "full")

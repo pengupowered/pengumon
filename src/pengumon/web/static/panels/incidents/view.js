@@ -11,11 +11,18 @@ const { el, escapeHtml: esc, icon, mark } = kit;
 
 // ---------- the timeline ----------
 
+// The hairlines between the days of the window, at the local midnights inside it (fractions of the lane).
+const cutsStyle = (cuts) => (cuts.length
+  ? 'background-image:' + cuts.map(() => 'linear-gradient(var(--tl-cut,var(--line)),var(--tl-cut,var(--line)))').join(',')
+    + ';background-position:' + cuts.map((c) => `${(c * 100).toFixed(3)}% 0`).join(',')
+    + ';background-size:var(--tl-cut-w,1px) 100%;background-repeat:no-repeat' // a theme may set --tl-cut and --tl-cut-w
+  : '');
+
 function timelineMarkup(t) {
   const span = (value) => `${value.toFixed(2)}%`;
-  return t.lanes.map((lane) => `<div class="tl-lane" data-item="lane-${esc(lane.key)}"><span class="tl-l" data-v="lane">${esc(lane.word)}</span><div class="tl-track">${lane.bars.map((b) => `<button type="button" class="tl-bar st-${b.level}${b.expected ? ' exp' : ''}${b.ongoing ? ' ongoing' : ''}"`
+  return t.lanes.map((lane) => `<div class="tl-lane" data-item="lane-${esc(lane.key)}"><span class="tl-l" data-v="lane">${esc(lane.word)}</span><div class="tl-track" style="${cutsStyle(t.cuts)}">${lane.bars.map((b) => `<button type="button" class="tl-bar st-${b.level}${b.expected ? ' exp' : ''}${b.ongoing ? ' ongoing' : ''}"`
     + ` style="left:${span(b.left)};width:${span(b.width)}" data-item="bar-${numText(b.id)}" data-v="tip" data-action="inspectIncident" data-arg="${numText(b.id)}" data-tip="${esc(b.tip)}" aria-label="${esc(b.aria)}"></button>`).join('')}</div></div>`).join('')
-    + `<div class="tl-axis"><span></span><div data-v="days">${t.days.map((d) => `<span>${esc(d)}</span>`).join('')}</div></div>`
+    + `<div class="tl-axis"><span></span><div data-v="days">${t.days.map((d) => `<span style="--at:${(d.at * 100).toFixed(3)}%">${esc(d.label)}</span>`).join('')}</div></div>`
     + `<div class="tl-now" style="--now:${t.now.toFixed(4)}"></div>`
     + (t.window ? `<div class="tl-win" style="--a:${t.window.from.toFixed(4)};--b:${t.window.to.toFixed(4)}" aria-hidden="true"></div>` : '');
 }

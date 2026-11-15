@@ -13,10 +13,14 @@ import { focusViewersPassword, viewersPassword } from './access.js';
 import { fetchVersions } from './versions.js';
 import { fetchState, renderAll, syncAccess, updateChrome } from './render.js';
 import { addNote, setNotes, showServerErrors } from './validation.js';
+import { loweredKinds, lowerText } from './storage.js';
+import { askConfirm } from './confirm.js';
 import { renderVersions } from './transfer.js';
 import { $, U, isOpen } from './ui.js';
 
 const sentence = (names) => names.map((n) => (S.spec[n] ? `${S.spec[n].group ? `${S.spec[n].group}: ` : ''}${S.spec[n].label}` : n)).join(', ');
+
+let confirmedLowering = false; // the question about deleted data was answered yes: the Save it asked about goes on
 
 export async function save() {
   if (U.saving || !changeCount() || hasProblems()) return;
@@ -30,6 +34,12 @@ export async function save() {
   if (current === '') {
     addNote('crit', '<b>Not saved.</b> Enter the current password under “Others may look”: turning it on needs it.');
     focusViewersPassword();
+    return;
+  }
+  // lowering a "keep for" number deletes data older than it: say how much, and ask
+  const lowered = loweredKinds();
+  if (lowered.length && !confirmedLowering) {
+    askConfirm(lowerText(lowered), 'Delete and save', () => { confirmedLowering = true; save().finally(() => { confirmedLowering = false; }); });
     return;
   }
   U.saving = true;

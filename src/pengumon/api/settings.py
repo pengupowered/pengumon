@@ -33,10 +33,11 @@ from pengumon import __version__, paths
 from pengumon.api.access import NEED_CURRENT_VIEWERS, unconfirmed
 from pengumon.api.common import StateDep
 from pengumon.api.settings_models import (
-    About, ConfigYamlState, ConflictError, ImportDraft, ListState, PutResponse, SecretState, SettingsValidate,
+    About, ConfigYamlState, ConflictError, ImportDraft, ListState, ProbingCost, PutResponse, SecretState, SettingsValidate,
     SettingsError, SettingsPut, SettingsSchema, SettingsState, SettingsValues, ValidateResponse, ValueState,
     VersionDraft, VersionInfo,
 )
+from pengumon.probe_interval import probing_cost
 from pengumon.state import AppState
 from pengumon.db.settings import SettingsConflict
 from pengumon.observability import grafana
@@ -142,7 +143,7 @@ async def get_settings_schema(request: Request, response: Response, state: State
     if request.headers.get("if-none-match") == _etag():
         return Response(status_code=304, headers=headers)
     response.headers.update(headers)
-    return SettingsSchema.model_validate(build_schema(state.config.prober.interval_seconds))
+    return SettingsSchema.model_validate(build_schema())
 
 
 @router.get("/settings", response_model=SettingsState)
@@ -160,7 +161,7 @@ async def get_settings(request: Request, state: StateDep):
         lists = {k: {**v, "items": [_for_viewer(k, i) for i in v["items"]]} for k, v in lists.items()}
         secrets = {k: {**v, "host": None} for k, v in secrets.items() if not k.startswith("webhook_header.")}
     return SettingsState(
-        revision=manager.revision,
+        revision=manager.revision, probing=ProbingCost(**probing_cost(manager.config.targets)),
         values={k: ValueState(**v) for k, v in manager.value_states().items()},
         lists={k: ListState(**v) for k, v in lists.items()},
         secrets={k: SecretState(**v) for k, v in secrets.items()},

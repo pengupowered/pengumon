@@ -1,4 +1,4 @@
-// Router history modal: CPU / memory, WAN rates (with the line capacity when known) and client count over 1 h to 7 d,
+// Router history modal: CPU / memory, WAN rates (with the line capacity when known) and client count over 1 h up to All (the retention),
 // from the server-side buckets of GET /api/devices/{id}/history?max_points=. Fetched on open and on a range change only.
 
 import { registerActions } from '../../js/dispatch.js';
@@ -8,18 +8,21 @@ import { formatClock, zoneOffsetMs } from '../../js/clock.js';
 import { keepKeyboard, openModal } from '../../js/modal.js';
 import { setText } from '../../js/dom.js';
 import { series as tone, token } from '../../js/chart-theme.js';
+import { allStoredWords, axisLabel, distinctTicks, fillRangeSelect, loadFromOldest, monthTicks, monthsPast, rangeOptions, retentionDays, stepWords } from '../../js/ranges.js';
 
-const RANGES = { 3600: true, 21600: true, 86400: true, 604800: true };
-const MAX_POINTS = 360;
+// The ranges on offer: 1 h up to what the router's history is kept for (js/ranges.js).
+const options = () => rangeOptions({ days: retentionDays('router'), min: '1h' });
+const MAX_POINTS = 720; // (about 400-800 points a line from 24 h on)
 const Y_WIDTH = 54; // every chart gets the same y-axis width, so the three plot areas line up on the shared x axis
 const charts = {};
 let rangeSeconds = 3600;
-const RANGE_NAMES = { 3600: '1 hour', 21600: '6 hours', 86400: '24 hours', 604800: '7 days' };
+const rangeName = () => { const o = options().find((x) => x.seconds === rangeSeconds); return o ? o.words.toLowerCase() : `last ${Math.round(rangeSeconds / 86400)} days`; };
 let device = null; // the router whose history is open
 let requestSeq = 0;
 let lastBody = null; // the last answer drawn, for a redraw after a theme change
 let times = []; // the bucket times (ms) of the loaded answer: the crosshair snaps to them
 let bucketSeconds = 60;
+let drawnSeconds = 3600; // the span the charts draw (All starts at the oldest stored row): the axis labels follow it, not the range's name
 let hoverIdx = null; // the bucket the crosshair is on, in every chart
 const readers = {}; // chart id -> (row index) => readout text
 
@@ -59,7 +62,7 @@ const crosshair = {
       ctx.lineTo(x, a.bottom);
       ctx.stroke();
       chart.data.datasets.forEach((ds) => {
-        const p = ds.dot && ds.data[hoverIdx];
+        const p = ds.dot && (ds.aligned || ds.data)[hoverIdx];
         if (!p || p.y === null || p.y === undefined) return;
         ctx.beginPath();
         ctx.arc(x, scales.y.getPixelForValue(p.y), 3.5, 0, Math.PI * 2);
@@ -87,7 +90,7 @@ function nearest(ms) {
 
 // The time of a bucket: with seconds while buckets are shorter than a minute, with the date over a day.
 const stamp = (ms) => (bucketSeconds < 60 ? formatClock(ms, false, true)
-  : formatClock(ms, rangeSeconds > 86400));
+  : `${formatClock(ms, drawnSeconds > 86400)}${bucketSeconds >= 3600 ? ` · ${stepWords(bucketSeconds)}` : ''}`); // (a long range's bucket is named)
 
 function setHover(idx) {
   if (idx === hoverIdx) return;
@@ -111,10 +114,11 @@ function onKey(ev) {
 }
 
 // Ticks on round local times (every 10 min, 1 h, 6 h, ... whichever gives at most 7), the same on all three charts.
-const STEPS_MIN = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880];
+const STEPS_MIN = [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 5760, 10080, 20160];
 function niceTicks(scale) {
   const { min, max } = scale;
-  const step = (STEPS_MIN.find((m) => (max - min) / (m * 60000) <= 7) || 2880) * 60000;
+  if (monthsPast(drawnSeconds)) { scale.ticks = monthTicks(min, max).map((value) => ({ value })); return; } // months past 90 days
+  const step = (STEPS_MIN.find((m) => (max - min) / (m * 60000) <= 7) || 20160) * 60000;
   const off = -zoneOffsetMs(min); // the page's clock is UTC minus this
   const ticks = [];
   for (let t = Math.ceil((min - off) / step) * step + off; t <= max; t += step) ticks.push({ value: t });
@@ -145,7 +149,7 @@ function lineChart(id, datasets, yTitle, yMax, fromZero = true) {
           type: 'linear',
           grid: { display: false },
           afterBuildTicks: niceTicks,
-          ticks: { font: { size: 10 }, maxRotation: 0, callback: (v) => formatClock(v, rangeSeconds > 86400) }
+          ticks: { font: { size: 10 }, maxRotation: 0, callback: distinctTicks((v) => axisLabel(v, drawnSeconds)) }
         },
         y: {
           beginAtZero: fromZero,
@@ -197,6 +201,7 @@ export function renderRouterHistory(body) {
   document.getElementById('routerHistWanBox').style.display = showWan ? '' : 'none';
   times = rows.map((r) => r[0] * 1000);
   bucketSeconds = body.bucket_seconds || 60;
+  drawnSeconds = Math.max(1, xMax - xMin) / 1000;
   hoverIdx = null;
   Object.keys(readers).forEach((k) => delete readers[k]);
   Object.keys(charts).forEach((id) => { charts[id].destroy(); delete charts[id]; }); // a device without a section keeps no chart
@@ -245,7 +250,13 @@ export function renderRouterHistory(body) {
   document.getElementById('routerHistTempBox').style.display = hasTemp ? '' : 'none';
   if (hasTemp) {
     const temp = tone(3);
-    lineChart('routerHistTempChart', [series('Temperature avg', temp, col('temp_avg')), peak('Temperature max', temp, col('temp_max'))], '°C', undefined, false);
+    // the router is asked for its temperature about once a minute: in the 10-second slices of the last hour most slices hold
+    // none, so the line joins readings up to 3 minutes or 1.5 slices apart, whichever is longer (a longer silence still
+    // shows as a gap; past a day a slice is 15 minutes or more)
+    // (Chart.js draws a null as a break whatever spanGaps says: spanGaps joins points that are in the data, so the slices
+    // without a reading are left out of the drawn data; `aligned` keeps every slice for the crosshair, which reads by bucket)
+    const joined = (d) => Object.assign(d, { aligned: d.data, data: d.data.filter((p) => p.y !== null && p.y !== undefined), spanGaps: Math.max(180000, 1500 * bucketSeconds) });
+    lineChart('routerHistTempChart', [joined(series('Temperature avg', temp, col('temp_avg'))), joined(peak('Temperature max', temp, col('temp_max')))], '°C', undefined, false);
     legend('routerHistTempLegend', [['CPU temperature', 'var(--s4)']]);
     readers.routerHistTempChart = (i) => `${fmtNum(at('temp_avg')(i))} °C (peak ${fmtNum(at('temp_max')(i))} °C)`;
   }
@@ -263,16 +274,25 @@ async function load() {
   const seq = ++requestSeq;
   setText(status, 'Loading…');
   const end = Date.now() / 1000;
-  const q = new URLSearchParams({ start_time: String(end - rangeSeconds), end_time: String(end), max_points: String(MAX_POINTS) });
+  const all = !!options().find((o) => o.seconds === rangeSeconds && o.all);
   try {
-    const res = await fetch(`/api/devices/${encodeURIComponent(device.id)}/history?${q}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
+    const ask = async (from, to) => {
+      const q = new URLSearchParams({ start_time: String(from), end_time: String(to), max_points: String(MAX_POINTS) });
+      const res = await fetch(`/api/devices/${encodeURIComponent(device.id)}/history?${q}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+    // All starts at the oldest stored row when that is younger than the retention (js/ranges.js)
+    const { answer: body, since } = await loadFromOldest({
+      all, start: end - rangeSeconds, end, ask, current: () => seq === requestSeq,
+      widthOf: (b) => b.bucket_seconds, oldest: (b) => (b.rows.length ? b.rows[0][0] : null)
+    });
     if (seq !== requestSeq) return; // a newer range was chosen meanwhile
     renderRouterHistory(body);
     document.getElementById('routerHistModal').dataset.points = String(body.rows.length);
-    const slice = body.bucket_seconds >= 60 ? `${body.bucket_seconds / 60} min` : `${body.bucket_seconds} s`;
-    setText(status, body.rows.length ? `${RANGE_NAMES[rangeSeconds] || ''} · averages per ${slice}, dashed line: peak`
+    const slice = stepWords(body.bucket_seconds);
+    const what = all ? allStoredWords(retentionDays('router'), since) : rangeName();
+    setText(status, body.rows.length ? `${what} · averages per ${slice}, dashed line: peak`
       : 'No router samples in this range.');
   } catch (e) {
     if (seq === requestSeq) setText(status, `Could not load router history: ${e.message}`);
@@ -280,7 +300,12 @@ async function load() {
 }
 
 function markRange() {
-  document.querySelectorAll('#routerHistRanges button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.arg) === rangeSeconds)));
+  const host = document.getElementById('routerHistRanges');
+  if (!host) return;
+  const list = options();
+  const hit = list.find((o) => o.seconds === rangeSeconds) || list.find((o) => o.id === '1h') || list[0];
+  rangeSeconds = hit.seconds; // (a range the retention no longer keeps gives way to 1 h)
+  fillRangeSelect(host, { options: list, value: hit.id, action: 'setRouterHistoryRange', label: 'Time range' });
 }
 
 export function openRouterHistory(deviceId) {
@@ -294,7 +319,7 @@ export function openRouterHistory(deviceId) {
 }
 
 export function setRouterHistoryRange(seconds) {
-  if (!RANGES[seconds]) return;
+  if (!options().some((o) => o.seconds === seconds)) return;
   rangeSeconds = seconds;
   markRange();
   load();
@@ -305,6 +330,8 @@ document.addEventListener('themechange', () => { if (lastBody && device) renderR
 
 // The actions this module's markup names (see dispatch.js).
 registerActions('click', {
-  openRouterHistory: (el) => openRouterHistory(el.dataset.arg),
-  setRouterHistoryRange: (el) => setRouterHistoryRange(Number(el.dataset.arg))
+  openRouterHistory: (el) => openRouterHistory(el.dataset.arg)
+});
+registerActions('change', {
+  setRouterHistoryRange: (el) => { const hit = options().find((o) => o.id === el.value); if (hit) setRouterHistoryRange(hit.seconds); }
 });

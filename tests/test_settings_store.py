@@ -91,12 +91,12 @@ async def test_the_import_of_an_owner_shaped_config_equals_the_old_load_key_by_k
     stored = manager.document()
     assert stored.values["classifier.busy_load_pct"] == 70
     assert stored.values["classifier.consecutive_failures_for_incident"] == 3  # equal to the default: still stored
-    assert "server.host" not in stored.values and "prober.interval_seconds" not in stored.values
+    assert "server.host" not in stored.values and stored.values["prober.interval_seconds"] == 1  # a setting now
     assert "prober.ping_count_per_probe" not in stored.values
     assert set(stored.lists) == {"devices", "services", "dns_probes"}  # webhooks: not in the file, default
     versions = await manager.versions()
     assert [(v["revision"], v["source"]) for v in versions] == [(1, "import")]
-    assert versions[0]["summary"] == ("Imported from config.yaml: 15 values; devices 2, services 2, "
+    assert versions[0]["summary"] == ("Imported from config.yaml: 16 values; devices 2, services 2, "
                                       "DNS lookups 2")
     assert manager.import_report() == []
 
@@ -407,7 +407,7 @@ async def test_export_round_trips_through_import(tmp_path):
 async def test_import_of_a_whole_config_yaml_leaves_secrets_bootstrap_and_targets_out(tmp_path):
     manager, _ = await make_manager(tmp_path, "")
     draft = await manager.import_yaml(OWNER_SHAPED + WEBHOOKS)
-    assert "server.host" not in draft["values"] and "prober.interval_seconds" not in draft["values"]
+    assert "server.host" not in draft["values"] and draft["values"]["prober.interval_seconds"] == 1
     (hook,) = draft["lists"]["webhooks"]
     assert "url" not in hook and hook["headers"]["X-Plain"] == "secret:Home_X-Plain"
     text = json.dumps(draft)

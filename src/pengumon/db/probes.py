@@ -9,10 +9,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from pengumon.incidents.loss import TargetLoss
 from pengumon.models.probes import ProbeSample
 from pengumon.db.core import DAY
+from pengumon.probe_interval import dead_minute_probes
 from pengumon.db.rollups import QUARTER_SECONDS, merged_rows_sql, minute_floor
 from pengumon.db.schema import (
     UPSERT_ROLLUP_10S_FROM_SAMPLES,
-    UPSERT_ROLLUP_15M_FROM_1M,
+    upsert_rollup_15m_from_1m,
     UPSERT_ROLLUP_1M_FROM_SAMPLES,
     slot_rows_from_samples,
 )
@@ -100,7 +101,8 @@ class ProbeQueries:
                 await db.execute(UPSERT_ROLLUP_1M_FROM_SAMPLES, (first_minute * 60, (last_minute + 1) * 60))
                 await db.execute(UPSERT_ROLLUP_10S_FROM_SAMPLES, (int(first // 10) * 10, (int(last // 10) + 1) * 10))
                 # the quarters of the minutes just written, from rollup_1m
-                await db.execute(UPSERT_ROLLUP_15M_FROM_1M, (first_minute // 15 * 15, (last_minute // 15 + 1) * 15))
+                await db.execute(upsert_rollup_15m_from_1m(dead_minute_probes(self.probe_interval_seconds)),
+                                 (first_minute // 15 * 15, (last_minute // 15 + 1) * 15))
         except Exception as e:
             self._sample_buffer = batch + self._sample_buffer  # keep them for the next attempt
             db_flush_failures.add(1, {"error": type(e).__name__})
@@ -371,7 +373,7 @@ class ProbeQueries:
         await self._flush_for(end_time, start_time, long_ok=True)
         now = time.time()
         minutes_start = now - self.rollup_retention_days * DAY
-        start_time = max(start_time, now - max(self.long_rollup_retention_days, self.rollup_retention_days) * DAY)
+        start_time = max(start_time, now - self.probe_history_days() * DAY)
         if end_time < start_time:
             return "bucket", [], 0
         ids = self._target_filter(target_ids)

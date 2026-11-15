@@ -115,6 +115,7 @@ its own rows. The services gauges stay in the table so that the order of `/metri
 - **6. line_load** (`engine/line_load.py`). Line capacity and the load backfills. Also the cross-wiring: a monitor with `watch_load` gets the line load, one with `watch_probes` gets the probe-loss check.
 - **7. notify** (`notify/component.py`). The notifier: ntfy and webhooks (`notify/notifier.py`, `notify/webhook.py`), for the classifier and the service checks. It sends one alert per outage, not per incident ([webhooks.md](webhooks.md)), and follows `incidents:` changes live.
 - **8. classifier** (`engine/classifier/component.py`). Needs the line load, the notifier and the devices' line technology.
+- **8a. incident_evidence** (`incidents/evidence.py`). Optional: writes each closed incident's own copy of what the inspector shows, once a minute ([storage.md](storage.md#incident-evidence-schema-v22)). Needs the devices (the modem's poll interval) and the database; nothing to stop.
 - **9. speedtest** (`speedtest/component.py`). Optional: the scheduled speed test. Needs the line load, the notifier and the classifier (it masks the classifier's verdicts while a test runs). It always registers; the scheduler reads `speedtest:` at every tick, so the setting needs no restart. Its `stop` ends a test still running, which records itself as interrupted.
 - **10. settings_preview** (`settings/preview_component.py`). The job store for the outage-rules preview; its `stop` kills a replay still running.
 - **11. services** (`services/component.py`). Optional: host service checks.

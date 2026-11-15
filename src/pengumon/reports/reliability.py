@@ -9,15 +9,20 @@ from pengumon.reports.common import _canonical_order, _split_incidents, _targets
 from pengumon.reports.outages import outage_totals, outages_of
 from pengumon.reports.queries import daily_availability, hourly_loss
 from pengumon.timeofday import utc_offset
+from pengumon.windows import day_cells
 
 
 async def build_report(repository, config, days: int, now: Optional[float] = None, tz: tzinfo = timezone.utc,
-                       ignoring: Iterable[str] = ()) -> Dict[str, Any]:
-    """The last `days` days. Day and hour buckets are the clock's in `tz` (timeofday.viewer_zone; the container runs
+                       ignoring: Iterable[str] = (), window_end: Optional[float] = None) -> Dict[str, Any]:
+    """The last `days` days: the rolling window [window_end - days * 24 h, window_end], `window_end` being now unless
+    given (so a caller can have every part of an answer cover one window). `availability` lists the calendar days
+    with probes, each marked in `partial` (the window cuts it: the first and last) with the `hours` it holds inside
+    the window. Day and hour buckets are the clock's in `tz` (timeofday.viewer_zone; the container runs
     in UTC). Loss by hour is the loss grid's rule: the hops that ignore ping (`ignoring`) and the hops removed from the
     path are left out. tz_offset_minutes: the zone's offset now."""
     now = now or time.time()
-    start_time = now - days * 86400
+    end_time = now if window_end is None else window_end
+    start_time = end_time - days * 86400
 
     cfg_targets = _targets(config)
     names = {t.id: t.name for t in cfg_targets}
@@ -29,16 +34,17 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
         per_hop[r["target_id"]][r["day"]] = [r["sent"], r["ok"]]
         all_days.add(r["day"])
     day_list = sorted(all_days)
+    cells = {c["day"]: c for c in day_cells(start_time, end_time, tz)}
     hops = []
     for tid in sorted(per_hop, key=lambda t: order.index(t) if t in order else 999):
-        cells = per_hop[tid]
-        sent = sum(v[0] for v in cells.values())
-        ok = sum(v[1] for v in cells.values())
+        counts = per_hop[tid]
+        sent = sum(v[0] for v in counts.values())
+        ok = sum(v[1] for v in counts.values())
         hops.append({
             "target_id": tid,
             "name": names.get(tid, tid),
             "availability_pct": round(ok * 100.0 / sent, 3) if sent else None,
-            "per_day": [round(cells[d][1] * 100.0 / cells[d][0], 3) if d in cells and cells[d][0] else None
+            "per_day": [round(counts[d][1] * 100.0 / counts[d][0], 3) if d in counts and counts[d][0] else None
                         for d in day_list],
         })
 
@@ -62,7 +68,11 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
         "days": days,
         "tz_offset_minutes": utc_offset(now, tz) // 60,
         "generated_at": now,
-        "availability": {"days": day_list, "hops": hops},
+        "window_start": start_time,
+        "window_end": end_time,
+        "availability": {"days": day_list, "hops": hops,
+                         "partial": [bool(cells[d]["partial"]) if d in cells else False for d in day_list],
+                         "hours": [cells[d]["hours"] if d in cells else 24.0 for d in day_list]},
         "incidents": {
             "count": len(incidents),
             "minutes": round(sum(lasted(r, now) for r in incidents) / 60.0, 1),

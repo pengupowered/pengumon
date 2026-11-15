@@ -234,16 +234,20 @@ async def test_the_traffic_route_ranks_clients_by_download_with_names_apps_and_h
     await api_state(app_state, repo, privacy="full")
     newest = await seed_traffic(repo, time.time())
     async with api() as ac:
-        body = (await ac.get("/api/devices/router/traffic", params={"hours": 6})).json()
+        body = (await ac.get("/api/devices/router/traffic", params={"hours": 24})).json()
     assert body["available"] is True and body["reason"] is None and body["interval_seconds"] == 3600
-    assert body["privacy"] == "full" and body["window_end"] == newest + HOUR
-    assert len(body["wan"]) == 6 and body["wan"][-1] == {"hour": body["end"] - HOUR, "up": None, "down": None}
-    assert body["totals"]["down"] == 75 * 10**9 + 5 * 10**9
+    # the window ends at the newest hour the router published, which is within an hour of the current one
+    assert body["privacy"] == "full" and body["window_end"] == newest + HOUR == body["end"]
+    assert body["end"] - body["start"] == 24 * HOUR
+    assert len(body["wan"]) == 24 and body["wan"][-1] == {"hour": newest, "up": 10**8, "down": 10**9}
+    assert body["totals"]["down"] == 75 * 10**9 + 6 * 10**9
+    assert body["apps_covered"] == {"hours": 24, "windows": [newest + HOUR]}  # not yesterday's row: it overlaps
     game, laptop = body["clients"]
     assert (game["label"], game["mac"], game["kind"], game["down"]) == ("Den console", GAME, "game", 75 * 10**9)
     assert game["traffic_hint"] == "Sony PlayStation" and game["apps"][0]["app"] == "Sony PlayStation"
     assert laptop["traffic_hint"] is None  # two apps half each: no hint
     assert [a["app"] for a in body["apps"]] == ["Sony PlayStation", "YouTube"]
+    assert body["apps_unattributed"]["down"] == 81 * 10**9 - 78 * 10**9  # the total minus the two apps
     assert len(game["key"]) == 12 and GAME not in game["key"]
 
 
@@ -251,7 +255,7 @@ async def test_the_traffic_routes_mask_clients_as_the_clients_list_does(app_stat
     await api_state(app_state, repo, privacy="masked")
     await seed_traffic(repo, time.time())
     async with api() as ac:
-        masked = await ac.get("/api/devices/router/traffic", params={"hours": 6})
+        masked = await ac.get("/api/devices/router/traffic", params={"hours": 24})
         key = masked.json()["clients"][0]["key"]
         one = await ac.get(f"/api/devices/router/traffic/clients/{key}", params={"hours": 48})
         by_mac = await ac.get(f"/api/devices/router/traffic/clients/{GAME}")
@@ -262,8 +266,10 @@ async def test_the_traffic_routes_mask_clients_as_the_clients_list_does(app_stat
     assert GAME not in masked.text and "Den console" not in masked.text and "Example Games 0003" in masked.text
     assert one.status_code == 200 and GAME not in one.text and one.json()["client"]["label"] == "Example Games 0003"
     assert sum(p["down"] or 0 for p in one.json()["series"]) == 75 * 10**9
-    # 48 hours: the apps are the whole day stored (yesterday's 20 GB), not the latest 24-hour window (75 GB)
-    assert one.json()["apps"][0]["down"] == 20 * 10**9 and one.json()["apps_days"]["stored"] == 1
+    # 48 hours: the latest 24-hour window (75 GB); yesterday's row ends after that window starts, so it overlaps and
+    # is not added
+    assert one.json()["apps"][0]["down"] == 75 * 10**9 and one.json()["apps_covered"]["hours"] == 24
+    assert one.json()["apps_unattributed"] == {"up": 0, "down": 0}
     yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
     assert [d["day"] for d in one.json()["days"]] == [yesterday]
     assert by_mac.status_code == 404  # a MAC only for a request that may see them
@@ -364,7 +370,7 @@ async def test_the_mcp_tool_ranks_the_devices_by_kind_never_by_name_or_mac(app_s
     await api_state(app_state, repo, privacy="full")  # even when the dashboard shows names: the tools never do
     await seed_traffic(repo, time.time())
     tool = next(t for t in TOOLS if t.name == "traffic")
-    out = await tool.handler(app_state, {"hours": 6, "top": 5})
+    out = await tool.handler(app_state, {"hours": 24, "top": 5})
     assert out["available"] is True
     assert out["clients"][0] == {"device": "game console", "vendor": "Example Games", "download_bytes": 75 * 10**9,
                                  "upload_bytes": 10**9, "main_app": "Sony PlayStation",
@@ -372,7 +378,9 @@ async def test_the_mcp_tool_ranks_the_devices_by_kind_never_by_name_or_mac(app_s
                                                "upload_bytes": 10**9},
                                               {"app": "General", "download_bytes": 10**8, "upload_bytes": 1}]}
     assert GAME not in json.dumps(out) and "Den console" not in json.dumps(out)
-    assert out["busiest_hours"][0]["download_bytes"] == 76 * 10**9 and out["totals"]["download_bytes"] == 80 * 10**9
+    assert out["busiest_hours"][0]["download_bytes"] == 76 * 10**9 and out["totals"]["download_bytes"] == 81 * 10**9
+    assert out["apps_not_broken_down"] == {"download_bytes": 3 * 10**9, "upload_bytes": 0}  # up: 6 hours of 0.1 GB < the apps' 1 GB
+    assert out["apps_covered"]["hours"] == 24
 
 
 async def test_the_hourly_cleanup_prunes_traffic_by_its_own_setting(repo):
@@ -391,9 +399,11 @@ async def test_the_hourly_cleanup_prunes_traffic_by_its_own_setting(repo):
 
 def test_the_retention_setting_is_validated():
     from pengumon.config import DatabaseConfig
-    assert DatabaseConfig().traffic_retention_days == 400
-    with pytest.raises(ValueError):
-        DatabaseConfig(traffic_retention_days=0)
+    assert DatabaseConfig().traffic_retention_days == 180
+    for bad in (0, 29):
+        with pytest.raises(ValueError):
+            DatabaseConfig(traffic_retention_days=bad)
+    assert DatabaseConfig(traffic_retention_days=30).traffic_retention_days == 30
 
 
 # --- hostile values (0.27 security review) --------------------------------------------------------------------------
@@ -471,11 +481,11 @@ async def test_a_bad_stored_event_breaks_no_reader(app_state, repo):
     assert "### Router events" in text and "router restarted" in text
 
 
-async def test_device_events_are_kept_as_long_as_the_quarter_hour_rollups(repo):
+async def test_device_events_are_kept_for_the_speed_test_retention(repo):
     now = time.time()
     await repo.insert_device_event("router", now - 500 * 86400, "restarted", {})
     await repo.insert_device_event("router", now - 100 * 86400, "restarted", {})  # older than the per-minute rollups
-    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, long_rollup_retention_days=400)
+    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, speedtest_retention_days=400)
     assert removed["device_events"] == 1
     assert [round((now - e[1]) / 86400) for e in await repo.get_device_events("router", 0, now)] == [100]
 
@@ -537,17 +547,17 @@ async def test_the_events_route_refuses_a_time_that_is_not_a_finite_number(app_s
     assert res.status_code == 422
 
 
-# --- ranges longer than a day: the apps are the sum of whole local days ---------------------------------------------------
+# --- ranges longer than a day: rolling windows, the apps are the 24-hour windows inside them -------------------------------
 
 NY = ZoneInfo("America/New_York")
 NOW_NY = datetime(2026, 11, 12, 13, 30, tzinfo=NY).timestamp()  # a Thursday afternoon, 11 days after daylight saving ended
 
 
 async def seed_days(repo, tz=NY, now=NOW_NY):
-    """Whole days (midnight to midnight in `tz`) for the 3 days before `now`'s: the console played 10 GB of Sony
-    PlayStation a day, the laptop watched 2 GB of YouTube a day; the day before those has a row that is not a whole day
-    (it ends at 09:00, as Pengumon before 0.27.0 kept one). Every hour of the last 5 days has a WAN row and the console
-    and the laptop download in each. The latest 24-hour windows say Netflix only."""
+    """24-hour app windows ending at midnight (in `tz`) for the 3 days before `now`'s: the console played 10 GB of Sony
+    PlayStation a day, the laptop watched 2 GB of YouTube a day; the day before those has a window that ends at 09:00
+    (as Pengumon before 0.27.0 kept one). Every hour of the last 5 days has a WAN row and the console and the laptop
+    download in each. The latest 24-hour windows (ending at the current hour) say Netflix only."""
     today = datetime.fromtimestamp(now, tz).date()
     for back in (1, 2, 3):
         day = today - timedelta(days=back)
@@ -572,61 +582,80 @@ async def seed_days(repo, tz=NY, now=NOW_NY):
     await repo.upsert_traffic_hours("router", rows, now)
 
 
-async def test_seven_days_count_the_apps_of_the_whole_days_in_them_not_the_latest_window(repo):
+async def test_seven_days_are_the_last_168_hours_and_their_apps_are_the_windows_inside_them(repo):
     await seed_days(repo)
     namer = traffic.Namer("full", inventory())
     week = await traffic.summary(repo, "router", 168, namer, now=NOW_NY, tz=NY)
-    assert week["apps_days"] == {"first": "2026-11-05", "last": "2026-11-11", "wanted": 7, "stored": 3,
-                                 "days": ["2026-11-09", "2026-11-10", "2026-11-11"]}
-    # three whole days; the row that is not a whole day (Old Game) and the latest window (Netflix) are not counted
-    assert week["apps"] == [{"app": "Sony PlayStation", "up": 3 * 10**8, "down": 30 * 10**9},
-                            {"app": "YouTube", "up": 3 * 10**7, "down": 6 * 10**9}]
-    assert week["apps_window_end"] == datetime(2026, 11, 12, tzinfo=NY).timestamp()
+    floor = traffic.hour_floor(NOW_NY)
+    assert (week["start"], week["end"], week["hours"]) == (floor - 168 * HOUR, floor, 168)
+    assert len(week["wan"]) == 168  # a week keeps its hours
+    # newest first, none overlapping: the latest window (Netflix, ending now), then the days ending at the midnights
+    # of 11 and 10 November; the one of 12 November overlaps the latest, the 09:00 one is not a whole 24 h in line
+    midnight = lambda d, h=0: int(datetime(2026, 11, d, h, tzinfo=NY).timestamp())  # noqa: E731
+    assert week["apps_covered"] == {"hours": 72, "windows": [floor, midnight(11), midnight(10)]}
+    assert week["apps_window_end"] == floor
+    assert week["apps"][0] == {"app": "Sony PlayStation", "up": 2 * 10**8, "down": 20 * 10**9}
+    assert [a["app"] for a in week["apps"]] == ["Sony PlayStation", "Netflix", "YouTube"]
     game, laptop = week["clients"]
-    assert game["apps"] == [{"app": "Sony PlayStation", "up": 3 * 10**8, "down": 30 * 10**9}]
-    assert game["traffic_hint"] == "Sony PlayStation" and laptop["traffic_hint"] == "YouTube"
-    # a day or less: the router's latest 24-hour window, as before
+    assert game["apps"][0] == {"app": "Sony PlayStation", "up": 2 * 10**8, "down": 20 * 10**9}
+    assert game["traffic_hint"] == "Sony PlayStation" and laptop["traffic_hint"] is None
+    # the apps and what is not broken down add up to the total (a direction that the apps exceed is 0)
+    assert laptop["down"] == 120 * 10**8 and laptop["apps_unattributed"]["down"] == 120 * 10**8 - 9 * 10**9
+    assert [a["down"] for a in week["apps"]] == [20 * 10**9, 5 * 10**9, 4 * 10**9]
+    assert week["totals"]["down"] == 120 * 3 * 10**8
+    assert week["apps_unattributed"]["down"] == week["totals"]["down"] - 29 * 10**9 == 7 * 10**9
+    # a day: the latest window ends now, so it is the whole list, and with nothing left over
     day = await traffic.summary(repo, "router", 24, namer, now=NOW_NY, tz=NY)
-    assert day["apps_days"] is None and [a["app"] for a in day["apps"]] == ["Netflix"]
+    assert [a["app"] for a in day["apps"]] == ["Netflix"] and day["apps_covered"]["windows"] == [floor]
     assert day["clients"][0]["apps"][0]["app"] == "Netflix"
-    # the days are cut on the zone: in UTC none of the stored rows ends at a midnight
+    # under 24 hours no 24-hour window lies inside: nothing is broken down, everything is "not broken down"
+    short = await traffic.summary(repo, "router", 6, namer, now=NOW_NY, tz=NY)
+    assert short["apps"] == [] and short["apps_covered"] == {"hours": 0, "windows": []}
+    assert short["apps_unattributed"]["down"] == short["totals"]["down"] == 6 * 3 * 10**8
+    assert short["clients"][0]["apps"] == [] and short["clients"][0]["traffic_hint"] is None
+    # the zone does not matter to the apps any more: the windows are the router's, not days
     utc = await traffic.summary(repo, "router", 168, namer, now=NOW_NY, tz=timezone.utc)
-    assert utc["apps"] == [] and utc["apps_days"]["stored"] == 0 and utc["apps_window_end"] is None
-    assert utc["clients"][0]["apps"] == [] and utc["clients"][0]["traffic_hint"] is None
+    assert utc["apps_covered"] == week["apps_covered"] and utc["apps"] == week["apps"]
 
 
-async def test_thirty_days_are_whole_local_days_up_to_the_last_midnight_with_a_total_per_day(repo):
+async def test_thirty_days_are_the_last_720_hours_with_a_bar_per_calendar_day_cut_at_the_window(repo):
     await seed_days(repo)
     body = await traffic.summary(repo, "router", 24, traffic.Namer("full", inventory()), now=NOW_NY, tz=NY, days=30)
-    assert body["days"] == 30 and body["apps_days"]["wanted"] == 30 and body["apps_days"]["stored"] == 3
-    assert body["start"] == datetime(2026, 10, 13, tzinfo=NY).timestamp()
-    assert body["end"] == datetime(2026, 11, 12, tzinfo=NY).timestamp()  # today, still under way, is not in it
-    assert body["hours"] == 30 * 24 + 1  # 1 November had 25 hours (daylight saving ended)
+    floor = traffic.hour_floor(NOW_NY)  # 13:00 on 12 November
+    assert body["days"] == 30 and (body["start"], body["end"], body["hours"]) == (floor - 720 * HOUR, floor, 720)
     assert body["wan"] == []  # per day only: the hours of 30 days would be most of the answer
     daily = body["daily"]
-    assert [d["day"] for d in daily][:2] == ["2026-10-13", "2026-10-14"] and daily[-1]["day"] == "2026-11-11"
+    assert [d["day"] for d in daily][:2] == ["2026-10-13", "2026-10-14"] and daily[-1]["day"] == "2026-11-12"
+    # the window ends at 13:00 on the 12th and begins at 13:00 on the 13th (an hour later than 720 h: 25 h day between)
+    assert daily[0]["partial"] and daily[-1]["partial"] and daily[-1]["hours"] == 13
+    assert not any(d["partial"] for d in daily[1:-1])
     assert next(d for d in daily if d["day"] == "2026-11-01")["hours"] == 25
-    # the WAN rows cover the last 5 days up to now: 4 whole days and today's hours (not in the range)
+    assert sum(d["hours"] for d in daily) == 720
+    # the WAN rows cover the last 5 days up to now
     full = [d for d in daily if d["stored"]]
-    assert [d["day"] for d in full] == ["2026-11-07", "2026-11-08", "2026-11-09", "2026-11-10", "2026-11-11"]
-    assert full[0]["stored"] < 24 and all(d["stored"] == d["hours"] == 24 for d in full[1:])
-    assert all(d["down"] == 24 * 3 * 10**8 for d in full[1:]) and daily[0]["down"] is None
-    assert body["totals"]["down"] == sum(d["down"] for d in full)
-    assert body["apps"][0] == {"app": "Sony PlayStation", "up": 3 * 10**8, "down": 30 * 10**9}
+    assert [d["day"] for d in full] == ["2026-11-07", "2026-11-08", "2026-11-09", "2026-11-10", "2026-11-11",
+                                        "2026-11-12"]
+    assert full[0]["stored"] == 11 and all(d["stored"] == d["hours"] == 24 for d in full[1:-1])
+    assert all(d["down"] == 24 * 3 * 10**8 for d in full[1:-1]) and daily[0]["down"] is None
+    assert body["totals"]["down"] == sum(d["down"] for d in full)  # the window's total, which the bars add up to
+    assert body["apps"][0] == {"app": "Sony PlayStation", "up": 2 * 10**8, "down": 20 * 10**9}
 
 
-async def test_the_traffic_route_takes_days_in_the_zone_set_in_settings(app_state, repo):
+async def test_the_traffic_route_takes_days_and_hours_as_the_same_rolling_window(app_state, repo):
     await api_state(app_state, repo, privacy="full")
     app_state.config = AppConfig(privacy=PrivacyConfig(client_details="full"),
                                  general=GeneralConfig(timezone="America/New_York"))
     await seed_days(repo, now=time.time())
     async with api() as ac:
         month = await ac.get("/api/devices/router/traffic", params={"days": 30})
+        hours = await ac.get("/api/devices/router/traffic", params={"hours": 720})
         week = await ac.get("/api/devices/router/traffic", params={"hours": 168})
         bad = [await ac.get("/api/devices/router/traffic", params={"days": d}) for d in (0, traffic.MAX_DAYS + 1, "x")]
-    assert month.status_code == 200 and len(month.json()["daily"]) == 30 and month.json()["days"] == 30
-    assert month.json()["apps_days"]["stored"] == 3 and month.json()["apps"][0]["app"] == "Sony PlayStation"
-    assert week.json()["days"] is None and week.json()["daily"] is None and week.json()["apps_days"]["stored"] == 3
+    assert month.status_code == 200 and month.json()["days"] == 30 and month.json()["hours"] == 720
+    assert month.json()["end"] - month.json()["start"] == 720 * HOUR and month.json()["daily"][0]["partial"]
+    assert hours.json()["daily"] == month.json()["daily"] and hours.json()["wan"] == []
+    assert week.json()["days"] is None and len(week.json()["daily"]) in (7, 8) and len(week.json()["wan"]) == 168
+    assert "apps_days" not in week.json() and week.json()["apps_covered"]["hours"] >= 24
     assert [r.status_code for r in bad] == [422, 422, 422]
 
 
@@ -641,28 +670,29 @@ async def test_a_day_row_is_kept_only_for_a_window_that_ends_at_a_midnight_in_th
     assert device.monitor._day_of(int(datetime(2026, 11, 2, tzinfo=NY).timestamp())) == "2026-11-01"
 
 
-async def test_a_device_over_7_and_30_days_has_the_apps_and_hint_of_the_whole_days_and_a_total_per_day(repo):
+async def test_a_device_over_7_and_30_days_has_the_apps_hint_and_bars_of_the_window(repo):
     await seed_days(repo)
     namer = traffic.Namer("full", inventory())
+    floor = traffic.hour_floor(NOW_NY)
     day = await traffic.client_detail(repo, "router", GAME, 24, namer, now=NOW_NY, tz=NY)
-    assert day["apps_days"] is None and [a["app"] for a in day["apps"]] == ["Netflix"] and day["daily"] is None
+    assert [a["app"] for a in day["apps"]] == ["Netflix"] and day["daily"] is None
+    assert day["apps_covered"]["windows"] == [floor]
     week = await traffic.client_detail(repo, "router", GAME, 168, namer, now=NOW_NY, tz=NY)
-    assert week["apps"] == [{"app": "Sony PlayStation", "up": 3 * 10**8, "down": 30 * 10**9}]
-    assert week["client"]["traffic_hint"] == "Sony PlayStation" and week["apps_days"]["stored"] == 3
-    assert week["apps_window_end"] == datetime(2026, 11, 12, tzinfo=NY).timestamp() and week["range_days"] is None
+    assert week["apps"][0] == {"app": "Sony PlayStation", "up": 2 * 10**8, "down": 20 * 10**9}
+    assert week["client"]["traffic_hint"] == "Sony PlayStation" and week["apps_covered"]["hours"] == 72
+    assert week["apps_window_end"] == floor and week["range_days"] is None and len(week["series"]) == 168
+    assert len(week["daily"]) in (7, 8) and week["daily"][0]["partial"] and week["daily"][-1]["partial"]
     month = await traffic.client_detail(repo, "router", GAME, 24, namer, now=NOW_NY, tz=NY, days=30)
-    assert month["range_days"] == 30 and len(month["daily"]) == 30 and month["hours"] == 30 * 24 + 1
-    assert month["series"] == []
-    assert month["start"] == datetime(2026, 10, 13, tzinfo=NY).timestamp()
-    assert month["daily"][-1] == {"day": "2026-11-11", "start": int(datetime(2026, 11, 11, tzinfo=NY).timestamp()),
+    assert month["range_days"] == 30 and month["hours"] == 720 and month["series"] == []
+    assert month["start"] == floor - 720 * HOUR and month["end"] == floor
+    assert month["daily"][-2] == {"day": "2026-11-11", "start": int(datetime(2026, 11, 11, tzinfo=NY).timestamp()),
                                   "end": int(datetime(2026, 11, 12, tzinfo=NY).timestamp()), "up": 24 * 10**6,
-                                  "down": 24 * 2 * 10**8, "hours": 24, "stored": 24}
+                                  "down": 24 * 2 * 10**8, "hours": 24, "partial": False, "stored": 24}
     assert month["totals"]["down"] == sum(d["down"] or 0 for d in month["daily"])
-    assert month["apps"][0]["down"] == 30 * 10**9 and [d["day"] for d in month["days"]] == ["2026-11-09", "2026-11-10",
-                                                                                             "2026-11-11"]
-    # a device without a whole day of apps in the range: no apps and no hint, not its latest window
-    laptop_none = await traffic.client_detail(repo, "router", PHONE, 168, namer, now=NOW_NY, tz=NY)
-    assert laptop_none["apps"] == [] and laptop_none["client"]["traffic_hint"] is None
+    assert [d["day"] for d in month["days"]] == ["2026-11-09", "2026-11-10", "2026-11-11"]  # its apps by whole day
+    # a device with no app window in the range: nothing broken down, and no hint
+    nobody = await traffic.client_detail(repo, "router", PHONE, 168, namer, now=NOW_NY, tz=NY)
+    assert nobody["apps"] == [] and nobody["client"]["traffic_hint"] is None and nobody["apps_covered"]["hours"] == 0
 
 
 async def test_the_device_route_takes_days(app_state, repo):
@@ -671,7 +701,8 @@ async def test_the_device_route_takes_days(app_state, repo):
     async with api() as ac:
         month = await ac.get(f"/api/devices/router/traffic/clients/{GAME}", params={"days": 30})
         bad = await ac.get(f"/api/devices/router/traffic/clients/{GAME}", params={"days": 0})
-    assert month.status_code == 200 and len(month.json()["daily"]) == 30 and month.json()["range_days"] == 30
+    assert month.status_code == 200 and month.json()["daily"][0]["partial"] and month.json()["range_days"] == 30
+    assert month.json()["hours"] == 720
     assert bad.status_code == 422
 
 

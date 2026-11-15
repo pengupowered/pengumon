@@ -7,6 +7,7 @@
 import { kit } from '../../js/cards.js';
 import { paint } from '../../js/dom.js';
 import { hoursChart, legendOf } from './chart.js';
+import { fillRangeSelect } from '../../js/ranges.js';
 
 const { el, icon, mark, status } = kit;
 
@@ -40,9 +41,7 @@ function totals(box, vm) {
 function chartPart(box) {
   const bar = el('div', 'trf-chart-bar');
   const keys = el('span', 'trf-legend');
-  const seg = el('span', 'seg');
-  seg.setAttribute('role', 'group');
-  seg.setAttribute('aria-label', 'Range');
+  const seg = el('span', 'range-host');
   bar.append(keys, seg);
   const wrap = el('div', 'chart-box trf-chart-box');
   const canvas = el('canvas');
@@ -54,15 +53,8 @@ function chartPart(box) {
   let keysSig = null;
   return {
     update(c, force) {
-      paint(seg, c.modes, () => c.modes.forEach((m) => {
-        const b = el('button', null, m.label);
-        b.type = 'button';
-        b.dataset.action = m.action;
-        b.dataset.arg = String(m.arg);
-        b.title = m.title;
-        b.setAttribute('aria-pressed', String(m.pressed));
-        seg.appendChild(b);
-      }));
+      const pressed = c.modes.find((m) => m.pressed);
+      fillRangeSelect(seg, { options: c.modes.map((m) => ({ id: m.arg, words: m.label })), value: pressed ? pressed.arg : c.modes[0].arg, action: 'trafficRange', label: 'Range' });
       // the legend: Download, Upload and the kinds of gap there are; drawn again after a theme change (its colors are tokens)
       const kinds = JSON.stringify([...new Set(c.gaps.filter(Boolean))]);
       if (force || kinds !== keysSig) {
@@ -122,7 +114,8 @@ function deviceRow(r) {
 }
 
 export function appRow(r) {
-  const li = el('div', 'trf-row app');
+  const li = el('div', `trf-row app${r.muted ? ' rest' : ''}`);
+  if (r.title) li.title = r.title;
   li.append(mark(el('b', 'trf-name', r.name), 'name'));
   const figs = el('span', 'trf-figs');
   figs.append(mark(el('b', 'trf-down', r.down), 'down'), mark(el('span', 'trf-up', `${r.up} up`), 'up'));

@@ -95,7 +95,8 @@ export const steps = [
     const mode = await page.evaluate(() => (document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")));
     eq("the card has Nord's first series color", await prop("--s1"), nord[mode]["--s1"]);
     ok("the rest of the page keeps its own", await page.$eval("[data-panel=matrix]", (e) => getComputedStyle(e).getPropertyValue("--s1").trim()) === page1);
-    await until(() => document.getElementById("latencyChart") && Chart.getChart(document.getElementById("latencyChart")));
+    // (the live chart draws its lines once the feed's first message and the stored minute are in: wait for them)
+    await until(() => document.getElementById("latencyChart") && Chart.getChart(document.getElementById("latencyChart"))?.data.datasets.some((d) => d.pathLabel));
     const lines = await lineColors();
     ok(`the latency chart draws in the card's colors (${lines.join(" ")})`, lines.length > 0 && lines.every((c) => Object.values(nord[mode]).includes(c)));
     // custom: the accent and eight series colors, as color pickers

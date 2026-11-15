@@ -95,9 +95,19 @@ def test_the_registry_covers_every_key_the_inventory_exposes():
 
 
 def test_bootstrap_keys_and_the_dead_key_are_not_on_the_page():
-    for key in ("server.host", "server.port", "database.db_path", "prober.interval_seconds",
-                "prober.ping_count_per_probe"):
+    for key in ("server.host", "server.port", "database.db_path", "prober.ping_count_per_probe"):
         assert key in NOT_ON_PAGE and key not in registry.BY_KEY
+
+
+def test_the_probe_interval_is_a_setting_with_fixed_choices():
+    """0.28: prober.interval_seconds left the bootstrap keys (config.py) and has a row on the Probing page."""
+    from pengumon.config import BOOTSTRAP_KEYS
+    assert "prober.interval_seconds" not in BOOTSTRAP_KEYS and "prober.interval_seconds" not in NOT_ON_PAGE
+    interval, dns = registry.get("prober.interval_seconds"), registry.get("prober.dns_interval_seconds")
+    assert interval.section == dns.section == "probing"
+    assert interval.constraints()["choices"] == [1, 2, 5, 10, 30, 60] == dns.constraints()["choices"]
+    assert interval.default() == 1 and dns.default() is None and dns.constraints()["nullable"] is True
+    assert interval.choice_labels["10"] == "Every 10 seconds" and interval.live and dns.live
 
 
 def test_keys_are_unique_and_sections_known_and_ordered():

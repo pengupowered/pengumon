@@ -1,5 +1,5 @@
 // Speed card, the model: the scheduled speed test (GET /api/speedtests): the last result against the plan, the grade
-// for delay under load, a history chart (7 or 30 days), when the next test is due, this month's data use, and a Run now
+// for delay under load, a history chart (24 hours to All), when the next test is due, this month's data use, and a Run now
 // button that asks first (it uses data). Polled every minute, and every 3 s while a test runs. present() turns the
 // answer into the view model every view of the card draws (view.js is the standard one; docs/themes.md, "Drawing a
 // card"); the header's summary and the card's status are the frame, kept here.
@@ -8,8 +8,9 @@ import { createCard } from '../../js/cards.js';
 import { registerActions } from '../../js/dispatch.js';
 import { settingsValues, val } from '../../js/settings-values.js';
 import standard from './view.js';
-import { chartOf, lastResult, nextText, PROVIDERS, problem, runBlock, usageText } from './result.js';
+import { chartOf, lastResult, nextText, PROVIDERS, problem, RANGE_DAYS, rangeList, runBlock, TEST_LIMIT, usageText } from './result.js';
 import { everyWhileVisible, whenVisible } from '../../js/timers.js';
+import { onRetentionChange } from '../../js/ranges.js';
 
 const POLL_MS = 60000;
 const RUNNING_POLL_MS = 3000;
@@ -112,7 +113,9 @@ function schedule() {
 
 export async function refresh() {
   try {
-    const res = await fetch('/api/speedtests?hours=720&limit=500');
+    // as far back as the longest range reaches (the test retention), at least 30 days, as many tests as one answer holds
+    const hours = Math.min(8760, Math.max(720, Math.max(...RANGE_DAYS()) * 24));
+    const res = await fetch(`/api/speedtests?hours=${hours}&limit=${TEST_LIMIT}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
     data = body && Array.isArray(body.tests) ? body : null;
@@ -158,6 +161,7 @@ export function initSpeed() {
   if (!article) return;
   card = createCard({ panel: 'speed', root: article.querySelector('.panel-b'), standard, fixture });
   render();
+  onRetentionChange(() => { if (!RANGE_DAYS().includes(range)) range = 7; render(); refresh(); });
   refresh();
   everyWhileVisible(render, REDRAW_MS);
   document.addEventListener('zonechange', render);
@@ -167,6 +171,9 @@ export function initSpeed() {
 registerActions('click', {
   speedAskRun: () => { confirming = true; note = null; render(); },
   speedRunCancel: () => { confirming = false; render(); },
-  speedRunConfirm: () => { runNow(); },
-  speedRange: (el) => { range = Number(el.dataset.arg) === 30 ? 30 : 7; render(); }
+  speedRunConfirm: () => { runNow(); }
+});
+registerActions('change', {
+  speedRange: (el) => { const hit = rangeList().find((r) => r.id === el.value); range = hit ? hit.days : 7; render(); }
+
 });

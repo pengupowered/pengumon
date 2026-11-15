@@ -39,7 +39,8 @@ async def test_a_report_without_data_is_empty_but_complete():
     report = await build_report(Repo(), None, 7, now=NOW)
     assert report == {
         "days": 7, "tz_offset_minutes": 0, "generated_at": NOW,
-        "availability": {"days": [], "hops": []},
+        "window_start": NOW - 7 * 86400, "window_end": NOW,
+        "availability": {"days": [], "hops": [], "partial": [], "hours": []},
         "incidents": {"count": 0, "minutes": 0.0, "by_cause": [], "excluded_expected": 0,
                       "outages": {"count": 0, "down_minutes": 0.0, "longest_minutes": 0.0, "maintenance": 0}},
         "loss_by_hour": [], "worst_hours": [],
@@ -147,3 +148,17 @@ async def test_reverse_names_that_are_no_host_names_are_left_out(tmp_path):
                                                 "198.51.100.6": "be-10_ae1.cr1.example-isp.net"}
     finally:
         await repo.close()
+
+
+async def test_the_first_and_last_day_are_marked_partial_with_the_hours_they_hold():
+    now = 1_793_448_000.0 + 30 * 60  # 2026-10-31 12:30 UTC
+    days = ["2026-10-24", "2026-10-25", "2026-10-31"]
+    daily = [{"target_id": "a", "day": d, "sent": 10, "ok": 10} for d in days]
+    report = await build_report(Repo(daily=daily), cfg("a"), 7, now=now)
+    assert report["availability"]["partial"] == [True, False, True]
+    assert report["availability"]["hours"] == [11.5, 24, 12.5]
+    assert (report["window_start"], report["window_end"]) == (now - 7 * 86400, now)
+    # a caller that wants one window for every part gives its end: the day cells follow it
+    other = await build_report(Repo(daily=daily), cfg("a"), 7, now=now, window_end=now - 30 * 60)
+    assert other["window_end"] == now - 30 * 60 and other["availability"]["hours"] == [12, 24, 12]
+    assert other["availability"]["partial"] == [True, False, True]

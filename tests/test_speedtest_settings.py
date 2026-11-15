@@ -86,7 +86,7 @@ def test_the_interval_is_any_whole_number_of_hours_up_to_a_year(hours):
 def test_the_version_line_says_the_interval_in_its_largest_whole_unit(hours, text):
     from pengumon.settings.describe import _shown, hours_text
     assert hours_text(hours) == text
-    assert _shown(registry.BY_KEY["speedtest.interval_hours"], hours, 1.0) == text
+    assert _shown(registry.BY_KEY["speedtest.interval_hours"], hours) == text
 
 
 @pytest.mark.parametrize("idle, down, up, grade", [

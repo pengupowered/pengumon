@@ -66,7 +66,19 @@ class Tool:
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 200
-PERIODS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
+# seconds each `period` reaches back; "all" has no fixed length: the retention of the kind of data (period_seconds)
+PERIODS = {"1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "90d": 90 * 86400, "all": None}
+_RETENTION_DEFAULT_DAYS = 180
+
+
+def period_seconds(state, period: str, retention: str = "latency_retention_days") -> float:
+    """How far back `period` reaches. "all": the days Settings keeps that kind of data (`retention`, a database.*
+    setting: latency_retention_days for incidents and the report, speedtest_retention_days for speed tests)."""
+    seconds = PERIODS[period]
+    if seconds is not None:
+        return seconds
+    days = getattr(getattr(getattr(state, "config", None), "database", None), retention, _RETENTION_DEFAULT_DAYS)
+    return days * 86400.0
 _STAGES = ("local", "gateway", "isp", "public", "dns", "custom")
 _TIME_KEYS = frozenset({
     "timestamp", "start_time", "end_time", "since", "last_checked", "last_ok", "last_poll", "window_start",
@@ -214,7 +226,7 @@ async def _incidents(state, args):
     limit = args.get("limit", DEFAULT_LIMIT)
     rows = await repo.get_recent_incidents(limit=_INCIDENT_SCAN, include_expected=True, scope="network")
     now = time.time()
-    since = now - PERIODS[period]
+    since = now - period_seconds(state, period)
     inside = [i for i in rows if i.start_time >= since]
     rules = Rules.from_config(state.config)
     shown = inside[:limit]
@@ -345,7 +357,13 @@ async def _report(state, args):
     period = args.get("period", "7d")
     ignoring = ignoring_ping_ids(state.prober)
     uptime = await build_uptime(repo, state.config, period, tz=tz)
-    reliability = await build_report(repo, state.config, PERIODS[period] // 86400, tz=tz, ignoring=ignoring)
+    # one window for every part: the uptime strips' (its end), which the report's days, incidents and worst hours follow
+    if period == "all":  # the uptime window's own length: from the oldest stored probe, at most the retention
+        days = (uptime["end"] - uptime["start"]) / 86400
+    else:
+        days = PERIODS[period] / 86400  # (1h: a fraction of a day; build_report cuts its window from it)
+    reliability = await build_report(repo, state.config, int(days) if days >= 1 and period != "all" else days, tz=tz,
+                                     ignoring=ignoring, window_end=uptime["end"])
     hops = []
     for target in uptime["targets"]:
         cells = target["cells"]
@@ -354,7 +372,7 @@ async def _report(state, args):
                      "busy_blocks": cells.count("busy")})
     out = localize({
         "period": period, "zone": uptime["zone"], "window_start": uptime["start"], "window_end": uptime["end"],
-        "block_seconds": uptime["block_seconds"], "uptime_by_hop": hops,
+        "block_seconds": uptime["block_seconds"], "partial_blocks": uptime["partial"], "uptime_by_hop": hops,
         "daily_availability": reliability["availability"], "incidents": reliability["incidents"],
         "worst_hours_of_day": None, "generated_at": reliability["generated_at"],
     }, tz)
@@ -448,7 +466,8 @@ async def _speed_tests(state, args):
     period = args.get("period", "7d")
     limit = args.get("limit", DEFAULT_LIMIT)
     now = time.time()
-    rows = await repo.get_speed_tests(now - PERIODS[period], now, limit=10_000)
+    rows = await repo.get_speed_tests(now - period_seconds(state, period, "speedtest_retention_days"), now,
+                                      limit=10_000)
     cfg, line = config.speedtest, config.line
     start, end = month_bounds(now, named_zone(config.general.timezone))
     used = await repo.speed_test_bytes(start, end)
@@ -538,7 +557,7 @@ async def _traffic(state, args):
     top = int(args.get("top", TRAFFIC_TOP_DEFAULT))
     namer = router_traffic.Namer("generic", getattr(device.monitor, "latest_clients", None))
     status = router_traffic.status_of(device)
-    body = await router_traffic.summary(repo, device.id, hours, namer, top=top, tz=tz)
+    body = await router_traffic.summary(repo, device.id, hours, namer, top=top, tz=tz, with_hours=True)
 
     def apps(rows):
         return [{"app": a["app"], "download_bytes": a["down"], "upload_bytes": a["up"]} for a in rows]
@@ -558,11 +577,16 @@ async def _traffic(state, args):
         "clients": clients,
         "apps": apps(body["apps"]),
         "apps_window_ends": iso(body["apps_window_end"], tz),
-        "apps_days": body["apps_days"],
-        "note": "The router's own count (its Traffic Analyzer), per clock hour, published after the hour ends. App "
-                "figures: for 47 hours or less, the router's latest 24-hour window; for more, the sum of the whole local "
-                "days (midnight to midnight) up to the last midnight, apps_days saying which and how many had figures. "
-                "Clients are ranked by download over the hours asked.",
+        "apps_not_broken_down": {"download_bytes": body["apps_unattributed"]["down"],
+                                 "upload_bytes": body["apps_unattributed"]["up"]},
+        "apps_covered": {"hours": body["apps_covered"]["hours"],
+                         "window_ends": [iso(w, tz) for w in body["apps_covered"]["windows"]]},
+        "note": "The router's own count (its Traffic Analyzer), per clock hour, published after the hour ends. The "
+                "window is rolling: the last `hours` hours up to the newest hour published (from/to). The router counts "
+                "apps only over 24 hours: the app figures are the sum of its 24-hour counts that lie inside the window "
+                "(apps_covered says which), and apps_not_broken_down is the rest of the total, so apps plus it add up "
+                "to totals. Under 24 hours no count lies inside, so nothing is broken down by app. Clients are ranked "
+                "by download over the hours asked.",
     }
 
 
@@ -591,9 +615,11 @@ TOOLS: List[Tool] = [
                                                   "description": "The incident id from `incidents`."}},
           "required": ["id"], "additionalProperties": False}, _scrubbing(_incident)),
     Tool("report",
-         "Uptime and reliability over a day, a week or a month: availability of every hop of the path, how many "
-         "outage and degraded blocks it had, availability per day, incidents by cause and the worst hours of the "
-         "day for packet loss. Use it for 'how reliable has my internet been?'.",
+         "Uptime and reliability over the last day, week or month (a rolling window ending now, window_start to "
+         "window_end, the same for every part of the answer): availability of every hop of the path, how many "
+         "outage and degraded blocks it had, availability per calendar day (the first and last day are cut by the "
+         "window: `partial`, with the hours they hold), incidents by cause and the worst hours of the day for "
+         "packet loss. Use it for 'how reliable has my internet been?'.",
          _schema(period=_period_schema("7d")), _scrubbing(_report)),
     Tool("devices",
          "The modem and router Pengumon polls: what each is, whether the last poll worked, its headline readings "
@@ -619,12 +645,13 @@ TOOLS: List[Tool] = [
          _schema(period=_period_schema("7d"), limit=_limit_schema()), _scrubbing(_speed_tests)),
     Tool("traffic",
          "Who used the internet? The router's own count of the bytes each connected device downloaded and uploaded "
-         "(its Traffic Analyzer), per clock hour, over the last `hours`: the totals, the busiest hours, the devices "
-         "ranked by download with their top apps (and the app a device mostly uses), and the apps of all devices "
-         "together. Use it to explain a busy line or a slow evening. A device is described by its kind and maker "
+         "(its Traffic Analyzer), per clock hour, over a rolling window of the last `hours` (ending at the newest "
+         "hour the router published): the totals, the busiest hours, the devices ranked by download with their top "
+         "apps (and the app a device mostly uses), and the apps of all devices together, with what the router "
+         "could not break down by app (apps_not_broken_down). Use it to explain a busy line or a slow evening. A device is described by its kind and maker "
          "(\"game console\", \"phone\"), never by name or address. Empty when no router reports it.",
          _schema(hours={"type": "integer", "minimum": 1, "maximum": 720,
-                        "description": "How many complete hours back (default 24)."},
+                        "description": "How many complete hours back, a rolling window (default 24, up to 720 = 30 days)."},
                  top={"type": "integer", "minimum": 1, "maximum": 50,
                       "description": f"How many devices and apps to list (default {TRAFFIC_TOP_DEFAULT})."}),
          _scrubbing(_traffic)),
@@ -635,8 +662,8 @@ TOOLS: List[Tool] = [
          "remove more; use `anonymized` if the text will leave the household.",
          _schema(scope={"type": "string", "enum": ["window", "incident"],
                         "description": "A time window (default) or one incident."},
-                 hours={"type": "integer", "minimum": 1, "maximum": 168,
-                        "description": "For scope window: how many hours back (default 24)."},
+                 hours={"type": "integer", "minimum": 1, "maximum": 720,
+                        "description": "For scope window: how many hours back (default 24, up to 720 = 30 days)."},
                  incident_id={"type": "integer", "minimum": 1, "maximum": 2**53,
                               "description": "For scope incident, and only then: the incident id."},
                  level={"type": "string", "enum": ["full", "vague", "anonymized"],

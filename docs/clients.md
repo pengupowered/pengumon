@@ -43,7 +43,7 @@ name, never a rename.
   The one exception is the router's traffic per client (schema v19, `traffic_hourly` and `traffic_apps`), stored by
   MAC so that its history exists: `GET /api/devices/{id}/traffic` names the clients by the rule above, and the dossier,
   the AI pack and the MCP tools describe a client only by its kind and maker ("a game console"), never by name or
-  address. Kept for `database.traffic_retention_days` (400 by default). And the names given to devices in Pengumon
+  address. Kept for `database.traffic_retention_days` (180 by default). And the names given to devices in Pengumon
   (schema v20, `client_names`, by MAC; set with the pencil in a device's traffic dialog, or `PUT
   /api/devices/{id}/clients/{key}/name`): shown instead of the router's name wherever names are shown in full, never
   when they are masked, and never in the dossier, the AI pack or MCP. Only a request that may see names may set one.

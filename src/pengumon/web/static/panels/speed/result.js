@@ -5,9 +5,17 @@
 import { localFormat } from '../../js/clock.js';
 import { STATUS } from '../../js/dom.js';
 import { has } from '../../js/values.js';
+import { rangeOptions, retentionDays } from '../../js/ranges.js';
 
 export const PROVIDERS = { cloudflare: 'Cloudflare', mlab: 'M-Lab', librespeed: 'LibreSpeed' };
-const RANGES = [{ days: 7, label: '7 d' }, { days: 30, label: '30 d' }];
+// The history ranges on offer (js/ranges.js): tests come about daily, so the chart starts at 24 hours; 90 d and All follow the
+// speed test retention. `days` is what the model keeps (All: the retention).
+export const rangeList = () => rangeOptions({ days: retentionDays('speedtest'), min: '24h' })
+  .map((o) => ({ id: o.id, days: o.seconds / 86400, label: o.short, name: o.words, all: o.all }));
+export const RANGE_DAYS = () => rangeList().map((r) => r.days);
+const rangeName = (days) => { const r = rangeList().find((x) => x.days === days); return r ? r.name.toLowerCase() : `last ${days} days`; };
+// The most tests one answer holds (GET /api/speedtests limit): a longer range shows the newest of them and says so.
+export const TEST_LIMIT = 500;
 // A result's status as the card says it (never color alone: icon and word).
 const RESULT = {
   ok: { level: 'good', word: 'Done' },
@@ -135,13 +143,21 @@ export function problem(data, now) {
 // The history chart's data: plain numbers (times in ms); the view gives them colors.
 export function chartOf(data, now, range) {
   const edge = Math.ceil(now / 600) * 600; // the chart's right edge moves every 10 minutes, so a redraw in between changes nothing
-  const from = edge - range * 86400;
+  let from = edge - range * 86400;
+  const named = rangeList().find((r) => r.days === range);
+  const capped = data.tests.length >= TEST_LIMIT; // (the answer holds the newest tests only)
+  // All shows what is stored: it starts at the oldest test (a day before it), not at the retention
+  const oldest = data.tests.length ? data.tests[data.tests.length - 1].ts : null;
+  if (named && named.all && oldest !== null && oldest - 86400 > from) from = Math.floor((oldest - 86400) / 600) * 600;
+  if (capped && oldest !== null && oldest > from) from = Math.floor((oldest - 3600) / 600) * 600;
   const tests = data.tests.filter((t) => t.ts >= from).slice().reverse();
-  if (!tests.length) return null;
+  // a range with no test in it (24 h between two scheduled tests) still has its buttons, so the longer range can be picked
+  const anySpeed = data.tests.some((t) => has(best(t, 'down')) || has(best(t, 'up')));
+  if (!tests.length && !anySpeed) return null;
   const point = (t, dir) => ({ x: t.ts * 1000, y: best(t, dir) });
   const down = tests.filter((t) => has(best(t, 'down'))).map((t) => point(t, 'down'));
   const up = tests.filter((t) => has(best(t, 'up'))).map((t) => point(t, 'up'));
-  if (!down.length && !up.length) return null; // marks alone are no chart
+  if (!down.length && !up.length && !anySpeed) return null; // marks alone are no chart
   const mark = (status) => tests.filter((t) => t.status === status).map((t) => ({ x: t.ts * 1000, y: 0, tip: `${RESULT[status].word}${t.reason ? `: ${t.reason}` : ''}` }));
   const bad = mark('failed');
   const skipped = mark('skipped');
@@ -158,8 +174,9 @@ export function chartOf(data, now, range) {
     down, up, failed: bad, skipped,
     planDown: has(data.plan.down_mbps) && data.plan.down_mbps > 0 ? data.plan.down_mbps : null,
     planUp: has(data.plan.up_mbps) && data.plan.up_mbps > 0 ? data.plan.up_mbps : null,
-    label: `Speed of the last ${range} days, ${tests.length} test${tests.length === 1 ? '' : 's'}: ${bits.join('; ')}.`,
-    modes: RANGES.map((r) => ({ action: 'speedRange', arg: r.days, label: r.label, title: `Last ${r.days} days`, pressed: r.days === range }))
+    label: !down.length && !up.length ? `No speed test in the ${rangeName(range)}.`
+      : `Speed of the ${rangeName(range)}, ${tests.length} test${tests.length === 1 ? '' : 's'}${capped ? ' (the newest ones: this range holds more)' : ''}: ${bits.join('; ')}.`,
+    modes: rangeList().map((r) => ({ action: 'speedRange', arg: r.id, label: r.name, title: r.name, pressed: r.days === range }))
   };
 }
 

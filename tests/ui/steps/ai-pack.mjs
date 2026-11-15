@@ -99,6 +99,17 @@ export const steps = [
     await until(() => !document.getElementById("aiPackCopy").disabled);
     eq("it recovers", (await text("#aiPackNote")).includes("Could not"), false);
 
+    // the windows: 1 h, 24 h, 7 d, 30 d; 30 d asks for 720 hours, and 24 h again for 24
+    eq("the windows to cover", await page.$$eval("#aiPackWindow option:not([hidden])", (o) => o.map((x) => x.textContent).join(",")), "Last hour,Last 24 hours,Last 7 days,Last 30 days");
+    const asked = await page.evaluate(() => window.__ai.length);
+    await page.select("#aiPackWindow", "30d");
+    await until((n) => window.__ai.length > n, asked);
+    ok("30 days asks for 720 hours", /^scope=window&hours=720&/.test(await page.evaluate(() => window.__ai.at(-1))));
+    await page.select("#aiPackWindow", "24h");
+    await until((n) => window.__ai.length > n, asked + 1);
+    ok("and 24 hours again for 24", /^scope=window&hours=24&/.test(await page.evaluate(() => window.__ai.at(-1))));
+    await until(() => !document.getElementById("aiPackCopy").disabled);
+
     // scrolled: the footer and its messages stay in view
     await page.$eval("#aiPackBody", (b) => { b.scrollTop = b.scrollHeight; });
     await page.$eval("#aiPackText", (t) => { t.scrollTop = 400; });

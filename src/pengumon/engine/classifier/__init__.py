@@ -55,6 +55,9 @@ class StepResult:
     outcome: TrackerOutcome
 
 
+DNS_KINDS = frozenset({"dns_outage", "dns_loss", "dns_slow"})  # the verdicts of engine.classifier.rules._dns_fault
+
+
 class ClassifierCore:
     """The verdict logic of one round, without a clock, callbacks or background tasks: diagnose, the load and
     hop-deprioritization adjustments, and the incident tracker. Owns the tracker and the time of the last upstream
@@ -99,6 +102,10 @@ class ClassifierCore:
             verdict = apply_load(verdict, m, reading, config, is_loss_or_outage)
         if verdict.is_fault and verdict.kind in ISP_LINE_KINDS:
             verdict = apply_hop_deprioritization(verdict, m, config)
+        if not m.dns_probed and verdict.kind in DNS_KINDS:
+            # A DNS verdict read from the last lookups' window in a round where none ran: the rule counts lookups, not
+            # rounds, so the tracker holds still (it neither builds toward an incident nor counts a recovery).
+            return StepResult(verdict, is_loss_or_outage, reading, TrackerOutcome())
         outcome = await self.tracker.observe(verdict, is_loss_or_outage=is_loss_or_outage, reading=reading, ts=ts)
         return StepResult(verdict, is_loss_or_outage, reading, outcome)
 

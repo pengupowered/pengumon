@@ -30,10 +30,7 @@
             <span class="seg" role="group" aria-label="Group by" id="clientsModeButtons">
               <button type="button" aria-pressed="true" data-action="setClientsChartMode" data-arg="band">By band</button>
               <button type="button" aria-pressed="false" data-action="setClientsChartMode" data-arg="node" id="clientsNodeModeBtn">By node</button></span>
-            <span class="seg" role="group" aria-label="Time range" id="clientsRangeButtons">
-              <button type="button" aria-pressed="false" data-action="setClientsRange" data-arg="3600">1 h</button>
-              <button type="button" aria-pressed="true" data-action="setClientsRange" data-arg="86400">24 h</button>
-              <button type="button" aria-pressed="false" data-action="setClientsRange" data-arg="604800">7 d</button></span>
+            <span class="range-host" id="clientsRangeButtons"></span>
           </span></h3>
           <div class="legend" id="clientsLegend"></div>
           <div class="chart-box" style="--h: 170px"><canvas id="clientsChart" role="img" aria-label="Clients over time"></canvas></div>

@@ -46,7 +46,9 @@ from pengumon.web.settings import DisplayConfig
     (HopStatusConfig, {"public_latency_ms": 20000}),
     (ProberConfig, {"timeout_seconds": 0}),
     (ProberConfig, {"timeout_seconds": 1.5}),
-    (ProberConfig, {"interval_seconds": 0.5, "timeout_seconds": 0.8}),  # longer than the round
+    (ProberConfig, {"interval_seconds": 0.5}),  # not one of the choices
+    (ProberConfig, {"interval_seconds": 5, "dns_interval_seconds": 2}),  # shorter than the round
+    (ProberConfig, {"interval_seconds": 2, "dns_interval_seconds": 5}),  # not a whole multiple of the round
     (ProberConfig, {"dns_timeout_seconds": 6}),
     (ServiceChecksConfig, {"interval_seconds": 0}),
     (ServiceChecksConfig, {"failures_for_incident": 0}),
@@ -62,7 +64,7 @@ from pengumon.web.settings import DisplayConfig
     (GeneralConfig, {"timezone": "../../etc/passwd"}),
     (DisplayConfig, {"grafana_url": "ftp://grafana.example.com"}),
     (DisplayConfig, {"grafana_url": "https://grafana.example.com/?orgId=1"}),
-    (DisplayConfig, {"default_latency_range": "7d"}),
+    (DisplayConfig, {"default_latency_range": "6h"}),
     (ServerConfig, {"log_level": "loud"}),
     (ServerConfig, {"log_levels": "pengumon.devices"}),
     (LineSignalConfig, {"ds_snr_critical_db": 34}),  # above the warning level
@@ -119,14 +121,33 @@ def test_the_edges_of_each_range_are_accepted():
     assert DiscoverySettings(daily_check_time="").daily_check_time is None
 
 
-def test_a_short_round_keeps_the_default_timeout():
-    """Tests run the round at 0.05 s; only a timeout someone set is held to the round."""
-    assert ProberConfig(interval_seconds=0.05).timeout_seconds == 1.0
+def test_the_timeout_never_exceeds_the_shortest_round():
+    """The timeout is at most 1 s and the shortest round is 1 s, so the old rule (timeout within the round) cannot fail;
+    tests that run the loop faster assign the live config's attribute (not validated) and keep the default timeout."""
     assert ProberConfig(interval_seconds=1.0, timeout_seconds=1.0).timeout_seconds == 1.0
+    config = ProberConfig()
+    config.interval_seconds = 0.05
+    assert config.timeout_seconds == 1.0
 
 
-@pytest.mark.parametrize("seconds", [0, -1, 0.0, 61])
-def test_a_probe_round_must_be_positive_and_at_most_a_minute_R4_L11(seconds):
+@pytest.mark.parametrize("seconds", [1, 2, 5, 10, 30, 60, 1.0, 5.0])
+def test_the_probe_interval_takes_the_choices_only(seconds):
+    assert ProberConfig(interval_seconds=seconds).interval_seconds == seconds
+
+
+@pytest.mark.parametrize("base, dns", [(1, None), (1, 5), (2, 10), (5, 5), (5, 30), (10, 60), (30, 60), (2, 2)])
+def test_the_dns_interval_is_a_choice_that_is_a_multiple_of_the_round(base, dns):
+    assert ProberConfig(interval_seconds=base, dns_interval_seconds=dns).dns_interval_seconds == dns
+
+
+@pytest.mark.parametrize("base, dns", [(5, 2), (10, 5), (2, 5), (5, 35), (30, 10), (10, 3), (60, 30)])
+def test_a_dns_interval_that_does_not_fit_the_round_is_refused(base, dns):
+    with pytest.raises(ValidationError, match="dns_interval_seconds"):
+        ProberConfig(interval_seconds=base, dns_interval_seconds=dns)
+
+
+@pytest.mark.parametrize("seconds", [0, -1, 0.0, 61, 0.05, 0.5, 3, 7, 1.5, 120])
+def test_a_probe_round_must_be_one_of_the_choices_R4_L11(seconds):
     with pytest.raises(ValidationError):
         ProberConfig(interval_seconds=seconds)
 

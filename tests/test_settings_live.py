@@ -154,7 +154,11 @@ VALUES = {
     "database.retention_days": (14, lambda st: st.repository.retention_days),
     "database.slot_retention_days": (21, lambda st: st.repository.slot_retention_days),
     "database.rollup_retention_days": (500, lambda st: st.repository.rollup_retention_days),
-    "database.long_rollup_retention_days": (700, lambda st: st.repository.long_rollup_retention_days),
+    "database.latency_retention_days": (700, lambda st: st.repository.latency_retention_days),
+    "database.router_retention_days": (710, lambda st: st.repository.router_retention_days),
+    "database.mesh_retention_days": (720, lambda st: st.repository.mesh_retention_days),
+    "database.line_retention_days": (730, lambda st: st.repository.line_retention_days),
+    "database.speedtest_retention_days": (740, lambda st: st.repository.speedtest_retention_days),
     "database.incident_retention_days": (900, lambda st: st.repository.incident_retention_days),
     "database.traffic_retention_days": (200, lambda st: st.repository.traffic_retention_days),
     "privacy.client_details": ("masked", cfg("privacy.client_details")),
@@ -181,6 +185,8 @@ VALUES = {
     "prober.hop_status.dns_jitter_ms": (44, hop("dns_jitter_ms")),
     "classifier.dns_degraded_loss_pct": (30, classifier("dns_degraded_loss_pct")),
     "classifier.dns_cooldown_seconds": (60, classifier("dns_cooldown_seconds")),
+    "prober.interval_seconds": (5, lambda st: (st.config.prober.interval_seconds, st.repository.probe_interval_seconds)),
+    "prober.dns_interval_seconds": (10, cfg("prober.dns_interval_seconds")),
     "prober.timeout_seconds": (0.8, lambda st: st.prober.ping_timeout),
     "prober.dns_timeout_seconds": (2.0, lambda st: st.prober.dns_timeout),
     "uptime.outage_dead_minutes": (3, uptime("outage_dead_minutes")),
@@ -316,7 +322,7 @@ async def test_every_setting_applies_live_without_a_restart(tmp_path, monkeypatc
                                                           "values": {key: value, **WITH.get(key, {})}})
                 assert res.status_code == 200, (key, res.text)
                 assert res.json()["live_failed"] == [], key
-                assert observe(state) == value, key
+                assert observe(state) in (value, (value, value)), key  # (the interval is also kept by the repository)
             for name, (items, secrets, observe, expected) in LISTS.items():
                 security.reset_rate_limits()
                 res = await ac.put("/api/settings", json={"base_revision": state.settings.revision,

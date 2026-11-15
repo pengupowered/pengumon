@@ -69,13 +69,15 @@ async def get_reliability_report(
 async def get_loss_grid(
     state: StateDep,
     request: Request,
-    days: int = Query(7, ge=1, le=31),
+    days: int = Query(7, ge=1, le=3650),
     tz_offset_minutes: TzOffset = 0,
     tz: TzName = None,
 ):
     """Probe loss per calendar day and hour of the last `days` days, for the "when it breaks" heatmap: rows are days
     (oldest first), columns the 24 hours; sent, lost and loss_pct per cell (loss_pct null where nothing was sent);
-    when each cell begins (day_starts, hour_starts) and the zone used."""
+    when each cell begins (day_starts, hour_starts) and the zone used. Up to 31 days only; more are folded into 7 rows,
+    Monday to Sunday (`fold: "weekday"`, `days` the number asked), each hour the sum of that weekday-hour over the window
+    (up to the probe retention; 3650 at most)."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
     zone, ignoring = viewer_zone(state.config, tz, tz_offset_minutes)[0], ignoring_ping_ids(state.prober)
@@ -87,12 +89,13 @@ async def get_loss_grid(
 async def get_uptime(
     state: StateDep,
     request: Request,
-    window: Literal["24h", "7d", "30d"] = Query("24h"),
+    window: Literal["24h", "7d", "30d", "90d", "all"] = Query("24h"),
     tz_offset_minutes: TzOffset = 0,
     tz: TzName = None,
 ):
-    """Availability strips for every target in one answer: one status per block (24h: 96 blocks of 15 min; 7d, 30d:
-    calendar days) of ok, degraded, outage, busy (explained by line load) or no_data, plus the availability over the
+    """Availability strips for every target in one answer: one status per block (24h: 96 blocks of 15 min; 7d, 30d,
+    90d: calendar days; all: the whole probe retention, from the oldest stored probe, in calendar days up to 90 days
+    and in local weeks beginning Monday beyond; `cell` says which: "15m", "day" or "week") of ok, degraded, outage, busy (explained by line load) or no_data, plus the availability over the
     window. From the rollups; each block's start and end (bounds) and the zone used."""
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
@@ -106,7 +109,7 @@ async def get_uptime(
 async def get_ai_pack(
     state: StateDep,
     scope: Literal["window", "incident"] = Query("window"),
-    hours: int = Query(24, ge=1, le=168, description="the window for scope=window: 1, 24 or 168 in the dashboard"),
+    hours: int = Query(24, ge=1, le=720, description="the window for scope=window: 1, 24, 168 or 720 in the dashboard"),
     incident_id: Optional[int] = Query(None, ge=1, description="required for scope=incident, refused otherwise"),
     level: Literal["full", "vague", "anonymized"] = Query("full"),
     detail: Literal["short", "detailed"] = Query("short"),

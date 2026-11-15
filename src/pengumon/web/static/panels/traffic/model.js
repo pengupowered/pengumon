@@ -1,8 +1,9 @@
 // Internet use card, the model: the router's traffic statistics (GET /api/devices/{id}/traffic): the WAN's download and
-// upload as a bar chart (per clock hour over 24 hours or 7 days, per day over 30 days), the devices that used the most, and
-// the apps: the router's latest 24-hour window over 24 hours, the sum of the whole days (midnight to midnight) up to the
-// last midnight over 7 and 30 days (the router counts apps only per 24 hours). Polled once a minute (the router publishes an hour a few minutes after it ends, and Pengumon reads
-// it every hour or so). present() turns the answer into the view model every view of the card draws (view.js is the
+// upload as a bar chart (per clock hour over 24 hours or 7 days, per calendar day over 30 and 90 days, per week past that), the devices that used the
+// most, and the apps. Every range is a rolling window that ends at the newest hour the router published (24, 168 and 720
+// hours); the router counts apps only per 24 hours, so the apps are the sum of its 24-hour counts that lie inside the
+// window, and what they do not account for is shown as "Not broken down by app". Polled once a minute (the router publishes
+// an hour a few minutes after it ends, and Pengumon reads it every hour or so). present() turns the answer into the view model every view of the card draws (view.js is the
 // standard one; docs/themes.md, "Drawing a card"); the header's summary, the footer and the card's status are the frame,
 // kept here.
 //
@@ -17,22 +18,27 @@ import { formatClock, localFormat } from '../../js/clock.js';
 import standard from './view.js';
 import { everyWhileVisible, whenVisible } from '../../js/timers.js';
 import { has } from '../../js/values.js';
+import { allStoredWords, onRetentionChange, rangeOptions, retentionDays } from '../../js/ranges.js';
 
 const POLL_MS = 60000;
 const REDRAW_MS = 60000;
-// `arg` names a range in its button and in the query; 30 days are whole days up to the last midnight, a bar per day.
-export const RANGES = [
-  { arg: '24', query: 'hours=24', hours: 24, label: '24 h', title: 'Last 24 hours' },
-  { arg: '168', query: 'hours=168', hours: 168, label: '7 d', title: 'Last 7 days' },
-  { arg: '30d', query: 'days=30', days: 30, label: '30 d', title: 'Last 30 days' }
-];
+// The ranges on offer (js/ranges.js): all roll back from now. `arg` is the range's id ('24h', '7d', '30d', '90d', 'all'), `hours` what is
+// asked of the router's traffic (GET /api/devices/{id}/traffic accepts up to 400 days). 24 h and 7 d are a bar per clock hour, 30 d
+// and 90 d a bar per calendar day, and past 90 days a bar per week (a bar per day would be a hair wide).
+const MAX_DAYS = 400;
+export const rangeList = () => rangeOptions({ days: Math.min(retentionDays('traffic'), MAX_DAYS), min: '24h' }).map((o) => ({
+  arg: o.id, hours: o.seconds / 3600, query: `hours=${o.seconds / 3600}`, label: o.short, title: o.words, all: o.all
+}));
+export const WEEKLY_FROM_HOURS = 90 * 24;
+export const NOT_BROKEN_DOWN = 'Not broken down by app';
+export const NOT_BROKEN_DOWN_WHY = 'The router counts apps per 24 hours; hours not covered by one of its counts in this range';
 const TOP = 10; // devices and apps asked for
 const SHOWN = 8; // devices and apps listed
 
 let device = null;
 let data = null; // the last answer, null until it came
 let failed = null; // why the last request failed, null while it worked
-let range = '24';
+let range = '24h';
 let card = null;
 let pollTimer = null;
 let seq = 0;
@@ -46,10 +52,29 @@ function span(seconds) {
 
 const clock = (sec) => formatClock(sec * 1000);
 // The range an answer is of (the range now chosen may be newer than the answer in hand), and "last 24 hours": what it covers.
-const rangeOf = (d) => RANGES.find((r) => (d.days ? r.days === d.days : r.hours === d.hours)) || RANGES[0];
-const covers = (d) => rangeOf(d).title.toLowerCase();
+const coversWords = (hours) => (hours <= 24 ? 'last 24 hours' : hours === 168 ? 'last 7 days' : `last ${Math.round(hours / 24)} days`);
+// "All" says what it holds: "all stored, since Nov 8" when it starts at the first stored day, else "all stored, last 180 d".
+const covers = (d) => (d.all ? allStoredWords(Math.round(d.hours / 24), d.since) : coversWords(d.hours));
+
+// Asks for a range; for All, when the first stored day is later than the window's start by more than two days, asks again
+// for the window from that day (the router's traffic is kept as hourly rows: a day with none is "not stored"), so the bars
+// start at the data (days, or weeks only when the span drawn is past 90 days). `ask(hours)` -> the answer or null;
+// `current()` is false when a newer choice was made. The answer says `all` and, when it starts late, `since` (epoch seconds).
+export async function loadTraffic(chosen, ask, current) {
+  const body = await ask(chosen.hours);
+  if (!chosen.all || !body || !Array.isArray(body.daily)) return body;
+  body.all = true;
+  const first = body.daily.find((r) => has(r.down));
+  if (!current() || !first || first.start - body.start <= 2 * 86400) return body;
+  const again = await ask(Math.max(24, Math.ceil((body.end - first.start) / 3600)));
+  if (!again) return body;
+  again.all = true;
+  again.since = first.start;
+  return again;
+}
 // A day as the answer names it ("2026-11-11"), in words: "Nov 11", or with the weekday "Wed, Nov 11". The answer cut the
-// days on the zone set in Settings, so they are read as dates, never as instants in the browser's zone.
+// days on the zone set in Settings, so they are read as dates, never as instants in the browser's zone. The hours a cut
+// day holds are instants: "Fri 16:00-24:00" (clock times, as the rest of the card shows them).
 const DAY = new Intl.DateTimeFormat([], { timeZone: 'UTC', month: 'short', day: 'numeric' });
 const WEEKDAY = new Intl.DateTimeFormat([], { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
 export const dayWords = (day, weekday) => {
@@ -93,49 +118,91 @@ export function gapNotes(h) {
   return notes;
 }
 
+// "16:00" and, for the midnight that ends a day, "24:00".
+const HM23 = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+const clock23 = (sec) => localFormat(sec * 1000, HM23);
+const clockEnd = (sec) => { const t = clock23(sec); return t === '00:00' ? '24:00' : t; };
+
 // The days of a daily series as the chart draws them (the same shape as hoursOf's): a day without a stored hour is a gap
-// ("not stored"); a day with some is drawn with what was stored, and the notes say how many such days there are.
+// ("not stored"); a day with some is drawn with what was stored, and the notes say how many such days there are. The range
+// cuts the first and last day: such a cell is `partial`, drawn narrower in proportion to its hours (`shares`, 1 for a
+// whole day, also one of 23 or 25 hours) and its title says which hours it holds.
 export function daysOf(rows) {
+  const unit = rows.length && rows[0].week ? 168 : 24;
   return {
     hours: rows.map((r) => r.start),
     labels: rows.map((r) => dayWords(r.day)),
-    titles: rows.map((r) => `${dayWords(r.day, true)}${r.stored && r.stored < r.hours ? ` (${r.stored} of ${r.hours} hours stored)` : ''}`),
+    titles: rows.map((r) => {
+      const held = r.week ? (r.partial ? ` (${Math.round(r.hours)} of 168 hours)` : '') : r.partial ? ` ${clock23(r.start)}-${clockEnd(r.end)}` : '';
+      const missing = r.stored && r.stored < Math.floor(r.hours) ? ` (${r.stored} of ${Math.round(r.hours)} hours stored)` : '';
+      return `${r.week ? `week of ${dayWords(r.day)}` : dayWords(r.day, true)}${held}${missing}`;
+    }),
     down: rows.map((r) => (has(r.down) ? r.down : null)),
     up: rows.map((r) => (has(r.up) ? r.up : null)),
     gaps: rows.map((r) => (has(r.down) ? null : 'nodata')),
+    shares: rows.map((r) => (r.partial ? Math.min(1, Math.max(0.05, r.hours / unit)) : 1)),
     stored: rows.some((r) => has(r.down))
   };
 }
 
+// The daily rows of a range past 90 days as weeks (Monday to Sunday, the first and last cut by the range): the sums of their
+// days, `partial` when the range cuts the week (it holds fewer than 166 of its 168 hours at an end of the range).
+export function weeklyOf(rows) {
+  if (!rows || !rows.length) return rows;
+  const weeks = [];
+  rows.forEach((r, i) => {
+    const [y, m, d] = r.day.split('-').map(Number);
+    const dow = (new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay() + 6) % 7; // Monday = 0
+    const monday = new Date(Date.UTC(y, m - 1, d - dow, 12)).toISOString().slice(0, 10);
+    let w = weeks[weeks.length - 1];
+    if (!w || w.day !== monday) { w = { week: true, day: monday, start: r.start, end: r.end, hours: 0, stored: 0, down: null, up: null, partial: false, first: i === 0 }; weeks.push(w); }
+    w.end = r.end;
+    w.hours += r.hours;
+    w.stored += r.stored || 0;
+    if (has(r.down)) w.down = (w.down || 0) + r.down;
+    if (has(r.up)) w.up = (w.up || 0) + r.up;
+    w.last = i === rows.length - 1;
+  });
+  weeks.forEach((w) => { w.partial = (w.first || w.last) && w.hours < 166; });
+  return weeks;
+}
+// The rows a daily answer is drawn from: days, or weeks past 90 days.
+export const dailyRows = (d) => (d.hours > WEEKLY_FROM_HOURS ? weeklyOf(d.daily) : d.daily);
+
 export function dayNotes(rows) {
   const notes = [];
+  const unit = rows.length && rows[0].week ? 'week' : 'day';
   const missing = rows.filter((r) => !has(r.down)).length;
-  const partial = rows.filter((r) => has(r.down) && r.stored < r.hours).length;
-  if (missing) notes.push({ key: 'nodata', text: `${plural(missing, 'day')} in this range ${missing === 1 ? 'was' : 'were'} not stored (Pengumon was not reading the router then).` });
-  if (partial) notes.push({ key: 'partial', text: `${plural(partial, 'day')} ${partial === 1 ? 'has' : 'have'} hours missing: ${partial === 1 ? 'its bar counts' : 'their bars count'} only the hours stored.` });
+  const partial = rows.filter((r) => has(r.down) && r.stored < Math.floor(r.hours)).length;
+  const cut = rows.filter((r) => r.partial).length;
+  if (cut) notes.push({ key: 'cut', text: `The range begins and ends inside a ${unit}: those bars are narrower and count only the hours it holds (hover for which).` });
+  if (missing) notes.push({ key: 'nodata', text: `${plural(missing, unit)} in this range ${missing === 1 ? 'was' : 'were'} not stored (Pengumon was not reading the router then).` });
+  if (partial) notes.push({ key: 'partial', text: `${plural(partial, unit)} ${partial === 1 ? 'has' : 'have'} hours missing: ${partial === 1 ? 'its bar counts' : 'their bars count'} only the hours stored.` });
   return notes;
 }
 
-const modes = () => RANGES.map((r) => ({ action: 'trafficRange', arg: r.arg, label: r.label, title: r.title, pressed: r.arg === range }));
+const modes = () => rangeList().map((r) => ({ action: 'trafficRange', arg: r.arg, label: r.title, title: r.title, pressed: r.arg === range }));
 
-// The chart of 30 days: a bar per day.
+// The chart of 30 and 90 days: a bar per calendar day; past 90 days a bar per week (the first and last cut by the range).
 function dailyChartOf(d) {
-  const h = daysOf(d.daily);
+  const rows = dailyRows(d);
+  const h = daysOf(rows);
   if (!h.stored) return null;
-  const busiest = d.daily.reduce((best, r) => (has(r.down) && (!best || r.down > best.down) ? r : best), null);
+  const week = d.hours > WEEKLY_FROM_HOURS;
+  const busiest = rows.reduce((best, r) => (has(r.down) && (!best || r.down > best.down) ? r : best), null);
   return {
     ...h,
     days: true,
-    label: `Download and upload per day, ${covers(d)}: ${formatBytes(d.totals.down)} down, ${formatBytes(d.totals.up)} up.`,
+    label: `Download and upload per ${week ? 'week' : 'day'}, ${covers(d)}: ${formatBytes(d.totals.down)} down, ${formatBytes(d.totals.up)} up.`,
     modes: modes(),
-    notes: dayNotes(d.daily),
-    busiest: busiest && busiest.down > 0 ? { text: `Busiest day ${dayWords(busiest.day, true)}: ${formatBytes(busiest.down)} down`, hour: busiest.start } : null
+    notes: dayNotes(rows),
+    busiest: busiest && busiest.down > 0 ? { text: week ? `Busiest week, from ${dayWords(busiest.day, true)}: ${formatBytes(busiest.down)} down` : `Busiest day ${dayWords(busiest.day, true)}: ${formatBytes(busiest.down)} down`, hour: busiest.start } : null
   };
 }
 
 // The chart's data for the wan series: {hours..., modes, label, notes}; null without a stored hour.
 function chartOf(d) {
-  if (Array.isArray(d.daily)) return dailyChartOf(d);
+  if (!d.wan.length && Array.isArray(d.daily)) return dailyChartOf(d);
   const days = d.hours > 24;
   const h = hoursOf(d.wan, days);
   if (!h.stored) return null;
@@ -151,7 +218,9 @@ function chartOf(d) {
 }
 
 // One device (or app) row. `max`: the biggest download in the list, for the bar; `all`: the whole download, for the share;
-// `span`: "last 7 days" when the apps are the sum of the range's whole days, null when they are the router's latest 24 hours.
+// `span`: "last 7 days", the range the apps were counted in.
+const unbroken = (c) => !!c.apps_unattributed && (c.apps_unattributed.down > 0 || c.apps_unattributed.up > 0);
+
 function rowOf(c, max, all, span) {
   const kind = CLIENT_KINDS[c.kind];
   return {
@@ -160,10 +229,10 @@ function rowOf(c, max, all, span) {
     nameTitle: c.mac ? `${c.label} (${c.mac})` : c.label,
     icon: kind ? kind[1] : 'host',
     sub: [kind ? kind[0] : null, c.vendor].filter(Boolean).join(' · '),
-    app: c.traffic_hint ? `mostly ${c.traffic_hint}` : c.apps && c.apps.length ? `top app ${c.apps[0].app}` : '',
-    appTitle: span
-      ? (c.traffic_hint ? `The router counted at least 80 % of its traffic over the ${span} as this app` : `Its biggest app over the ${span}`)
-      : (c.traffic_hint ? 'The router counted at least 80 % of its last 24 hours as this app' : 'Its biggest app in the router\'s latest 24-hour window'),
+    app: c.traffic_hint ? `mostly ${c.traffic_hint}` : c.apps && c.apps.length ? `top app ${c.apps[0].app}` : unbroken(c) ? 'apps not broken down' : '',
+    appTitle: c.apps && c.apps.length
+      ? (c.traffic_hint ? `The router counted at least 80 % of its traffic as this app, over the hours it counted apps for in the ${span}` : `Its biggest app over the hours the router counted apps for in the ${span}`)
+      : NOT_BROKEN_DOWN_WHY,
     down: formatBytes(c.down),
     up: formatBytes(c.up),
     pct: max > 0 ? Math.max(2, Math.round((c.down / max) * 100)) : 0,
@@ -180,27 +249,34 @@ function clientsOf(d) {
     sub: covers(d),
     more: d.clients.length > SHOWN ? `${d.clients.length - SHOWN} more with less traffic` : '',
     empty: rows.length ? '' : 'No device used the internet in this range.',
-    rows: rows.map((c) => rowOf(c, max, d.totals.down, d.apps_days ? covers(d) : null))
+    rows: rows.map((c) => rowOf(c, max, d.totals.down, covers(d)))
   };
 }
 
+// The apps list: the apps the router counted inside the range and, last, what it did not break down (muted).
 function appsOf(d, now) {
   const rows = d.apps.slice(0, SHOWN);
-  const max = rows.length ? Math.max(...rows.map((a) => a.down)) : 0;
+  const rest = d.apps_unattributed || { up: 0, down: 0 };
+  const left = rest.down > 0 || rest.up > 0;
+  const max = Math.max(0, ...rows.map((a) => a.down), left ? rest.down : 0);
   const end = d.apps_window_end;
-  // the day too when the window ended more than a day ago, or on another day than now
+  const counted = d.apps_covered ? d.apps_covered.hours : 0;
+  // the day too when the newest count ended more than a day ago, or on another day than now
   const old = has(end) && now - end > 20 * 3600;
-  // over days the apps say the range as the devices do; which days had figures is in the help (traffic.apps) and the answer
-  const days = !!d.apps_days;
+  const list = rows.map((a) => ({
+    key: a.app, name: a.app, down: formatBytes(a.down), up: formatBytes(a.up),
+    pct: max > 0 ? Math.max(2, Math.round((a.down / max) * 100)) : 0
+  }));
+  if (left) {
+    list.push({ key: '__rest', name: NOT_BROKEN_DOWN, title: NOT_BROKEN_DOWN_WHY, muted: true, down: formatBytes(rest.down), up: formatBytes(rest.up),
+      pct: max > 0 ? Math.max(2, Math.round((rest.down / max) * 100)) : 0 });
+  }
   return {
     title: 'Top apps',
-    sub: days ? covers(d) : has(end) ? `apps over the 24 h to ${formatClock(end * 1000, old)}` : 'apps over the router\'s latest 24 h',
+    sub: counted ? `${counted === d.hours ? covers(d) : `counted over ${counted} of ${d.hours} h`}, to ${formatClock(end * 1000, old)}` : 'the router has no 24 h count in this range',
     more: '',
-    empty: rows.length ? '' : days ? 'No whole day of app figures is stored for this range yet: Pengumon keeps one per day, read just after midnight.' : 'The router has no app figures yet.',
-    rows: rows.map((a) => ({
-      key: a.app, name: a.app, down: formatBytes(a.down), up: formatBytes(a.up),
-      pct: max > 0 ? Math.max(2, Math.round((a.down / max) * 100)) : 0
-    }))
+    empty: list.length ? '' : 'The router has no app figures yet.',
+    rows: list
   };
 }
 
@@ -233,9 +309,7 @@ export function present(d, ui, now) {
     empty,
     totals: chart ? {
       text: `${formatBytes(d.totals.down)} downloaded · ${formatBytes(d.totals.up)} uploaded`,
-      range: Array.isArray(d.daily) && d.daily.length
-        ? `${rangeOf(d).title}, ${dayWords(d.daily[0].day)} to ${dayWords(d.daily[d.daily.length - 1].day)} (whole days; today is in 24 h)`
-        : `${covers(d).charAt(0).toUpperCase()}${covers(d).slice(1)}, up to ${formatClock(d.end * 1000, d.hours > 24)}`,
+      range: `${covers(d).charAt(0).toUpperCase()}${covers(d).slice(1)}, from ${formatClock(d.start * 1000, true)} to ${formatClock(d.end * 1000, true)}`,
       busiest: chart.busiest
     } : null,
     chart,
@@ -263,12 +337,13 @@ export function fixture() {
       { key: 'fx3', label: 'Example plug', kind: null, vendor: null, up: 1000000, down: 5000000, apps: [], traffic_hint: null }
     ],
     apps: [{ app: 'Example Play', up: 4000000000, down: 100000000000 }, { app: 'Example Video', up: 900000000, down: 12000000000 }, { app: 'General', up: 1000000, down: 5000000 }],
+    apps_unattributed: { up: 299000000, down: 995000000 }, apps_covered: { hours: 24, windows: [end - 3600] },
     apps_window_end: end - 3600, privacy: 'full'
   };
   return present(answer, { failed: null }, end + 600);
 }
 
-// The range the card shows now (its arg: '24', '168' or '30d'): a device's dialog opens in it.
+// The range the card shows now (its arg: a range id of js/ranges.js): a device's dialog opens in it.
 export const shownRange = () => range;
 
 // Asks for the card's figures again now (a device was renamed in its dialog).
@@ -295,10 +370,14 @@ async function refresh() {
   if (!device) return;
   const mine = ++seq;
   try {
-    const chosen = RANGES.find((r) => r.arg === range) || RANGES[0];
-    const res = await fetch(`/api/devices/${encodeURIComponent(device.id)}/traffic?${chosen.query}&top=${TOP}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
+    const list = rangeList();
+    const chosen = list.find((r) => r.arg === range) || list[0];
+    range = chosen.arg;
+    const body = await loadTraffic(chosen, async (hours) => {
+      const res = await fetch(`/api/devices/${encodeURIComponent(device.id)}/traffic?hours=${hours}&top=${TOP}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }, () => mine === seq);
     if (mine !== seq) return; // another range was chosen meanwhile
     data = body && Array.isArray(body.wan) ? body : null;
     failed = data ? null : 'unexpected answer';
@@ -320,15 +399,16 @@ export function initTraffic(dev) {
   refresh();
   everyWhileVisible(render, REDRAW_MS);
   document.addEventListener('zonechange', render);
+  onRetentionChange(() => { render(); refresh(); });
 }
 
 // The actions this card's views name (see dispatch.js).
-registerActions('click', {
+registerActions('change', {
   trafficRange: (el) => {
-    const arg = el.dataset.arg;
-    if (!RANGES.some((r) => r.arg === arg) || arg === range) return;
+    const arg = el.value;
+    if (!rangeList().some((r) => r.arg === arg) || arg === range) return;
     range = arg;
-    render(); // the buttons show the choice at once; the figures follow with the answer
+    render(); // the control shows the choice at once; the figures follow with the answer
     refresh();
   }
 });

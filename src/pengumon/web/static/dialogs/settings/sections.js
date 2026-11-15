@@ -4,8 +4,9 @@
 import { escapeHtml } from '../../js/escape.js';
 import { icon } from '../../js/dom.js';
 import { accessHtml, viewersConfirmHtml } from './access.js';
-import { isLayoutKey, layoutRowHtml, rowHtml, speedEstimateRowHtml, speedMlabRowHtml } from './fields.js';
+import { intervalEstimateRowHtml, isLayoutKey, layoutRowHtml, rowHtml, speedEstimateRowHtml, speedMlabRowHtml } from './fields.js';
 import { rememberSlot, slotHtml } from './secrets.js';
+import { retentionTableHtml } from './storage.js';
 import { S } from './store.js';
 
 const bySetting = (a, b) => a.order - b.order;
@@ -44,6 +45,7 @@ function groupHtml(section, group) {
   if (section.id === 'devices' && group.name === 'Host app checks') extra = listHtml('services');
   if (section.id === 'speedtest' && !group.name) extra = speedMlabRowHtml();
   if (section.id === 'speedtest' && group.name === 'Data use') extra = speedEstimateRowHtml();
+  if (section.id === 'probing' && group.name === 'Probe interval') extra = intervalEstimateRowHtml();
   if (group.specs.some((s) => s.key === 'access.allow_viewers')) extra = viewersConfirmHtml(); // its current password
   return `<div class="set-group">${group.name ? `<h4 class="set-group-t">${escapeHtml(group.name)}</h4>` : ''}${rows}${extra}</div>`;
 }
@@ -55,6 +57,7 @@ export function sectionHtml(section) {
   if (section.id === 'devices') head = listHtml('devices');
   if (section.id === 'access') head = accessHtml();
   if (section.id === 'probing') tail = listHtml('dns_probes');
+  if (section.id === 'retention' && S.server.can_edit) tail = retentionTableHtml();
   if (section.id === 'display') tail = listHtml('themes');
   if (section.id === 'alerts' && !groups.some((g) => g.name === 'Channels')) groups = [{ name: 'Channels', specs: [] }, ...groups];
   if (section.id === 'devices' && !groups.some((g) => g.name === 'Host app checks')) groups.push({ name: 'Host app checks', specs: [] });

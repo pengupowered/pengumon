@@ -251,9 +251,33 @@ export const steps = [
     eq("the default theme and every built-in one were looked at", seen.length >= 5, true);
   }],
 
-  ["incident timeline: bars, lanes by cause", async ({ count, ok, until }) => {
+  ["incident timeline: bars, lanes by cause, a day line at every midnight in the window", async ({ count, ok, page, until }) => {
     await until(() => document.querySelectorAll("#incidentTimeline .tl-bar").length >= 10);
     ok("lanes by cause", (await count("#incidentTimeline .tl-lane")) >= 1);
+    // 7 x 24 h ending now holds 7 local midnights (6 or 8 around a clock change is not this test's week): each lane draws
+    // a line at each, as background layers of its track (a declaration the browser refuses would draw none)
+    const lines = await page.$eval("#incidentTimeline .tl-track", (t) => (getComputedStyle(t).backgroundImage.match(/linear-gradient/g) || []).length);
+    ok(`a day line per midnight (${lines})`, lines >= 6 && lines <= 8);
+  }],
+
+  ["incident timeline: 7 d and 30 d; 30 d keeps a day line per midnight and labels the Mondays only", async ({ chooseRange, count, eq, ok, page, rangeState, until }) => {
+    eq("the card offers 7 d to All (the incidents are kept 180 days)", (await rangeState("#incidentRanges")).words.join(","), "Last 7 days,Last 30 days,Last 90 days,All · 180 d");
+    eq("7 d is chosen", (await rangeState("#incidentRanges")).value, "7d");
+    const week = await count("#incidentTimeline .tl-bar");
+    await chooseRange("#incidentRanges", "30d");
+    await until(() => document.querySelector("#incidentRanges select").value === "30d");
+    await until((n) => document.querySelectorAll("#incidentTimeline .tl-bar").length >= n && document.querySelectorAll("#incidentTimeline [data-v=days] span").length <= 6, week);
+    ok(`the 30 d timeline holds the week's bars (${week} or more)`, (await count("#incidentTimeline .tl-bar")) >= week);
+    const lines = await page.$eval("#incidentTimeline .tl-track", (t) => (getComputedStyle(t).backgroundImage.match(/linear-gradient/g) || []).length);
+    ok(`a day line per midnight (${lines})`, lines >= 29 && lines <= 31);
+    const labels = await page.$$eval("#incidentTimeline [data-v=days] span", (s) => s.map((x) => x.textContent));
+    ok(`at most one label a week (${labels.join(", ")})`, labels.length >= 3 && labels.length <= 5);
+    ok("each is a date", labels.every((l) => /^[A-Z][a-z]{2} \d{1,2}$/.test(l)));
+    ok("and a Monday", labels.every((l) => new Date(`${l} ${new Date().getFullYear()} 12:00`).getDay() === 1 || new Date(`${l} ${new Date().getFullYear() - 1} 12:00`).getDay() === 1));
+    await chooseRange("#incidentRanges", "7d");
+    await until(() => document.querySelectorAll("#incidentTimeline [data-v=days] span").length >= 6);
+    const again = await page.$eval("#incidentTimeline .tl-track", (t) => (getComputedStyle(t).backgroundImage.match(/linear-gradient/g) || []).length);
+    ok(`back on 7 d: a line per midnight (${again})`, again >= 6 && again <= 8);
   }],
 
   ["lanes use Path health's words: Router, Gateway, Line, ISP, Internet, DNS, Load, Service; the cause help explains them", async ({ eq, ok, page, until }) => {
@@ -502,12 +526,10 @@ export const steps = [
     await waitText("#incidentPaginationInfo", /^Showing 91–100 of /);
     await click("#btnPageNext");
     await waitText("#incidentPaginationInfo", /^Showing 101–110 of /);
-    // the timeline is the 7 calendar days ending tonight at midnight, so how many of the synthetic incidents fall in it
-    // depends on the time of day (about 72 just after midnight, 84 just before): count them the same way (the two
+    // the timeline is the last 7 x 24 hours ending now: count the synthetic incidents in it the same way (the two
     // busy-line ones may be hidden)
     const inWindow = await page.evaluate(() => {
-      const end = new Date(); end.setHours(24, 0, 0, 0);
-      const start = end.getTime() / 1000 - 7 * 86400, now = Date.now() / 1000;
+      const now = Date.now() / 1000, start = now - 7 * 86400;
       return Array.from({ length: 130 }, (_, i) => now - 560 - i * 7200).filter((t) => t >= start).length;
     });
     ok(`the timeline has the week's incidents (${inWindow - 2} or more)`, await page.$$eval("#incidentTimeline .tl-bar", (b) => b.length) >= inWindow - 2);
@@ -659,4 +681,37 @@ export const steps = [
       await layoutMounted();
     }
   }],
+
+  ["every range draws the incident timeline (bars, a line per midnight to 30 days, per week past it, month labels past 60 days that do not overlap), on a desktop, a phone and in every theme", async ({ atEveryRange, chooseRange, eq, everyLook, noSideways, ok, openPanel, page, phone, rangeState, settled, showCard }) => {
+    const TL = "[data-panel=incidents] .tl"; // (a theme's own view, Amber CRT's, keeps the standard timeline without its id)
+    const WANT = { "7d": { bars: 10, lines: [6, 8], label: /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/ }, "30d": { bars: 10, lines: [29, 31], label: /^[A-Z][a-z]{2} \d{1,2}$/ },
+      "90d": { bars: 30, lines: [12, 14], label: /^[A-Z][a-z]{2}( \d{4})?$/ }, all: { bars: 40, lines: [22, 25], /* All reaches the oldest stored incident, not the retention: the seed's oldest is 166 days back (seed_long_history: 44 blips 3.7 days apart from 3 days ago), 24 weeks */ label: /^[A-Z][a-z]{2}( \d{4})?$/ } };
+    const check = (where) => async (id) => {
+      const what = `${where} ${id}`;
+      const w = WANT[id];
+      const bars = await page.$$eval(TL + " .tl-bar", (b) => b.length);
+      ok(`${what}: ${bars} bars (at least ${w.bars})`, bars >= w.bars);
+      const lines = await page.$eval(TL + " .tl-track", (t) => (getComputedStyle(t).backgroundImage.match(/linear-gradient/g) || []).length);
+      ok(`${what}: ${lines} day or week lines (${w.lines.join("-")})`, lines >= w.lines[0] && lines <= w.lines[1]);
+      const labels = await page.$$eval(TL + " [data-v=days] span", (s) => s.map((x) => ({ t: x.textContent, l: x.getBoundingClientRect().left, r: x.getBoundingClientRect().right })));
+      ok(`${what}: ${labels.length} labels, each of the right kind (${labels.map((l) => l.t).join(" | ")})`, labels.length >= 2 && labels.length <= 9 && labels.every((l) => w.label.test(l.t)));
+      ok(`${what}: no label runs into the next`, labels.every((l, i) => i === 0 || l.l >= labels[i - 1].r - 1));
+      ok(`${what}: nothing sticks out sideways`, await noSideways());
+    };
+    await showCard("incidents");
+    eq("7 d to All (kept 180 days)", (await rangeState("#incidentRanges")).ids.join(), "7d,30d,90d,all");
+    await atEveryRange("#incidentRanges", "#incidentTimeline", async (id) => { await check("desktop")(id); }, { pause: 600 });
+    await everyLook(async (look) => {
+      await showCard("incidents");
+      for (const id of ["30d", "all"]) {
+        await chooseRange("#incidentRanges", id);
+        await settled();
+        await check(look)(id);
+      }
+    });
+    await phone(async () => {
+      await openPanel("incidents", "incidents");
+      await atEveryRange("#incidentRanges", "#incidentTimeline", async (id) => { await check("phone")(id); }, { pause: 600 });
+    });
+  }, { variants: ["longhistory"] }],
 ];

@@ -413,9 +413,11 @@ class DocsisHistory:
         return [snapshot_from_sample(s) for s in samples if s.technology == TECHNOLOGY]
 
     async def get_channel_history(self, start_time: float, end_time: float, channel_id: Optional[int] = None,
-                                  direction: Optional[str] = None) -> List[list]:
-        """channel_history_rows of the readings in the range, no padding."""
-        samples = await self.repository.get_line_samples(self.device_id, start_time, end_time)
+                                  direction: Optional[str] = None, bucket_seconds: Optional[float] = None) -> List[list]:
+        """channel_history_rows of the readings in the range, no padding; with `bucket_seconds` of the newest reading
+        of each bucket only."""
+        samples = await self.repository.get_line_samples(self.device_id, start_time, end_time,
+                                                         bucket_seconds=bucket_seconds)
         return channel_history_rows(samples, channel_id, direction)
 
 

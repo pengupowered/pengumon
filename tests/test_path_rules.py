@@ -189,8 +189,10 @@ async def test_the_loss_grid_leaves_out_the_hops_that_ignore_ping(tmp_path):
     await repo.insert_samples(rows)
     every = await build_loss_grid(repo, 1, now=NOON)
     grid = await build_loss_grid(repo, 1, now=NOON, ignoring={"quiet"})
-    assert (every["sent"][0][10], every["lost"][0][10]) == (120, 63)
-    assert (grid["sent"][0][10], grid["lost"][0][10], grid["loss_pct"][0][10]) == (60, 3, 5.0)
+    # the last 24 hours to the end of the hour in progress: yesterday's row (from 13:00) and today's, where 10:00 is
+    assert every["days"][-1] == "2026-10-31"
+    assert (every["sent"][-1][10], every["lost"][-1][10]) == (120, 63)
+    assert (grid["sent"][-1][10], grid["lost"][-1][10], grid["loss_pct"][-1][10]) == (60, 3, 5.0)
     await repo.close()
 
 

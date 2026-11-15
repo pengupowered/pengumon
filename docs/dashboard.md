@@ -81,7 +81,7 @@ variant).
 upload, each with its share of your plan under it when Settings > Your line is set; the line's rate your router measured
 during the test, with the test's own figure small under it, or the test's own when no router gave one, as the line under
 the figures says: "Line, measured by your router" or "Test only"), when it ran (the full time on hover) and
-against which server, the delay under load with its grade (A+ to F), a 7 or 30 day history chart with the plan as dashed
+against which server, the delay under load with its grade (A+ to F), a 24 h, 7 d or 30 d history chart with the plan as dashed
 lines, and the tests that failed or were skipped as marks on the axis (a cross and a hollow circle). A result that is not
 whole says why: *Partial* with the reason, or *Failed* / *Skipped* above the last good figures. Under the chart: when the next
 test is due, or "Speed test is off" with a link that opens Settings at the section, and this month's data use against the
@@ -92,23 +92,26 @@ download, then upload...": the server does not report which direction it is in. 
 test worked and unknown otherwise: a test that failed raises no warning dot on the Network tab.
 
 **Internet use** is the router's own Traffic Analyzer, kept by Pengumon ([api.md](api.md), "Router traffic"), so that page
-is no longer needed. It shows, for the last 24 hours or 7 days, the WAN's download and upload for each clock hour as bars
-(upload quieter), or for the last 30 days a bar per day (the 30 whole days up to the last midnight, in the zone set in
-Settings: today is in the 24 hour view), the sums and the busiest hour or day, the devices that used the most (name, kind and
-maker, download over upload with a bar, and the app most of its traffic was: "mostly Sony PlayStation" when one recognized
-app was at least 80 % of it; each device is a button that opens its dialog) and the top apps. The router gives apps only as
-a total of 24 hours, so over 24 hours the apps are its latest such total ("apps over the 24 h to 14:00"), and over 7 and 30
-days the sum of the whole days (midnight to midnight) up to the last midnight: Pengumon keeps the router's total of each day
-it reads just after that midnight. A day it was not reading then has no app figures (the help says so; the list is headed
-by the range, "last 7 days", as the devices are). Sizes are
+is no longer needed. It shows, for the last 24 hours, 7 days or 30 days, the WAN's download and upload for each clock hour
+as bars (upload quieter), or over 30 days a bar per calendar day, the sums and the busiest hour or day, the devices that
+used the most (name, kind and maker, download over upload with a bar, and the app most of its traffic was: "mostly Sony
+PlayStation" when one recognized app was at least 80 % of it; each device is a button that opens its dialog) and the top
+apps. Every range is a rolling window that ends at the newest hour the router published (24, 168 or 720 hours back), so a
+longer range always contains the shorter one. Over 30 days the first and last bar are the days the window cuts: they are
+drawn narrower in proportion to the hours they hold and their tooltip says which ("Fri 16:00-24:00"). The router gives
+apps only as a total of 24 hours, so the apps are the sum of its 24-hour totals that lie inside the range (the list is
+headed "counted over 72 of 168 h, to 14:00" when they do not cover all of it), and the last row, "Not broken down by app",
+is what the router's counts do not account for: the range's total minus the apps listed, so the list adds up to the total
+(the help says why). Sizes are
 in decimal units ("75 GB"), as the router writes them. The router publishes an hour a few minutes after it ends, so the newest
-hour is drawn as a hatched bar and said in words under the chart ("The newest hour (14:00-15:00) is not published by the router
-yet."), never as 0 bytes; an hour Pengumon was not reading is hatched more quietly and counted ("131 hours in this range were
+hour, when a range includes one the router has not published, is drawn as a hatched bar and said in words under the chart
+("The newest hour (14:00-15:00) is not published by the router yet."), never as 0 bytes; an hour Pengumon was not reading is hatched more quietly and counted ("131 hours in this range were
 not stored"). When the router gives no figures the card says why (the answer's `reason`: the Traffic Analyzer is switched off,
 the device is disabled, ...), and the footer says when it was last read and how often ("read 14:05 · every 60 min"). A
 **device's dialog** opens in the card's range and has its own 24 h, 7 d and 30 d buttons: the device's traffic per hour (per
 day over 30 days), its totals and busiest hour or day, its main app and its apps over the range (counted as the card counts
-them) and the apps of each day (the router's 24-hour total of each whole day, midnight to midnight); Back, Escape and Done
+them, with its own "Not broken down by app" row) and the apps of each day (the router's 24-hour total that ends at the
+end of that day); Back, Escape and Done
 close it. The pencil by its name (where names are shown) gives it a name in Pengumon ("PS5" for a console the router calls
 "EXAMPLE NETWORK TECHNOLOGY CO"), shown instead of the router's on the card, in the dialog, in Local network and in the
 incident inspector; the dialog then also says what the router calls it, and "Use the router's name" takes the name away.
@@ -187,6 +190,17 @@ history. Sparklines are drawn by `static/js/sparkline.js` (SVG, not Chart.js); a
 or block that has begun opens the Incidents panel filtered to that time (on a phone, the Incidents tab), where each
 incident opens its inspector as usual. A time with nothing to list says why: nothing probed, every probe answered,
 busy-line incidents hidden, or loss too small or brief to open an incident.
+**Ranges** are rolling windows that end now: the Uptime strips over 24 hours to All, "When it breaks" (the last 7 to 90 x 24
+hours, or All to the end of the hour in progress), the Incidents timeline (the last 7 or 30 days to now, its day lines at the local
+midnights inside it; over 30 days the labels go at the Mondays only, "Nov 3") and the Reliability report all cover exactly that stretch. Their cells are calendar days or clock
+hours, so the window cuts the oldest and the newest: an Uptime day cell the window cuts is drawn narrower in proportion
+to the hours it holds and its tooltip says which ("Fri 16:00-24:00"), the first and last rows of "When it breaks" are
+blank for the hours outside the window, and the Reliability report's tooltip for its first and last day says how much of
+the day the range holds. The Uptime availability covers exactly the window.
+On a narrow card (a phone) each Uptime name and its availability sit over the strip, which takes the card's width; a
+block is never narrower than 7 px, so when the blocks don't fit (the 96 quarter hours of 24 h, the 90 days of 90 d) the
+strips scroll sideways together with their dates, opening at now and staying there through the refreshes unless the
+reader has scrolled back, the names staying in view.
 Their days and hours, and the Reliability report's, are in the zone set in Settings, else in the browser's own zone
 (the page sends it), and follow daylight saving: the day the clocks go back has 25 hours (the repeated hour counts twice
 in its cell, and opens both) and the day they go forward 23. The server says when each cell begins and ends, so a click
@@ -272,6 +286,44 @@ The help texts of the panels (hop colors, the busy level, router and DOCSIS leve
 (`js/settings-values.js`, GET `/api/settings/values`), so they quote what the page uses now. The latency panel opens on
 `display.default_latency_range`.
 
+**One range control on every chart**: a drop-down (a native `<select>`, so it works by keyboard, on a phone and with a screen
+reader; `js/ranges.js`), labelled by its choice ("Last 7 days"), with the same words and order everywhere: Live and
+Last 15 minutes (the latency views only), Last hour, Last 24 hours, Last 7 days, Last 30 days, Last 90 days and **All**.
+Each chart offers the ranges its data can fill: none finer than the data (the cable line's channels, Speed, Internet use and
+the uptime strips start at 24 h, the report, "When it breaks" and the Incidents timeline at 7 d), no 90 d when that kind of data
+is kept for less than 90 days, and no All when it would equal a range already offered. **All is the whole retention of that
+kind of data** and says so ("All · 180 d", "All · 1 y"; the retention settings under Settings > Database: probes, router,
+mesh, cable line, Internet use, speed tests, incidents, 180 days each by default), and the chart shows what is stored when
+that is younger than the retention. Incidents are kept forever by default (`incident_retention_days` 0): All then reaches the
+oldest stored incident and is labelled just "All". The ask-AI pack keeps 1 h to 30 d (a chat model's text has to stay small) but
+uses the same control. A Save that changes a retention updates the options of every open control; a chosen range that is no
+longer offered gives way to the shortest one.
+
+**Long views.** Every line holds about 400-800 points whatever the range (7 d is read in 15-minute buckets, 30 d in hourly
+ones, longer ranges in the span over 720 rounded up to whole quarter hours), the axis shows clock times to 24 h, dates from
+7 d and months past 90 d, and a tooltip names its bucket ("week of Nov 3", "6 h from 12:00"). Past 30 days "When it breaks"
+folds into seven rows, one per weekday, each hour the sum of that weekday-hour over the range ("by weekday and hour, last 90
+days"). The Uptime strips use one cell per day to 90 days and one per week (Monday to Sunday, the first and last cut by the
+window and drawn narrower) past it, which is what All is at 180 days. The Incidents timeline draws a line per midnight to
+30 days, one per week past it, and month labels past 60 days; it loads the incidents of the range through its paging, and when
+the range holds more than the newest 500 it loads the card says so. The Reliability report's and Internet use's bars are per day to 31
+(report) or 90 days (Internet use) and per week beyond, partial weeks narrower, with the week named in the tooltip.
+
+**All starts at the oldest stored data.** A fixed range (24 h to 90 d) keeps its whole window, and a part with no data shows
+as such ("not stored", "no data"). All is the retention, but a chart that has less stored starts at its oldest stored row: the
+router history, the client counts, the cable line's channels, the latency chart, the target history and the Internet use card
+and device dialog first ask for the whole retention and, when the oldest row is more than a couple of buckets after its
+start, ask again from that row, so the buckets suit the span drawn (400-800 points; `loadFromOldest` in `js/ranges.js`; the
+Internet use card asks again for the hours from its first stored day). Their notes say what is drawn in the same words as
+the uptime strips: "all stored, since Nov 8" or "all stored, last 180 d". The axis labels follow the span drawn, not the
+range's name: clock times to a day, dates to 90 days, months only past it, and no label twice in a row. In "When it breaks"
+the weekday-and-date labels have a column as wide as the widest ("Wed 21") in every theme.
+
+**The update bar.** A tab that was opened before the server was upgraded keeps the old page's scripts, so it can show a card
+the new version has changed. The page notes the `version` of `GET /api/health` at load and asks again when the live socket
+reconnects (a restart) and every 10 minutes; when it differs a bar across the top says "Pengumon was updated to 0.28.0. Reload to
+use it." with a Reload button and a close that hides it until the version changes again.
+
 ## Mobile tabs
 
 At 720 px and below a bottom bar (`static/js/tabs.js`) shows one group at a time: **Live** (path health, latency, hop
@@ -298,7 +350,7 @@ imports the module the first time one of those is used, and ahead of the click w
 control. `tests/test_frontend.py` checks that every way into a lazy dialog is named. The styles and markup stay in the page.
 
 The incident list (`panels/incidents/list.js`) loads the newest 50 incidents, and older ones in pages of 50 when the
-7-day timeline, a search, the last page, a time window opened from another panel or a custom chart range needs them, up
+7 or 30 day timeline, a search, the last page, a time window opened from another panel or a custom chart range needs them, up
 to 500 (`GET /api/incidents?limit=&offset=`).
 When the history has more than 500, the card says so: its count stays the server's (`/api/incidents/count`), a note names
 the 500 listed and points to the ISP dossier, the reliability report and the API for older ones, and the footer says its
@@ -421,7 +473,7 @@ tabs are named consistently. Add a smoke step to `tests/ui/smoke.mjs` for what a
 The sparkle button in the header, the inspector's **Ask AI** (that incident, with an hour on each side) and a button in the
 dossier open one dialog that shows the pack (`GET /api/ai-pack`) as Markdown, to copy into any chat assistant. Pengumon calls
 no AI itself. What the pack holds and what each level shares: [ai-pack.md](ai-pack.md).
-- **What to cover:** the past hour, 24 hours or 7 days, or the incident the dialog was opened from.
+- **What to cover:** the past hour, 24 hours, 7 days or 30 days, or the incident the dialog was opened from.
 - **How long:** Short, or With more examples.
 - **How much to share:** Full (the default every time it opens), Vague or Anonymized; each says in the dialog what it includes. Anyone
   who can view the dashboard may use every level.

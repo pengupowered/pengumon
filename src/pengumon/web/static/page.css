@@ -118,6 +118,16 @@ body[data-status="unknown"] { --gst: var(--unknown); }
 .conn-banner[hidden] { display: none; }
 .conn-banner svg.i { color: var(--unknown); flex: none; }
 @media (max-width: 720px) { .conn-banner { margin-inline: 12px; width: auto; } }
+/* The update bar (js/update-bar.js): a notice across the top above the header */
+.update-bar {
+  position: relative; z-index: calc(var(--z-sticky) + 1); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px max(16px, env(safe-area-inset-left, 0px));
+  background: var(--accent-bg); color: var(--ink-1); font-size: var(--fs-sm); border-bottom: 1px solid var(--accent);
+}
+.update-bar[hidden] { display: none; }
+.update-bar svg.i { color: var(--accent); flex: none; }
+.update-bar .ub-text { flex: 1 1 220px; min-width: 0; }
+.update-bar .ub-close { margin-left: auto; }
+@media (max-width: 720px) { .update-bar { padding-inline: 12px; } }
 /* First run: no device yet (index.html #setupHint, shown by main.js) */
 .setup-hint {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: min(calc(100% - 48px), calc(var(--page-max) - 48px)); margin: 8px auto 0;

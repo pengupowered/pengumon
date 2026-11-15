@@ -28,6 +28,7 @@ from pengumon.config import AppConfig, read_config_file
 from pengumon.db.settings import SettingsConflict
 from pengumon.observability import get_logger
 from pengumon.observability.telemetry import settings_imports, settings_saves
+from pengumon.probe_interval import INTERVAL_CHOICES
 from pengumon.secrets import SECRETS_DIR, SECRETS_FILE_DAMAGED, SecretsFileUnusable, SecretStore, resolve_slot
 from pengumon.settings import env as settings_env
 from pengumon.settings import lenient, registry
@@ -44,6 +45,7 @@ from pengumon.settings.validate import validate as validate_change
 _log = get_logger("pengumon.settings")
 
 SOURCES = ("save", "restore", "yaml_import")
+INTERVAL_KEY = "prober.interval_seconds"
 
 
 class SettingsInvalid(Exception):
@@ -108,10 +110,6 @@ class SettingsManager:
         self._lock = asyncio.Lock()
 
     # --- reading ------------------------------------------------------------------------------------------------
-
-    @property
-    def round_seconds(self) -> float:
-        return self.config.prober.interval_seconds
 
     def file_raw(self) -> dict:
         if self._raw is None:
@@ -243,10 +241,41 @@ class SettingsManager:
             for note in result.notes:
                 _log.info(f"Settings import: {note}")
 
+    def _file_interval(self) -> Optional[Tuple[Any, int]]:
+        """(the value config.yaml sets for prober.interval_seconds, the choice nearest to it), or None when the file
+        sets none that is a number."""
+        part = self.file_raw().get("prober")
+        value = part.get(INTERVAL_KEY.split(".")[1]) if isinstance(part, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+            return None
+        return value, min(INTERVAL_CHOICES, key=lambda c: (abs(c - value), c))
+
+    async def _import_interval(self) -> None:
+        """0.28: prober.interval_seconds was a config.yaml-only key (a bootstrap key) and is a setting now. The first
+        start that finds the store without it stores the file's value once, snapped to the nearest of the choices
+        (with a note when it moved); after that the file's value is ignored, and the log says so."""
+        found = self._file_interval()
+        if await self.repository.probe_interval_imported():
+            if found is not None:
+                _log.info(f"config.yaml sets {INTERVAL_KEY}: ignored, the probe interval is a setting now "
+                          "(Settings > Probing)")
+            return
+        chosen = found[1] if found else None
+        summary = f"Probe every {chosen} s, from config.yaml" if chosen else "Probe interval left at its default"
+        revision = await self.repository.import_probe_interval(INTERVAL_KEY, chosen, summary)
+        if revision is not None:
+            note = ""
+            if found and found[0] != chosen:
+                note = (f" (config.yaml sets {found[0]:g} s; the choices are "
+                        f"{', '.join(str(c) for c in INTERVAL_CHOICES)} s, so it moved to {chosen} s)")
+            _log.info(f"Imported {INTERVAL_KEY} from config.yaml: {chosen} s{note}; it is a setting now, "
+                      "and the file's value is ignored from here on")
+
     async def load(self) -> None:
         """The one-time import (first start of the store), then the stored document into the live config."""
         if not await self.repository.settings_initialized():
             await self._import_once()
+        await self._import_interval()
         revision, stored = await self.repository.load_settings()
         unknown_keys = sorted(k for k in stored.values if k not in registry.BY_KEY)
         unknown_lists = sorted(n for n in stored.lists if n not in registry.LISTS)
@@ -297,7 +326,7 @@ class SettingsManager:
         return ValidationContext(
             config=self.config, document=self.document, env_overrides=self.env_overrides, environ=self._environ,
             token_set=self._token_set, hop_ids=self._hop_ids, candidate=self._data, secret_value=self.secret_value,
-            slots=self.slots, round_seconds=lambda: self.round_seconds)
+            slots=self.slots)
 
     # --- saving ------------------------------------------------------------------------------------------------------
 
@@ -351,7 +380,7 @@ class SettingsManager:
             try:
                 revision, old, new, summary = await self.repository.save_settings(
                     base_revision, change_values, change_lists, source,
-                    lambda before, after: describe(before, after, checked.slots, self.round_seconds))
+                    lambda before, after: describe(before, after, checked.slots))
             except BaseException:  # ... and a failed commit puts back what it replaced (a failed save changes nothing)
                 if written:
                     self._restore_secrets(written)

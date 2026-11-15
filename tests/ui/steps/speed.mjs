@@ -35,7 +35,7 @@ const speedAnswer = (patch) => {
 };
 
 export const steps = [
-  ["speed card: the last result against the plan, its delay grade, the next test and this month's data, from the seeded tests", async ({ count, eq, moduleUrl, ok, page, text, until, waitText }) => {
+  ["speed card: the last result against the plan, its delay grade, the next test and this month's data, from the seeded tests", async ({ chooseRange, count, eq, moduleUrl, ok, page, rangeState, text, until, waitText }) => {
     // the plan ("Your line") is set through the settings API for this step only: with it set the line load is known, which
     // other steps (the incident inspector's "Line load unknown") rely on not being
     const plan = (values) => page.evaluate(async (v) => {
@@ -75,12 +75,19 @@ export const steps = [
       const sets = () => page.evaluate(() => Chart.getChart(document.querySelector("[data-panel=speed] canvas")).data.datasets.map((d) => `${d.label}:${d.data.length}`).join());
       eq("7 days: both lines, the plan, a failed and a skipped mark", await sets(), "Download plan:2,Upload plan:2,Download:3,Upload:2,Failed:1,Skipped:1");
       eq("the chart has ink", (await page.$eval(`${CARD} canvas`, (c) => c.getContext("2d").getImageData(0, 0, c.width, c.height).data.some((v, i) => i % 4 === 3 && v > 0))), true);
-      await page.$eval(`${CARD} [data-action=speedRange][data-arg="30"]`, (b) => b.click());
-      await until(() => document.querySelector("[data-panel=speed] [data-action=speedRange][data-arg='30']").getAttribute("aria-pressed") === "true");
+      eq("the ranges: 24 h to All (the tests are kept 180 days)", (await rangeState(CARD)).words.join(","), "Last 24 hours,Last 7 days,Last 30 days,Last 90 days,All · 180 d");
+      await chooseRange(CARD, "24h");
+      await until(() => document.querySelector("[data-panel=speed] select.range-select").value === "24h");
+      const edges = await page.evaluate(() => { const x = Chart.getChart(document.querySelector("[data-panel=speed] canvas")).scales.x; return { span: x.max - x.min, max: x.max, now: Date.now() }; });
+      eq("24 h: the window is a day long", edges.span, 86400000);
+      ok("and its right edge is the next 10 minutes after now", edges.max % 600000 === 0 && edges.max >= edges.now && edges.max - edges.now <= 600000);
+      ok("the chart says it is 24 hours", /last 24 hours/.test(await page.$eval(`${CARD} canvas`, (c) => c.getAttribute("aria-label"))));
+      await chooseRange(CARD, "30d");
+      await until(() => document.querySelector("[data-panel=speed] select.range-select").value === "30d");
       eq("30 days: the older tests are in", await sets(), "Download plan:2,Upload plan:2,Download:5,Upload:4,Failed:1,Skipped:1");
-      eq("7 d is no longer pressed", await page.$eval(`${CARD} [data-action=speedRange][data-arg="7"]`, (b) => b.getAttribute("aria-pressed")), "false");
+      eq("7 d is no longer chosen", (await rangeState(CARD)).value, "30d");
       ok("the chart says what it shows", /30 days, 6 tests/.test(await page.$eval(`${CARD} canvas`, (c) => c.getAttribute("aria-label"))) || /30 days, 7 tests/.test(await page.$eval(`${CARD} canvas`, (c) => c.getAttribute("aria-label"))));
-      await page.$eval(`${CARD} [data-action=speedRange][data-arg="7"]`, (b) => b.click());
+      await chooseRange(CARD, "7d");
     } finally {
       await plan({ "line.down_mbps": null, "line.up_mbps": null });
     }
@@ -305,4 +312,33 @@ export const steps = [
     await click(run);
     eq("pressing it asks nothing", await count(`${BODY} .spd-confirm`), 0);
   }, { variants: ["viewonly"] }],
+
+  ["every range draws the speed history (the tests of the range, months on the axis past 90 days), on a desktop, a phone and in every theme", async ({ atEveryRange, axisOk, chartAxis, chooseRange, eq, everyLook, noSideways, ok, openPanel, phone, rangeState, settled, showCard }) => {
+    const CHART = "[data-panel=speed] canvas";
+    const KINDS = { "24h": ["clock"], "7d": ["date"], "30d": ["date"], "90d": ["date"], all: ["month"] }; // (the speed chart labels a week with dates)
+    const NEEDS = { "24h": 1, "7d": 3, "30d": 5, "90d": 8, all: 10 }; // the seeded tests: 3 h, 51 h, 99 h..., then the long history's
+    const check = (where) => async (id, s) => {
+      const what = `${where} ${id}`;
+      ok(`${what}: the chart is drawn`, !!s);
+      const down = s.sets.find((d) => d.label === "Download");
+      ok(`${what}: ${down ? down.n : 0} download points (at least ${NEEDS[id]})`, !!down && down.n >= NEEDS[id]);
+      axisOk(what, id, s, KINDS[id]);
+      ok(`${what}: nothing sticks out sideways`, await noSideways());
+    };
+    await showCard("speed");
+    eq("24 h to All", (await rangeState("[data-panel=speed]")).ids.join(), "24h,7d,30d,90d,all");
+    await atEveryRange("[data-panel=speed]", CHART, check("desktop"));
+    await everyLook(async (look) => {
+      await showCard("speed");
+      for (const id of ["24h", "all"]) {
+        await chooseRange("[data-panel=speed]", id);
+        await settled();
+        await check(look)(id, await chartAxis(CHART));
+      }
+    });
+    await phone(async () => {
+      await openPanel("speed", "network");
+      await atEveryRange("[data-panel=speed]", CHART, check("phone"));
+    });
+  }, { variants: ["longhistory"] }],
 ];

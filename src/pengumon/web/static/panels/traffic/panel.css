@@ -26,6 +26,8 @@ button.trf-row { cursor: pointer; }
 button.trf-row:hover { background: var(--surface-2); }
 .trf-row > svg.i { color: var(--ink-3); }
 .trf-row.app { grid-template-columns: minmax(0, 1fr) auto; }
+.trf-row.rest .trf-name, .trf-row.rest .trf-down { color: var(--ink-3); font-weight: var(--fw-reg, 400); }
+.trf-row.rest .trf-bar i { background: var(--ink-4, var(--line-strong)); }
 .trf-who { display: flex; flex-direction: column; min-width: 0; font-size: var(--fs-sm); }
 .trf-name { color: var(--ink-1); font-weight: var(--fw-semi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trf-sub, .trf-app { font-size: var(--fs-xs); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

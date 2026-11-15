@@ -9,7 +9,7 @@
 import { registerActions } from '../../js/dispatch.js';
 import { createCard } from '../../js/cards.js';
 import { icon, STATUS } from '../../js/dom.js';
-import { localFormat, nextMidnight } from '../../js/clock.js';
+import { localFormat, nextMidnight, zoneOffsetMs } from '../../js/clock.js';
 import { numText } from '../../js/escape.js';
 import { CAUSES, CAUSE_SHORT } from '../../js/roles.js';
 import { CAP, hasMore, isLoading, loadAll, loadMore, loadSince, loadedOutages, oldestLoaded, totalCounts } from './list.js';
@@ -17,6 +17,7 @@ import { causeOf, durationOf, formatDuration, levelOfIncident, whenText } from '
 import { settingsValues, val } from '../../js/settings-values.js';
 import standard from './view.js';
 import { everyWhileVisible } from '../../js/timers.js';
+import { fillRangeSelect, onRetentionChange, rangeOptions, retentionDays } from '../../js/ranges.js';
 
 const DAY = 86400;
 
@@ -28,22 +29,61 @@ let incidentPageSize = 10;
 let incidentCurrentPage = 1;
 let showExpectedIncidents = false;
 const openOutages = new Set(); // outage ids whose drops are listed (state that survives a theme switch)
+let timelineRange = '7d'; // the timeline's window (the range control in the card's header: js/ranges.js)
+const options = () => rangeOptions({ days: retentionDays('incidents'), min: '7d' });
 let incidentWindow = null; // {start, end, label, lost, sent}: only the incidents overlapping this time (showIncidentWindow)
 
 const overlaps = (inc, win) => inc.start_time < win.end && (inc.end_time ?? Date.now() / 1000) > win.start;
 
 // ---------- the view model ----------
 
-// The last 7 days as one lane per cause, each incident a bar where and as long as it happened (busy-line ones hatched,
-// an ongoing one ringed); a bar opens the inspector. `visible`: the incidents the toggle shows. Positions are percents of
-// the lane (bars) or fractions of the week (now, the window).
-function timeline(visible, win, nowMs) {
+// The last 7 x 24 hours as one lane per cause, each incident a bar where and as long as it happened (busy-line ones hatched,
+// an ongoing one ringed); a bar opens the inspector. The window ends now (no empty future); its day labels sit at the local
+// midnights inside it (and at its start, when the first day holds enough of it), not in 7 equal columns. `visible`: the
+// incidents the toggle shows. Positions are percents of the lane (bars) or fractions of the window (now, the window, the
+// days).
+const MIN_FIRST_DAY = 0.06; // the first, cut day gets a label at the start when it holds at least this part of the window
+const MIN_LAST_DAY = 0.06; // the newest day is labeled at its midnight only when that leaves room for the label before now
+
+export function dayMarks(start, end) {
+  const span = end - start;
+  const cuts = [];
+  for (let m = nextMidnight(start * 1000) / 1000; m < end; m = nextMidnight(m * 1000) / 1000) cuts.push(m);
+  const day = (at) => localFormat((at + 3600) * 1000, { weekday: 'short' }); // an hour in: the day that begins at `at`
+  if (span > 14 * DAY) {
+    // weeks: a label only at the Mondays ("Nov 3"), one per week; a hairline per midnight to 30 days, then one per week
+    const monday = (m) => new Date((m + 3600) * 1000 + zoneOffsetMs((m + 3600) * 1000)).getUTCDay() === 1;
+    const mondays = cuts.filter(monday);
+    const lines = (span > 30 * DAY ? mondays : cuts).map((m) => (m - start) / span);
+    if (span > 60 * DAY) {
+      // months: a label at each first of the month ("Nov", and "Jan 2027" at a new year), the first cut month's name at the
+      // start when it holds enough of the window
+      const first = (m) => new Date((m + 3600) * 1000 + zoneOffsetMs((m + 3600) * 1000)).getUTCDate() === 1;
+      const month = (m) => localFormat((m + 3600) * 1000, { month: 'short' });
+      const yearly = (m) => localFormat((m + 3600) * 1000, { month: 'short', year: 'numeric' });
+      const marks = cuts.filter((m) => first(m) && 1 - (m - start) / span >= MIN_LAST_DAY)
+        .map((m) => ({ at: (m - start) / span, label: new Date((m + 3600) * 1000 + zoneOffsetMs((m + 3600) * 1000)).getUTCMonth() === 0 ? yearly(m) : month(m) }));
+      if (!marks.length || marks[0].at >= MIN_FIRST_DAY) marks.unshift({ at: 0, label: month(start) });
+      return { marks, cuts: lines };
+    }
+    const weekly = mondays.filter((m) => 1 - (m - start) / span >= MIN_LAST_DAY)
+      .map((m) => ({ at: (m - start) / span, label: localFormat((m + 3600) * 1000, { month: 'short', day: 'numeric' }) }));
+    return { marks: weekly, cuts: lines };
+  }
+  // a midnight just before now keeps its hairline but no label: the label would run past the end of the lane
+  const marks = cuts.filter((m) => 1 - (m - start) / span >= MIN_LAST_DAY).map((m) => ({ at: (m - start) / span, label: day(m) }));
+  if (!cuts.length || (cuts[0] - start) / span >= MIN_FIRST_DAY) marks.unshift({ at: 0, label: localFormat(start * 1000, { weekday: 'short' }) });
+  return { marks, cuts: cuts.map((m) => (m - start) / span) };
+}
+
+function timeline(visible, win, nowMs, days = 7) {
   const now = nowMs / 1000;
-  const end = nextMidnight(nowMs) / 1000; // the end of today, on the page's clock
-  const start = end - 7 * DAY;
+  const end = now; // the window ends now
+  const start = end - days * DAY;
   const list = visible.filter((i) => (i.end_time ?? now) >= start);
   if (!list.length) return null;
   const span = end - start;
+  const marks = dayMarks(start, end);
   const shownWin = win && win.end > start ? win : null;
   return {
     lanes: CAUSES.filter(([key]) => list.some((i) => (i.cause || 'unknown') === key)).map(([key, word]) => ({
@@ -52,12 +92,13 @@ function timeline(visible, win, nowMs) {
         const active = i.duration_seconds === null || i.duration_seconds === undefined;
         const label = `${i.title} · ${whenText(i.start_time)} · ${active ? 'ongoing' : durationOf(i).long}${i.expected ? ' · expected' : ''}`;
         return { id: i.id, level: levelOfIncident(i), expected: !!i.expected, ongoing: active,
-          left: ((Math.max(start, i.start_time) - start) / span) * 100, width: Math.max(0.45, (((i.end_time ?? now) - i.start_time) / span) * 100),
+          left: ((Math.max(start, i.start_time) - start) / span) * 100, width: Math.max(0.45, (((i.end_time ?? now) - Math.max(start, i.start_time)) / span) * 100),
           tip: label, aria: label.replace(/ · /g, ', ') };
       })
     })),
-    days: Array.from({ length: 7 }, (_, k) => localFormat((start + k * DAY + 3600) * 1000, { weekday: 'short' })),
-    now: (now - start) / span,
+    days: marks.marks,
+    cuts: marks.cuts,
+    now: 1,
     window: shownWin ? { from: (Math.max(start, shownWin.start) - start) / span, to: (shownWin.end - start) / span } : null
   };
 }
@@ -187,6 +228,9 @@ export function present(s, nowMs) {
   // the list holds the newest CAP incidents; when the history has more, say so (the count above is the server's real one)
   const capped = !s.more && s.all.length >= CAP && (!known || known.total > s.all.length);
   const capNote = !capped ? '' : `Only the newest ${CAP} incidents are listed${known ? ` (of ${known.total.toLocaleString()} recorded)` : ''}. Older ones are in the ISP dossier (up to 30 days), the reliability report (up to 90 days) and the API (/api/incidents with limit and offset).`;
+  // the list holds the newest CAP incidents: a fixed range may reach back past the oldest one loaded, and holds more than the timeline shows
+  const timelineNote = s.timelineRange && s.timelineRange !== 'all' && s.timelineDays > 7 && !s.more && s.all.length >= CAP && s.oldest !== null && s.oldest > nowMs / 1000 - s.timelineDays * DAY
+    ? `The timeline shows the newest ${CAP} incidents, from ${localFormat(s.oldest * 1000, { month: 'short', day: 'numeric' })}: this range holds more.` : '';
   const expectedCount = known ? known.expected : s.all.filter((inc) => inc.expected).length;
 
   const startIdx = (page - 1) * s.pageSize;
@@ -202,14 +246,14 @@ export function present(s, nowMs) {
   }
   const windowIncidents = s.window ? visible.filter(matches).length : 0;
   return {
-    timeline: timeline(visible, s.window, nowMs),
+    timeline: timeline(visible, s.window, nowMs, s.timelineDays || 7),
     window: s.window ? { label: s.window.label, found: windowIncidents === 1 ? '1 incident' : `${windowIncidents} incidents`,
       clear: { action: 'clearIncidentWindow', label: 'Show all', icon: 'close' } } : null,
     list: { rows, empty },
     page,
     total: totalCount,
     frame: {
-      cap: capNote,
+      cap: [capNote, timelineNote].filter(Boolean).join(' '),
       count: capped ? `${incidentCount.toLocaleString()} recorded events · newest ${CAP} listed`
         : grouped ? `${everything.length}${s.more ? '+' : ''} events · ${incidentCount} incidents`
         : `${incidentCount}${s.more && knownShown === null ? '+' : ''} recorded events`,
@@ -253,7 +297,7 @@ export function fixture() {
 
 function state() {
   return { all: allRawIncidents, query: incidentSearchQuery, pageSize: incidentPageSize, page: incidentCurrentPage, showExpected: showExpectedIncidents,
-    window: incidentWindow, totals: totalCounts(), more: hasMore(), loading: isLoading(), oldest: oldestLoaded(),
+    window: incidentWindow, timelineDays: timelineDays(), timelineRange, totals: totalCounts(), more: hasMore(), loading: isLoading(), oldest: oldestLoaded(),
     outages: loadedOutages(), maintenance: { start: val(settingsValues(), 'incidents.maintenance_start', '00:00'), end: val(settingsValues(), 'incidents.maintenance_end', '06:00') } };
 }
 
@@ -285,8 +329,40 @@ function render() {
 export function initIncidentsCard(section) {
   root = section.querySelector('.panel-b');
   card = createCard({ panel: 'incidents', root, standard, fixture });
+  markRange();
+  onRetentionChange(() => { markRange(); render(); loadSince(timelineStart()); });
   document.addEventListener('zonechange', render); // the times and the timeline's days are on the page's clock
   everyWhileVisible(render, 60000); // the timeline's "now", ongoing bars and "Today 14:02" labels move with the clock
+}
+
+// The start of the timeline's window (epoch seconds): the list loads back to it (panel.js). A range is a rolling window ending
+// now; All reaches the oldest stored incident (from the oldest one loaded, on the midnight before it), and never further back
+// than the incidents are kept.
+export function timelineStart(nowMs = Date.now()) {
+  const opt = options().find((o) => o.id === timelineRange) || options()[0];
+  const now = nowMs / 1000;
+  if (opt.id !== 'all') return now - opt.seconds;
+  const oldest = oldestLoaded();
+  const earliest = now - opt.seconds;
+  if (oldest === null) return Math.max(earliest, now - 30 * DAY);
+  return Math.max(earliest, nextMidnight(oldest * 1000) / 1000 - DAY);
+}
+const timelineDays = () => (Date.now() / 1000 - timelineStart()) / DAY;
+
+// A range on the timeline: the list reaches back that far, then the card is drawn.
+function markRange() {
+  const list = options();
+  if (!list.some((o) => o.id === timelineRange)) timelineRange = '7d'; // (a retention that no longer keeps the range)
+  const host = document.getElementById('incidentRanges');
+  if (host) fillRangeSelect(host, { options: list, value: timelineRange, action: 'setIncidentDays', label: 'Timeline window' });
+}
+
+function setTimelineRange(id) {
+  if (id === timelineRange || !options().some((o) => o.id === id)) return;
+  timelineRange = id;
+  markRange();
+  render();
+  loadSince(timelineStart()); // older than what is loaded: load back to it (list.js re-renders)
 }
 
 // Lists the drops of an outage under its row, or hides them again.
@@ -392,5 +468,6 @@ registerActions('input', {
   handleIncidentSearch: (el) => handleIncidentSearch(el.value)
 });
 registerActions('change', {
+  setIncidentDays: (el) => setTimelineRange(el.value),
   changeIncidentPageSize: (el) => changeIncidentPageSize(el.value)
 });

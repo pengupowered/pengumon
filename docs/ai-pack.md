@@ -12,7 +12,7 @@ what is wrong; the dossier is the evidence for the provider.
 
 1. Open **Ask AI**: the sparkle button in the header (a time window), **Ask AI** in the incident inspector (that
    incident, with an hour on each side), or the button in the dossier.
-2. Choose what to cover (the past hour, 24 hours or 7 days, or the incident), how long (Short, or With more
+2. Choose what to cover (the past hour, 24 hours, 7 days or 30 days, or the incident), how long (Short, or With more
    examples) and how much to share (Full, Vague or Anonymized, below). The preview is exactly the text you will
    copy, with a token estimate.
 3. **Copy** (or **Download .md**) and paste it into a new chat.

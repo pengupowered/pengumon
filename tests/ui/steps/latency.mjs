@@ -59,6 +59,35 @@ export const steps = [
     eq("60 targets over 1.5 s are two rounds", r.denseRounds, 2);
   }],
 
+  ["back to Live: the rounds that came while the stored window loaded are drawn, so the window meets the feed without a gap", async ({ chooseRange, click, moduleUrl, ok, page, sleep, until }) => {
+    // The stored window's answer is held back 3 s, as a slow answer is; the feed's messages of those seconds are noted.
+    // 0.28.0 drew them on the view the answer then replaced: a gap in every line where the window met the feed.
+    await page.evaluate(() => {
+      const real = window.fetch;
+      window.__heldMessages = [];
+      window.__holding = false;
+      window.__smokeMutate = (d) => { if (window.__holding && d && d.timestamp) window.__heldMessages.push(d.timestamp); };
+      window.fetch = (u, o) => {
+        if (!(String(u).includes("/api/history?") && !String(u).includes("bucket_seconds"))) return real(u, o);
+        window.__holding = true;
+        return real(u, o).then((res) => new Promise((r) => setTimeout(() => { window.__holding = false; r(res); }, 3000)));
+      };
+    });
+    await chooseRange("#timeRangeButtons", "15m");
+    await chooseRange("#timeRangeButtons", "live");
+    await sleep(5000);
+    const url = await moduleUrl("../panels/latency/charts.js");
+    const r = await page.evaluate(async (u) => {
+      const { view } = await import(u);
+      const held = window.__heldMessages;
+      window.__smokeMutate = null;
+      const drawn = (t) => view.times.some((x) => Math.abs(x - t) < 0.01);
+      return { held: held.length, missing: held.filter((t) => !drawn(t)).length, points: view.times.length };
+    }, url);
+    ok(`messages came while the window loaded (${r.held})`, r.held >= 2);
+    ok(`each of them is drawn after the stored rounds (${r.missing} of ${r.held} missing; ${r.points} points)`, r.missing === 0);
+  }],
+
   ["a stored window's torn edges are left out: a second some path targets are not stored in yet is no gap in their lines", async ({ eq, moduleUrl, page }) => {
     const r = await page.evaluate(async (u) => {
       const { wholeEdges } = await import(u);
@@ -199,16 +228,93 @@ export const steps = [
     await pickLook("");
   }],
 
-  ["time ranges switch the main chart", async ({ click, eq, page, until, waitText }) => {
-    for (const [arg, label] of [["3600", "last 1 h · avg per 10 s"], ["900", "last 15 min · avg per 2 s"]]) {
-      await click(`#timeRangeButtons button[data-arg="${arg}"]`);
+  ["time ranges switch the main chart: Live, 15 m, 1 h, 24 h, 7 d, 30 d, 90 d, All, each a rolling window ending now", async ({ chooseRange, eq, ok, page, rangeState, until, waitText }) => {
+    eq("the card offers the ranges in this order", (await rangeState("#timeRangeButtons")).words.join(","), "Live,Last 15 minutes,Last hour,Last 24 hours,Last 7 days,Last 30 days,Last 90 days,All · 180 d");
+    // the range, the words over the chart, the bucket the request names (7 d and 30 d keep about 700 points a line; past 30 d the
+    // width is a nice step that gives at most 800)
+    for (const [id, arg, label, bucket] of [["1h", "3600", "last 1 h · avg per 10 s", "10"], ["15m", "900", "last 15 min · avg per 2 s", "2"], ["24h", "86400", "last 24 h · avg per 1 min", "60"],
+      ["7d", "604800", "last 7 d · avg per 15 min", "900"], ["30d", "2592000", "last 30 d · avg per 1 h", "3600"],
+      ["90d", "7776000", "last 90 d · avg per 3 h", "10800"], ["all", "15552000", "all 180 d · avg per 6 h", "21600"]]) {
+      await chooseRange("#timeRangeButtons", id);
       await waitText("#chartModeLabel", new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
       await until((i) => Chart.getChart(document.getElementById(i)).data.datasets.length >= 3, "latencyChart");
-      eq("active button", await page.$eval("#timeRangeButtons button.active", (b) => b.dataset.arg), arg);
+      eq("the range is chosen", (await rangeState("#timeRangeButtons")).value, id);
+      const lastAsked = () => {
+        const q = new URL(performance.getEntriesByType("resource").filter((e) => e.name.includes("/api/history?") && e.name.includes("bucket_seconds")).pop().name).searchParams;
+        return { span: Number(q.get("end_time")) - Number(q.get("start_time")), bucket: q.get("bucket_seconds"), lag: Date.now() / 1000 - Number(q.get("end_time")) };
+      };
+      await until((s) => { try { const q = new URL(performance.getEntriesByType("resource").filter((e) => e.name.includes("/api/history?") && e.name.includes("bucket_seconds")).pop().name).searchParams; return Number(q.get("end_time")) - Number(q.get("start_time")) === s; } catch { return false; } }, Number(arg));
+      const asked = await page.evaluate(lastAsked);
+      eq(`${label}: the request spans the range`, asked.span, Number(arg));
+      eq(`${label}: in buckets of`, asked.bucket, bucket);
+      ok(`${label}: it ends now (${asked.lag.toFixed(0)} s ago)`, asked.lag >= 0 && asked.lag < 60);
     }
-    await click('#timeRangeButtons button[data-arg="live"]');
+    // (All draws what is stored: this seed holds a few days, so its axis is not months; the longhistory variant checks months over 90 days)
+    ok("the axis labels follow the span drawn, not the range's name: no months for a few days of data", !/^[A-Z][a-z]{2} \d{4}$/.test(await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.labels[0])));
+    await chooseRange("#timeRangeButtons", "30d");
+    await waitText("#chartModeLabel", /^last 30 d /);
+    await until(() => (Chart.getChart(document.getElementById("latencyChart")).data.labels[0] ?? "") !== ""); // (the answer is drawn)
+    // (the axis follows the span drawn, not the range's name: this seed holds a few days, so a 30 d chart has times, not dates
+    // alone; the longhistory variant has 30 days of data and checks that dates come then)
+    ok("the 30 d axis is of the span drawn (not months)", !/^[A-Z][a-z]{2} \d{4}$/.test(await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.labels[0])));
+    await chooseRange("#timeRangeButtons", "live");
     await waitText("#chartModeLabel", /^last 60 s · every probe$/);
     await until(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.length >= 3);
+  }],
+
+  ["a range whose history cannot be loaded empties the chart and says so (it never draws the previous range under the new one's name)", async ({ chooseRange, eq, page, until, waitText }) => {
+    await chooseRange("#timeRangeButtons", "24h");
+    await waitText("#chartModeLabel", /^last 24 h /);
+    await until(() => Chart.getChart(document.getElementById("latencyChart")).data.labels.length > 0);
+    // the stored history's next answer fails (in the page, not on the server: the step needs the 24 h chart drawn first)
+    await page.evaluate(() => {
+      window.__realFetch = window.fetch;
+      window.fetch = (url, opts) => (String(url).includes("/api/history?") && String(url).includes("bucket_seconds")
+        ? Promise.resolve(new Response("{}", { status: 503 })) : window.__realFetch(url, opts));
+    });
+    try {
+      await chooseRange("#timeRangeButtons", "7d");
+      await waitText("#chartModeLabel", /^last 7 d · avg per 15 min · could not load the history$/);
+      await until(() => Chart.getChart(document.getElementById("latencyChart")).data.labels.length === 0);
+      eq("no line keeps the 24 h points", await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.reduce((n, d) => n + d.data.length, 0)), 0);
+    } finally {
+      await page.evaluate(() => { window.fetch = window.__realFetch; });
+    }
+    await chooseRange("#timeRangeButtons", "7d");
+    await waitText("#chartModeLabel", /^last 7 d · avg per 15 min$/);
+    await until(() => Chart.getChart(document.getElementById("latencyChart")).data.labels.length > 0);
+    await chooseRange("#timeRangeButtons", "live");
+    await waitText("#chartModeLabel", /^last 60 s · every probe$/);
+  }],
+
+  ["the latency chart's time labels never run into each other, on a phone in every theme (a monospaced theme's labels are wider)", async ({ chooseRange, everyLook, ok, page, phone, settled, showCard, sleep, until }) => {
+    // the gap between neighbouring labels as drawn: each label is centered on its tick, as wide as the theme's font makes it
+    const gaps = () => page.evaluate(() => {
+      const c = Chart.getChart(document.querySelector("[data-panel=latency] .lat-main canvas")); // (a theme's own view has no #latencyChart)
+      const x = c.scales.x;
+      const ctx = document.createElement("canvas").getContext("2d");
+      ctx.font = Chart.helpers.toFont(x.options.ticks.font).string;
+      const boxes = x.ticks.map((t, i) => { const at = x.getPixelForTick(i); const w = ctx.measureText(String(t.label)).width; return [at - w / 2, at + w / 2, t.label]; });
+      const out = [];
+      for (let i = 1; i < boxes.length; i++) out.push({ gap: Math.round(boxes[i][0] - boxes[i - 1][1]), between: `${boxes[i - 1][2]} | ${boxes[i][2]}` });
+      return { n: boxes.length, out };
+    });
+    await phone(async () => {
+      // (2 calls of /api/history a theme, at most one theme every 5 s: well under the route's 60 a minute, which the slice's other steps use too)
+      await everyLook(async (look) => {
+        const began = Date.now();
+        await showCard("latency");
+        for (const id of ["live", "1h"]) { // (clock labels with seconds, the widest; the longhistory step checks the dates' count)
+          await chooseRange("#timeRangeButtons", id);
+          await settled();
+          await until((r) => r && Chart.getChart(document.querySelector("[data-panel=latency] .lat-main canvas"))?.scales.x.ticks.length > 1, `${look} ${id}`);
+          const g = await gaps();
+          const worst = g.out.reduce((m, o) => (o.gap < m.gap ? o : m), { gap: Infinity, between: "" });
+          ok(`${look} ${id}: ${g.n} labels, the closest ${worst.gap} px apart (${worst.between})`, worst.gap >= 4);
+        }
+        await sleep(Math.max(0, 5000 - (Date.now() - began)));
+      });
+    });
   }],
 
   ["the legend says what each line is, the chart fills its card, the loss lane says when it is empty", async ({ eq, ok, page, text, until }) => {
@@ -299,4 +405,53 @@ export const steps = [
     }));
     ok(`toLocaleTimeString calls in 3.5 s: ${calls} (one per point per message would be 180 or more)`, calls < 40);
   }],
+
+  // ---- the `longhistory` variant: 200 days of made-up history (tests/test_ui_smoke.py seed_long_history) ----
+  ["every range draws the latency chart (400-800 points from 7 d on, axis labels of the range's kind), on a desktop, a phone and in every theme", async ({ atEveryRange, axisOk, chartAxis, chooseRange, eq, everyLook, noSideways, ok, phone, rangeState, settled, showCard }) => {
+    const CHART = "[data-panel=latency] .lat-main canvas";
+    const check = (where) => async (id, s) => {
+      const what = `${where} ${id}`;
+      ok(`${what}: the chart is drawn`, !!s);
+      const long = ["7d", "30d", "90d", "all"].includes(id);
+      ok(`${what}: ${s.count} points (${long ? "300-820" : "at least 40"})`, long ? s.count >= 300 && s.count <= 820 : s.count >= 40);
+      ok(`${what}: the first line has its points (${s.sets[0].n} of ${s.count})`, s.sets[0].n >= s.count * 0.5);
+      axisOk(what, id, s);
+      ok(`${what}: no sideways scroll`, await noSideways());
+    };
+    eq("the ranges are Live, 15 m, 1 h, 24 h, 7 d, 30 d, 90 d and All", (await rangeState("#timeRangeButtons")).ids.join(), "live,15m,1h,24h,7d,30d,90d,all");
+    await atEveryRange("#timeRangeButtons", CHART, check("desktop"), { skip: ["live"] });
+    await phone(async () => {
+      await showCard("latency");
+      await atEveryRange("#timeRangeButtons", CHART, async (id, s) => {
+        await check("phone")(id, s);
+        ok(`phone ${id}: at most 3 time labels fit (${s.labels.length})`, s.labels.length <= 4);
+      }, { skip: ["live"] });
+    });
+    await everyLook(async (look) => {
+      await showCard("latency");
+      for (const id of ["24h", "7d", "all"]) {
+        await chooseRange("#timeRangeButtons", id);
+        await settled();
+        await check(look)(id, await chartAxis(CHART));
+      }
+    });
+  }, { variants: ["longhistory"] }],
+
+  ["All starts at the oldest stored probe when that is younger than the retention: the latency chart (42 days of data, then 400), dates then months, a bucket that suits the span", async ({ chartAxis, chooseRange, eq, ok, page, rangeState, settled, showCard, youngData }) => {
+    const CHART = "[data-panel=latency] .lat-main canvas";
+    await showCard("latency");
+    for (const { days, kind } of [{ days: 42, kind: "date" }, { days: 400, kind: "month" }]) {
+      await youngData(days);
+      eq(`${days}: the retention is a year`, (await rangeState("#timeRangeButtons")).words.at(-1), "All · 1 y");
+      await chooseRange("#timeRangeButtons", "all");
+      await settled();
+      const s = await chartAxis(CHART);
+      ok(`${days}: ${s.count} points (400-800; 365 days in 6 h buckets would be 1460, 42 of them only 168)`, s.count >= 400 && s.count <= 800);
+      ok(`${days}: the labels are ${kind}s (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => (kind === "date" ? /^[A-Z][a-z]{2} \d{1,2}$/ : /^[A-Z][a-z]{2} \d{4}$/).test(l)));
+      ok(`${days}: no label twice in a row`, s.labels.every((l, i) => i === 0 || l !== s.labels[i - 1]));
+      const words = await page.$eval("#chartModeLabel", (e) => e.textContent);
+      ok(`${days}: the label says where it starts (${words})`, /^all stored, since [A-Z][a-z]{2} \d{1,2}/.test(words));
+    }
+    await youngData(null);
+  }, { variants: ["longhistory"] }],
 ];

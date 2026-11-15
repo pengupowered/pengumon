@@ -5,6 +5,78 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-15
+### Changed
+- **Every range is a window that ends now.** "24 h", "7 d" and "30 d" mean the last 24 hours, 7 × 24 hours and
+  30 × 24 hours, on every card, in the API and in the MCP tools: never "since a midnight" or "whole days". A longer range
+  always holds the shorter one, so its figures are never smaller (0.27's Internet use could show less over 30 days than
+  over 7). Day cells that the window cuts at either end (uptime strips, "When it breaks", Internet use's 30-day bars,
+  the report's days) are drawn narrower in proportion to their hours, and their tooltip says which hours they hold.
+- **Internet use: the apps add up to the total.** The router counts apps only per 24 hours; the apps of a range are
+  the router's 24-hour counts that lie inside it, and what they do not cover is shown as **Not broken down by app**, so
+  a device's or the network's apps always add up to its total. Pengumon now keeps the router's app list of every hour
+  (31 days), so over any range the counts cover it fully once a month of lists is stored.
+- **The same ranges on every chart, in one drop-down: 1 h, 24 h, 7 d, 30 d, 90 d and All** (latency also Live and
+  15 m), leaving out a range finer than the data (the cable line is read every 30 minutes, Internet use per hour) and
+  90 d where that kind of data is kept for less. **All** is everything that kind of data keeps, labelled with its
+  retention ("All · 180 d"), from the oldest stored data on. The control is a native drop-down ("Last 7 days"), the
+  same on every card, by keyboard, on phones and with screen readers. Router history drops 6 h; the speed card gains
+  24 h; the Ask AI pack keeps 1 h to 30 d. The MCP tools' `period` adds `1h`, `90d` and `all`.
+- **Long ranges have views of their own.** Every chart draws about 400-800 points a line at any range, its axis in clock
+  times, dates or (past 90 days) months, and its tooltips name the bucket ("Nov 3, 12:00 · 6 h average"). Past 90
+  days the uptime strips are drawn in weeks starting Monday ("week of Nov 3"); past 31 days "When it breaks" folds into
+  one row per weekday, the hour-of-day pattern over the range; past 30 days the incidents timeline marks weeks and
+  labels months; past 31 days the report's bars, and past 90 days Internet use's, are weeks. The API's
+  `/api/uptime` takes `window=90d|all` (with `cell`: `15m`, `day` or `week`) and `/api/report/loss-grid` takes
+  `days` up to the retention (`fold: "weekday"` past 31).
+- **The probe interval is a setting:** Settings > Probing > Probe every: 1, 2, 5, 10, 30 or 60 seconds, applied without
+  a restart (it was `prober.interval_seconds` in config.yaml, read at start; a value there is imported once, snapped to
+  the nearest choice, then ignored). DNS lookups can run less often than the path's pings (a whole multiple of the
+  interval; a lookup not due in a round is not probed, never lost). Every hop of the path, whatever its probe method,
+  stays in the same round, so a fault is still placed by comparing hops probed together. Settings shows what the
+  interval costs (internet traffic a month, storage a day), how much later the rules act, and that drops shorter than
+  about the interval may go unseen. The outage and hop rules are counted in probes, as before, and now say so, with
+  the time they mean at the current interval.
+- **Retention by kind of data, with its disk cost.** Settings > Retention has one "keep for" number per kind: latency,
+  router, mesh, cable line, Internet use, speed tests and router events, and incidents ("Delete incidents older
+  than"). Each is at least 30 days, **180 days by default**; incidents can still be kept forever (0). A table under them
+  shows each kind's size now, when full at the chosen number and the change, and the disk's free space, from the
+  database itself (`GET /api/storage`); Save asks first when a lower number would delete data. Full detail is the same
+  for every kind (every second and 10 seconds for 7 days, every minute for 30), so every range up to 30 days keeps its
+  detail; those three are under Settings > Advanced. A value you set before is kept; `long_rollup_retention_days` is
+  now `latency_retention_days`.
+### Added
+- **Router and mesh history past 7 days.** Their readings are rolled up into minutes and quarter hours, as the probes
+  are (schema v21), so their charts reach 30 days and their history is kept by the retention above.
+- **Each incident keeps its own evidence.** When an incident has closed, the probes, router readings and modem readings
+  its details show are copied with it (schema v22), so an incident months old opens with the same per-second charts,
+  hop table and line readings as yesterday's, and they go only when the incident does.
+- **An open tab offers to reload after an upgrade:** "Pengumon was updated to 0.28.0. Reload to use it." A tab
+  opened before an upgrade went on running the old page.
+### Fixed
+- The live latency chart could miss a round where the stored history it opens with meets the live feed.
+- A chart whose range could not be loaded (the latency and client count charts) went on drawing the previous range
+  under the new range's name; it is now emptied and says why.
+- Latency chart on a phone in the Amber CRT and Digital Rain themes: the time labels ran into each other (their
+  monospaced labels are wider); as many labels are drawn as fit.
+- Internet use: 30 days could show less than 7 days, and a device's apps over 7 days could be smaller than over 24
+  hours (the ranges and the app counts covered different days).
+- A minute in which every probe was lost counted as down only with at least 10 probes, so above a 6-second interval no
+  outage reached the uptime strips; the rule now follows the interval (unchanged at 1 and 2 seconds).
+- Uptime strips at phone width: a long target name ran over its strip; and beside the names a strip was about 150 px
+  wide, so 90 days or 96 quarter hours were under 2 px a block, too thin to tell apart or tap. On a phone each name and
+  its availability now sit over the strip, a block is at least 7 px, and when the blocks don't fit the strips scroll
+  sideways together with their dates, opening at now, the names staying in view.
+### Security
+- dnspython 2.9.2 (CVE-2026-128089, high) and opentelemetry-api 1.45.2 (CVE-2026-126360, moderate), with the
+  OpenTelemetry packages that move with it and patch releases of anyio, click, fastapi, pydantic, pydantic-settings,
+  tzdata and websockets (each out at least 7 days).
+### Upgrade notes
+- Schema v21 (router and mesh tiers, hourly app lists), v22 (incident evidence) and v23 (the renamed retention setting)
+  run at the first start; on a database of about 450 MB they took about 2 seconds together.
+- The new 180-day defaults apply only where no value was set. No install holds data older than that yet.
+- Incidents older than 180 days are deleted unless "Delete incidents older than" is set (0 keeps them forever).
+
 ## [0.27.0] - 2026-11-11
 ### Added
 - **Device names in Pengumon.** A device whose router name is unhelpful (a game console the router calls "EXAMPLE

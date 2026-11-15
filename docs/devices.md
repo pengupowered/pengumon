@@ -162,10 +162,11 @@ its size.
      whose total fell to 0 needs neither. A client whose total did not change keeps the app list last read for it, as
      this round's window (the hour that left the window moved what the hour that came in moved), at no request.
 
-  So each round gives every client's apps over the 24 hours to the round's hour, and the round just after midnight
-  (in the zone set in Settings) gives each one's whole day: Pengumon keeps that as the day's apps, which the Internet
-  use card adds up over 7 and 30 days. A day whose midnight round did not run (Pengumon stopped, an interval of more
-  than an hour that skips it) has no app figures.
+  So each round gives every client's apps over the 24 hours to the round's hour. Pengumon keeps the latest window of
+  each client, and the one that ends at a local midnight (in the zone set in Settings) as that day's apps. The Internet
+  use card adds up the stored windows that lie inside its range, newest first and never overlapping; the part of the
+  range no stored window covers (Pengumon stopped, a round skipped, hours before it kept them) is shown as "Not broken
+  down by app".
 
   Rounds start `traffic_interval_seconds` apart (default 3600, at least 60); with an hour or more, at 5 minutes past
   the hour. The first round after a start reads the last 24 hours. A round makes at most 3 requests per 10 s poll
@@ -179,7 +180,7 @@ its size.
 
   Stored per client (by MAC) and hour, and the app windows (the latest per client, and the first after each local
   midnight, so app history exists by day): [storage.md](storage.md#router-readings-device-events-and-traffic-schema-v19).
-  Kept for `database.traffic_retention_days` (400 days by default).
+  Kept for `database.traffic_retention_days` (180 days by default).
 
 **Request budget**, measured with the test fixtures (8 clients, 7 with traffic; `tests/test_router_traffic.py`
 `test_the_request_budget_per_hour`), per hour of steady polling at the default 10 s poll and 60 s client list:
@@ -202,7 +203,7 @@ changed, went down or came back). They are not incidents (a restart already show
 The `snmp` driver gives the uptime too (`sysUpTime`), so its restarts are recorded the same way; `sysUpTime` counts
 hundredths of a second in 32 bits and goes back to 0 about every 497 days, and a drop of exactly that much is taken as
 the counter wrapping, not a restart. An uptime above 20 years is a bad number and is ignored. Events are kept as long
-as the quarter-hour history (`database.long_rollup_retention_days`, 400 days by default).
+for `database.speedtest_retention_days` (180 days by default).
 
 ## Changing devices without a restart
 

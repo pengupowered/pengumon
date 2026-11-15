@@ -373,8 +373,8 @@ async def run_scenario(name: str, tmp_path, monkeypatch) -> dict:
     for snapshot in s.routers:
         await repo.insert_device_sample(device_sample("router", snapshot))
     iid = await repo.create_incident(s.incident)
-    monkeypatch.setattr(app.state, STATE_ATTR, AppState(repository=repo, config=s.config, devices=devices),
-                        raising=False)
+    # set plainly: build_golden registers the one cleanup (a monkeypatch per scenario would be undone once per scenario)
+    setattr(app.state, STATE_ATTR, AppState(repository=repo, config=s.config, devices=devices))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get(f"/api/incidents/{iid}/inspect")
     assert res.status_code == 200
@@ -386,6 +386,7 @@ async def run_scenario(name: str, tmp_path, monkeypatch) -> dict:
 
 
 async def build_golden(tmp_path, monkeypatch) -> dict:
+    monkeypatch.setattr(app.state, STATE_ATTR, None, raising=False)  # the scenarios set it; removed once afterwards
     golden = {}
     key_order = None
     for name in SCENARIOS:

@@ -82,7 +82,41 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=routerHistModal]");
   }],
 
-  ["router History modal: three charts on one time axis, range buttons refetch", async ({ ROUTER, click, eq, ok, outDir, page, path, shown, until }) => {
+  ["router History modal: at 1 h the temperature line joins readings a minute apart (spanGaps), so the line has segments, not lone dots", async ({ ROUTER, click, eq, ok, page, rangeState, until }) => {
+    await click(`${ROUTER} [data-action=openRouterHistory]`);
+    await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
+    eq("the range is 1 h", (await rangeState("#routerHistRanges")).value, "1h");
+    await until(() => !!Chart.getChart(document.getElementById("routerHistTempChart")));
+    const info = await page.evaluate(() => {
+      const c = Chart.getChart(document.getElementById("routerHistTempChart"));
+      const meta = c.getDatasetMeta(0);
+      const segments = meta.dataset.segments || [];
+      return { spanGaps: c.data.datasets[0].spanGaps, readings: c.data.datasets[0].data.length,
+        segments: segments.length, longest: Math.max(0, ...segments.map((s) => s.end - s.start + 1)) };
+    });
+    ok(`the dataset joins readings up to 3 minutes apart (spanGaps ${info.spanGaps})`, info.spanGaps === 180000);
+    ok(`the line has segments of several points (${info.readings} readings in ${info.segments} segments, the longest of ${info.longest} points)`, info.readings >= 3 && info.longest >= 3);
+    await click("[data-action=closeModal][data-arg=routerHistModal]");
+  }],
+
+  ["router History modal: past a day the temperature line is joined too (slices of 15 minutes and more: the join follows the slice)", async ({ ROUTER, chooseRange, click, ok, page, settled, until }) => {
+    await click(`${ROUTER} [data-action=openRouterHistory]`);
+    await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
+    for (const id of ["7d", "30d", "all"]) {
+      await chooseRange("#routerHistRanges", id);
+      await settled();
+      await until(() => !!Chart.getChart(document.getElementById("routerHistTempChart")));
+      const info = await page.evaluate(() => {
+        const c = Chart.getChart(document.getElementById("routerHistTempChart"));
+        const segments = c.getDatasetMeta(0).dataset.segments || [];
+        return { readings: c.data.datasets[0].data.length, segments: segments.length, longest: Math.max(0, ...segments.map((g) => g.end - g.start + 1)) };
+      });
+      ok(`${id}: the line has segments of several points (${info.readings} readings in ${info.segments} segments, the longest of ${info.longest})`, info.readings >= 3 && info.longest >= Math.min(info.readings, 10));
+    }
+    await click("[data-action=closeModal][data-arg=routerHistModal]");
+  }, { variants: ["longhistory"] }],
+
+  ["router History modal: three charts on one time axis, the range control refetches", async ({ ROUTER, chooseRange, click, eq, ok, outDir, page, path, rangeState, shown, until }) => {
     eq("history button shown", await shown(`${ROUTER} [data-action=openRouterHistory]`), true);
     await click(`${ROUTER} [data-action=openRouterHistory]`);
     await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
@@ -95,18 +129,28 @@ export const steps = [
     eq("system sets (cpu/mem avg+max)", one.routerHistSystemChart.sets, 4);
     eq("shared axis min", new Set(Object.values(one).map((v) => v.min)).size, 1);
     eq("shared axis max", new Set(Object.values(one).map((v) => v.max)).size, 1);
-    eq("active range", await page.$eval("#routerHistRanges button[aria-pressed=true]", (b) => b.dataset.arg), "3600");
+    eq("active range", (await rangeState("#routerHistRanges")).value, "1h");
+    eq("the dialog offers 1 h to All (no 6 h; the router keeps 180 days)", (await rangeState("#routerHistRanges")).words.join(","), "Last hour,Last 24 hours,Last 7 days,Last 30 days,Last 90 days,All · 180 d");
     await page.screenshot({ path: path.join(outDir, "router-history.png") });
     const requests = () => page.evaluate(() => performance.getEntriesByType("resource").filter((e) => e.name.includes("/history?")).length);
     const before = await requests();
-    await click('#routerHistRanges button[data-arg="86400"]');
+    await chooseRange("#routerHistRanges", "24h");
     await until((n) => performance.getEntriesByType("resource").filter((e) => e.name.includes("/history?")).length > n, before);
     await until(() => document.getElementById("routerHistStatus").textContent.includes("24 hours"));
-    eq("active range after click", await page.$eval("#routerHistRanges button[aria-pressed=true]", (b) => b.dataset.arg), "86400");
+    eq("active range after the choice", (await rangeState("#routerHistRanges")).value, "24h");
+    await chooseRange("#routerHistRanges", "30d");
+    await until(() => document.getElementById("routerHistStatus").textContent.includes("30 days"));
+    eq("active range 30 d", (await rangeState("#routerHistRanges")).value, "30d");
+    const asked = await page.evaluate(() => {
+      const q = new URL(performance.getEntriesByType("resource").filter((e) => e.name.includes("/history?") && e.name.includes("max_points")).pop().name).searchParams;
+      return { span: Number(q.get("end_time")) - Number(q.get("start_time")), lag: Date.now() / 1000 - Number(q.get("end_time")) };
+    });
+    eq("30 d asks for 30 days", asked.span, 30 * 86400);
+    ok(`ending now (${asked.lag.toFixed(0)} s ago)`, asked.lag >= 0 && asked.lag < 60);
     await click("[data-action=closeModal][data-arg=routerHistModal]");
   }],
 
-  ["clients modal: summary, table, link speed label, offline toggle, node filter, sorting, chart", async ({ ROUTER, chartLabels, click, count, dialogKeys, eq, ok, outDir, page, path, signIn, text, until, waitCount }) => {
+  ["clients modal: summary, table, link speed label, offline toggle, node filter, sorting, chart", async ({ ROUTER, chartLabels, chooseRange, click, count, dialogKeys, eq, ok, outDir, page, path, rangeState, signIn, text, until, waitCount }) => {
       await signIn(ROUTER); // the clients feature needs the router's password stored: do what a person does (this file does not rely on another file having done it)
     // the stored password makes the `clients` feature available; a reload picks that up
     await page.reload({ waitUntil: "load" });
@@ -151,7 +195,18 @@ export const steps = [
     ok("chart has points", (await chartLabels("clientsChart")) > 10);
     await click('#clientsModeButtons button[data-arg=node]');
     await until(() => Chart.getChart(document.getElementById("clientsChart")).data.datasets.map((d) => d.label).join() === "Hall,Study");
-    await click('#clientsRangeButtons button[data-arg="3600"]');
+    eq("the clients chart offers 1 h to All", (await rangeState("#clientsRangeButtons")).words.join(","), "Last hour,Last 24 hours,Last 7 days,Last 30 days,Last 90 days,All · 180 d");
+    await chooseRange("#clientsRangeButtons", "30d");
+    await until(() => document.querySelector("#clientsRangeButtons select").value === "30d");
+    await until(() => { const q = new URL(performance.getEntriesByType("resource").filter((e) => e.name.includes("clients/history")).pop().name).searchParams; return Number(q.get("end_time")) - Number(q.get("start_time")) === 30 * 86400; });
+    await until(() => Chart.getChart(document.getElementById("clientsChart")).data.labels.length > 0);
+    const asked = await page.evaluate(() => {
+      const q = new URL(performance.getEntriesByType("resource").filter((e) => e.name.includes("clients/history")).pop().name).searchParams;
+      return { span: Number(q.get("end_time")) - Number(q.get("start_time")), lag: Date.now() / 1000 - Number(q.get("end_time")) };
+    });
+    eq("30 d asks for 30 days", asked.span, 30 * 86400);
+    ok(`ending now (${asked.lag.toFixed(0)} s ago)`, asked.lag >= 0 && asked.lag < 60);
+    await chooseRange("#clientsRangeButtons", "1h");
     await until(() => Chart.getChart(document.getElementById("clientsChart")).data.labels.length > 0);
     await page.screenshot({ path: path.join(outDir, "clients.png") });
     await click("[data-action=closeModal][data-arg=networkModal]");
@@ -204,7 +259,7 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=networkModal]");
   }],
 
-  ["Local network dialog: keyboard on the topology, band filter chips, sort state, signal words, empty-state element", async ({ ROUTER, click, eq, flipMode, ok, outDir, page, path, until, waitCount }) => {
+  ["Local network dialog: keyboard on the topology, band filter chips, sort state, signal words, empty-state element", async ({ ROUTER, click, eq, flipMode, ok, outDir, page, path, rangeState, until, waitCount }) => {
     await click(`${ROUTER} [data-f=lan]`);
     await until(() => document.getElementById("networkModal").classList.contains("active"));
     await waitCount("#clientsBody tr", 3);
@@ -224,7 +279,7 @@ export const steps = [
     ok(`signal words with dBm (${signals.join("|")})`, signals.length >= 1 && signals.every((t) => /^(Excellent|Good|Fair|Weak) -?\d+ dBm$/.test(t)));
     eq("sorted column has aria-sort", await page.$$eval("#networkModal th[aria-sort]", (ths) => ths.map((t) => t.getAttribute("aria-sort")).join()), "descending"); // the clients step above clicked Device twice
     eq("empty state is hidden while clients are listed", await page.$eval("#clientsEmpty", (e) => e.hidden), true);
-    eq("range buttons expose their state", await page.$eval("#clientsRangeButtons button[aria-pressed=true]", (b) => b.dataset.arg), "3600"); // the clients step chose 1 h
+    eq("the range control shows the choice", (await rangeState("#clientsRangeButtons")).value, "1h"); // the clients step chose 1 h
     eq("by node was chosen earlier", await page.$$eval("#clientsLegend span", (els) => els.map((e) => e.textContent).join("|")), "Hall|Study");
     await click("#clientsModeButtons button[data-arg=band]");
     await until(() => document.querySelector("#clientsLegend span")?.textContent === "5 GHz");
@@ -299,4 +354,126 @@ export const steps = [
     ok("the table no longer says per-device traffic is missing", !/Per-device traffic is not available/.test(await text("#networkModal")));
     await click("[data-action=closeModal][data-arg=networkModal]");
   }],
+
+  ["every range draws the router history's charts (400-800 points from 7 d on, axis labels of the range's kind), on a desktop, a phone and in every theme", async ({ ROUTER, atEveryRange, axisOk, chartAxis, chooseRange, click, eq, everyLook, noSideScroll, ok, phone, rangeState, settled, until }) => {
+    const open = async () => {
+      await click(`${ROUTER} [data-action=openRouterHistory]`);
+      await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
+    };
+    const check = (where) => async (id, s) => {
+      const what = `${where} ${id}`;
+      ok(`${what}: the WAN chart is drawn`, !!s);
+      const long = ["7d", "30d", "90d", "all"].includes(id);
+      const points = s.sets[0].n;
+      ok(`${what}: ${points} points (${long ? "300-820" : "at least 20"})`, long ? points >= 300 && points <= 820 : points >= 20);
+      axisOk(what, id, s);
+      for (const other of ["routerHistSystemChart", "routerHistClientsChart"]) ok(`${what}: ${other} has its points`, (await chartAxis(`#${other}`)).sets[0].n >= 20);
+      ok(`${what}: nothing sticks out sideways`, await noSideScroll("routerHistModal"));
+    };
+    await open();
+    eq("the router keeps 180 days: 1 h to All", (await rangeState("#routerHistRanges")).ids.join(), "1h,24h,7d,30d,90d,all");
+    await atEveryRange("#routerHistRanges", "#routerHistWanChart", check("desktop"));
+    await everyLook(async (look) => {
+      for (const id of ["24h", "all"]) {
+        await chooseRange("#routerHistRanges", id);
+        await settled();
+        await check(look)(id, await chartAxis("#routerHistWanChart"));
+      }
+    });
+    await click("[data-action=closeModal][data-arg=routerHistModal]");
+    await phone(async () => {
+      await open();
+      await atEveryRange("#routerHistRanges", "#routerHistWanChart", check("phone"));
+      await click("[data-action=closeModal][data-arg=routerHistModal]");
+    });
+  }, { variants: ["longhistory"] }],
+
+  ["every range draws the clients chart (the server's 300 points at most), with the axis labels of the range's kind, on a desktop, a phone and in every theme", async ({ ROUTER, atEveryRange, axisOk, chartAxis, chooseRange, click, eq, everyLook, noSideScroll, ok, page, phone, rangeState, settled, signIn, sleep, until, waitCount }) => {
+    await signIn(ROUTER); // the clients feature needs the router's password stored
+    await page.reload({ waitUntil: "load" });
+    await until((s) => document.querySelector(s) && !document.querySelector(s).disabled, `${ROUTER} [data-f=count]`);
+    // the server lets the clients routes answer 30 calls a minute (a person choosing ranges asks far less): one choice every 2.2 s
+    const paced = async (id) => { await chooseRange("#clientsRangeButtons", id); await sleep(2200); };
+    const open = async () => {
+      await click(`${ROUTER} [data-f=count]`);
+      await until(() => document.getElementById("networkModal").classList.contains("active"));
+      await waitCount("#clientsBody tr", 3);
+    };
+    const check = (where) => async (id, s) => {
+      const what = `${where} ${id}`;
+      ok(`${what}: the chart is drawn`, !!s);
+      ok(`${what}: ${s.count} points (20-320)`, s.count >= 20 && s.count <= 320);
+      const shown = await page.evaluate(() => ({ chosen: document.querySelector("#clientsRangeButtons select").value, note: document.getElementById("clientsChartNote").textContent }));
+      ok(`${what}: the control says ${shown.chosen}, the chart's note says "${shown.note}"`, shown.chosen === id && !/^Could not/.test(shown.note));
+      axisOk(what, id, s);
+      ok(`${what}: nothing sticks out sideways`, await noSideScroll("networkModal"));
+    };
+    await open();
+    eq("1 h to All", (await rangeState("#clientsRangeButtons")).ids.join(), "1h,24h,7d,30d,90d,all");
+    await atEveryRange("#clientsRangeButtons", "#clientsChart", check("desktop"), { pause: 2200 });
+    await everyLook(async (look) => {
+      for (const id of ["24h", "all"]) {
+        await paced(id);
+        await settled();
+        await check(look)(id, await chartAxis("#clientsChart"));
+      }
+    });
+    await click("[data-action=closeModal][data-arg=networkModal]");
+    await phone(async () => {
+      await open();
+      await atEveryRange("#clientsRangeButtons", "#clientsChart", check("phone"), { pause: 2200 });
+      await click("[data-action=closeModal][data-arg=networkModal]");
+    });
+  }, { variants: ["longhistory"] }],
+
+  ["All starts at the oldest stored data when that is younger than the retention: router history (42 days of data, then 400), a window of its own, dates then months, no label twice in a row", async ({ ROUTER, chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, until, youngData }) => {
+    for (const { days, kind, age } of [{ days: 42, kind: "date", age: 42 }, { days: 400, kind: "month", age: 180 }]) { // (the router keeps 180 days of tiers: the server answers no more)
+      await youngData(days);
+      await click(`${ROUTER} [data-action=openRouterHistory]`);
+      await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
+      eq(`${days}: the retention is a year`, (await rangeState("#routerHistRanges")).words.at(-1), "All · 1 y");
+      await chooseRange("#routerHistRanges", "all");
+      await settled();
+      const s = await chartAxis("#routerHistWanChart");
+      const x = await page.evaluate(() => { const c = Chart.getChart(document.getElementById("routerHistWanChart")); const d = c.data.datasets[0].data; return { min: c.scales.x.min / 1000, first: d[0].x / 1000, now: Date.now() / 1000 }; });
+      const back = (x.now - x.first) / 86400;
+      ok(`${days}: the first point is ${back.toFixed(1)} days back (about ${age}, not 365)`, Math.abs(back - age) < 1.5);
+      ok(`${days}: the axis starts there (${((x.now - x.min) / 86400).toFixed(1)} days back)`, Math.abs((x.now - x.min) / 86400 - age) < 1.5);
+      ok(`${days}: ${s.sets[0].n} points (400-800)`, s.sets[0].n >= 400 && s.sets[0].n <= 800);
+      ok(`${days}: the labels are ${kind}s (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => (kind === "date" ? /^[A-Z][a-z]{2} \d{1,2}$/ : /^[A-Z][a-z]{2} \d{4}$/).test(l)));
+      ok(`${days}: no label twice in a row`, s.labels.every((l, i) => i === 0 || l !== s.labels[i - 1]));
+      ok(`${days}: the status says where it starts`, /^all stored, since [A-Z][a-z]{2} \d{1,2}/.test(await page.$eval("#routerHistStatus", (e) => e.textContent)));
+      await click("[data-action=closeModal][data-arg=routerHistModal]");
+    }
+    await youngData(null);
+  }, { variants: ["longhistory"] }],
+
+  ["All starts at the oldest stored data when that is younger than the retention: the clients chart (42 days of data, then 400)", async ({ ROUTER, chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, signIn, sleep, until, waitCount, youngData }) => {
+    await signIn(ROUTER);
+    await page.reload({ waitUntil: "load" });
+    await until((s) => document.querySelector(s) && !document.querySelector(s).disabled, `${ROUTER} [data-f=count]`);
+    for (const { days, kind } of [{ days: 42, kind: "date" }, { days: 400, kind: "month" }]) {
+      if (days === 400) await sleep(62000); // (the clients routes answer 30 calls a minute)
+      await youngData(days);
+      await click(`${ROUTER} [data-f=count]`);
+      await until(() => document.getElementById("networkModal").classList.contains("active"));
+      await waitCount("#clientsBody tr", 3);
+      await sleep(2200); // (the clients routes answer 30 calls a minute)
+      await chooseRange("#clientsRangeButtons", "all");
+      await settled();
+      await sleep(2200);
+      const s = await chartAxis("#clientsChart");
+      const note = await page.$eval("#clientsChartNote", (e) => e.textContent);
+      ok(`${days}: ${s.count} points (20-320: the server's 300 at most)`, s.count >= 20 && s.count <= 320);
+      const first = await page.evaluate(() => Chart.getChart(document.getElementById("clientsChart")).data.labels[0]);
+      const near = await page.evaluate((d, month) => [-1, 0, 1].map((k) => new Date(Date.now() - (d - (month ? 31 * k : k)) * 86400000)
+        .toLocaleDateString("en-US", month ? { month: "short", year: "numeric" } : { month: "short", day: "numeric" }).replace(",", "")), Math.min(days, 180), kind === "month");
+      ok(`${days}: the first label "${first}" is where the data starts (${near.join(" / ")}), not a year back`, near.includes(String(first)));
+      ok(`${days}: the labels are ${kind}s (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => (kind === "date" ? /^[A-Z][a-z]{2} \d{1,2}$/ : /^[A-Z][a-z]{2} \d{4}$/).test(l)));
+      ok(`${days}: no label twice in a row`, s.labels.every((l, i) => i === 0 || l !== s.labels[i - 1]));
+      ok(`${days}: the note says where it starts (${note})`, /^all stored, since [A-Z][a-z]{2} \d{1,2}/.test(note));
+      await click("[data-action=closeModal][data-arg=networkModal]");
+    }
+    await youngData(null);
+  }, { variants: ["longhistory"] }],
 ];

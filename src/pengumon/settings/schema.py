@@ -1,6 +1,6 @@
 """What `GET /api/settings/schema` sends: the registry as the page needs it, with each setting's type, range,
 choices and default read from its pydantic field, the five lists' item fields, the device drivers and their options,
-and the secret slots. The same for every request of a build (only `round_seconds` comes from the config)."""
+and the secret slots. The same for every request of a build."""
 
 from typing import Any, Dict, List, Type
 
@@ -66,10 +66,9 @@ def list_spec(spec: registry.ListSpec) -> Dict[str, Any]:
     return out
 
 
-def build_schema(round_seconds: float) -> Dict[str, Any]:
+def build_schema() -> Dict[str, Any]:
     """The schema document (api/settings_models.SettingsSchema)."""
     return {
-        "round_seconds": round_seconds,
         "sections": [{"id": s.id, "title": s.title, "order": s.order} for s in registry.SECTIONS],
         "settings": [setting_spec(s) for s in registry.SETTINGS],
         "lists": {name: list_spec(spec) for name, spec in registry.LISTS.items()},

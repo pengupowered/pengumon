@@ -121,7 +121,9 @@ def live_monitor():
 
 @pytest.fixture
 async def world(tmp_path):
-    repo = DatabaseRepository(db_path=str(tmp_path / "pengumon.db"))
+    # the history is a fixed window in the past: raw polls are what the sections read (retention_days covers it); the
+    # quarter-hour tier a real old window would read is db/device_tiers.py's, tested in tests/test_device_tiers.py
+    repo = DatabaseRepository(db_path=str(tmp_path / "pengumon.db"), retention_days=100_000)
     await repo.initialize()
     await seed(repo)
     config = make_config()

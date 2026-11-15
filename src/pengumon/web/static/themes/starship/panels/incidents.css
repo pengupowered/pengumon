@@ -9,7 +9,7 @@
 :root[data-look="starship"] [data-panel="incidents"] .tl .tl-l { margin-right: 4px; text-align: right; padding: 0 3px; font-size: 10px; letter-spacing: 0; }
 :root[data-look="starship"] [data-panel="incidents"] .tl-track {
   height: 18px; border-radius: 2px;
-  background: repeating-linear-gradient(90deg, var(--surface-2) 0 calc(100% / 7 - 2px), var(--bg) calc(100% / 7 - 2px) calc(100% / 7));
+  background-color: var(--surface-2); --tl-cut: var(--bg); --tl-cut-w: 2px; /* gaps at the midnights (drawn by the view) */
 }
 :root[data-look="starship"] [data-panel="incidents"] .tl-bar { border-radius: 2px; background: var(--st); }
 :root[data-look="starship"] [data-panel="incidents"] .tl-bar.exp { background: repeating-linear-gradient(135deg, var(--busy) 0 3px, transparent 3px 5px); }

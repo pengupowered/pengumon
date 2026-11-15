@@ -173,9 +173,11 @@ async def get_clients_history(
     start = start_time if start_time is not None else end - DEFAULT_HISTORY_SECONDS
     if not (start < end):
         raise HTTPException(status_code=400, detail="start_time must be before end_time")
+    start = max(start, now - state.repository.router_history_days() * 86400)  # the longest tier (db/device_tiers.py)
     bucket = bucket_seconds(start, end)
     rows = await state.repository.get_client_counts(device.id, start, end, bucket)
-    node_rows = await state.repository.get_mesh_counts(device.id, start, end, bucket)
+    mesh_start = max(start, now - state.repository.mesh_history_days() * 86400)  # the mesh nodes' own retention
+    node_rows = await state.repository.get_mesh_counts(device.id, mesh_start, end, bucket) if mesh_start < end else []
     points: List[Dict[str, Any]] = [
         {"ts": ts, "online": online, "wired": wired, "wifi": round(sum(v or 0 for v in bands), 1),
          "by_band": {BAND_2G: bands[0], BAND_5G: bands[1], BAND_OTHER: bands[2]}, "by_node": {}}

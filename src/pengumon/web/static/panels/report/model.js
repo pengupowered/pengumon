@@ -2,6 +2,9 @@
 // present() makes the view model every view of the card draws (view.js is the standard one; docs/themes.md, "Drawing a
 // card"); the range buttons and the footer (worst hour) are the frame, kept here.
 //
+// The range is a rolling window ending now, so its first and last day are cut: the report marks them (`partial`, with the
+// `hours` each holds in the range) and a bar's tooltip says so.
+//
 // The headline is the internet as seen through the public targets (the median of their availability; the last hop
 // when there is no public target); days are bars of what that figure lost (a clean day has no bar, so a bad day stands
 // out; bars of 99.9x % all looked full), causes the share of downtime per cause, and a table gives every hop. Nothing is
@@ -18,6 +21,7 @@ import { quietKey, quietTargets, shortLabels } from '../../js/path.js';
 import { CAUSE_LONG } from '../../js/roles.js';
 import standard from './view.js';
 import { everyWhileVisible } from '../../js/timers.js';
+import { fillRangeSelect, onRetentionChange, rangeOptions, retentionDays } from '../../js/ranges.js';
 
 let card = null;
 let root = null;
@@ -49,7 +53,22 @@ function outagesText(o) {
   return `${o.count} outage${o.count === 1 ? '' : 's'}, down ${minutesText(o.down_minutes)} in all, longest ${minutesText(o.longest_minutes)}`
     + (o.maintenance > 0 ? `, ${o.maintenance} likely maintenance` : '');
 }
+const weekText = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 const hour = (h) => `${String(h).padStart(2, '0')}:00`;
+// "14 h" or "11 h 53 min": the part of a cut day the range holds
+const WEEK_FROM_DAYS = 31; // past this many days the bars are weeks (a bar per day would be a hair wide in this card: 90 bars were under 1 px)
+const MAX_DAYS = 400; // what GET /api/report answers
+// The days (dates 'YYYY-MM-DD' on the report's clock) as Monday-start weeks: [{ start, idx: [day indexes] }].
+function weeksOf(days) {
+  const weeks = [];
+  days.forEach((d, i) => {
+    const dow = (new Date(`${d}T12:00:00Z`).getUTCDay() + 6) % 7; // Monday = 0
+    if (!weeks.length || dow === 0) weeks.push({ start: d, idx: [] });
+    weeks[weeks.length - 1].idx.push(i);
+  });
+  return weeks;
+}
+const holdText = (h) => { const m = Math.round(h * 60); return m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 60)} h`; };
 
 // The view model of a report: { state: 'ready', hero, downtime, incidents, lost, causes, excluded, hops, foot, summary }.
 // `ctx`: { targets: [{id, category}], labels, quiet } (what the page knows of the targets).
@@ -63,14 +82,25 @@ export function present(report, ctx) {
   if (!pub.length) pub = heard.length ? [heard[heard.length - 1]] : [];
   const avail = median(pub.map((h) => h.availability_pct));
   const perDay = days.map((_, i) => median(pub.map((h) => h.per_day[i])));
-  const lostPct = perDay.map((v) => (v === null || v === undefined ? null : Math.max(0, 100 - v)));
+  // Past 31 days a bar is a week (Monday to Sunday, the first and last cut by the range): the hours each day holds in the range
+  // weigh its availability, and a cut week's bar is as narrow as the hours it holds.
+  const weekly = report.days > WEEK_FROM_DAYS;
+  const hoursOf = (i) => (report.availability.partial && report.availability.partial[i] ? report.availability.hours[i] : 24);
+  const units = weekly ? weeksOf(days).map((w) => {
+    const have = w.idx.filter((i) => perDay[i] !== null && perDay[i] !== undefined);
+    const hrs = w.idx.reduce((a, i) => a + hoursOf(i), 0);
+    const held = have.reduce((a, i) => a + hoursOf(i), 0);
+    const v = held > 0 ? have.reduce((a, i) => a + perDay[i] * hoursOf(i), 0) / held : null;
+    return { id: w.start, name: `week of ${weekText(w.start)}`, v, hours: hrs, cut: (w.idx.includes(0) || w.idx.includes(days.length - 1)) && hrs < 166 };
+  }) : days.map((d, i) => ({ id: d, name: d, v: perDay[i], hours: hoursOf(i), cut: !!(report.availability.partial && report.availability.partial[i]), day: true }));
+  const lostPct = units.map((u) => (u.v === null || u.v === undefined ? null : Math.max(0, 100 - u.v)));
   const peak = Math.max(0, ...lostPct.filter((v) => v !== null));
   const peakDay = lostPct.indexOf(peak);
   const minutes = inc.minutes || 0;
   const downtime = minutes >= 60 ? `${Math.floor(minutes / 60)}h ${String(Math.round(minutes % 60)).padStart(2, '0')}m` : `${minutes.toFixed(minutes < 10 ? 1 : 0)} min`;
   const totalMin = inc.by_cause.reduce((a, c) => a + c.minutes, 0) || 1;
   const dayName = (d) => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short' });
-  const note = peak > 0 ? `Worst: ${dayName(days[peakDay])} ${days[peakDay]}, ${fmtPct(peak)} lost` : 'No probe lost on any day';
+  const note = peak > 0 ? `Worst ${weekly ? 'week' : 'day'}: ${weekly ? units[peakDay].name : `${dayName(days[peakDay])} ${days[peakDay]}`}, ${fmtPct(peak)} lost` : `No probe lost on any ${weekly ? 'week' : 'day'}`;
   const worstHour = report.worst_hours[0];
   const name = (h) => ({ text: ctx.labels[h.target_id] || h.name, title: h.name });
   return {
@@ -85,16 +115,19 @@ export function present(report, ctx) {
     downtime: { label: 'Downtime', value: downtime },
     incidents: { label: `Incidents, ${report.days} d`, value: String(inc.count), sub: outagesText(inc.outages) },
     lost: {
-      title: 'Lost per day',
-      columns: Math.max(1, days.length),
-      aria: `Share of probes lost per day. ${note}`,
+      title: weekly ? 'Lost per week' : 'Lost per day',
+      columns: Math.max(1, units.length),
+      // the grid: a bar's width follows the hours it holds (a cut day or week is narrower); a closer gap for many bars
+      style: `grid-template-columns: ${units.some((u) => u.hours !== units[0].hours) ? units.map((u) => `minmax(0, ${Math.round(u.hours * 1000) / 1000}fr)`).join(' ') : `repeat(${Math.max(1, units.length)}, minmax(0, 1fr))`}; gap: ${units.length > 60 ? 1 : units.length > 31 ? 2 : units.length > 14 ? 4 : 6}px`,
+      aria: `Share of probes lost per ${weekly ? 'week' : 'day'}. ${note}`,
       note,
-      bars: days.map((d, i) => {
-        const v = perDay[i];
+      bars: units.map((u, i) => {
+        const v = u.v;
         const none = v === null || v === undefined;
         const lost = lostPct[i];
-        return { id: d, tip: `${d} · ${none ? 'no data' : `${fmtPct(v)} answered, ${fmtPct(lost)} lost`}`, nodata: none,
-          height: lost === null || peak <= 0 ? 0 : Math.max(4, (lost / peak) * 100), letter: days.length > 10 ? '' : dayName(d).slice(0, 1) };
+        const part = u.cut ? ` · only ${holdText(u.hours)} of this ${weekly ? 'week' : 'day'} are in the range` : '';
+        return { id: u.id, tip: `${u.name} · ${none ? 'no data' : `${fmtPct(v)} answered, ${fmtPct(lost)} lost`}${part}`, nodata: none, partial: u.cut,
+          height: lost === null || peak <= 0 ? 0 : Math.max(4, (lost / peak) * 100), letter: !weekly && units.length <= 10 ? dayName(u.id).slice(0, 1) : '' };
       })
     },
     causes: {
@@ -155,15 +188,22 @@ function draw({ report }) {
 }
 
 // Reliability report (/api/report)
+// The range control: 7, 30, 90 days and All (the probes' retention, at most what the route answers).
+const options = () => rangeOptions({ days: Math.min(retentionDays('probes'), MAX_DAYS), min: '7d' });
+let rangeId = '7d';
+const daysOf = (id) => Math.round(((options().find((o) => o.id === id) || options()[0]).seconds) / 86400);
 let range = 7; // the days asked for
+function markRange() {
+  const list = options();
+  if (!list.some((o) => o.id === rangeId)) rangeId = '7d'; // (a retention that no longer keeps the range)
+  range = daysOf(rangeId);
+  const host = document.getElementById('reportRangeButtons');
+  if (host) fillRangeSelect(host, { options: list, value: rangeId, action: 'loadReport', label: 'Report range' });
+}
 async function loadReport(days, refresh = false) {
   if (!card) return;
   range = days;
   const mine = ++seq;
-  document.querySelectorAll('#reportRangeButtons button').forEach((b) => {
-    b.classList.toggle('active', b.dataset.arg === String(days));
-    b.setAttribute('aria-pressed', String(b.dataset.arg === String(days)));
-  });
   if (!refresh) card.update({ state: 'loading' }); // (a refresh of what is shown keeps showing it)
   try {
     // Day and hour buckets are cut server-side, in the Settings zone, else this browser's.
@@ -181,7 +221,9 @@ async function loadReport(days, refresh = false) {
 export function initReport(section) {
   root = section.querySelector('.panel-b');
   card = createCard({ panel: 'report', root, standard, fixture });
-  loadReport(7);
+  markRange();
+  onRetentionChange(() => { markRange(); loadReport(range); });
+  loadReport(range);
   followQuietHops();
   // the headline, downtime and incident count follow the line: read again when an incident opens, ends or changes, when
   // the zone changes (the buckets are cut in it), and now and then
@@ -196,6 +238,11 @@ export function initReport(section) {
 }
 
 // The actions this card's markup names (see dispatch.js).
-registerActions('click', {
-  loadReport: (el) => loadReport(Number(el.dataset.arg))
+registerActions('change', {
+  loadReport: (el) => {
+    if (!options().some((o) => o.id === el.value) || el.value === rangeId) return;
+    rangeId = el.value;
+    markRange();
+    loadReport(range);
+  }
 });

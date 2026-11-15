@@ -2,7 +2,7 @@
 // docs/themes.md, "Drawing a card"), with the inspector that opens from a row (a dialog, not a card).
 
 import { renderedRevision } from '../../js/settings-values.js';
-import { initIncidentsCard, updateIncidentsTable } from './model.js';
+import { initIncidentsCard, timelineStart, updateIncidentsTable } from './model.js';
 import { bindIncidents, loadSince, reload } from './list.js';
 import './inspector.js';
 import './help.js';
@@ -20,9 +20,8 @@ export default {
     // (which includes the first message after a reconnect); older incidents are loaded when something needs them
     // (list.js). The latency chart gets the list too, for its incident windows.
     bindIncidents((list) => { updateIncidentsTable(list); ctx.bus.publish('incidents:list', list); });
-    // the timeline shows 7 days, so the list reaches back that far; a chart range asked for from the inspector may be older
-    const week = () => Date.now() / 1000 - 7 * 86400;
-    const load = () => reload().then(() => loadSince(week()));
+    // the timeline shows 7 or 30 days, so the list reaches back that far; a chart range asked for from the inspector may be older
+    const load = () => reload().then(() => loadSince(timelineStart()));
     let version = null;
     ctx.bus.subscribe('incidents_version', (v) => {
       if (v === version) return;

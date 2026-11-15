@@ -13,7 +13,7 @@ server:
   log_level: "info"
 
 prober:
-  interval_seconds: 1.0
+  interval_seconds: 1   # 1, 2, 5, 10, 30 or 60 seconds; a setting since 0.28 (Settings > Probing): imported once
   timeout_seconds: 1.0
 
 # The probe path (targets) lives in the database and is edited in the dashboard (Path health > Edit). This list is
@@ -111,11 +111,16 @@ line:
 
 database:
   # The database file is <data directory>/pengumon.db (`pengumon paths` shows where); db_path is only for moving it.
-  retention_days: 7          # raw 1 s samples, DOCSIS and router telemetry
-  slot_retention_days: 7     # 10 s probe rollups (the latency chart's 10 s buckets); >= retention_days
-  rollup_retention_days: 90  # per-minute probe rollups (charts, report and uptime at one-minute detail)
-  long_rollup_retention_days: 400  # quarter-hour probe rollups (older ranges), speed tests, device events; >= rollup_retention_days
-  incident_retention_days: 0 # resolved incidents: 0 keeps them forever, else >= long_rollup_retention_days
+  # How long each kind of data is kept past the fixed full detail (1 s and 10 s for 7 days, 1 minute for 30). Days; at least 30.
+  latency_retention_days: 180    # probes, 15-minute steps (was long_rollup_retention_days)
+  router_retention_days: 180     # the router's load, speeds and client counts
+  mesh_retention_days: 180       # clients per mesh node
+  line_retention_days: 180       # the cable line's per-channel readings
+  traffic_retention_days: 180    # Internet use per client, hour and day
+  speedtest_retention_days: 180  # speed tests and the router's restarts and WAN link changes
+  incident_retention_days: 180   # resolved incidents and their evidence; 0 keeps them forever
+  # Full detail (Settings > Advanced; leave these unless you know why):
+  # retention_days: 7, slot_retention_days: 7, rollup_retention_days: 30
 
 # Other apps on this host: each health endpoint is fetched every interval_seconds; failures_for_incident failed
 # checks in a row open a "not responding" incident (kind service_down), the next good answer resolves it. With

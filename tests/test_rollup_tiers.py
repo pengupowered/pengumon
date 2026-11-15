@@ -376,7 +376,7 @@ async def test_history_asks_rollup_10s_for_whole_tens_and_widens_to_whole_tens(r
 
 async def test_history_of_whole_quarters_and_of_ranges_older_than_the_minutes_reads_the_quarters(tmp_path, monkeypatch):
     repo = DatabaseRepository(db_path=str(tmp_path / "q.db"), sample_flush_seconds=3600, retention_days=1,
-                              rollup_retention_days=2, long_rollup_retention_days=10)
+                              rollup_retention_days=2, latency_retention_days=10)
     await repo.initialize()
     now = time.time()
     for back in (12 * DAY, 5 * DAY, 600):  # past every retention, quarter-hour rollups only (once pruned), all three
@@ -413,34 +413,32 @@ async def test_retention_keeps_each_tier_for_its_own_setting(repo):
             return db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
     assert [count(t) for t in ("rollup_10s", "rollup_1m", "rollup_15m")] == [4 * 6, 4, 4]
-    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=90, long_rollup_retention_days=400)
+    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=90, latency_retention_days=400)
     assert (removed["samples"], removed["rollup_10s"], removed["rollup_1m"], removed["rollup_15m"]) == (180, 18, 1, 0)
-    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, long_rollup_retention_days=100)
+    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, latency_retention_days=100)
     assert (removed["rollup_1m"], removed["rollup_15m"]) == (1, 1)  # the 60-day minute goes; its quarter stays
     assert [count(t) for t in ("samples", "rollup_10s", "rollup_1m", "rollup_15m")] == [60, 6, 2, 3]
     assert (await repo.get_hop_stats(now - 70 * DAY))[0]["sent"] == 180  # 60 + 60 (minutes) + 60 (quarters only)
 
 
-async def test_the_defaults_keep_minutes_90_days_and_quarters_400_and_speed_tests_with_the_quarters(tmp_path):
+async def test_the_defaults_keep_minutes_30_days_and_quarters_180(tmp_path):
     from pengumon.config import DatabaseConfig
     from pengumon.settings import registry
 
     config = DatabaseConfig()
-    assert (config.retention_days, config.rollup_retention_days, config.long_rollup_retention_days) == (7, 90, 400)
+    assert (config.retention_days, config.rollup_retention_days, config.latency_retention_days) == (7, 30, 180)
     repo = DatabaseRepository(db_path=str(tmp_path / "d.db"))
-    assert (repo.rollup_retention_days, repo.long_rollup_retention_days) == (90, 400)
-    # quarter-hour history is at least as long as the per-minute one; unset, it follows a longer per-minute setting
-    assert DatabaseConfig(rollup_retention_days=500).long_rollup_retention_days == 500
-    assert DatabaseConfig(rollup_retention_days=200).long_rollup_retention_days == 400
-    with pytest.raises(ValueError, match="long_rollup_retention_days must be at least"):
-        DatabaseConfig(rollup_retention_days=500, long_rollup_retention_days=400)
+    assert (repo.rollup_retention_days, repo.latency_retention_days) == (30, 180)
+    # the quarter-hour history is its own number: no tie to the per-minute one
+    assert DatabaseConfig(rollup_retention_days=500).latency_retention_days == 180
+    assert DatabaseConfig(rollup_retention_days=500, latency_retention_days=40).latency_retention_days == 40
     for bad in (29, 3651):
         with pytest.raises(ValueError):
-            DatabaseConfig(long_rollup_retention_days=bad)
-    setting = registry.get("database.long_rollup_retention_days")
-    assert setting.label == "Keep quarter-hour history for" and setting.default() == 400
+            DatabaseConfig(latency_retention_days=bad)
+    setting = registry.get("database.latency_retention_days")
+    assert setting.label == "Keep latency history for" and setting.default() == 180
     assert (setting.constraints()["min"], setting.constraints()["max"]) == (30, 3650)
-    assert "quarter-hour" in registry.get("database.rollup_retention_days").effect
+    assert "15-minute" in setting.effect
 
 
 # --- the migration -----------------------------------------------------------------------------------------------------
@@ -535,11 +533,11 @@ async def test_the_10_second_rollups_are_kept_for_slot_retention_days_not_for_th
         with sqlite3.connect(repo.db_path) as db:
             return db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
-    removed = await repo.cleanup_old_samples(retention_days=3, rollup_retention_days=90, long_rollup_retention_days=400)
+    removed = await repo.cleanup_old_samples(retention_days=3, rollup_retention_days=90, latency_retention_days=400)
     assert (removed["samples"], removed["rollup_10s"]) == (120, 6)  # raw: 5 and 10 days; 10 s: only the 10-day one
     assert [count(t) for t in ("samples", "rollup_10s")] == [60, 12]
     # a raw retention longer than slot_retention_days is the floor (the 10-second rollups are never shorter)
-    removed = await repo.cleanup_old_samples(retention_days=9, rollup_retention_days=90, long_rollup_retention_days=400)
+    removed = await repo.cleanup_old_samples(retention_days=9, rollup_retention_days=90, latency_retention_days=400)
     assert removed["rollup_10s"] == 0
 
 

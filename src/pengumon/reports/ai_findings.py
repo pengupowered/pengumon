@@ -19,6 +19,7 @@ import math
 import time
 from array import array
 from collections import Counter, defaultdict
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from statistics import median
@@ -79,7 +80,7 @@ class Rules:
     closeup_max_rows: int = 24             # more rows than this: the lossiest ones are kept
     closeup_rows_10s: int = 40             # the incident scope's 10-second rows, the lossiest kept
     closeup_columns: int = 4
-    probe_interval_seconds: float = 1.0    # a lost probe stands for this long (the prober's default interval)
+    probe_interval_seconds: float = 1.0    # a lost probe stands for this long (collect_pack_facts: prober.interval_seconds)
     episode_seconds_around_10s: float = 120.0
 
 
@@ -1071,6 +1072,9 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
     rows; `start`..`end` is the window around it). `tz`: the local time zone (a named zone follows its daylight-saving
     changes); without it, the fixed offset `tz_offset_minutes`, east positive."""
     now = time.time() if now is None else now
+    interval = getattr(getattr(config, "prober", None), "interval_seconds", None)
+    if rules is RULES and interval and interval != rules.probe_interval_seconds:
+        rules = dataclasses.replace(rules, probe_interval_seconds=float(interval))  # a lost probe stands for the real round
     tz = tz or timezone(timedelta(minutes=tz_offset_minutes))
     clock = LocalClock(tz)
     ignoring = frozenset(ignoring)

@@ -31,6 +31,9 @@ const SHARD_WEIGHT = { "core.mjs": 90, "settings.mjs": 66, "incidents.mjs": 34, 
   "matrix.mjs": 18, "device-setup.mjs": 17, "diagnosis.mjs": 13, "router.mjs": 11, "traffic.mjs": 11, "strips.mjs": 10, "ai-pack.mjs": 9,
   "dossier.mjs": 9, "trace.mjs": 6, "target-history.mjs": 5.5, "layout.mjs": 5, "add-target.mjs": 5, "alerts.mjs": 4.5, "line.mjs": 4,
   "heat.mjs": 3, "report.mjs": 2.5, "services.mjs": 1, "sign-out.mjs": 0.5 };
+// The `longhistory` variant runs few steps of long files; seconds each file takes there (measured), for the same balancing.
+const LONG_WEIGHT = { "router.mjs": 170, "incidents.mjs": 90, "strips.mjs": 60, "report.mjs": 45, "latency.mjs": 42, "traffic.mjs": 40,
+  "heat.mjs": 34, "speed.mjs": 30, "line.mjs": 30, "target-history.mjs": 20 };
 // PENGUMON_BROWSER=firefox: one pass in Firefox (WebDriver BiDi), only these step files (docs/testing.md). A step that needs
 // a Chromium-only API says so with the option `chromiumOnly: "<reason>"`; Firefox skips it and prints the reason.
 const firefox = process.env.PENGUMON_BROWSER === "firefox";
@@ -85,7 +88,7 @@ if (shardCount > 1) {
   }
   mine = mine.filter((m) => slice.get(unitOf(m)) === shardIndex);
 }
-function weightOf(m) { return SHARD_WEIGHT[m.file] ?? todoOf(m).length; }
+function weightOf(m) { return (variant === "longhistory" ? LONG_WEIGHT : SHARD_WEIGHT)[m.file] ?? todoOf(m).length; }
 const skipped = firefox ? mine.flatMap((m) => m.steps.filter(([, , o]) => o?.chromiumOnly).map(([n, , o]) => `${m.subject}: ${n} (not in Firefox: ${o.chromiumOnly})`)) : [];
 const fileMs = {};
 let started = false;
@@ -97,6 +100,7 @@ run: for (const m of mine) {
   let fatal = false;
   for (const [i, [name, fn, opts]] of todo.entries()) {
     const label = `${m.subject}: ${name}`;
+    if (process.env.PENGUMON_STEP_ONLY && !label.includes(process.env.PENGUMON_STEP_ONLY)) continue; // (debugging: only the steps whose label holds this text)
     if (await ctx.step(label, fn)) continue;
     if (opts?.fatal) fatal = true;
     else skipped.push(...todo.slice(i + 1).map(([n]) => `${m.subject}: ${n}`));

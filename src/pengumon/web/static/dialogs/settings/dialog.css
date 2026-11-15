@@ -188,8 +188,28 @@
 /* The speed test: its data estimate and the M-Lab privacy note are lines of their own, not settings */
 .set-note { padding: var(--sp-2) 0; }
 .set-note[data-inactive] { display: none; } /* not `hidden`: the search box sets that on every row */
+.set-line { display: block; }
+.set-time { color: var(--ink-2); font-size: var(--fs-sm); }
 .set-estimate, .set-privacy { margin: 0; font-size: var(--fs-sm); color: var(--ink-2); overflow-wrap: anywhere; }
 .set-privacy b { color: var(--warn); }
 /* the three providers are buttons whose labels are sentences (M-Lab's says what it publishes): they stack and wrap */
 .set-row[data-key="speedtest.provider"] .set-input .seg { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
 .set-row[data-key="speedtest.provider"] .set-input .seg button { white-space: normal; text-align: left; }
+
+/* Retention: the disk table (storage.js). A table on a desktop; on a phone it scrolls inside its own box, not the page. */
+.set-row[data-extra=storage] { display: block; }
+.set-storage-wrap { overflow-x: auto; max-width: 100%; }
+.set-storage { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.set-storage th, .set-storage td { text-align: left; padding: var(--sp-1) var(--sp-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.set-storage thead th { color: var(--ink-2); font-weight: 600; }
+/* (the dialog's table rule, style.css .modal-b table:not(.dlist) th, would make the kinds small capitals that never wrap) */
+.modal-b table.set-storage tbody th { font-weight: 500; font-size: inherit; text-transform: none; letter-spacing: normal; color: var(--ink-1); padding: var(--sp-1) var(--sp-2); }
+.set-storage .set-total th, .set-storage .set-total td { font-weight: 700; border-bottom: 0; }
+/* On a phone the table keeps its figures on screen: the Keep column (the number is in its field just above) goes, the
+   kinds wrap, the cells are tighter; it still scrolls inside its box if a figure is unusually wide. */
+@media (max-width: 560px) {
+  .set-storage thead th:nth-child(2), .set-storage td[data-cell="keep"], .set-storage .set-total td:nth-child(2) { display: none; }
+  .modal-b table.set-storage tbody th, .modal-b table.set-storage thead th, .set-storage td[data-cell="change"], .set-storage td[data-cell="full"] { white-space: normal; }
+  .modal-b table.set-storage tbody th { padding: var(--sp-1) 4px; }
+  .set-storage th, .set-storage td { padding: var(--sp-1) 4px; }
+}

@@ -60,6 +60,9 @@ class RoundMetrics:
     public: CategoryMetrics
     dns: CategoryMetrics
     failed_targets: Tuple[str, ...]
+    # False in a round where DNS lookups are set up but none ran (prober.dns_interval_seconds is longer than the
+    # round): the DNS figures are those of the last lookups, and the round says nothing new about them.
+    dns_probed: bool = True
 
     def is_loss_or_outage(self, status: StatusCode, config: ClassifierConfig) -> bool:
         """Packet loss or a hard outage, as opposed to pure latency / jitter."""
@@ -148,4 +151,5 @@ def round_metrics(stats: Dict[str, TargetStats], samples: List[ProbeSample],
             cat_samples[st.category].append(s)
 
     per = {c: category_metrics(c, targets[c], cat_samples[c], window) for c in CATEGORIES}
-    return RoundMetrics(per["local"], per["gateway"], per["isp"], per["public"], per["dns"], tuple(failed))
+    dns_probed = bool(cat_samples["dns"]) or not targets["dns"]
+    return RoundMetrics(per["local"], per["gateway"], per["isp"], per["public"], per["dns"], tuple(failed), dns_probed)

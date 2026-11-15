@@ -4,8 +4,16 @@ export const subject = "panel:heat";
 export const variants = ["full"];
 
 export const steps = [
-  ["loss heatmap: a cell per hour of the week and an insight", async ({ ok, outDir, page, path, text, waitCount }) => {
-    await waitCount("#heatGrid > i, #heatGrid > .cell", 7 * 24);
+  ["loss heatmap: a cell per hour of the 8 dates the last 7 x 24 hours touch (the hours outside the window blank) and an insight", async ({ eq, ok, outDir, page, path, text, until }) => {
+    // one row per date the window touches: 8, or 7 when it begins at a midnight (the hour in progress is the one before it)
+    await until(() => document.querySelectorAll("#heatGrid > .cell").length >= 7 * 24);
+    const rows = await page.$$eval("#heatGrid > [data-v=day]", (e) => e.length);
+    ok(`7 or 8 dates (${rows})`, rows === 7 || rows === 8);
+    eq("a cell per hour of every date", await page.$$eval("#heatGrid > i, #heatGrid > .cell", (e) => e.length), rows * 24);
+    eq("exactly 7 x 24 hours are inside the window", await page.$$eval("#heatGrid > .cell", (e) => e.length), 7 * 24);
+    eq("the rest are blank, not 'no data'", await page.$$eval("#heatGrid > i.outside", (e) => e.length), (rows - 7) * 24);
+    ok("blank cells have no tooltip and are not read out", await page.$$eval("#heatGrid > i.outside", (els) => els.every((e) => !e.dataset.tip && e.getAttribute("aria-hidden") === "true" && getComputedStyle(e).backgroundColor === "rgba(0, 0, 0, 0)")));
+    ok("the sentence names the window", /last 7 days/.test(await text("#heatInsight")) || /No packet loss/.test(await text("#heatInsight")));
     ok("insight", (await text("#heatInsight")).length > 20);
     await page.screenshot({ path: path.join(outDir, "strips-heat.png"), fullPage: true });
   }],
@@ -13,8 +21,8 @@ export const steps = [
   ["loss heatmap: every hour so far is a button, and it lists that hour's incidents", async ({ click, count, eq, ok, page, shown, text, until }) => {
     await until(() => document.querySelectorAll("#heatGrid .cell").length >= 1);
     const cells = await page.$$eval("#heatGrid > i, #heatGrid > .cell", (els) => els.map((e) => ({ button: e.tagName === "BUTTON", start: Number(e.dataset.start || 0) })));
-    const plain = await page.$$eval("#heatGrid > i", (els) => els.map((e) => [e.dataset.tip, getComputedStyle(e).cursor]));
-    ok("only hours still to come are plain cells", plain.every(([tip, cursor]) => /not yet/.test(tip) && cursor !== "pointer"));
+    const plain = await page.$$eval("#heatGrid > i:not(.outside)", (els) => els.map((e) => [e.dataset.tip, getComputedStyle(e).cursor]));
+    ok("the window ends with the hour in progress: no hour still to come is drawn", plain.length === 0);
     ok("the buttons are the hours that have begun, with and without loss", cells.filter((c) => c.button).length > 24 * 6
       && cells.filter((c) => c.button).every((c) => c.start <= Date.now() / 1000));
     eq("the hint says so", await shown("#heatHint"), true);
@@ -131,11 +139,71 @@ export const steps = [
       grid.update(present(JSON.parse(JSON.stringify(answer)), now));
       const same = box.querySelector(".cell").dataset.mark === "kept";
       const next = JSON.parse(JSON.stringify(answer));
-      next.lost[0][0] += 1;
+      // an hour inside the window (the oldest row starts at the window's start hour: its earlier hours are not drawn)
+      const d0 = next.lost.findIndex((row, d) => row.some((_, h) => !(next.outside && next.outside[d][h])));
+      const h0 = next.lost[d0].findIndex((_, h) => !(next.outside && next.outside[d0][h]));
+      next.lost[d0][h0] += 1;
       grid.update(present(next, now));
       return { same, changed: box.querySelector(".cell").dataset.mark === undefined };
     }, [await moduleUrl("../panels/heat/model.js"), await moduleUrl("cards.js")]);
     ok("an identical answer leaves the cells alone", result.same);
     ok("a changed answer draws them", result.changed);
   }],
+
+  ["loss heatmap: the range control; 30 d asks for 30 days, draws 30 x 24 hours (the cut rows blank) and says so", async ({ chooseRange, eq, ok, page, rangeState, text, until }) => {
+    eq("the card offers 7 d to All", (await rangeState("#heatRanges")).words.join(","), "Last 7 days,Last 30 days,Last 90 days,All · 180 d");
+    eq("7 d is chosen", (await rangeState("#heatRanges")).value, "7d");
+    await chooseRange("#heatRanges", "30d");
+    await until(() => document.querySelectorAll("#heatGrid > .cell").length === 30 * 24);
+    eq("30 d is chosen", (await rangeState("#heatRanges")).value, "30d");
+    const rows = await page.$$eval("#heatGrid > [data-v=day]", (e) => e.length);
+    ok(`30 or 31 dates (${rows})`, rows === 30 || rows === 31);
+    eq("exactly 30 x 24 hours inside the window, the rest blank", await page.$$eval("#heatGrid > i.outside", (e) => e.length), (rows - 30) * 24);
+    ok("the request asked for 30 days", await page.evaluate(() => performance.getEntriesByType("resource").filter((e) => e.name.includes("/api/report/loss-grid")).pop().name.includes("days=30")));
+    eq("the header says so", await text("#heatMeta"), "loss by hour, 30 days");
+    ok("the sentence names the window", /last 30 days/.test(await text("#heatInsight")));
+    ok("a day is named with its date (30 rows: a weekday alone is ambiguous)", /^[A-Z][a-z]{2} \d{1,2}$/.test(await page.$eval("#heatGrid > [data-v=day]", (e) => e.textContent)));
+    ok("the oldest rows reach back (the 7 d view held 7 x 24)", (await page.$$eval("#heatGrid > .cell", (e) => e.length)) > 7 * 24);
+    await chooseRange("#heatRanges", "7d");
+    await until(() => document.querySelectorAll("#heatGrid > .cell").length === 7 * 24);
+    eq("back on 7 d", await text("#heatMeta"), "loss by hour, 7 days");
+  }],
+
+  ["every window draws the loss grid (a row per date to 30 days, a row per weekday past it), on a desktop, a phone and in every theme", async ({ atEveryRange, chooseRange, eq, everyLook, noSideways, ok, openPanel, page, phone, rangeState, settled, showCard, text }) => {
+    const check = (where) => async (id) => {
+      const what = `${where} ${id}`;
+      const rows = await page.$$eval("#heatGrid > [data-v=day]", (e) => e.map((x) => x.textContent));
+      const cells = await page.$$eval("#heatGrid > .cell, #heatGrid > i.fold", (e) => e.map((x) => x.getBoundingClientRect().width));
+      const folded = id === "90d" || id === "all";
+      if (folded) {
+        eq(`${what}: a row per weekday, Monday first`, rows.join(), "Mon,Tue,Wed,Thu,Fri,Sat,Sun");
+        eq(`${what}: 7 x 24 cells`, cells.length, 168);
+        ok(`${what}: the sentence says by weekday and hour (${await text("#heatInsight")})`, /by weekday and hour, last \d+ days/.test(await text("#heatInsight")));
+        ok(`${what}: the header says so (${await text("#heatMeta")})`, /^by weekday and hour, \d+ days$/.test(await text("#heatMeta")));
+        eq(`${what}: no hour opens the incident list (nothing to open)`, await page.$$eval("#heatGrid > .cell", (e) => e.length), 0);
+      } else {
+        ok(`${what}: a row per date (${rows.length})`, id === "7d" ? rows.length >= 7 && rows.length <= 8 : rows.length >= 30 && rows.length <= 31);
+        ok(`${what}: ${cells.length} hour cells`, cells.length >= (id === "7d" ? 7 : 30) * 24);
+      }
+      const cut = await page.$$eval("#heatGrid > [data-v=day]", (e) => e.filter((x) => x.scrollWidth > x.clientWidth).map((x) => `${x.textContent} (${x.scrollWidth} > ${x.clientWidth})`));
+      ok(`${what}: no row label is cut off (${cut.join(", ") || "all fit"})`, cut.length === 0);
+      ok(`${what}: the narrowest cell is ${Math.min(...cells).toFixed(1)} px (at least 5)`, Math.min(...cells) >= 5);
+      ok(`${what}: nothing sticks out sideways`, await noSideways());
+    };
+    await showCard("heat");
+    eq("7 d to All", (await rangeState("#heatRanges")).ids.join(), "7d,30d,90d,all");
+    await atEveryRange("#heatRanges", "#heatGrid", check("desktop"));
+    await everyLook(async (look) => {
+      await showCard("heat");
+      for (const id of ["30d", "all"]) {
+        await chooseRange("#heatRanges", id);
+        await settled();
+        await check(look)(id);
+      }
+    });
+    await phone(async () => {
+      await openPanel("heat", "incidents");
+      await atEveryRange("#heatRanges", "#heatGrid", check("phone"));
+    });
+  }, { variants: ["longhistory"] }],
 ];

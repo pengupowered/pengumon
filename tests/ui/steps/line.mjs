@@ -28,7 +28,7 @@ export const steps = [
     eq("closed", await page.$eval("#channelsModal", (m) => m.classList.contains("active")), false);
   }],
 
-  ["channels modal History tab: heatmap canvas, channel detail chart, range and metric", async ({ LINE, click, eq, hasChart, ok, outDir, page, path, shown, until }) => {
+  ["channels modal History tab: heatmap canvas, channel detail chart, range and metric", async ({ LINE, chooseRange, click, eq, hasChart, ok, outDir, page, path, rangeState, shown, until }) => {
     await click(`${LINE} [data-action=openChannelsModal]`);
     eq("tabs shown", await shown("#channelsTabs"), true);
     await click("#btnChannelsHistory");
@@ -54,8 +54,18 @@ export const steps = [
     eq("detail datasets", await page.evaluate(() => Chart.getChart(document.getElementById("chHistDetailChart")).data.datasets.length), 3);
     ok("detail has points", (await page.evaluate(() => Chart.getChart(document.getElementById("chHistDetailChart")).data.datasets[0].data.length)) > 20);
     await page.screenshot({ path: path.join(outDir, "channels-history.png") });
-    await click('#chHistRanges button[data-arg="604800"]');
-    await until(() => document.querySelector("#chHistRanges button.active")?.dataset.arg === "604800" && /readings/.test(document.getElementById("chHistStatus").textContent));
+    await chooseRange("#chHistRanges", "7d");
+    await until(() => document.querySelector("#chHistRanges select")?.value === "7d" && /readings/.test(document.getElementById("chHistStatus").textContent));
+    eq("24 h to All (readings every 30 min: no 1 h), the 180 day retention", (await rangeState("#chHistRanges")).ids.join(","), "24h,7d,30d,90d,all");
+    await chooseRange("#chHistRanges", "30d");
+    await until(() => document.querySelector("#chHistRanges select")?.value === "30d" && /readings|No channel readings/.test(document.getElementById("chHistStatus").textContent));
+    const asked = await page.evaluate(() => {
+      const q = new URL(performance.getEntriesByType("resource").filter((e) => e.name.includes("/channels/history?")).pop().name).searchParams;
+      return { span: Number(q.get("end_time")) - Number(q.get("start_time")), lag: Date.now() / 1000 - Number(q.get("end_time")) };
+    });
+    eq("30 d asks for 30 days", asked.span, 30 * 86400);
+    ok(`ending now (${asked.lag.toFixed(0)} s ago)`, asked.lag >= 0 && asked.lag < 60);
+    ok("and the heatmap is drawn from what is stored", Number(await page.$eval("#chHistCanvas", (c) => c.dataset.drawn)) > 0);
     await click("[data-action=closeModal][data-arg=channelsModal]");
   }],
 
@@ -133,4 +143,72 @@ export const steps = [
     eq("title", await text(`${LINE} [data-f=title]`), "Line");
     ok("meta", /^Fiber · [\d.]+$/.test((await text(`${LINE} [data-f=meta]`)).trim()));
   }, { variants: ["unknownline"] }],
+
+  ["every range draws the channel history (a heatmap of every channel and the detail chart of one), on a desktop and a phone, in every theme", async ({ LINE, atEveryRange, axisOk, chartAxis, chooseRange, click, eq, everyLook, noSideScroll, ok, page, phone, rangeState, settled, until }) => {
+    const open = async () => {
+      await click(`${LINE} [data-action=openChannelsModal]`);
+      await click("#btnChannelsHistory");
+      await until(() => Number(document.getElementById("chHistCanvas").dataset.rows) >= 2);
+      await page.evaluate(() => { // a click on the first channel's row draws its detail chart
+        const c = document.getElementById("chHistCanvas");
+        const r = c.getBoundingClientRect();
+        c.dispatchEvent(new MouseEvent("click", { clientX: r.left + 100, clientY: r.top + 18 + 3, bubbles: true }));
+      });
+      await until(() => !!Chart.getChart(document.getElementById("chHistDetailChart")));
+    };
+    const check = (where) => async (id, s) => {
+      const what = `${where} ${id}`;
+      ok(`${what}: the detail chart is drawn`, !!s);
+      const points = s.sets[0].n;
+      ok(`${what}: the detail chart has ${points} points (at most 840: a long range is thinned)`, points >= 3 && points <= 840);
+      axisOk(what, id, s);
+      const heat = await page.$eval("#chHistCanvas", (c) => ({ rows: Number(c.dataset.rows), drawn: Number(c.dataset.drawn), w: c.width }));
+      ok(`${what}: the heatmap holds ${heat.drawn} readings in ${heat.rows} rows`, heat.rows >= 2 && heat.drawn >= heat.rows);
+      ok(`${what}: nothing sticks out sideways`, await noSideScroll("channelsModal"));
+    };
+    await open();
+    eq("the line keeps 180 days: 24 h to All", (await rangeState("#chHistRanges")).ids.join(), "24h,7d,30d,90d,all");
+    await atEveryRange("#chHistRanges", "#chHistDetailChart", check("desktop"));
+    await everyLook(async (look) => {
+      for (const id of ["7d", "all"]) {
+        await chooseRange("#chHistRanges", id);
+        await settled();
+        await check(look)(id, await chartAxis("#chHistDetailChart"));
+      }
+    });
+    await click("[data-action=closeModal][data-arg=channelsModal]");
+    await phone(async () => {
+      await open();
+      await atEveryRange("#chHistRanges", "#chHistDetailChart", check("phone"));
+      await click("[data-action=closeModal][data-arg=channelsModal]");
+    });
+  }, { variants: ["longhistory"] }],
+
+  ["All starts at the oldest stored reading when that is younger than the retention: the channel history (42 days of data, then 400)", async ({ LINE, chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, until, youngData }) => {
+    for (const { days, kind, age } of [{ days: 42, kind: "date", age: 42 }, { days: 400, kind: "month", age: 180 }]) { // (the line keeps readings for 180 days: the server answers no more)
+      await youngData(days);
+      await click(`${LINE} [data-action=openChannelsModal]`);
+      await click("#btnChannelsHistory");
+      await until(() => Number(document.getElementById("chHistCanvas").dataset.rows) >= 2);
+      await page.evaluate(() => { // a click on the first channel's row draws its detail chart
+        const c = document.getElementById("chHistCanvas");
+        const r = c.getBoundingClientRect();
+        c.dispatchEvent(new MouseEvent("click", { clientX: r.left + 100, clientY: r.top + 18 + 3, bubbles: true }));
+      });
+      await until(() => !!Chart.getChart(document.getElementById("chHistDetailChart")));
+      eq(`${days}: the retention is a year`, (await rangeState("#chHistRanges")).words.at(-1), "All · 1 y");
+      await chooseRange("#chHistRanges", "all");
+      await settled();
+      const s = await chartAxis("#chHistDetailChart");
+      const from = await page.$eval("#chHistCanvas", (c) => (Date.now() / 1000 - Number(c.dataset.from)) / 86400);
+      ok(`${days}: the heatmap starts ${from.toFixed(1)} days back (about ${age}, not 365)`, Math.abs(from - age) < 1.5);
+      const x = await page.evaluate(() => (Date.now() - Chart.getChart(document.getElementById("chHistDetailChart")).scales.x.min) / 86400000);
+      ok(`${days}: so does the detail chart (${x.toFixed(1)} days back)`, Math.abs(x - age) < 1.5);
+      ok(`${days}: the labels are ${kind}s (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => (kind === "date" ? /^[A-Z][a-z]{2} \d{1,2}$/ : /^[A-Z][a-z]{2} \d{4}$/).test(l)));
+      ok(`${days}: no label twice in a row`, s.labels.every((l, i) => i === 0 || l !== s.labels[i - 1]));
+      ok(`${days}: the status says where it starts`, /^all stored, since [A-Z][a-z]{2} \d{1,2}/.test(await page.$eval("#chHistStatus", (e) => e.textContent)));
+      await click("[data-action=closeModal][data-arg=channelsModal]");
+    }
+    await youngData(null);
+  }, { variants: ["longhistory"] }],
 ];

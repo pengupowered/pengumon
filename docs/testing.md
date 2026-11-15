@@ -112,10 +112,11 @@ hardening flags set inline in `scripts/test-ui.sh` (or through a shared runner s
 tooling and never enter the production image (see `docs/supply-chain.md`).
 
 `scripts/test-ui.sh` runs the browser runs side by side with pytest-xdist: `full` as four slices of the step files
-(`smoke.mjs`'s SHARD argument; the files that run last stay together because they build on one another), the seven
-other variants and the two Firefox slices (12 runs in all, listed in `RUNS` in `tests/test_ui_smoke.py`), 4 at a time
+(`smoke.mjs`'s SHARD argument; the files that run last stay together because they build on one another), the other
+variants (`longhistory`, 200 days of made-up history for every chart at every range in every theme, desktop and phone, as three slices) and the two Firefox slices (listed in `RUNS` in `tests/test_ui_smoke.py`), 4 at a time
 (`PENGUMON_UI_WORKERS`, `-n <N>` wins). The memory cap is 1 GB plus 800 MB per worker (`PENGUMON_TEST_MEMORY`), as each
 run is an app, Node and Chromium.
+`PENGUMON_STEP_ONLY=<text>` (set in the container: `scripts/test-ui.sh --command env PENGUMON_STEP_ONLY=... python -m pytest ...`) runs only the steps whose label holds the text; each step logs its progress to stderr, which a run cut off by its time limit prints.
 Tests wait on conditions, not on a fixed time, where there is one (`lib.mjs`: `layoutSettled`, `positionSettled`,
 `nextMessages`, `frames`); a few fixed waits are left on purpose: the sign-out step's 3 s "nothing happens" check, the
 final 2.5 s wait for late errors, and the waits before screenshots.

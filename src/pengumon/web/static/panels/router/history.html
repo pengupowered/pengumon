@@ -4,11 +4,7 @@
     <header class="modal-h"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg><h2 class="modal-t" id="routerHistTitle">Router history</h2>
       <button type="button" class="info" data-action="toggleHelp" data-help="router.history" aria-label="About router history"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button>
       <span class="modal-m" id="routerHistStatus"></span>
-      <div class="tools"><span class="seg" role="group" aria-label="Time range" id="routerHistRanges">
-        <button type="button" aria-pressed="true" data-action="setRouterHistoryRange" data-arg="3600">1 h</button>
-        <button type="button" aria-pressed="false" data-action="setRouterHistoryRange" data-arg="21600">6 h</button>
-        <button type="button" aria-pressed="false" data-action="setRouterHistoryRange" data-arg="86400">24 h</button>
-        <button type="button" aria-pressed="false" data-action="setRouterHistoryRange" data-arg="604800">7 d</button></span></div>
+      <div class="tools"><span class="range-host" id="routerHistRanges"></span></div>
       <button type="button" class="btn icon m-close" data-action="closeModal" data-arg="routerHistModal" aria-label="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
     <div class="modal-b">
       <p class="fine top">Charts share one time axis: hover any of them, or focus one and use the arrow keys, and the crosshair follows on all. Solid lines are the average of each time slice, thin dashed lines the peak. The WAN chart is measured against your line capacity, the speed of your internet plan. <button type="button" class="info" data-action="toggleHelp" data-help="line.capacity" aria-label="About line capacity"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg></button></p>

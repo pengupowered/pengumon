@@ -3,6 +3,7 @@
 
 import { badge } from '../../js/dom.js';
 import { escapeHtml } from '../../js/escape.js';
+import { loadFromOldest } from '../../js/ranges.js';
 import { zoneParams } from '../../js/clock.js';
 import { token } from '../../js/chart-theme.js';
 import { median } from '../../js/values.js';
@@ -12,7 +13,7 @@ import { fetchPathEvents } from '../../js/path-api.js';
 import { liveQuiet, renderGroupUptime, renderUptime } from './strips.js';
 import { lossBar, paintMarks, setRange, tint } from './charts.js';
 import { lossOf, num, per, setStats, stateBadge, unit } from './figures.js';
-import { RANGES, T, win } from './state.js';
+import { bucketOf, rangeList, T, win } from './state.js';
 
 async function getJson(url) {
   const res = await fetch(url);
@@ -24,15 +25,26 @@ async function getJson(url) {
 export async function load(quiet = false) {
   const mine = ++T.seq;
   const status = document.getElementById('targetHistStatus');
-  const [, , bucket] = RANGES.find((r) => r[0] === T.rangeSeconds);
   const end = Math.floor(Date.now() / 1000);
+  const all = !!rangeList().find((r) => r[0] === T.rangeSeconds && r[5]);
   if (!quiet) status.textContent = 'Loading...';
   const ids = T.group && T.view === 'all' ? T.group.members.map((m) => m.id) : [T.group ? T.view : T.targetId];
-  const q = `${ids.map((i) => `target_ids=${encodeURIComponent(i)}`).join('&')}&start_time=${end - T.rangeSeconds}&end_time=${end}&bucket_seconds=${bucket}&compact=true`;
+  const targets = ids.map((i) => `target_ids=${encodeURIComponent(i)}`).join('&');
   const uptime = getJson(`/api/uptime?window=24h&${zoneParams()}`).catch(() => null);
   try {
-    const { fields, rows } = await getJson(`/api/history?${q}`);
+    // All starts at the oldest stored probe when that is younger than the retention (js/ranges.js): buckets suit that span
+    const got = await loadFromOldest({
+      all, start: end - T.rangeSeconds, end, bucketOf, current: () => mine === T.seq,
+      ask: (from, to, width) => getJson(`/api/history?${targets}&start_time=${from}&end_time=${to}&bucket_seconds=${width}&compact=true`),
+      oldest: (h) => { const t = h.fields.indexOf('timestamp'); return h.rows.reduce((m, r) => (m === null || r[t] < m ? r[t] : m), null); }
+    });
     if (mine !== T.seq) return; // a newer request (another range, target or view) owns the charts
+    const { fields, rows } = got.answer;
+    const bucket = got.bucket;
+    T.start = got.start;
+    T.since = got.since;
+    T.spanSeconds = end - got.start;
+    T.bucket = bucket;
     const col = (n) => fields.indexOf(n);
     const c = { id: col('target_id'), t: col('timestamp'), lat: col('latency_ms'), loss: col('packet_loss_pct'), p10: col('latency_p10_ms'),
       p90: col('latency_p90_ms'), ok: col('successful_count'), tot: col('total_count') };

@@ -1,5 +1,10 @@
 """The probe loop: one round every `prober.interval_seconds` that probes, stores, classifies and publishes.
 
+The interval is a setting applied without a restart: the loop reads it from the live config at the start of every
+round and again while it waits, so a change takes effect within a fraction of a second (a wait of a minute is not kept
+to its end). The DNS lookups run every `prober.dns_interval_seconds` (a whole multiple of the round; unset: every
+round): a round they are not due in leaves them out, so they are not probed (never lost).
+
 It never waits for HTTP or for a websocket client: the devices run in their own tasks (their latest snapshots are
 simply read by the live parts) and `ws.publish` only stores the message for the broadcaster task. The live message
 is the round itself (timestamp, diagnosis, targets) plus one field per registered live part (components.LivePart):
@@ -14,6 +19,7 @@ from pengumon.live.ws import ws_manager
 from pengumon.components import LivePart
 from pengumon.live.message import LiveStreamMessage
 from pengumon.observability import get_logger
+from pengumon.probe_interval import dns_every
 from pengumon.observability.telemetry import (
     probe_round_duration, probe_round_work, probe_rounds_late, probe_rounds_skipped, record_probes,
 )
@@ -23,6 +29,7 @@ _log = get_logger("pengumon")  # the app's lifecycle lines keep the logger name 
 _ROUND_FIELDS = frozenset({"timestamp", "diagnosis", "targets"})
 # A round that starts later than this many intervals after the one before is late (the usual jitter is a few ms).
 LATE_FACTOR = 1.5
+WAIT_SLICE_SECONDS = 0.5  # the longest the loop sleeps before it looks at the interval again
 _STORE, _CLASSIFY, _PUBLISH = {"step": "store"}, {"step": "classify"}, {"step": "publish"}  # (built once: 1 s path)
 
 
@@ -47,17 +54,26 @@ def check_live_parts(parts: Iterable[LivePart]) -> None:
         raise ValueError(f"a live-message field has two parts: {', '.join(sorted(names))}")
 
 
+def dns_due(round_index: int, prober_config) -> bool:
+    """Whether the DNS lookups run in round number `round_index` (counted from the start of the loop): every round
+    when `prober.dns_interval_seconds` is unset, else every dns_interval / interval rounds, starting with the first."""
+    every = dns_every(prober_config.interval_seconds, getattr(prober_config, "dns_interval_seconds", None))
+    return round_index % every == 0
+
+
 async def probe_background_worker(config, prober, classifier, repository, ws=ws_manager,
                                   live_parts: Sequence[LivePart] = ()):
     """Continuous background loop executing network probes and handing telemetry to the broadcaster."""
     _log.info(f"Starting continuous network prober (Interval: {config.prober.interval_seconds}s)...")
 
-    interval = config.prober.interval_seconds
-    previous_start, previous_elapsed = None, 0.0
+    previous_start, previous_elapsed, previous_interval = None, 0.0, config.prober.interval_seconds
+    round_index = -1
     while True:
         start_time = time.perf_counter()
+        interval = config.prober.interval_seconds  # live: a change in Settings applies from this round
+        round_index += 1
         if previous_start is not None:
-            late = late_round(previous_start, start_time, interval, previous_elapsed)
+            late = late_round(previous_start, start_time, previous_interval, previous_elapsed)
             if late is not None:
                 probe_rounds_late.add(1, {"cause": late[0]})
                 probe_rounds_skipped.add(late[1])
@@ -68,7 +84,7 @@ async def probe_background_worker(config, prober, classifier, repository, ws=ws_
             # 1. Execute probe round across all targets concurrently
             samples = await prober.execute_probe_round(
                 targets=config.targets,
-                dns_probes=config.dns_probes,
+                dns_probes=config.dns_probes if dns_due(round_index, config.prober) else [],
             )
 
             # 2. Persist samples to SQLite
@@ -107,5 +123,17 @@ async def probe_background_worker(config, prober, classifier, repository, ws=ws_
         # Precise timing compensation
         elapsed = previous_elapsed = time.perf_counter() - start_time
         probe_round_duration.record(elapsed)
-        sleep_dur = max(0.1, interval - elapsed)
-        await asyncio.sleep(sleep_dur)
+        await _wait_for_next_round(config, start_time)
+        # the next round is on time for the longer of the intervals in force at the start and at the end of the wait
+        previous_interval = max(interval, config.prober.interval_seconds)
+
+
+async def _wait_for_next_round(config, start_time: float) -> None:
+    """Sleeps until `prober.interval_seconds` after `start_time` (at least 0.1 s), in slices, so a changed interval is
+    seen while waiting."""
+    while True:
+        remaining = max(0.1, config.prober.interval_seconds - (time.perf_counter() - start_time))
+        if remaining <= WAIT_SLICE_SECONDS:
+            await asyncio.sleep(remaining)
+            return
+        await asyncio.sleep(WAIT_SLICE_SECONDS)

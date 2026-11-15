@@ -1,15 +1,17 @@
 """The prober's config sections: `prober:` (with its `hop_status:` colors) and `dns_probes:`. Plain pydantic models
 that import nothing of the app, so pengumon.config can name them without an import cycle.
 
-`prober.interval_seconds` (the round) is a bootstrap key: it stays in config.yaml and is never on the Settings page;
-tests run it at 0.05 s."""
+`prober.interval_seconds` (the round) is a setting with fixed choices (pengumon.probe_interval). Tests that need a
+faster loop assign the live config's attribute directly (0.05 s): assignment is not validated, and the settings never
+offer it."""
 
 import ipaddress
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pengumon.models.hosts import ID_PATTERN, validate_color, validate_host
+from pengumon.probe_interval import DEFAULT_INTERVAL, dns_interval_problem
 
 _MS = dict(ge=0, le=10000)  # a hop color level, ms
 DNS_RECORD_TYPES = ("A", "AAAA", "CNAME", "MX", "NS", "TXT")
@@ -49,11 +51,22 @@ class HopStatusConfig(BaseModel):
 
 
 class ProberConfig(BaseModel):
-    interval_seconds: float = Field(1.0, gt=0, le=60)  # bootstrap: the probe round (config.yaml only)
+    # the probe round: a setting (Settings > Probing), one of probe_interval.INTERVAL_CHOICES; the loop reads it every round
+    interval_seconds: Literal[1, 2, 5, 10, 30, 60] = DEFAULT_INTERVAL
+    # how often the DNS lookups run: one of the same choices, not shorter than the round and a whole multiple of it;
+    # None: every round. A lookup that is not due in a round is not probed (not lost).
+    dns_interval_seconds: Optional[Literal[1, 2, 5, 10, 30, 60]] = None
     timeout_seconds: float = Field(1.0, ge=0.2, le=1.0)  # a ping (and, unless dns_timeout_seconds, a lookup) is lost after
     dns_timeout_seconds: Optional[float] = Field(None, ge=0.2, le=5)  # None: timeout_seconds
     ping_count_per_probe: int = 1  # read nowhere; the settings import drops it
     hop_status: HopStatusConfig = Field(default_factory=HopStatusConfig)
+
+    @model_validator(mode="after")
+    def _dns_interval_fits_the_round(self):
+        problem = dns_interval_problem(self.interval_seconds, self.dns_interval_seconds)
+        if problem:
+            raise ValueError(f"dns_interval_seconds {problem}")
+        return self
 
     @model_validator(mode="after")
     def _timeout_within_the_round(self):

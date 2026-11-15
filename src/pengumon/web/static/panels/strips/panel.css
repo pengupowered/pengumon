@@ -11,14 +11,20 @@
 .s-axis { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
 .strip-legend { margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px dashed var(--line); }
 .strip-legend .grow { text-align: right; }
-@container (max-width: 560px) {
-  .strips { grid-template-columns: 92px minmax(0, 1fr) 54px; }
-  .s-name small { display: none; }
-  .strip-legend .grow { text-align: left; white-space: normal; }
-}
 .strips { grid-template-columns: minmax(130px, 260px) minmax(0, 1fr) 68px; }
+/* A narrow card (a phone): each target's name and availability on a line, its strip under them at the card's width. A
+   block is never narrower than 7 px: beside the names, the 90 days or 96 quarter hours of a phone were under 2 px each, too
+   thin to tell apart or tap. When the blocks don't fit, the strips scroll sideways together with their dates, the names
+   stay in view, and view.js opens them at now. */
 @container (max-width: 560px) {
-  .strips { grid-template-columns: 104px minmax(0, 1fr) 58px; }
-  .strips .strip { gap: 0.5px; } /* 95 gaps of 1.5 px left a 150 px strip no room for its 96 blocks */
-  .s-axis span:nth-child(2), .s-axis span:nth-child(4) { display: none; } /* three time labels fit, five ran onto two lines */
+  .strips { grid-template-columns: 1fr auto; grid-auto-flow: row dense; align-items: end; row-gap: 3px; overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 2px; }
+  .strips > span:empty { display: none; }
+  .s-hd:first-child, .s-name { position: sticky; left: 0; justify-self: start; }
+  /* a name longer than the line ("Internet 2606:4700:4700::1111") is cut, not drawn over the availability (full name on hover) */
+  .s-name { margin-top: 8px; overflow: hidden; max-width: calc(100cqw - 100px); } /* (the card less its padding and the availability) */
+  .s-name span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .s-name small { display: none; }
+  .strips .strip, .strip-quiet, .s-axis { grid-column: 1 / -1; }
+  .strips .strip { gap: 1px; min-width: calc(var(--n, 0) * 7px); }
+  .strip-legend .grow { text-align: left; white-space: normal; }
 }

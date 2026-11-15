@@ -121,18 +121,18 @@ async def test_empty_and_inverted_ranges_answer_no_rows(app_state, repo):
     assert inverted.status_code == 200 and inverted.json()["rows"] == []
 
 
-async def test_automatic_bucketing_caps_the_points_and_the_range_is_clipped_to_retention(app_state, repo):
+async def test_automatic_bucketing_caps_the_points_and_the_range_is_clipped_to_the_longest_tier(app_state, repo):
     app_state.devices, app_state.repository = _devices(), repo
     now = time.time()
-    await _router_poll(repo, now - 10 * 86400, 1.0, 1.0, 1.0, 1.0, 1)   # beyond the 7 day retention: never returned
+    await _router_poll(repo, now - 500 * 86400, 1.0, 1.0, 1.0, 1.0, 1)   # beyond every tier's retention: never returned
     for i in range(0, 7 * 86400, 1800):                                  # a sample every 30 min across the week
         await _router_poll(repo, now - i - 5, 5.0, 1.0, 10.0, 20.0, 4)
     async with _client() as ac:
-        res = await ac.get("/api/devices/router/history", params={"start_time": now - 30 * 86400, "end_time": now,
+        res = await ac.get("/api/devices/router/history", params={"start_time": now - 600 * 86400, "end_time": now,
                                                                   "max_points": 300})
     body = res.json()
-    assert body["start_time"] >= now - 7 * 86400 - 5
-    assert body["bucket_seconds"] >= (7 * 86400) / 300
+    assert body["start_time"] >= now - repo.router_history_days() * 86400 - 5
+    assert body["bucket_seconds"] >= (repo.router_history_days() * 86400) / 300
     assert 0 < len(body["rows"]) <= 300
     assert all(r[1] == 5.0 for r in body["rows"])
     # a width below the cap is raised, not obeyed
@@ -218,8 +218,28 @@ async def test_channel_history_filters_by_channel_and_direction(app_state, repo)
     assert none == [] and bad.status_code == 422
 
 
+async def test_channel_history_bucket_seconds_keeps_the_newest_reading_of_each_bucket(app_state, repo):
+    app_state.devices, app_state.repository = _devices(), repo
+    base = (time.time() // 86400 - 3) * 86400 + 100  # a few days ago, inside a UTC day
+    for i in range(6):  # readings every 2 hours of the day: 0, 2, ..., 10 hours after base
+        await repo.insert_line_sample(line_sample("modem", _snapshot(base + i * 7200, [_ch(1, power=float(i))])))
+    async with _client() as ac:
+        params = {"start_time": base - 10, "end_time": base + 12 * 3600}
+        whole = (await ac.get("/api/devices/modem/channels/history", params=params)).json()["rows"]
+        by_four_hours = (await ac.get("/api/devices/modem/channels/history",
+                                      params={**params, "bucket_seconds": 4 * 3600})).json()["rows"]
+        bad = await ac.get("/api/devices/modem/channels/history", params={"bucket_seconds": 0})
+    assert [r[3] for r in whole] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    day_start = base - 100  # the bucket edges are multiples of 4 hours from the epoch: 0:00, 4:00, 8:00 of that UTC day
+    expected = [float(max(i for i in range(6) if (base + i * 7200) // (4 * 3600) == bucket))
+                for bucket in sorted({(base + i * 7200) // (4 * 3600) for i in range(6)})]
+    assert [r[3] for r in by_four_hours] == expected and len(expected) < 6 and day_start % 86400 == 0
+    assert bad.status_code == 422
+
+
 async def test_channel_history_range_defaults_and_caps(app_state, repo):
     app_state.devices, app_state.repository = _devices(), repo
+    repo.line_retention_days = 7  # (the default, 180, would show the reading of 9 days ago)
     now = time.time()
     await _seed_channels(repo, now)
     await repo.insert_line_sample(line_sample("modem", _snapshot(now - 5 * 86400, [_ch(7)])))

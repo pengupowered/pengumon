@@ -17,7 +17,8 @@ import time
 from datetime import timezone, tzinfo
 from typing import Any, AsyncIterator, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
-from pengumon.db.rollups import local_time_sql, merged_rows_sql, minute_floor, quarter_aligned
+from pengumon.probe_interval import dead_minute_probes
+from pengumon.db.rollups import dead_minute_sql, local_time_sql, merged_rows_sql, minute_floor, quarter_aligned
 from pengumon.incidents.loss import probe_window
 from pengumon.timeofday import clock_changes, utc_offset
 
@@ -38,11 +39,13 @@ def local_seconds_sql(tz: tzinfo, start_time: float, end_time: float) -> Tuple[s
 
 
 async def loss_grid_rows(repository, start_time: float, tz: tzinfo = timezone.utc, exclude: Iterable[str] = (), *,
-                         per_day: bool = True, now: Optional[float] = None) -> List[Dict[str, Any]]:
+                         per_day: bool = True, weekday: bool = False,
+                         now: Optional[float] = None) -> List[Dict[str, Any]]:
     """Probes sent and lost per calendar day and hour on the clock in `tz` since start_time, all targets together but
     the ones in `exclude` (target keys: the hops that ignore ping) and the hops removed from the path, from the
     rollups (see the module docstring). per_day=False: per hour of the day alone ("day" is ""), the reliability
-    report's loss by hour. Only the hours that have probes are returned."""
+    report's loss by hour. weekday=True: per day of the week alone ("day" is "0" Monday to "6" Sunday), the long
+    ranges' fold, summed in SQL. Only the hours that have probes are returned."""
     await repository.flush_samples()
     end_time = now or time.time()
     async with repository.read() as db:
@@ -50,7 +53,8 @@ async def loss_grid_rows(repository, start_time: float, tz: tzinfo = timezone.ut
             # summed per local hour first (whole quarters), then the hour's date and number from one strftime each
             rows_sql, rows_params = merged_rows_sql(("n", "ok"), int(start_time // 60), None, await minute_floor(db))
             local, params = local_time_sql(tz, start_time, end_time)
-            day = "strftime('%Y-%m-%d', h * 3600, 'unixepoch')" if per_day else "''"
+            day = ("(CAST(strftime('%w', h * 3600, 'unixepoch') AS INTEGER) + 6) % 7" if weekday
+                   else "strftime('%Y-%m-%d', h * 3600, 'unixepoch')" if per_day else "''")
             sql = f"""
                 SELECT {day} AS day, CAST(strftime('%H', h * 3600, 'unixepoch') AS INTEGER) AS hour,
                        target, SUM(sent), SUM(lost)
@@ -61,7 +65,8 @@ async def loss_grid_rows(repository, start_time: float, tz: tzinfo = timezone.ut
             params = [*params, *rows_params]
         else:
             local, params = local_seconds_sql(tz, start_time, end_time)
-            day = "strftime('%Y-%m-%d', t, 'unixepoch')" if per_day else "''"
+            day = ("(CAST(strftime('%w', t, 'unixepoch') AS INTEGER) + 6) % 7" if weekday
+                   else "strftime('%Y-%m-%d', t, 'unixepoch')" if per_day else "''")
             sql = f"""
                 SELECT {day} AS day, CAST(strftime('%H', t, 'unixepoch') AS INTEGER) AS hour,
                        target, SUM(n), SUM(n) - SUM(ok)
@@ -79,7 +84,23 @@ async def loss_grid_rows(repository, start_time: float, tz: tzinfo = timezone.ut
         cell = cells.setdefault((d, h), [0, 0])
         cell[0] += sent
         cell[1] += lost
-    return [{"day": d, "hour": h, "sent": sent, "lost": lost} for (d, h), (sent, lost) in cells.items()]
+    return [{"day": str(d) if weekday else d, "hour": h, "sent": sent, "lost": lost}
+            for (d, h), (sent, lost) in cells.items()]
+
+
+async def oldest_probe_time(repository) -> Optional[float]:
+    """The start (epoch seconds) of the oldest stored probe rollup, to the minute where the per-minute tier still holds it, else to the quarter hour; None while nothing is
+    stored."""
+    await repository.flush_samples()
+    async with repository.read() as db:
+        async with db.execute("SELECT (SELECT MIN(minute) FROM rollup_1m) * 60.0, "
+                              "(SELECT MIN(quarter) FROM rollup_15m) * 900.0") as cursor:
+            row = await cursor.fetchone()
+    minute, quarter = row
+    # the minute rollups are exact; when they no longer reach back to the oldest quarter, that quarter's start
+    if minute is not None and (quarter is None or minute < quarter + 900):
+        return minute
+    return quarter
 
 
 async def hourly_loss(repository, start_time: float, tz: tzinfo = timezone.utc, exclude: Iterable[str] = (),
@@ -123,21 +144,27 @@ async def daily_availability(repository, start_time: float, tz: tzinfo = timezon
 
 
 async def block_stats(repository, start_time: float, end_time: float, block_seconds: int,
-                      tz: tzinfo = timezone.utc) -> List[Dict[str, Any]]:
+                      tz: tzinfo = timezone.utc, block_offset: int = 0) -> List[Dict[str, Any]]:
     """Probes sent and answered per target and block of the minutes [start_time, end_time), from the rollups
     (quarter hours inside, minutes at the edges: see the module docstring). Block k covers the seconds
     k * block_seconds to (k + 1) * block_seconds on the clock in `tz` (counted from 1970-01-01 00:00 on that clock), so
     with block_seconds 86400 block k is local day k, 23 or 25 hours long on a day the clocks change. `dead_minutes`
-    counts the minutes in which every probe (of at least 10) was lost. Blocks without rollups are not returned."""
+    counts the minutes in which every probe was lost (of at least probe_interval.dead_minute_probes of them at the
+    repository's probe interval: 10 at 1 s and 2 s, fewer at a longer one). `block_offset` shifts the blocks' origin:
+    block k covers (k * block_seconds - block_offset) to ((k + 1) * block_seconds - block_offset) of that clock, so
+    with block_seconds 604800 and block_offset 259200 (3 days: 1970-01-01 was a Thursday) block k is the local week
+    that begins on a Monday. Blocks without rollups are not returned."""
     await repository.flush_samples()
     block = int(block_seconds)
+    shift = int(block_offset)
+    dead_probes = dead_minute_probes(getattr(repository, "probe_interval_seconds", 1.0))
     async with repository.read() as db:
         if block % 900 == 0 and quarter_aligned(tz, start_time, end_time):
             rows_sql, rows_params = merged_rows_sql(("n", "ok", "dead"), int(start_time // 60), int(end_time // 60),
-                                                    await minute_floor(db))
+                                                    await minute_floor(db), dead_probes=dead_probes)
             local, params = local_time_sql(tz, start_time, end_time)
             sql = f"""
-                SELECT target, {local} / {block} AS block, SUM(n), SUM(ok), SUM(dead)
+                SELECT target, ({local} + {shift}) / {block} AS block, SUM(n), SUM(ok), SUM(dead)
                 FROM ({rows_sql})
                 GROUP BY target, block
             """
@@ -145,8 +172,8 @@ async def block_stats(repository, start_time: float, end_time: float, block_seco
         else:
             local, params = local_seconds_sql(tz, start_time, end_time)
             sql = f"""
-                SELECT target, {local} / {block} AS block, SUM(n), SUM(ok),
-                       SUM(CASE WHEN ok = 0 AND n >= 10 THEN 1 ELSE 0 END)
+                SELECT target, ({local} + {shift}) / {block} AS block, SUM(n), SUM(ok),
+                       SUM({dead_minute_sql(dead_probes)})
                 FROM rollup_1m
                 WHERE minute >= ? AND minute < ?
                 GROUP BY target, block

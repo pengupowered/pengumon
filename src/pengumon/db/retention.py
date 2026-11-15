@@ -1,11 +1,12 @@
-"""The retention component: removes what is older than the database section's retention_days (raw samples),
-slot_retention_days (10-second rollups), rollup_retention_days (per-minute rollups) and long_rollup_retention_days (quarter-hour rollups and
-speed tests), once at start and then every hour. It starts after the storage component, whose migration builds the
-quarter-hour rollups from the per-minute ones before this first cleanup can delete any of them."""
+"""The retention component: removes what is older than the database section's retention settings (raw samples,
+10-second and per-minute rollups, then one number per kind of data: db/core.py cleanup_old_samples), once at start and
+then every hour. It starts after the storage component, whose migration builds the quarter-hour rollups from the
+per-minute ones before this first cleanup can delete any of them."""
 
 import asyncio
 
 from pengumon.components import Component, Context
+from pengumon.db.core import KIND_SETTINGS
 from pengumon.observability import get_logger
 
 _log = get_logger("pengumon")  # the app's lifecycle lines keep the logger name they have always had
@@ -15,11 +16,11 @@ INTERVAL_SECONDS = 3600
 
 async def cleanup_background_worker(config, repository) -> None:
     """Periodically purges metrics older than retention_days."""
-    _log.info(
-        f"Retention policy active: raw probe data {config.database.retention_days} days, "
-        f"per-minute rollups {config.database.rollup_retention_days} days, "
-        f"quarter-hour rollups {config.database.long_rollup_retention_days} days."
-    )
+    database = config.database
+    kinds = ", ".join(f"{name.removesuffix('_retention_days')} {getattr(database, name) or 'forever'}"
+                      for name in KIND_SETTINGS)
+    _log.info(f"Retention policy active: full detail {database.retention_days} / {database.slot_retention_days} / "
+              f"{database.rollup_retention_days} days; kept for, in days: {kinds}.")
     while True:
         try:
             await asyncio.sleep(INTERVAL_SECONDS)

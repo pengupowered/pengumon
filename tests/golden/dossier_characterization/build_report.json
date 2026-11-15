@@ -19,6 +19,8 @@
   "days",
   "tz_offset_minutes",
   "generated_at",
+  "window_start",
+  "window_end",
   "availability",
   "incidents",
   "loss_by_hour",
@@ -67,6 +69,14 @@
      ],
      "target_id": "zzz"
     }
+   ],
+   "hours": [
+    24.0,
+    24.0
+   ],
+   "partial": [
+    false,
+    false
    ]
   },
   "days": 3,
@@ -246,6 +256,8 @@
    }
   ],
   "tz_offset_minutes": -300,
+  "window_end": 1760000000.0,
+  "window_start": 1759740800.0,
   "worst_hours": [
    {
     "hour": 3,

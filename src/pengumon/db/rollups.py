@@ -15,12 +15,14 @@ number of minutes is not), and the callers keep the per-minute query when it fai
 
 from typing import List, Optional, Sequence, Tuple
 
+from pengumon.probe_interval import DEAD_MINUTE_MAX_PROBES
 from pengumon.timeofday import clock_changes, utc_offset
 
 QUARTER_MINUTES = 15
 QUARTER_SECONDS = 900
 
-# Each name as rollup_15m and rollup_1m give it. dead: minutes with every probe (of at least 10) lost (block_stats).
+# Each name as rollup_15m and rollup_1m give it. dead: minutes with every probe lost, of at least `dead_probes` of them
+# (probe_interval.dead_minute_probes: 10 at 1 s and 2 s, fewer at a longer interval; block_stats).
 _FROM_15M = {
     "n": "n", "ok": "ok", "lat_sum": "lat_sum", "lat_min": "lat_min", "lat_max": "lat_max", "jit_sum": "jit_sum",
     "jit_n": "jit_n", "p10_sum": "p10_sum", "p10_ok": "p10_ok", "p90_sum": "p90_sum", "p90_ok": "p90_ok",
@@ -30,8 +32,13 @@ _FROM_1M = {
     "n": "n", "ok": "ok", "lat_sum": "lat_sum", "lat_min": "lat_min", "lat_max": "lat_max", "jit_sum": "jit_sum",
     "jit_n": "jit_n", "p10_sum": "lat_p10 * ok", "p10_ok": "CASE WHEN lat_p10 IS NOT NULL THEN ok END",
     "p90_sum": "lat_p90 * ok", "p90_ok": "CASE WHEN lat_p90 IS NOT NULL THEN ok END",
-    "dead": "CASE WHEN ok = 0 AND n >= 10 THEN 1 ELSE 0 END",
 }
+
+
+def dead_minute_sql(dead_probes: int) -> str:
+    """The rollup_1m expression that is 1 for a dead minute: every probe lost, and at least `dead_probes` of them."""
+    return f"CASE WHEN ok = 0 AND n >= {int(dead_probes)} THEN 1 ELSE 0 END"
+
 MERGED_COLUMNS = tuple(_FROM_15M)
 
 
@@ -68,13 +75,14 @@ async def minute_floor(db) -> Optional[int]:
 
 
 def merged_rows_sql(columns: Sequence[str], first: int, end: Optional[int], floor: Optional[int],
-                    target_clause: str = "", target_params: Sequence = ()) -> Tuple[str, list]:
+                    target_clause: str = "", target_params: Sequence = (),
+                    dead_probes: int = DEAD_MINUTE_MAX_PROBES) -> Tuple[str, list]:
     """(SQL, parameters) of a SELECT of the rows of the minutes [first, end) as `t` (the UTC second the row begins),
     `target` and `columns` (names of MERGED_COLUMNS): the whole quarters from rollup_15m, the edges from rollup_1m
     (split_minutes). target_clause (" AND target IN (?, ...)") and its parameters filter every part."""
     q_lo, q_hi, edges = split_minutes(first, end, floor)
     quarter_cols = ", ".join(f"{_FROM_15M[c]} AS {c}" for c in columns)
-    minute_cols = ", ".join(f"{_FROM_1M[c]} AS {c}" for c in columns)
+    minute_cols = ", ".join(f"{dead_minute_sql(dead_probes) if c == 'dead' else _FROM_1M[c]} AS {c}" for c in columns)
     upper = "" if q_hi is None else " AND quarter < ?"
     parts = [f"SELECT quarter * {QUARTER_SECONDS} AS t, target, {quarter_cols} FROM rollup_15m "
              f"WHERE quarter >= ?{upper}{target_clause}"]

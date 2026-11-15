@@ -4,7 +4,7 @@ export const subject = "panel:report";
 export const variants = ["full"];
 
 export const steps = [
-  ["reliability report renders and switches range", async ({ click, count, eq, ok, page, text, until }) => {
+  ["reliability report renders and switches range", async ({ chooseRange, count, eq, ok, page, rangeState, text, until }) => {
     await until(() => /^Last 7 days:/.test(document.getElementById("reportOutput").dataset.summary ?? ""));
     ok("headline", /\d+\.\d\d%/.test(await text("#reportOutput .rep-hero")));
     ok("hop rows", (await count("#reportOutput .rep-hops tbody tr")) >= 3);
@@ -16,12 +16,14 @@ export const steps = [
     eq("hops as the rest of the page names them, the configured name on hover", hops,
       "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
     ok("a bar per day with data", (await count("#reportOutput .days .day")) >= 1);
+    ok("today is cut by the range (it ends now): its bar says how much of the day the range holds", /only .+ of this day are in the range/.test(await page.$eval("#reportOutput .days .day:last-child", (e) => e.dataset.tip)));
     ok("the bars are what was lost per day, with the worst day named", /Lost per day/i.test(await text("#reportOutput .rep-days")) && /Worst: |No probe lost/.test(await text("#reportOutput .rep-days .rep-note")));
     const causes = await page.$$eval("#reportOutput .causes li span:first-child", (els) => els.map((e) => e.textContent));
     ok(`causes in words, not classifier codes: ${causes}`, causes.length > 0 && causes.every((c) => !/_/.test(c) && !/^unknown outage$/.test(c)));
-    await click('[data-action=loadReport][data-arg="30"]');
+    eq("the control offers 7, 30, 90 days and All", (await rangeState("#reportRangeButtons")).words.join(","), "Last 7 days,Last 30 days,Last 90 days,All · 180 d");
+    await chooseRange("#reportRangeButtons", "30d");
     await until(() => /^Last 30 days:/.test(document.getElementById("reportOutput").dataset.summary ?? ""));
-    eq("active", await page.$eval("#reportRangeButtons button.active", (b) => b.dataset.arg), "30");
+    eq("active", (await rangeState("#reportRangeButtons")).value, "30d");
   }],
 
   ["a hop that ignores ping is listed as such in Every hop, not with the availability of its unanswered pings", async ({ eq, page, until }) => {
@@ -39,4 +41,44 @@ export const steps = [
     await page.evaluate(() => { window.__smokeMutate = null; });
     await until(() => ![...document.querySelectorAll("#reportOutput .rep-hops tbody tr")].some((r) => /Ignores ping/.test(r.textContent)));
   }],
+
+  ["every range draws the report (a bar per day to 30 days, a bar per week past it, bars wide enough to see), on a desktop, a phone and in every theme", async ({ atEveryRange, chooseRange, eq, everyLook, noSideways, ok, openPanel, page, phone, rangeState, settled, showCard }) => {
+    // (Synthwave draws the card with its own view: columns and a title of its own)
+    const BARS = "#reportOutput .days .day, #reportOutput .sw-col";
+    const TITLE = "#reportOutput .rep-days h3, #reportOutput .sw-days .sw-t";
+    const WANT = { "7d": [7, 8, "day"], "30d": [30, 31, "day"], "90d": [13, 15, "week"], all: [26, 28, "week"] };
+    const check = (where) => async (id) => {
+      const what = `${where} ${id}`;
+      const [lo, hi, unit] = WANT[id];
+      try {
+        await page.waitForFunction((n, sel) => document.querySelectorAll(sel).length >= n, { timeout: 15000 }, lo, BARS);
+      } catch (e) {
+        const seen = await page.evaluate((b, t) => ({ bars: document.querySelectorAll(b).length, title: document.querySelector(t)?.textContent, summary: document.getElementById("reportOutput").dataset.summary, chosen: document.querySelector("#reportRangeButtons select")?.value }), BARS, TITLE);
+        throw new Error(`${what}: waited for ${lo} bars, the card shows ${JSON.stringify(seen)}`);
+      }
+      const bars = await page.$$eval(BARS, (b) => b.map((x) => ({ w: x.getBoundingClientRect().width, tip: x.dataset.tip || x.title })));
+      ok(`${what}: ${bars.length} bars (${lo}-${hi})`, bars.length >= lo && bars.length <= hi);
+      // (the first and last bar hold only the hours the window reaches: narrower by design, a sliver an hour or two in)
+      const whole = Math.min(...bars.slice(1, -1).map((b) => b.w));
+      ok(`${what}: the whole days' or weeks' bars are at least 2 px wide (${whole.toFixed(1)})`, whole >= 2);
+      ok(`${what}: the title says ${unit}s (${await page.$eval(TITLE, (e) => e.textContent)})`, new RegExp(`Lost per ${unit}`).test(await page.$eval(TITLE, (e) => e.textContent)));
+      if (unit === "week") ok(`${what}: a bar's tip names its week (${bars[1].tip})`, bars.every((b) => /^week of [A-Z][a-z]{2} \d{1,2} · /.test(b.tip)));
+      ok(`${what}: nothing sticks out sideways`, await noSideways());
+    };
+    await showCard("report");
+    eq("7 d to All", (await rangeState("#reportRangeButtons")).ids.join(), "7d,30d,90d,all");
+    await atEveryRange("#reportRangeButtons", "#reportOutput", async (id) => { await check("desktop")(id); });
+    await everyLook(async (look) => {
+      await showCard("report");
+      for (const id of ["30d", "all"]) {
+        await chooseRange("#reportRangeButtons", id);
+        await settled();
+        await check(look)(id);
+      }
+    });
+    await phone(async () => {
+      await openPanel("report", "incidents");
+      await atEveryRange("#reportRangeButtons", "#reportOutput", async (id) => { await check("phone")(id); });
+    });
+  }, { variants: ["longhistory"] }],
 ];

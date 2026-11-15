@@ -11,6 +11,7 @@ import os
 
 from pengumon.components import Component, Context, LivePart
 from pengumon.db.backup_temp import backup_temp_dir, remove_backup_leftovers
+from pengumon.db.core import RETENTION_SETTINGS
 from pengumon.db.repository import DatabaseRepository
 from pengumon.observability import get_logger
 
@@ -28,14 +29,10 @@ def _clean_backup_temp() -> None:
 def repository_for(config) -> DatabaseRepository:
     """The repository of `config.database` (an AppConfig), not opened yet. The retention days are set again by the
     settings component once the stored settings are loaded."""
+    database = config.database
     return DatabaseRepository(
-        db_path=config.database.db_path,
-        retention_days=config.database.retention_days,
-        rollup_retention_days=config.database.rollup_retention_days,
-        long_rollup_retention_days=config.database.long_rollup_retention_days,
-        traffic_retention_days=config.database.traffic_retention_days,
-        slot_retention_days=config.database.slot_retention_days,
-        incident_retention_days=config.database.incident_retention_days,
+        db_path=database.db_path,
+        **{name: getattr(database, name) for name in RETENTION_SETTINGS},
     )
 
 

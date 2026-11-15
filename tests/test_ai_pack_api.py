@@ -61,6 +61,13 @@ async def test_the_default_is_full_for_24_hours_and_it_is_counted(repo, stub):
     assert obs_helpers.total("pengumon.ai_pack.exports", level="full", scope="window") == before + 1
 
 
+async def test_the_window_may_be_30_days(repo, stub):
+    async with _client() as ac:
+        assert (await ac.get("/api/ai-pack?hours=720")).status_code == 200
+        assert (await ac.get("/api/ai-pack?hours=721")).status_code == 422
+    assert [c["hours"] for c in stub.calls] == [720]
+
+
 async def test_a_viewer_without_the_token_may_export_full(repo, stub, monkeypatch):
     monkeypatch.setattr(security_config, "access_token", TOKEN)
     monkeypatch.setattr(security_config, "view_without_token", True)
@@ -78,7 +85,7 @@ async def test_the_scope_must_agree_with_the_incident_id(repo, stub):
         assert (await ac.get("/api/ai-pack?incident_id=1")).status_code == 422
         assert (await ac.get("/api/ai-pack?scope=incident&incident_id=999")).status_code == 404
         assert (await ac.get("/api/ai-pack?scope=incident&incident_id=1&level=vague&tz=America/New_York")).status_code == 200
-        assert (await ac.get("/api/ai-pack?hours=169")).status_code == 422
+        assert (await ac.get("/api/ai-pack?hours=721")).status_code == 422
     assert [c["incident_id"] for c in stub.calls] == [1] and stub.calls[0]["level"] == "vague"
     assert stub.calls[0]["tz_name"] == "America/New_York"     # the browser's zone, for when Settings has none
 

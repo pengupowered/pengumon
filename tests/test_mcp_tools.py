@@ -138,7 +138,66 @@ async def test_report_has_uptime_per_hop_and_the_reliability_summary(mcp_state):
     gateway = next(h for h in out["uptime_by_hop"] if h["name"] == "Example gateway")
     assert 90 < gateway["availability_pct"] < 100 and out["incidents"]["count"] == 1
     assert out["window_start"][-6:] in ("-05:00", "-04:00")
+    from datetime import datetime
+    span = datetime.fromisoformat(out["window_end"]) - datetime.fromisoformat(out["window_start"])
+    assert span.total_seconds() == 7 * 86400  # one rolling window, to the minute, for every part
+    daily = out["daily_availability"]
+    assert len(daily["partial"]) == len(daily["hours"]) == len(daily["days"]) and len(out["partial_blocks"]) >= 7
     assert (await call(mcp_state, "report", period="24h"))["period"] == "24h"
+
+
+def test_the_period_enum_is_the_same_six_ranges_on_every_tool_that_has_one():
+    for name in ("incidents", "report", "speed_tests"):
+        assert BY_NAME[name].input_schema["properties"]["period"]["enum"] == ["1h", "24h", "7d", "30d", "90d", "all"], name
+
+
+async def test_incidents_report_and_speed_tests_answer_at_1h_and_at_30d(mcp_state):
+    from datetime import datetime
+    for period, seconds in (("1h", 3600), ("30d", 30 * 86400)):
+        out = await call(mcp_state, "report", period=period)
+        span = datetime.fromisoformat(out["window_end"]) - datetime.fromisoformat(out["window_start"])
+        assert out["period"] == period and span.total_seconds() == seconds, period  # one rolling window for every part
+        assert (await call(mcp_state, "incidents", period=period))["period"] == period
+        assert (await call(mcp_state, "speed_tests", period=period))["period"] == period
+    # 1h reads the 15-minute blocks (the last four), as 24h does with 96
+    hour = await call(mcp_state, "report", period="1h")
+    assert hour["block_seconds"] == 900 and len(hour["partial_blocks"]) == 4 and not any(hour["partial_blocks"])
+    # a longer period holds the shorter one
+    counts = [(await call(mcp_state, "incidents", period=p))["total_in_period"] for p in ("1h", "24h", "7d", "30d")]
+    assert counts == sorted(counts)
+
+
+async def test_the_90d_and_all_periods_answer_on_incidents_report_and_speed_tests(mcp_state):
+    from datetime import datetime
+    from pengumon.incidents.model import Incident
+    now = time.time()
+    for days, title in ((60, "Sixty days ago"), (120, "A hundred and twenty days ago"), (200, "Older than the retention")):
+        await mcp_state.repository.create_incident(Incident(
+            start_time=now - days * 86400, end_time=now - days * 86400 + 60, cause_code="unknown_outage", title=title,
+            description="d", severity="warning", resolved=True))
+    month, quarter, everything = [await call(mcp_state, "incidents", period=p) for p in ("30d", "90d", "all")]
+    assert [o["period"] for o in (month, quarter, everything)] == ["30d", "90d", "all"]
+    titles = lambda out: [i["title"] for i in out["incidents"]]  # noqa: E731
+    assert "Sixty days ago" not in titles(month) and "Sixty days ago" in titles(quarter)
+    assert "A hundred and twenty days ago" not in titles(quarter) and "A hundred and twenty days ago" in titles(everything)
+    assert "Older than the retention" not in titles(everything)  # all: the latency retention, 180 days
+    assert month["total_in_period"] <= quarter["total_in_period"] <= everything["total_in_period"]
+    quarter_report = await call(mcp_state, "report", period="90d")
+    span = datetime.fromisoformat(quarter_report["window_end"]) - datetime.fromisoformat(quarter_report["window_start"])
+    assert span.total_seconds() == 90 * 86400 and quarter_report["block_seconds"] == 86400
+    everything_report = await call(mcp_state, "report", period="all")
+    # the seed holds a week of probes: all starts at the oldest stored one and every part follows that window
+    span = datetime.fromisoformat(everything_report["window_end"]) - datetime.fromisoformat(everything_report["window_start"])
+    assert 6 * 86400 < span.total_seconds() <= 8 * 86400 and everything_report["period"] == "all"
+    assert everything_report["incidents"]["count"] >= 1
+    # speed tests: all is the speed test retention (a setting of its own), not the probes'
+    await mcp_state.repository.insert_speed_test({
+        "ts": now - 100 * 86400, "duration_s": 12.0, "trigger": "scheduled", "provider": "librespeed", "server": None,
+        "status": "ok", "down_mbps": 100.0, "up_mbps": 10.0, "bytes_down": 10**8, "bytes_up": 10**7})
+    assert (await call(mcp_state, "speed_tests", period="90d"))["tests_in_period"] == 3
+    assert (await call(mcp_state, "speed_tests", period="all"))["tests_in_period"] == 4
+    mcp_state.config.database.speedtest_retention_days = 30
+    assert (await call(mcp_state, "speed_tests", period="all"))["tests_in_period"] == 3
 
 
 async def test_devices_are_summaries_with_counts_only_and_no_addresses(mcp_state):
@@ -273,8 +332,10 @@ async def test_speed_tests_when_the_test_is_off_say_so(mcp_state):
 def _all_calls(state):
     yield "status", {}
     yield "incidents", {"period": "30d", "limit": 200}
+    yield "incidents", {"period": "1h"}
     yield "incident", {"id": state.example_incident_id}
     yield "report", {"period": "30d"}
+    yield "report", {"period": "1h"}
     yield "devices", {}
     yield "services", {}
     yield "speed_tests", {"period": "30d", "limit": 200}
@@ -324,7 +385,7 @@ async def test_no_tool_output_holds_a_secret(mcp_state):
             seen += 1
     finally:
         security_config.access_token = ""
-    assert seen == 14 and len(MARKERS) == len(set(MARKERS)) == 9 and len(markers) == 23
+    assert seen == 16 and len(MARKERS) == len(set(MARKERS)) == 9 and len(markers) == 23
     devices = {d["id"]: d for d in (await BY_NAME["devices"].handler(mcp_state, {}))["devices"]}
     assert {"owrt", "sw", "asus2", "igd"} <= set(devices)  # the extra devices are listed, each after a failed poll
     assert (devices["owrt"]["error_kind"], devices["asus2"]["error_kind"], devices["igd"]["status"]) == (
@@ -416,7 +477,7 @@ async def _plant(state):
 
 def _privacy_calls(incident_id):
     return [("status", {}), ("incidents", {"period": "30d", "limit": 200}), ("incident", {"id": incident_id}),
-            ("report", {"period": "24h"}), ("report", {"period": "30d"}), ("devices", {}),
+            ("report", {"period": "24h"}), ("report", {"period": "30d"}), ("report", {"period": "1h"}), ("devices", {}),
             ("speed_tests", {"period": "30d", "limit": 200}), ("traffic", {"hours": 720, "top": 50}),
             # the services' own check URLs and descriptions are the owner's: only the planted values here
             ("services", {}),

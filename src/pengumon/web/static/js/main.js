@@ -16,6 +16,7 @@ import { mountLayout } from './layout.js';
 import { connectWebSocket } from './live.js';
 import { initChrome } from './chrome.js';
 import { loadModules } from './panels/index.js';
+import { initUpdateBar } from './update-bar.js';
 
 // What a panel gets: the bus and what the installation has (devices, features).
 function context() {
@@ -34,6 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initChrome();
   await Promise.all([initTargets(), loadDevices(), initSettingsValues()]);
   initHelp();
+  initUpdateBar();
   document.getElementById('setupHint').hidden = !state.devicesKnown || state.devices.length > 0;
   try {
     mountLayout(await loadModules(), context());

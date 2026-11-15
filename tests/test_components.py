@@ -115,9 +115,11 @@ async def _idle(*args, **kwargs):
 def _quiet_workers(monkeypatch):
     from pengumon.db import retention
     from pengumon.engine import probing
+    from pengumon.incidents import evidence
     from pengumon.services import component as services
     monkeypatch.setattr(probing, "probe_background_worker", _idle)
     monkeypatch.setattr(retention, "cleanup_background_worker", _idle)
+    monkeypatch.setattr(evidence, "_worker", _idle)
     monkeypatch.setattr(services, "collector_background_worker", _idle)
 
 
@@ -270,8 +272,8 @@ async def test_shutdown_order(tmp_path, monkeypatch):
     _quiet_workers(monkeypatch)
     async with main.lifespan(main.app):
         # the wifi device, probe loop, retention, line load, speed test scheduler, service checks, broadcaster,
-        # route-change checks, the event-loop monitor
-        assert len(tasks) == 9
+        # route-change checks, the event-loop monitor, the incident evidence writer
+        assert len(tasks) == 10
 
     labels = [label for label, _ in events]
     assert all(done for _, done in events), events  # every task had ended

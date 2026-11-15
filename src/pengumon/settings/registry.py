@@ -23,6 +23,7 @@ from pengumon.devices.settings import DeviceConfig
 from pengumon.engine.netinfo import default_dns_probes
 from pengumon.engine.prober_settings import DnsProbeConfig
 from pengumon.notify.settings import MAX_WEBHOOKS, WebhookItem
+from pengumon.probe_interval import INTERVAL_LABELS
 from pengumon.services.settings import MAX_SERVICES, ServiceCheckConfig
 from pengumon.settings import env as settings_env
 from pengumon.web import themes as theme_rules
@@ -137,7 +138,7 @@ class Setting:
     effect: str           # one line: what changing it does
     unit: Optional[str] = None   # shown unit: "%", "ms", "s", "min", "days", "Mbps", "dB", "dBmV", "codewords/min"
     scale: float = 1.0    # shown = stored * scale (a fraction shown as %: 100; seconds shown as minutes: 1/60)
-    rounds: bool = False  # stored in probe rounds, shown in seconds (x round_seconds)
+    rounds: bool = False  # counted in probes (one a round); the page shows the time they mean at the current interval
     live: bool = True     # False: applies at the next start (the page says so)
     env: Optional[str] = None    # the variable that overrides it (pengumon.settings.env.SETTING_ENV)
     advanced: bool = False
@@ -200,7 +201,13 @@ def _theme_names() -> Dict[str, str]:
     return {t.id: t.name for t in theme_rules.builtin_themes()}
 
 
-_ROUNDS = dict(unit="s", rounds=True)
+# Counted in probes (one per probe round), shown in probes with the time they mean at the current interval beside them
+# (the page computes it from prober.interval_seconds). A rule is the evidence it needs, so a longer interval stretches
+# its time, not its count.
+_ROUNDS = dict(unit="probes", rounds=True)
+_LOST_ROUNDS = dict(unit="lost probes in a row", rounds=True)
+_SLOW_ROUNDS = dict(unit="slow probes in a row", rounds=True)
+_HEALTHY_ROUNDS = dict(unit="healthy probes in a row", rounds=True)
 _MINUTES = dict(unit="min", scale=1 / 60)
 _PCT_OF_FRACTION = dict(unit="%", scale=100.0)
 _PER_MILLION = dict(unit="per million", scale=1e6)  # a tiny ratio (0.000001) shown as "1 per million"
@@ -208,7 +215,7 @@ _PER_MILLION = dict(unit="per million", scale=1e6)  # a tiny ratio (0.000001) sh
 SETTINGS: Tuple[Setting, ...] = tuple(
     _entries("outage", [
         _s("classifier.window_probes", "Judge each hop by its last",
-           "Loss, latency and jitter are measured over each hop's probes from this time, one a round. Latency and "
+           "Loss, latency and jitter are measured over each hop's last probes, one a round. Latency and "
            "jitter take the middle value, so they count as high only when more than half the probes are: one stalled "
            "probe is no spike. Hop colors judge loss over it too.", **_ROUNDS),
         _s("classifier.degraded_loss_pct", "Loss counts as degraded from",
@@ -216,13 +223,14 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("classifier.down_loss_pct", "Loss counts as down from",
            "Share lost from which the stage is down: a critical outage.", "Loss", unit="%"),
         _s("classifier.consecutive_failures_for_incident", "Loss outage starts after",
-           "How long loss must last before an incident opens.", "When incidents start and end", **_ROUNDS),
+           "How many probes in a row must be lost before an incident opens (one probe a round).",
+           "When incidents start and end", **_LOST_ROUNDS),
         _s("classifier.consecutive_failures_for_latency_incident", "Latency incident starts after",
-           "How long a latency or jitter spike alone must last before an incident opens.",
-           "When incidents start and end", **_ROUNDS),
+           "How many probes in a row a latency or jitter spike alone must last before an incident opens.",
+           "When incidents start and end", **_SLOW_ROUNDS),
         _s("classifier.consecutive_successes_for_recovery", "Recovery confirmed after",
-           "How long the line must stay healthy before an incident ends. Applies to loss and latency incidents.",
-           "When incidents start and end", **_ROUNDS),
+           "How many healthy probes in a row end an incident. Applies to loss and latency incidents.",
+           "When incidents start and end", **_HEALTHY_ROUNDS),
         _s("classifier.local_latency_spike_threshold_ms", "Router",
            "Median latency to the router hops above this is a local latency fault.", "Latency spike levels",
            unit="ms"),
@@ -332,31 +340,39 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Failed checks in a row before a host app counts as not responding.", "Host app checks", unit="checks"),
     ])
     + _entries("probing", [
+        _s("prober.interval_seconds", "Probe every",
+           "How often every hop of the path is probed. A longer interval sends less traffic and stores less, but a drop "
+           "shorter than about the interval can go unseen, and the rules below (counted in probes) take that much longer "
+           "to act.", "Probe interval", unit="s", choice_labels=INTERVAL_LABELS),
+        _s("prober.dns_interval_seconds", "DNS lookups run",
+           "How often the DNS lookups run: a whole multiple of the probe interval, not shorter. A lookup that is not due "
+           "in a round is not probed (it is never counted as lost). The path's hops are always probed every round.",
+           "Probe interval", unit="s", choice_labels=INTERVAL_LABELS, empty="with every probe round"),
         _s("classifier.path_trace_target", "Trace to when an incident starts",
            "The host traced to record the path at the start of each incident."),
     ])
     + _entries("retention", [
-        _s("database.retention_days", "Keep raw samples for",
-           "1-second samples, line, router and mesh readings. Line-capacity learning needs 7 days. Older ones are deleted "
-           "at the next hourly cleanup.", unit="days"),
-        _s("database.slot_retention_days", "Keep 10-second history for",
-           "The latency chart's 10-second buckets, up to a day wide. At least as long as the raw samples, at most as "
-           "long as the per-minute history. Older ones are deleted at the next hourly cleanup.", unit="days"),
-        _s("database.rollup_retention_days", "Keep per-minute history for",
-           "Long-range charts, uptime strips, the report and the dossier at one-minute detail; older ranges use "
-           "quarter-hour detail. Older ones are deleted at the next hourly cleanup.", unit="days"),
-        _s("database.long_rollup_retention_days", "Keep quarter-hour history for",
-           "Charts, uptime strips and reports of ranges older than the per-minute history, in 15-minute steps, and the "
-           "speed tests and the router's restarts and WAN link changes. At least as long as the per-minute history. Older ones "
-           "are deleted at the next hourly cleanup.",
-           unit="days"),
-        _s("database.traffic_retention_days", "Keep router traffic for",
-           "Which clients and apps used the internet, per hour and per day, as the router counted them. Older ones are "
+        _s("database.latency_retention_days", "Keep latency history for",
+           "Every hop's loss, latency and jitter in 15-minute steps, for the charts, uptime strips and reports of long "
+           "ranges. Older data is deleted at the next hourly cleanup.", unit="days"),
+        _s("database.router_retention_days", "Keep router history for",
+           "The router's load, speeds and client counts in 15-minute steps. Older data is deleted at the next hourly "
+           "cleanup.", unit="days"),
+        _s("database.mesh_retention_days", "Keep mesh history for",
+           "How many clients each mesh node served, in 15-minute steps. Older data is deleted at the next hourly "
+           "cleanup.", unit="days"),
+        _s("database.line_retention_days", "Keep cable line history for",
+           "The modem's per-channel signal readings, as they were read. Older data is deleted at the next hourly "
+           "cleanup.", unit="days"),
+        _s("database.traffic_retention_days", "Keep Internet use for",
+           "Which clients and apps used the internet, per hour and per day, as the router counted them. Older data is "
            "deleted at the next hourly cleanup.", unit="days"),
-        _s("database.incident_retention_days", "Keep resolved incidents for",
-           "The incident list and everything built on it. 0: keep them forever. Otherwise at least as long as the "
-           "quarter-hour history. An incident that is still open is never deleted. Older ones are deleted at the next "
-           "hourly cleanup.", unit="days"),
+        _s("database.speedtest_retention_days", "Keep speed tests and router events for",
+           "Speed test results (never under 32 days: the monthly data cap sums them) and the router's restarts and "
+           "WAN link changes. Older data is deleted at the next hourly cleanup.", unit="days"),
+        _s("database.incident_retention_days", "Delete incidents older than",
+           "Resolved incidents and the evidence kept with each. 0: keep them forever. An incident that is still open "
+           "is never deleted. Older ones are deleted at the next hourly cleanup.", unit="days"),
     ])
     + _entries("access", [
         # the section's password controls are the page's own (dialogs/settings/access.js): they apply at once
@@ -395,7 +411,8 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "when the system asks for reduced motion; a browser can turn it off in the header's theme menu."),
         _s("display.default_latency_range", "Latency chart opens on",
            "The range the latency chart shows first. A browser's own choice still wins.",
-           choice_labels={"live": "Live", "15m": "15 minutes", "1h": "1 hour", "24h": "24 hours"}),
+           choice_labels={"live": "Live", "15m": "15 minutes", "1h": "1 hour", "24h": "24 hours",
+                          "7d": "7 days", "30d": "30 days"}),
         # the page shows these three as one row, "Layout for new browsers" (dialogs/settings/fields.js layoutRowHtml)
         _s("dashboard.order", "Panel order for new browsers",
            "The panel order a browser starts with; a browser's own Layout choice wins."),
@@ -484,6 +501,19 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("router_levels.wan_critical_pct", "Line load critical above",
            "A line this full is saturated. Must be above the busy line level.", "Router levels", unit="%",
            related="classifier.busy_load_pct"),
+        _s("database.retention_days", "Keep raw samples for",
+           "1-second probe samples and the router, mesh and line readings as they were read, which every chart of up "
+           "to 7 days draws. Line-capacity learning and the rules preview need 7 days. At least 1 day: an incident's "
+           "evidence is written about 16 minutes after it. Older ones are deleted at the next hourly cleanup.",
+           "Full detail (the same for every kind of data)", unit="days"),
+        _s("database.slot_retention_days", "Keep 10-second history for",
+           "The latency chart's 10-second buckets, up to a day wide. At least as long as the raw samples, at most as "
+           "long as the per-minute history. Older ones are deleted at the next hourly cleanup.",
+           "Full detail (the same for every kind of data)", unit="days"),
+        _s("database.rollup_retention_days", "Keep per-minute history for",
+           "Per-minute detail of the probes and the router, which every chart of up to 30 days draws. At least 30 "
+           "days; raising it keeps minute detail longer, at about 1 MB a day. Older ones are deleted at the next "
+           "hourly cleanup.", "Full detail (the same for every kind of data)", unit="days"),
         _s("server.log_level", "Log level", "How much Pengumon writes to its log.", "Logging", env="PENGUMON_LOG_LEVEL",
            choice_labels={"debug": "Everything (for debugging)", "info": "Normal", "warning": "Warnings and errors",
                           "error": "Errors only", "critical": "Critical errors only"}),
@@ -519,7 +549,6 @@ NOT_ON_PAGE: Dict[str, str] = {
     "server.host": "bootstrap: the listen address is needed before the database opens (PENGUMON_HOST)",
     "server.port": "bootstrap: needed before the database opens (PENGUMON_PORT)",
     "database.db_path": "bootstrap: where the settings themselves are stored",
-    "prober.interval_seconds": "bootstrap: the probe round; rules are shown in seconds as rounds x round_seconds",
     "prober.ping_count_per_probe": "does nothing; the one-time import drops it",
     "targets": "the probe path has its own store and editor (engine/path.py)",
 }

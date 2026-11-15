@@ -40,7 +40,7 @@ export const steps = [
     await click('#pathChain .node[data-node^="Gateway"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
     ok("the gateway's history", /ISP Modem/.test(await text("#targetHistTitle")));
-    eq("opened on Live, the range of the node's figure", await page.$eval('#targetHistRanges button[data-arg="300"]', (b) => b.getAttribute("aria-pressed")), "true");
+    eq("opened on Live, the range of the node's figure", await page.$eval("#targetHistRanges select", (s) => s.value), "live");
     await until(() => {
       const v = document.querySelector('#pathChain .node[data-node^="Gateway"] .node-val').textContent.replace(/ms$/, "");
       return document.getElementById("targetHistNow").textContent.startsWith(`On the path now: ${v} ms (the median of its last 60 probes). The figures above cover the last 5 min.`);

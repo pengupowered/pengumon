@@ -10,7 +10,7 @@
 :root[data-look="mission-control"] [data-panel="strips"] .strips { grid-template-columns: minmax(130px, 260px) minmax(0, 1fr) calc(var(--fs-lg) * 4.6); }
 :root[data-look="mission-control"] [data-panel="strips"] .strip-legend { color: var(--ink-3); border-top-color: var(--line); }
 @container (max-width: 560px) {
-  :root[data-look="mission-control"] [data-panel="strips"] .strips { grid-template-columns: 104px minmax(0, 1fr) calc(var(--fs-md) * 4.6); row-gap: 8px; }
+  :root[data-look="mission-control"] [data-panel="strips"] .strips { grid-template-columns: 1fr auto; row-gap: 4px; } /* the name over its strip (panels/strips/panel.css) */
   :root[data-look="mission-control"] [data-panel="strips"] .strip,
   :root[data-look="mission-control"] [data-panel="strips"] .strip-quiet { height: 24px; }
   :root[data-look="mission-control"] [data-panel="strips"] .s-pct { font-size: var(--fs-md); }

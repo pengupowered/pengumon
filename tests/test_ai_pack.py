@@ -304,3 +304,25 @@ async def test_a_pack_built_for_a_path_with_socket_hops_names_the_method_in_the_
     assert "1 hop is probed by a TCP connection instead of a ping" in md
     assert "1 is probed by an HTTP request (the time to the server's answer, not a round trip)." in md
     assert "secret-path" not in md  # the path of a request never reaches the pack
+
+
+async def test_a_pack_over_30_days_is_labeled_so_and_stays_within_its_module_budgets(tmp_path):
+    """The dialog offers 30 days (720 hours): the seeded day sits inside it, every module is still cut to its budget and
+    the whole pack is no longer than the module budgets plus the fixed parts allow."""
+    repo = DatabaseRepository(db_path=str(tmp_path / "month.db"))
+    real_time = time.time
+    time.time = lambda: END + 30
+    try:
+        await repo.initialize()
+        config = setup_a_config()
+        await seed_setup_a(repo, config, END)
+        packs = {h: await build_ai_pack(repo, config, scope="window", hours=h, incident_id=None, level="full",
+                                        detail="detailed", devices=tuple(config.devices), live=None,
+                                        tz_offset_minutes=-300) for h in (24, 720)}
+    finally:
+        time.time = real_time
+        await repo.close()
+    month = packs[720]
+    assert "Past 30 days" in month["markdown"] and "Past 30 days" not in packs[24]["markdown"]
+    assert all(m["chars"] <= m["budget_chars"] for m in month["modules"]), month["modules"]
+    assert month["chars"] <= 1.5 * packs[24]["chars"] + 5000, (month["chars"], packs[24]["chars"])

@@ -312,7 +312,7 @@ async def test_the_manager_refuses_a_device_that_cannot_be_built_and_applies_a_g
 async def test_the_upgrade_builds_quarter_hours_before_the_new_per_minute_retention_prunes(tmp_path, monkeypatch):
     """An install that imported config.yaml with the example's rollup_retention_days: 400 upgrades: the migration (the
     storage component, first) sums every per-minute row into quarter hours and puts the stored 400 back to the new
-    default, 90 days; only then does the retention component's start-up cleanup delete the per-minute rows older than
+    default (30 days since 0.28); only then does the retention component's start-up cleanup delete the per-minute rows older than
     that. Their probes are still in every report, from the quarter hours."""
     import sqlite3
     import time
@@ -329,7 +329,7 @@ async def test_the_upgrade_builds_quarter_hours_before_the_new_per_minute_retent
         assert getattr(main.app.state, STATE_ATTR).repository.rollup_retention_days == 400
 
     now = time.time()
-    old, recent = int((now - 200 * 86400) // 900) * 15, int((now - 50 * 86400) // 900) * 15  # first minutes of quarters
+    old, recent = int((now - 100 * 86400) // 900) * 15, int((now - 20 * 86400) // 900) * 15  # first minutes of quarters
     with sqlite3.connect(db) as con:  # back to v17, with per-minute history from before
         con.execute("DROP TABLE rollup_10s")
         con.execute("DROP TABLE rollup_15m")
@@ -342,8 +342,8 @@ async def test_the_upgrade_builds_quarter_hours_before_the_new_per_minute_retent
     async with main.lifespan(main.app):
         state = getattr(main.app.state, STATE_ATTR)
         repo = state.repository
-        assert (repo.rollup_retention_days, repo.long_rollup_retention_days) == (90, 400)
-        assert state.config.database.rollup_retention_days == 90
+        assert (repo.rollup_retention_days, repo.latency_retention_days) == (30, 180)
+        assert state.config.database.rollup_retention_days == 30
         with sqlite3.connect(db) as con:
             assert con.execute("SELECT minute FROM rollup_1m ORDER BY minute").fetchall() == [(recent,), (recent + 1,)]
             assert con.execute("SELECT quarter, n, ok FROM rollup_15m ORDER BY quarter").fetchall() == [

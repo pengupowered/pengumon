@@ -24,6 +24,9 @@ import pytest
 
 from pengumon.access.manager import SETUP_KEY
 from pengumon.capabilities import BAND_5G, Client, ClientsReading, SystemReading, TrafficApps, TrafficHour
+from dataclasses import astuple
+
+from pengumon.db import schema as db_schema
 from pengumon.db.repository import DatabaseRepository
 from pengumon.db.samples import MeshCount
 from pengumon.devices.samples import device_sample
@@ -150,10 +153,107 @@ async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
     assert long_id and short_id
 
 
+LONG_DAYS = 200  # how far back the `longhistory` variant's made-up history reaches (the retention default is 180)
+
+
+async def seed_long_history(db_path: str, now: float) -> None:
+    """The `longhistory` variant: on top of seed(), 200 days of history for the 90 d and All views of every chart, with
+    made-up values. Probes (quarter-hour rollups, a bad evening every 11th day, so the loss grid and the uptime cells have
+    something to say), the router and its mesh nodes (quarter-hour rollups), the cable line (a reading every 6 hours), the
+    router's traffic (three evening hours a day), speed tests (one every ten days) and old incidents (one every four days).
+    It stops an hour before the live data of seed() begins. Written straight into the tables the app's own rollups fill:
+    a raw second of probes for 200 days would be 17 million rows."""
+    repo = DatabaseRepository(db_path=db_path)
+    await repo.initialize()
+    end = int(now) - 8400 - 3600
+    first_q = (int(now) - LONG_DAYS * 86400) // 900
+    last_q = end // 900
+    targets = {key: tid for tid, key in repo._target_keys.items()}
+    probes = []
+    for q in range(first_q, last_q):
+        day, slot = divmod(q * 900 - first_q * 900, 86400)
+        slot //= 900
+        for i, (key, _, _) in enumerate(TARGETS):
+            lost = 0
+            if day % 11 == 5 and 76 <= slot <= 79:  # a bad evening, hardest at the gateway
+                lost = 90 if key == "isp_gateway" else 30
+            n = 900
+            ok = n - lost
+            lat = 8.0 + slot % 5 + i
+            probes.append((q, targets[key], n, ok, ok * lat, lat - 2, lat + 6.0 + (20 if lost else 0), 0.5 * ok, ok, (lat - 1) * ok, ok, (lat + 3) * ok, ok, 0))
+    figures = db_schema.DEVICE_ROLLUP_FIGURES
+    clients = db_schema.DEVICE_ROLLUP_CLIENT_COLUMNS
+    router_cols = [f"{c}_{x}" for c in figures for x in ("sum", "n", "max")] + ["wan_link_min"] + [f"{c}_{x}" for c in clients for x in ("sum", "n")]
+    routers, nodes = [], []
+    for q in range(first_q, last_q):
+        slot = (q * 900 // 900) % 96
+        n = 90
+        rx = 50.0 + (slot % 40)
+        row = []
+        for c in figures:
+            avg = {"wan_rx_mbps": rx, "wan_tx_mbps": 5.0, "cpu_pct": 20.0 + slot % 30, "mem_pct": 40.0, "client_count": 12.0 + slot // 30, "cpu_temp_c": 60.0 + slot % 7}[c]
+            row += [avg * n, n, avg * 1.4]
+        row.append(2500)
+        for c in clients:
+            row += [{"clients_online": 14, "clients_wired": 2, "clients_wifi_2g": 0, "clients_wifi_5g": 3 + slot % 4, "clients_wifi_other": 0}[c] * n, n]
+        routers.append(("router", q, *row))
+        nodes += [("router", q, "0000a1", 2 * 3, 3, 2), ("router", q, "0000a2", (1 + slot % 4) * 3, 3, 4)]
+    line = []
+    for k in range(0, LONG_DAYS * 4):
+        ts = now - 8400 - 3600 - k * 21600.0
+        recent = 42 if k % 17 == 0 else 0
+        line.append(astuple(line_sample("modem", DocsisSignalSnapshot(
+            timestamp=ts, downstream_power_avg=1.3, downstream_snr_avg=35.9, upstream_power_avg=44.5, uncorrectables_total=1000, uncorrectables_recent=recent,
+            status="healthy", channels=[DocsisChannel(channel_id=2, direction="downstream", frequency_mhz=537.0, power_dbmv=2.0, snr_db=31.5 + k % 5, uncorrectables=1000, uncorrectables_recent=recent),
+                                        DocsisChannel(channel_id=1, direction="downstream", frequency_mhz=531.0, power_dbmv=1.5, snr_db=36.0 + k % 4, uncorrectables=10),
+                                        DocsisChannel(channel_id=1, direction="upstream", frequency_mhz=30.6, power_dbmv=44.5)]))))
+    async with repo._db.write() as db:
+        await db.executemany("INSERT OR REPLACE INTO rollup_15m (quarter, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, p10_sum, p10_ok, p90_sum, p90_ok, dead_minutes) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", probes)
+        # the minute rollups of the last 24 hours (a real install keeps them for weeks): the history reads them for a range
+        # of up to 24 h in buckets of 10 minutes (the target history's 24 h)
+        minutes = [(m, targets[key], 60, 60, 60 * (8.0 + (m // 90) % 5 + i), 6.0 + i, 14.0 + i, 30.0, 60, 7.0 + i, 9.0 + i)
+                   for m in range((int(now) - 86400) // 60, end // 60) for i, (key, _, _) in enumerate(TARGETS)]
+        await db.executemany("INSERT OR REPLACE INTO rollup_1m (minute, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", minutes)
+        await db.executemany(f"INSERT OR REPLACE INTO device_rollup_15m (device_id, quarter, {', '.join(router_cols)}) VALUES (?, ?{', ?' * len(router_cols)})", routers)
+        await db.executemany("INSERT OR REPLACE INTO mesh_rollup_15m (device_id, quarter, node_id, clients_sum, clients_n, clients_max) VALUES (?, ?, ?, ?, ?, ?)", nodes)
+        await db.executemany(repo._LINE_INSERT, line)
+        # the router's and the mesh's raw readings of the last 7 days (every 5 minutes, up to the default seed's hours): a
+        # real install keeps 7 days raw, and the history reads raw there, the tiers only before it
+        raw_routers, raw_nodes = [], []
+        for k in range(12 * 3, 12 * 24 * 7):
+            ts = int(now) - k * 300
+            slot = (ts // 900) % 96
+            raw_routers.append(("router", float(ts), "healthy", 50.0 + slot % 40, 5.0, 20.0 + slot % 30, 40.0, 12 + slot // 30,
+                                14, 2, 0, 3 + slot % 4, 0, 60.0 + slot % 7, 2500))
+            raw_nodes += [("router", float(ts), "0000a1", 2), ("router", float(ts), "0000a2", 1 + slot % 4)]
+        await db.executemany("INSERT OR IGNORE INTO device_samples (device_id, ts, status, wan_rx_mbps, wan_tx_mbps, cpu_pct, mem_pct, client_count, "
+                             "clients_online, clients_wired, clients_wifi_2g, clients_wifi_5g, clients_wifi_other, cpu_temp_c, wan_link_mbps) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", raw_routers)
+        await db.executemany("INSERT OR IGNORE INTO mesh_samples (device_id, ts, node_id, clients) VALUES (?, ?, ?, ?)", raw_nodes)
+    hours = []
+    for back in range(3, LONG_DAYS):
+        midnight = (int(now) // 86400 - back) * 86400
+        for h in (20, 21, 22):
+            hours += [TrafficHour("", midnight + h * 3600, 2 * 10**8, (4 + back % 7) * 10**9), TrafficHour("AA:AA:AA:00:00:02", midnight + h * 3600, 10**7, 10**9)]
+    await repo.upsert_traffic_hours("router", hours, now - 300)
+    for days in (35, 50, 70, 100, 140, 170):
+        await repo.insert_speed_test({"ts": now - days * 86400.0, "duration_s": 24.0, "trigger": "scheduled", "provider": "cloudflare", "server": "EXA", "status": "ok",
+                                      "reason": None, "down_mbps": 200.0 + days % 60, "up_mbps": 18.0, "idle_ms": 12.0, "loaded_down_ms": 61.0, "loaded_up_ms": 33.0,
+                                      "bytes_down": 25_000_000, "bytes_up": 10_000_000})
+    for k in range(1, 45):
+        begin = now - 3 * 86400 - k * 3.7 * 86400
+        await repo.create_incident(Incident(start_time=begin, end_time=begin + 90.0, duration_seconds=90.0, cause_code="unknown_outage", title=f"Seeded old blip {k}",
+                                            description="(seeded long history)", severity="warning", resolved=True))
+    await repo.close()
+
+
 async def seed_router_traffic(repo: DatabaseRepository, now: float) -> None:
     """The router's traffic (schema v19) for the made-up client list in serve.py: 36 complete hours, the newest one not
     published yet (the router publishes an hour after it ends); Desk PC downloads 75 GB in one morning hour, mostly one
-    app; Ann's phone a little every hour; the app rows of the two whole days before today. Two device events (a restart, the WAN link down and back) and uptime, CPU
+    app; Ann's phone a little every hour; the router's app counts for the three 24-hour windows back from the newest hour
+    and the app rows of the two whole days before today. Two device events (a restart, the WAN link down and back) and uptime, CPU
     temperature and WAN link readings on the router's history."""
     newest = int(now // 3600) * 3600 - 2 * 3600
     rows = []
@@ -179,6 +279,16 @@ async def seed_router_traffic(repo: DatabaseRepository, now: float) -> None:
             TrafficApps("AA:AA:AA:00:00:02", end, (("YouTube", 10**8, 2 * 10**9),)),
             TrafficApps("", end, desk_apps + (("YouTube", 10**8, 2 * 10**9),)),
         ], now - 300, lambda w, d=day: d)
+    # the router's 24-hour counts that tile the range back from the newest hour (what Pengumon stores each hour from 0.28):
+    # the two before the latest hold the phone's YouTube only. Three of them, so that the two day rows above (which end at
+    # midnights) overlap the chain whatever the time of day and are never the ones a 7 or 30 day range adds up.
+    for back in (1, 2):
+        end = newest + 3600 - back * 86400
+        await repo.store_traffic_apps("router", [
+            TrafficApps("AA:AA:AA:00:00:01", end, ()),
+            TrafficApps("AA:AA:AA:00:00:02", end, (("YouTube", 10**8, 2 * 10**9),)),
+            TrafficApps("", end, (("YouTube", 10**8, 2 * 10**9),)),
+        ], now - 300, lambda w: f"window-{w}")
     window = newest + 3600
     await repo.store_traffic_apps("router", [
         TrafficApps("AA:AA:AA:00:00:01", window, (("Sony PlayStation", 1_500_000_000, 75 * 10**9),
@@ -242,6 +352,9 @@ DEVICES = {
     "longpath": "",
     "full": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
             '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
+    # `full` with 200 days of made-up history behind it (seed_long_history): the steps that draw every chart at every range
+    "longhistory": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
+                   '  - {id: router, driver: asuswrt, url: "http://192.168.98.1", model: "Example_Router"}\n',
     "bare": "",
     # two routers: one card each, each with its own history and setup
     "tworouters": 'devices:\n  - {id: modem, driver: xfinity_xb, url: "http://192.168.99.1"}\n'
@@ -280,7 +393,9 @@ RUNS = [pytest.param(*r, id="-".join([r[0]] + ([r[1].replace("/", "of")] if r[1]
     ("full", "4/4"), ("full", "2/2", "firefox"), ("longpath", "1/1"),
     ("full", "1/4"), ("token", "1/1"), ("tworouters", "1/1"),
     ("full", "2/4"), ("viewonly", "1/1"), ("bare", "1/1"),
-    ("full", "3/4"), ("full", "1/2", "firefox"), ("unknownline", "1/1"), ("firstrun", "1/1"))]
+    ("full", "3/4"), ("full", "1/2", "firefox"), ("unknownline", "1/1"), ("firstrun", "1/1"),
+    # every chart at every range, in every theme, on a desktop and a phone (the steps flagged `longhistory`), in three slices
+    ("longhistory", "1/3"), ("longhistory", "2/3"), ("longhistory", "3/3"))]
 assert {r.values[0] for r in RUNS} == set(DEVICES) and sum(r.values[0] == "full" and len(r.values) == 2 for r in RUNS) == FULL_SHARDS
 
 
@@ -292,7 +407,10 @@ def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
     token with PENGUMON_VIEW_WITHOUT_TOKEN on (view only, then sign in to edit). `firstrun`: the first-run question is
     still open (who can open the dashboard); every other variant has it answered."""
     db = tmp_path / "smoke.db"
-    asyncio.run(seed(str(db), time.time(), access_answered=variant != "firstrun"))
+    seeded_at = time.time()
+    asyncio.run(seed(str(db), seeded_at, access_answered=variant != "firstrun"))
+    if variant == "longhistory":
+        asyncio.run(seed_long_history(str(db), seeded_at))
     config = tmp_path / "config.yaml"
     targets = "".join(
         f'  - {{id: "{t}", name: "{n}", category: {c}, address: "127.0.0.1", enabled: true}}\n'
@@ -373,7 +491,11 @@ def test_dashboard_in_headless_browser(tmp_path, variant, shard, browser):
             pytest.fail("the service check of the app itself never came up")
         out_dir = tmp_path / "out"  # screenshots and the downloaded dossier; tmp_path is the only writable place in the container
         out_dir.mkdir()
-        run = subprocess.run(["node", str(UI / "smoke.mjs"), base, str(out_dir), variant, shard], env=env, capture_output=True, text=True, timeout=RUN_TIMEOUT_S)
+        try:
+            run = subprocess.run(["node", str(UI / "smoke.mjs"), base, str(out_dir), variant, shard], env=env, capture_output=True, text=True, timeout=RUN_TIMEOUT_S)
+        except subprocess.TimeoutExpired as e:  # say where the run was (the steps' progress lines on stderr)
+            progress = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+            pytest.fail(f"the browser run took more than {RUN_TIMEOUT_S} s; its progress:\n{progress}")
         print(run.stdout)  # shown with -s: the steps passed and the sparkline cost
         assert run.returncode == 0, f"{run.stdout}\n{run.stderr}"
     finally:

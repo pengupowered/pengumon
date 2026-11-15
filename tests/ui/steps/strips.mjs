@@ -14,41 +14,51 @@ const answering = () => {
   window.__answer = async (answer, win = "24h") => {
     next = answer;
     const n = served;
-    document.querySelector(`[data-action=setUptimeWindow][data-arg="${win}"]`).click();
+    const select = document.querySelector("#stripsRanges select");
+    select.value = win;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
     while (served === n) await new Promise((r) => setTimeout(r, 20));
     await new Promise((r) => setTimeout(r, 100));
   };
   window.__answered = () => {
     window.fetch = real;
-    document.querySelector('[data-action=setUptimeWindow][data-arg="24h"]').click();
+    const select = document.querySelector("#stripsRanges select");
+    select.value = "24h";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
   };
 };
 
 export const steps = [
-  ["uptime strips: availability per row, 96 blocks a day, the 7 d and 24 h windows", async ({ click, eq, ok, page, text, until }) => {
+  ["uptime strips: availability per row, 96 blocks a day, the 7 d and 24 h windows", async ({ chooseRange, eq, ok, page, text, until }) => {
     await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
     ok("availability per row", /\d+\.\d\d%/.test(await text("#stripsBody .s-pct")));
     eq("96 blocks a day", await page.$eval("#stripsBody .strip", (e) => e.children.length), 96);
     const names = await page.$$eval("#stripsBody .s-name", (els) => els.map((e) => `${e.querySelector("span").textContent}|${e.querySelector("small")?.textContent ?? ""}`));
     eq("rows named as Path health names them, the configured name beside", names.slice(0, 3).join(","),
       "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
-    await click('[data-action=setUptimeWindow][data-arg="7d"]');
-    await until(() => document.getElementById("stripsBody").dataset.blocks === "7");
-    await click('[data-action=setUptimeWindow][data-arg="24h"]');
+    await chooseRange("#stripsRanges", "7d");
+    // the last 7 days ending now: 8 calendar days, the first and last cut (7 when now is exactly a midnight)
+    await until(() => ["7", "8"].includes(document.getElementById("stripsBody").dataset.blocks));
+    const cells = await page.$$eval("#stripsBody .strip:first-of-type .cell", (els) => els.map((e) => ({ tip: e.dataset.tip, w: e.getBoundingClientRect().width })));
+    ok("the first and last days are cut: their tooltips say which hours, and they are narrower than a whole day",
+      cells.length === 7 || (/\d\d:\d\d–24:00/.test(cells[0].tip) && /00:00–\d\d:\d\d/.test(cells[cells.length - 1].tip)
+        && cells[0].w < cells[3].w && cells[cells.length - 1].w < cells[3].w));
+    ok("a whole day's tooltip names no hours", !/\d\d:\d\d–/.test(cells[Math.floor(cells.length / 2)].tip));
+    await chooseRange("#stripsRanges", "24h");
     await until(() => document.getElementById("stripsBody").dataset.blocks === "96");
   }],
 
-  ["uptime strips: an answer that fails says so in the card (no page error), and the next one draws the blocks again", async ({ click, ok, page, text, until }) => {
+  ["uptime strips: an answer that fails says so in the card (no page error), and the next one draws the blocks again", async ({ chooseRange, ok, page, text, until }) => {
     await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
     await page.evaluate(() => {
       window.__realFetch = window.fetch;
       window.fetch = (u, ...a) => (String(u).startsWith("/api/uptime") ? Promise.resolve(new Response("", { status: 503 })) : window.__realFetch(u, ...a));
     });
-    await click('[data-action=setUptimeWindow][data-arg="7d"]');
+    await chooseRange("#stripsRanges", "7d");
     await until(() => /Could not load the uptime: HTTP 503/.test(document.getElementById("stripsBody").textContent));
     ok("the key is still there", /No loss/.test(await text("[data-panel=strips] .strip-legend")));
     await page.evaluate(() => { window.fetch = window.__realFetch; });
-    await click('[data-action=setUptimeWindow][data-arg="24h"]');
+    await chooseRange("#stripsRanges", "24h");
     await until(() => document.getElementById("stripsBody").dataset.blocks === "96");
   }],
 
@@ -82,7 +92,7 @@ export const steps = [
       const real = await (await fetch("/api/uptime?window=24h")).json();
       const at = (d, h) => Date.UTC(2026, 9, d, h) / 1000;
       const bounds = [at(23, 22), at(24, 22), at(25, 23), at(26, 23), at(27, 23)];
-      await window.__answer({ ...real, window: "7d", block_seconds: 86400, blocks: 4, start: bounds[0], end: bounds[4], bounds, zone: "Europe/Berlin",
+      await window.__answer({ ...real, window: "7d", block_seconds: 86400, cell: "day", blocks: 4, start: bounds[0], end: bounds[4], bounds, zone: "Europe/Berlin",
         tz_offset_minutes: 60, targets: [{ ...real.targets[1], cells: ["ok", "ok", "outage", "ok"] }] }, "7d");
       const cell = document.querySelectorAll("#stripsBody .strip .cell")[2];
       cell.click();
@@ -153,11 +163,51 @@ export const steps = [
     await until(() => document.getElementById("incidentWindow").hidden);
   }],
 
-  ["uptime strips on a phone: every block keeps a visible width", async ({ ok, page, phone, until }) => {
+  ["uptime strips on a phone: each name and availability over its strip, blocks of 5 px or more that scroll sideways together, opened at now (also when drawn on a hidden tab), names in view when scrolled back", async ({ chooseRange, eq, noSideways, ok, page, pageReady, phone, until }) => {
     await phone(async () => {
-      await until(() => document.querySelectorAll("#stripsBody .strip").length >= 3);
-      const w = await page.$eval("#stripsBody .strip > *", (e) => e.getBoundingClientRect().width);
-      ok(`a block is ${w.toFixed(2)} px wide`, w >= 0.75); // the gaps once left the blocks about 0.1 px
+      // drawn while another tab is shown: the strips have no width then, and open at now when their tab is
+      await page.evaluate(() => { location.hash = "incidents"; });
+      await page.reload({ waitUntil: "load" });
+      await pageReady();
+      await until(() => document.querySelectorAll("#stripsBody .strip .cell").length >= 288 && document.querySelector("[data-panel=strips]").hidden);
+      await page.evaluate(() => { location.hash = "live"; });
+      await until(() => !document.querySelector("[data-panel=strips]").hidden);
+      await page.$eval("[data-panel=strips] .panel", (e) => e.scrollIntoView());
+      await new Promise((r) => setTimeout(r, 400));
+      const look = () => page.evaluate(() => {
+        const box = document.getElementById("stripsBody");
+        const b = box.getBoundingClientRect();
+        const strips = [...box.querySelectorAll(".strip")];
+        const name = box.querySelector(".s-name").getBoundingClientRect();
+        const pct = box.querySelector(".s-pct").getBoundingClientRect();
+        const strip = strips[0].getBoundingClientRect();
+        return { over: box.scrollWidth - box.clientWidth, left: box.scrollLeft, cell: Math.min(...[...strips[0].children].slice(1, -1).map((c) => c.getBoundingClientRect().width)),
+          stacked: name.bottom <= strip.top + 1 && pct.bottom <= strip.top + 1 && pct.left > name.right, together: strips.every((s) => Math.abs(s.getBoundingClientRect().left - strip.left) < 1),
+          namesIn: [...box.querySelectorAll(".s-name")].every((n) => n.getBoundingClientRect().left >= b.left - 1 && n.getBoundingClientRect().right <= b.right + 1),
+          axis: box.querySelector(".s-axis").getBoundingClientRect().width >= strip.width - 1 };
+      });
+      const now = await look();
+      ok(`the name and availability on a line over the strip`, now.stacked);
+      ok(`the narrowest block is ${now.cell.toFixed(1)} px (at least 5)`, now.cell >= 5);
+      ok(`96 blocks do not fit: the strips scroll sideways (${now.over} px)`, now.over > 100);
+      ok(`opened at now, on a tab that was hidden when they were drawn (${now.left} of ${now.over} px)`, now.left >= now.over - 2);
+      ok("the strips and the axis scroll together", now.together && now.axis);
+      ok("nothing else sticks out sideways", await noSideways());
+      await page.evaluate(() => { document.getElementById("stripsBody").scrollLeft = 0; });
+      await new Promise((r) => setTimeout(r, 200));
+      const back = await look();
+      eq("scrolled back to the start", back.left, 0);
+      ok("the names stay in view", back.namesIn && back.together);
+      // another range opens at now again
+      await chooseRange("#stripsRanges", "7d");
+      await until(() => ["7", "8"].includes(document.getElementById("stripsBody").dataset.blocks));
+      ok("a week fits without scrolling", (await look()).over <= 0);
+      await chooseRange("#stripsRanges", "24h");
+      await until(() => document.getElementById("stripsBody").dataset.blocks === "96");
+      await new Promise((r) => setTimeout(r, 200));
+      const again = await look();
+      ok(`24 h again opens at now (${again.left} of ${again.over} px)`, again.over > 100 && again.left >= again.over - 2);
+      await page.evaluate(() => { location.hash = "live"; });
     });
   }],
 
@@ -251,4 +301,36 @@ export const steps = [
     await until(() => document.querySelectorAll("#stripsBody .strip-quiet").length === 0);
     ok("IPv6 back: blocks again", (await text("#stripsBody")).includes("%"));
   }],
+
+  ["every window draws the uptime strips (cells wide enough to see, week cells past 90 days, dates on the axis), on a desktop, a phone and in every theme", async ({ atEveryRange, chooseRange, eq, everyLook, noSideways, ok, openPanel, page, phone, rangeState, settled, showCard }) => {
+    const WANT = { "24h": [96, 96], "7d": [7, 8], "30d": [30, 31], "90d": [90, 91], all: [26, 27] };
+    const check = (where) => async (id) => {
+      const what = `${where} ${id}`;
+      const cells = await page.$$eval("#stripsBody .strip:first-of-type .cell", (els) => els.map((e) => ({ tip: e.dataset.tip, w: e.getBoundingClientRect().width })));
+      const [lo, hi] = WANT[id];
+      ok(`${what}: ${cells.length} cells (${lo}-${hi})`, cells.length >= lo && cells.length <= hi);
+      const narrowest = Math.min(...cells.slice(1, -1).map((c) => c.w)); // (the first and last cell hold only the hours the window reaches: narrower by design)
+      ok(`${what}: the narrowest whole cell is ${narrowest.toFixed(1)} px (at least 2.5, 5 on a phone: its strips scroll sideways rather than draw them thinner)`, narrowest >= (where === "phone" ? 5 : 2.5));
+      if (id === "all") ok(`${what}: week cells say "week of" (${cells[1].tip})`, cells.every((c) => /week of [A-Z][a-z]{2} \d{1,2}/.test(c.tip)));
+      const axis = await page.$$eval("#stripsBody .s-axis span", (e) => e.map((x) => x.textContent));
+      ok(`${what}: the axis names dates (${axis.join(" | ")})`, id === "24h" ? axis.slice(0, -1).every((l) => /^\d{1,2}:\d{2}/.test(l)) : axis.slice(0, -1).every((l) => /^[A-Z][a-z]{2} \d{1,2}$/.test(l)));
+      ok(`${what}: the header says what the cells are (${await page.$eval("#stripsMeta", (e) => e.textContent)})`, new RegExp(id === "24h" ? "15-min blocks" : id === "all" ? "a block per week" : "a block per day").test(await page.$eval("#stripsMeta", (e) => e.textContent)));
+      ok(`${what}: nothing sticks out sideways`, await noSideways());
+    };
+    await showCard("strips");
+    eq("24 h to All", (await rangeState("#stripsRanges")).ids.join(), "24h,7d,30d,90d,all");
+    await atEveryRange("#stripsRanges", "#stripsBody", check("desktop"));
+    await everyLook(async (look) => {
+      await showCard("strips");
+      for (const id of ["24h", "all"]) {
+        await chooseRange("#stripsRanges", id);
+        await settled();
+        await check(look)(id);
+      }
+    });
+    await phone(async () => {
+      await openPanel("strips", "live");
+      await atEveryRange("#stripsRanges", "#stripsBody", check("phone"));
+    });
+  }, { variants: ["longhistory"] }],
 ];

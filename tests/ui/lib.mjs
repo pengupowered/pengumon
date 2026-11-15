@@ -20,6 +20,11 @@ export const BROWSER_HOST = "pengumon-test";
 // The same address on 127.0.0.1, for requests made by node itself (a step's fetch), which cannot resolve BROWSER_HOST.
 export const loopback = (url) => url.replace(BROWSER_HOST, "127.0.0.1");
 export const SHOTS = process.env.PENGUMON_SMOKE_SHOTS === "1";
+// The kinds of label a time axis has at each range of the range control (js/ranges.js): a clock time up to a day, date and clock to a
+// week, dates to 90 days, months beyond. A chart may use a coarser kind (its own words); labelKind() names what a label is.
+export const RANGE_AXIS = { live: ["clock"], "15m": ["clock"], "1h": ["clock"], "24h": ["clock"], "7d": ["datetime", "date"], "30d": ["date"], "90d": ["date"], all: ["month"] };
+export const labelKind = (t) => (/^\d{1,2}:\d{2}(:\d{2})?( ?[AP]M)?$/.test(t) ? "clock" : /^[A-Z][a-z]{2},? \d{4}$/.test(t) ? "month" : /^[A-Z][a-z]{2},? \d{1,2}$/.test(t) ? "date"
+  : /^([A-Z][a-z]{2},? (\d{1,2},? )?)?\d{1,2}:\d{2}/.test(t) ? "datetime" : "other");
 
 // The bus step subscribes a function that throws on purpose; the bus logs it (and must go on). The second: the states
 // steps refuse the socket on purpose.
@@ -129,6 +134,10 @@ export async function createContext({ base, outDir, variant }) {
   page.on("response", (r) => {
     if (r.url().startsWith(base) && r.status() >= 400 && !noise(r.url()) && !(refusalsExpected && r.status() === 401) && !statusExpected.includes(r.status())) problems.push(`HTTP ${r.status()}: ${r.url()}`);
   });
+  const inflight = new Set(); // the fetch/XHR requests still waiting for an answer (settled() waits for them)
+  page.on("request", (r) => { if (/\/api\//.test(r.url())) inflight.add(r); });
+  for (const done of ["requestfinished", "requestfailed"]) page.on(done, (r) => inflight.delete(r));
+  page.on("framenavigated", (f) => { if (f === page.mainFrame()) inflight.clear(); }); // (a reload cuts requests off; not every one is reported)
   page.on("dialog", (d) => { dialogs.push(`${d.type()}: ${d.message()}`); d.dismiss(); });
   // Chromium only (CDP): where downloads go. Firefox saves to its own default folder; no step reads a download from outDir.
   const client = firefox ? null : await page.createCDPSession();
@@ -230,6 +239,64 @@ export async function createContext({ base, outDir, variant }) {
     eq(`${modal}: focus is back on its opener`, await page.evaluate((o) => document.activeElement === document.querySelector(o), opener), true);
   };
 
+  // ---- the range control (js/ranges.js): a native <select> inside a host element ----
+  // chooseRange(host, id) picks an option the way a person does (the select's input and change events fire); rangeState(host)
+  // is what the control shows: its value, the ids and words of its options, and the words of the one chosen.
+  const chooseRange = (host, id) => page.select(`${host} select`, id);
+  const rangeState = (host) => page.$eval(`${host} select`, (s) => ({ value: s.value, ids: [...s.options].map((o) => o.value), words: [...s.options].map((o) => o.textContent), shown: s.selectedOptions[0]?.textContent ?? "" }));
+
+  // ---- charts at every range ----
+  // Waits for the answer of the range just chosen to arrive and be drawn: what a person waits for after choosing a range.
+  // (the page's live socket never lets the network go idle, so: a moment for the page to ask, the requests it asked for answered, a moment to draw)
+  const settled = async () => {
+    await sleep(150);
+    const w0 = Date.now();
+    for (let i = 0; i < 50 && inflight.size; i++) await sleep(100);
+    if (Date.now() - w0 > 1500) process.stderr.write(`  DBG waited ${Date.now() - w0} ms for ${[...inflight].map((r) => r.url().replace(/^.*\/api/, "/api")).join(" ")}\n`);
+    await sleep(150);
+    await frames(3);
+  };
+  // What a Chart.js chart shows: the labels of its x axis ticks, its datasets (name, number of points with a value) and its width.
+  const chartAxis = (canvas) => page.evaluate((sel) => {
+    const c = Chart.getChart(document.querySelector(sel));
+    if (!c) return null;
+    const has = (v) => v !== null && v !== undefined && !(typeof v === "object" && (v.y === null || v.y === undefined));
+    return { labels: (c.scales.x.ticks || []).map((t) => String(t.label)).filter((l) => l !== ""), // (a tick left blank because it repeats the one before is not shown)
+      count: c.data.labels ? c.data.labels.length : 0, width: c.width,
+      sets: c.data.datasets.map((d) => ({ label: String(d.label), n: (d.data || []).filter(has).length })) };
+  }, canvas);
+  const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
+  // The first and last tick labels are of the kinds the range has (RANGE_AXIS); `kinds` overrides for a chart with its own words.
+  const axisOk = (what, id, snap, kinds = RANGE_AXIS[id]) => {
+    ok(`${what}: the axis has labels (${snap.labels.join(" | ")})`, snap.labels.length >= 2);
+    for (const l of [snap.labels[0], snap.labels[snap.labels.length - 1]]) ok(`${what}: "${l}" is one of ${kinds.join("/")}`, kinds.includes(labelKind(l)));
+  };
+  // Every range of the control at `host`, in turn (Live too when it has one, unless `skip`): choose it, wait for the page to be quiet, and
+  // hand the chart at `canvas` to check(id, snapshot). Leaves the control on its last range.
+  const atEveryRange = async (host, canvas, check, { skip = [], pause = 0 } = {}) => {
+    const { ids } = await rangeState(host);
+    for (const id of ids.filter((i) => !skip.includes(i))) {
+      await chooseRange(host, id);
+      await settled();
+      if (pause) await sleep(pause);
+      await check(id, await chartAxis(canvas));
+    }
+    return ids;
+  };
+  // On a phone a panel is on one of the tabs (#live, #network, #incidents, #line): opens the tab and brings the panel on screen.
+  const openPanel = async (panel, tab) => {
+    await page.evaluate((t) => { location.hash = `#${t}`; }, tab);
+    await until((p) => !document.querySelector(`[data-panel=${p}]`).hidden, panel);
+    await showCard(panel);
+  };
+  // fn(look) once in every theme the page offers ("default" for the standard one), then back on the standard theme.
+  const everyLook = async (fn) => {
+    const looks = await page.evaluate(() => JSON.parse(document.documentElement.dataset.looks).map((t) => (t.id === document.documentElement.dataset.lookDefault ? "" : t.id)));
+    try {
+      for (const look of looks) { await pickLook(look); await fn(look || "default"); }
+    } finally { await pickLook(""); }
+  };
+
   // ---- the page ----
   const panelOrder = () => page.$$eval("[data-panel]", (els) => els.map((e) => e.dataset.panel));
   const layoutMounted = () => until(() => document.querySelector("[data-panel=report]")?.dataset.layoutHidden !== undefined);
@@ -249,6 +316,38 @@ export async function createContext({ base, outDir, variant }) {
     await page.reload({ waitUntil: "load" });
     await waitText("#wsText", /^Live/);
     await layoutMounted();
+  };
+  // A database younger than its retention: the retention settings say `retention` days (so All asks for that many), but the
+  // answers of the history routes hold nothing older than `days` days (the rows are cut from the real answer; a day of
+  // Internet use older than that has no stored hours). `youngData(null)` puts the real page back. It works on the open page
+  // (no reload); the controls take the new retention at once.
+  const youngData = async (days, retention = 365) => {
+    await page.evaluate(async (d, r, url) => {
+      window.__realFetch = window.__realFetch || window.fetch.bind(window);
+      if (d === null) window.fetch = window.__realFetch;
+      else {
+        const cut = Date.now() / 1000 - d * 86400;
+        const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        window.fetch = async (u, ...a) => {
+          const res = await window.__realFetch(u, ...a);
+          const path = new URL(String(u), location.href).pathname;
+          if (!res.ok) return res;
+          if (path === "/api/settings/values") {
+            const body = await res.json();
+            for (const k of Object.keys(body.values)) if (/^database\.(latency|router|mesh|line|traffic|speedtest|incident)_retention_days$/.test(k)) body.values[k] = r;
+            return json(body);
+          }
+          if (!/^\/api\/(history$|devices\/[^/]+\/(history|clients\/history|channels\/history|traffic(\/clients\/[^/]+)?)$)/.test(path)) return res;
+          const body = await res.json();
+          if (Array.isArray(body.rows) && body.fields) { const t = body.fields.indexOf("timestamp"); body.rows = body.rows.filter((x) => x[t < 0 ? 0 : t] >= cut); }
+          else if (Array.isArray(body.rows)) body.rows = body.rows.filter((x) => x[0] >= cut);
+          if (Array.isArray(body.points)) body.points = body.points.filter((p) => p.ts >= cut);
+          if (Array.isArray(body.daily)) body.daily = body.daily.map((x) => (x.end <= cut ? { ...x, down: null, up: null, stored: 0 } : x));
+          return json(body);
+        };
+      }
+      await (await import(url)).refreshSettingsValues();
+    }, days, retention, await moduleUrl("settings-values.js"));
   };
   const noSideScroll = (modal) => page.evaluate((id) => { const b = document.querySelector(`#${id} .modal-b`); return b.scrollWidth <= b.clientWidth + 1; }, modal);
 
@@ -413,11 +512,15 @@ export async function createContext({ base, outDir, variant }) {
 
   // ---- a step: runs fn(ctx); a failure is recorded with a screenshot ----
   async function step(name, fn) {
+    const t0 = Date.now();
+    process.stderr.write(`step: ${name.slice(0, 110)}\n`); // (progress: when a run is cut off by its time limit, this says where it was)
     try {
       await fn(ctx);
       stats.steps.push(name);
+      process.stderr.write(`  done in ${Math.round((Date.now() - t0) / 1000)} s\n`);
       return true;
     } catch (e) {
+      process.stderr.write(`  failed after ${Math.round((Date.now() - t0) / 1000)} s: ${String(e.message ?? e).slice(0, 200)}\n`);
       stats.failed.push({ step: name, error: String(e.message ?? e) });
       await page.screenshot({ path: path.join(outDir, stats.failed.length === 1 ? "failure.png" : `failure-${stats.failed.length}.png`) }).catch(() => {});
       return false;
@@ -426,9 +529,10 @@ export async function createContext({ base, outDir, variant }) {
 
   const ctx = {
     browser, firefox, page, client, base, outDir, variant, bare, problems, dialogs, stats, report,
-    LINE, ROUTER, USUAL_PANELS, PHONE, DESKTOP, SHOTS, systemTheme, fs, path,
+    LINE, ROUTER, USUAL_PANELS, PHONE, DESKTOP, SHOTS, RANGE_AXIS, labelKind, systemTheme, fs, path,
+    chooseRange, rangeState, settled, chartAxis, noSideways, axisOk, atEveryRange, everyLook, openPanel,
     sleep, frames, layoutSettled, nextMessages, positionSettled, until, text, count, shown, visible, click, clickAt, waitText, waitCount, chartLabels, hasChart, modalOpen, eq, ok, dialogKeys, tabStaysIn,
-    panelOrder, layoutMounted, openLayout, pageReady, phone, noSideScroll, setTheme, pickMode, pickLook, flipMode, darkNow, stubFetch,
+    panelOrder, layoutMounted, openLayout, pageReady, phone, noSideScroll, setTheme, pickMode, pickLook, flipMode, darkNow, stubFetch, youngData,
     shot, dialogShot, snap, shots, inspect, inspectNamed, canvasSig, inkedPixels, moduleUrl,
     popoverText, openHelp, showCard, signIn, signInWithToken, expectRefusals, expectStatus, resetPage, step,
   };

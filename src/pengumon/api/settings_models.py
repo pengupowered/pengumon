@@ -75,7 +75,7 @@ class SettingSpec(Constraints):
     effect: str
     unit: Optional[str]
     scale: float
-    rounds: bool  # stored in probe rounds; shown as value x round_seconds seconds
+    rounds: bool  # counted in probes: the page shows the time they mean at the current probe interval beside it
     live: bool
     env: Optional[str]
     advanced: bool
@@ -127,7 +127,6 @@ class SecretSpec(_Model):
 
 
 class SettingsSchema(_Model):
-    round_seconds: float
     sections: List[SectionSpec]
     settings: List[SettingSpec]
     lists: Dict[str, ListSchema]
@@ -175,8 +174,17 @@ class About(_Model):
     version: str
 
 
+class ProbingCost(_Model):
+    """What the probe interval costs, per round of the path (the page divides by the interval it is showing)."""
+    hops: int  # enabled hops of the path: every one is probed each round
+    hop_bytes_per_round: int  # internet traffic of one round of the path's hops past the gateway, both ways, framing included
+    dns_lookup_bytes: int  # traffic of one DNS lookup, both ways
+    sample_bytes: float  # stored bytes per probe row (measured: the samples table's pages over its rows)
+
+
 class SettingsState(_Model):
     revision: int  # 0: no settings store yet (the W0 stub)
+    probing: Optional[ProbingCost] = None
     values: Dict[str, ValueState]
     lists: Dict[str, ListState]
     secrets: Dict[str, SecretState]

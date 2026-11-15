@@ -3,7 +3,7 @@
 // a card").
 
 import { mountCharts } from './charts.js';
-import { loadHistoricalRange, preloadLiveHistory, setTimeRange } from './history.js';
+import { loadHistoricalRange, markRange, preloadLiveHistory, setTimeRange } from './history.js';
 import { settingsValues, val } from '../../js/settings-values.js';
 import { state } from '../../js/state.js';
 
@@ -18,7 +18,7 @@ function showProbeResolution(section, info) {
 }
 
 // display.default_latency_range (Settings > Display): the range the chart opens on, in seconds; 'live' is the 60 s live view.
-const RANGE_SECONDS = { '15m': 900, '1h': 3600, '24h': 86400 };
+const RANGE_SECONDS = { '15m': 900, '1h': 3600, '24h': 86400, '7d': 604800, '30d': 2592000 };
 
 export default {
   id: 'latency',
@@ -29,6 +29,7 @@ export default {
   available: () => true,
   mount(section, ctx) {
     mountCharts(ctx.bus, section);
+    markRange();
     const opening = RANGE_SECONDS[val(settingsValues(), 'display.default_latency_range', 'live')];
     if (opening) setTimeRange(opening);
     else preloadLiveHistory();

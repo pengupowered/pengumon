@@ -14,11 +14,18 @@ const setMutate = (page, src) => page.evaluate((code) => { window.__smokeMutate 
 const reloadPhone = async ({ page, PHONE, layoutMounted }) => { await page.setViewport(PHONE); await page.reload({ waitUntil: "load" }); await layoutMounted(); };
 // A page wider than its window scrolls sideways; so does any card whose content spills out of it.
 const overflowing = (page) => page.evaluate(() => {
+  // Uptime's strips scroll sideways on a phone by design (panels/strips/panel.css): what they hold past their edges is
+  // reached by scrolling them; the box itself is checked (other scroll boxes are not excused: a table must still fit)
+  const inScroller = (e) => {
+    const box = e.parentElement && e.parentElement.closest(".strips");
+    return !!box && /auto|scroll/.test(getComputedStyle(box).overflowX);
+  };
   const w = document.documentElement.clientWidth;
   const out = [];
   if (document.documentElement.scrollWidth > w) out.push(`page scrollWidth ${document.documentElement.scrollWidth} > ${w}`);
   document.querySelectorAll(".panel:not([hidden]) *, .topbar *, .tabbar *").forEach((e) => {
     if (e.closest("[hidden], .menu, canvas, .tip")) return;
+    if (inScroller(e)) return;
     const r = e.getBoundingClientRect();
     if (r.width && (r.right > w + 1 || r.left < -1) && getComputedStyle(e).position !== "fixed") out.push(`${e.tagName.toLowerCase()}.${String(e.className).split(" ")[0]} ${Math.round(r.left)}..${Math.round(r.right)}`);
   });
@@ -29,6 +36,12 @@ const overflowing = (page) => page.evaluate(() => {
 // runs out of its card. An ellipsis is a choice (the whole text is in a tooltip), so it is allowed; the header pill's
 // figures must not be cut on a wide window either.
 const clippedText = (page) => page.evaluate(() => {
+  // Uptime's strips scroll sideways on a phone by design (panels/strips/panel.css): what they hold past their edges is
+  // reached by scrolling them; the box itself is checked (other scroll boxes are not excused: a table must still fit)
+  const inScroller = (e) => {
+    const box = e.parentElement && e.parentElement.closest(".strips");
+    return !!box && /auto|scroll/.test(getComputedStyle(box).overflowX);
+  };
   const out = [];
   document.querySelectorAll(".panel *").forEach((e) => {
     if (!e.offsetParent || e.closest("svg, canvas, .sr-only, [hidden], .tip, .menu, .skel")) return;
@@ -39,7 +52,7 @@ const clippedText = (page) => page.evaluate(() => {
     if (/hidden|clip/.test(st.overflowX) && st.textOverflow !== "ellipsis" && e.scrollWidth > e.clientWidth + 1) out.push(`cut ${name}`);
     const card = e.closest(".panel").getBoundingClientRect();
     const r = e.getBoundingClientRect();
-    if (r.width && (r.right > card.right + 1 || r.left < card.left - 1)) out.push(`outside its card ${name}`);
+    if (r.width && !inScroller(e) && (r.right > card.right + 1 || r.left < card.left - 1)) out.push(`outside its card ${name}`);
   });
   const metrics = document.querySelector("#statusPillMetrics");
   if (window.innerWidth > 1180 && metrics && metrics.scrollWidth > metrics.clientWidth + 1) out.push(`header pill figures cut: "${metrics.textContent}"`);
@@ -1116,5 +1129,103 @@ export const steps = [
     await page.evaluate(() => { document.querySelector("[data-action=closeModal][data-arg=dossierModal]").click(); location.reload(); }).catch(() => {}); // (the context may go before the answer)
     await page.waitForFunction(() => window.__beforeReload === undefined && document.readyState === "complete", { timeout: 15000 });
     await layoutMounted();
+  }],
+
+  ["the range control: what a chart offers follows its data's finest step and how long that kind of data is kept (90 d gone below 90 days, All's words, never a range All repeats)", async ({ eq, moduleUrl, page }) => {
+    const url = await moduleUrl("ranges.js");
+    const offered = (args) => page.evaluate(async (u, a) => { const m = await import(u); return m.rangeOptions(a).map((o) => o.words).join(" | "); }, url, args);
+    eq("the default: 180 days", await offered({ days: 180, min: "1h" }), "Last hour | Last 24 hours | Last 7 days | Last 30 days | Last 90 days | All · 180 d");
+    eq("365 days is a year", await offered({ days: 365, min: "1h" }), "Last hour | Last 24 hours | Last 7 days | Last 30 days | Last 90 days | All · 1 y");
+    eq("90 days: All would repeat 90 d, so there is none", await offered({ days: 90, min: "1h" }), "Last hour | Last 24 hours | Last 7 days | Last 30 days | Last 90 days");
+    eq("60 days: no 90 d, All is 60", await offered({ days: 60, min: "1h" }), "Last hour | Last 24 hours | Last 7 days | Last 30 days | All · 60 d");
+    eq("30 days: All would repeat 30 d, no 90 d", await offered({ days: 30, min: "1h" }), "Last hour | Last 24 hours | Last 7 days | Last 30 days");
+    eq("kept forever (incidents: 0): All says no number", await offered({ days: 0, min: "7d" }), "Last 7 days | Last 30 days | Last 90 days | All");
+    eq("a range finer than the data is left out (speed tests, daily)", await offered({ days: 180, min: "24h" }), "Last 24 hours | Last 7 days | Last 30 days | Last 90 days | All · 180 d");
+    eq("the latency views have Live and 15 m", await offered({ days: 180, min: "1h", live: true, quarter: true }), "Live | Last 15 minutes | Last hour | Last 24 hours | Last 7 days | Last 30 days | Last 90 days | All · 180 d");
+    eq("the AI pack stops at 30 days and has no All", await offered({ min: "1h", max: "30d", all: false }), "Last hour | Last 24 hours | Last 7 days | Last 30 days");
+    eq("the widths of a long chart give 400-800 points", await page.evaluate(async (u) => { const m = await import(u); return [90, 180, 365].map((d) => Math.round((d * 86400) / m.longBucket(d * 86400))).join(); }, url), "720,720,730");
+  }],
+
+  ["a retention that is saved changes every control at once: 90 d goes below 90 days, All takes the new number, a range that is gone gives way", async ({ chooseRange, eq, moduleUrl, page, rangeState, until }) => {
+    const settings = await moduleUrl("settings-values.js");
+    const kept = async (days) => {
+      await page.evaluate(async (u, d) => {
+        const real = window.__realFetch || window.fetch.bind(window);
+        window.__realFetch = real;
+        window.fetch = async (url, ...a) => {
+          if (new URL(String(url), location.href).pathname !== "/api/settings/values") return real(url, ...a);
+          const body = await (await real(url, ...a)).json();
+          for (const k of Object.keys(body.values)) if (/^database\.(latency|router|mesh|line|traffic|speedtest|incident)_retention_days$/.test(k)) body.values[k] = d;
+          return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        };
+        await (await import(u)).refreshSettingsValues();
+      }, settings, days);
+    };
+    const ids = async (host) => (await rangeState(host)).ids.join();
+    await chooseRange("#stripsRanges", "all");
+    await kept(60);
+    await until(() => document.querySelector("#timeRangeButtons select").dataset.sig.includes("All · 60 d"));
+    eq("latency: no 90 d, All is 60 days", await ids("#timeRangeButtons"), "live,15m,1h,24h,7d,30d,all");
+    eq("uptime", await ids("#stripsRanges"), "24h,7d,30d,all");
+    eq("the loss grid", await ids("#heatRanges"), "7d,30d,all");
+    eq("the incident timeline", await ids("#incidentRanges"), "7d,30d,all");
+    eq("the report", await ids("#reportRangeButtons"), "7d,30d,all");
+    eq("the uptime control still shows All, now 60 days", (await rangeState("#stripsRanges")).shown, "All · 60 d");
+    await kept(30);
+    await until(() => !document.querySelector("#timeRangeButtons select").dataset.sig.includes("All"));
+    eq("30 days: neither 90 d nor All", await ids("#timeRangeButtons"), "live,15m,1h,24h,7d,30d");
+    eq("a chart that was on All goes back to its first range (uptime: 24 h)", (await rangeState("#stripsRanges")).value, "24h");
+    await kept(365);
+    await until(() => document.querySelector("#timeRangeButtons select").dataset.sig.includes("All · 1 y"));
+    eq("a year", (await rangeState("#timeRangeButtons")).words.at(-1), "All · 1 y");
+    await kept(180);
+    await until(() => document.querySelector("#timeRangeButtons select").dataset.sig.includes("All · 180 d"));
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+  }],
+
+  ["the update bar: a newer server version is offered as a reload, once per version, in every theme and on a phone", async ({ eq, everyLook, noSideways, ok, page, phone, pickLook, until }) => {
+    eq("a page of the current version shows no bar", await page.$eval("#updateBar", (e) => e.hidden), true);
+    const serve = (version) => page.evaluate((v) => {
+      window.__realFetch = window.__realFetch || window.fetch.bind(window);
+      window.fetch = (u, ...a) => (new URL(String(u), location.href).pathname === "/api/health"
+        ? Promise.resolve(new Response(JSON.stringify({ status: "ok", version: v, probing: "ok" }), { status: 200, headers: { "content-type": "application/json" } }))
+        : window.__realFetch(u, ...a));
+    }, version);
+    const reconnect = () => page.evaluate(() => window.__smokeSockets.at(-1).close()); // a restart: the socket comes back
+    await serve("9.9.9");
+    await reconnect();
+    await until(() => !document.getElementById("updateBar").hidden);
+    eq("it says so", await page.$eval("#updateBar", (e) => e.textContent.replace(/\s+/g, " ").trim()), "Pengumon was updated to 9.9.9. Reload to use it. Reload");
+    ok("with a Reload button and a close", await page.$eval("#updateBar", (e) => !!e.querySelector("[data-action=reloadPage]") && !!e.querySelector("[data-action=closeUpdateBar]")));
+    await everyLook(async (look) => {
+      const box = await page.$eval("#updateBar", (e) => { const r = e.getBoundingClientRect(); const c = getComputedStyle(e); return { w: r.width, h: r.height, bg: c.backgroundColor, ink: c.color }; });
+      ok(`${look}: the bar is shown across the page (${box.w} x ${box.h}) in colors of its own (${box.bg} / ${box.ink})`, box.w >= 1000 && box.h >= 30 && box.bg !== box.ink && box.bg !== "rgba(0, 0, 0, 0)");
+    });
+    await phone(async () => {
+      await serve("9.9.9");
+      await reconnect();
+      await until(() => !document.getElementById("updateBar").hidden);
+      const box = await page.$eval("#updateBar", (e) => { const r = e.getBoundingClientRect(); return { w: r.width, right: r.right, buttons: [...e.querySelectorAll("button")].every((b) => b.getBoundingClientRect().right <= innerWidth) }; });
+      ok(`phone: the bar fits (${box.w} px wide) and so do its buttons`, box.w <= 390 && box.buttons);
+      ok("phone: no sideways scroll", await noSideways());
+    });
+    await serve("9.9.9");
+    await reconnect();
+    await until(() => !document.getElementById("updateBar").hidden);
+    await page.$eval("#updateBar [data-action=closeUpdateBar]", (b) => b.click());
+    eq("the close hides it", await page.$eval("#updateBar", (e) => e.hidden), true);
+    await reconnect();
+    await page.waitForFunction(() => window.__smokeSockets.length >= 2, { timeout: 15000 });
+    await new Promise((r) => setTimeout(r, 4000));
+    eq("and it stays hidden for the same version, after another reconnect", await page.$eval("#updateBar", (e) => e.hidden), true);
+    await serve("9.9.10");
+    await reconnect();
+    await until(() => !document.getElementById("updateBar").hidden);
+    eq("a newer one shows it again", await page.$eval("#updateBar [data-f=version]", (e) => e.textContent), "9.9.10");
+    await page.evaluate(() => { window.__beforeReload = true; });
+    await page.$eval("#updateBar [data-action=reloadPage]", (b) => b.click());
+    await page.waitForFunction(() => window.__beforeReload === undefined && document.readyState === "complete", { timeout: 15000 });
+    eq("Reload loads the page again, which asks the real server and shows no bar", await page.$eval("#updateBar", (e) => e.hidden), true);
+    await pickLook("");
   }],
 ];

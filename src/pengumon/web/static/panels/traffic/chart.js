@@ -1,6 +1,7 @@
 // The traffic chart (Chart.js bars): download and upload per clock hour (or per day: the card over 30 days), used by the card
-// (view.js) and by the device dialog (client.js). It draws plain data: {labels, titles, down, up, gaps, label}, one entry per
-// hour or day, where `down` and
+// (view.js) and by the device dialog (client.js). It draws plain data: {labels, titles, down, up, gaps, label, shares}, one
+// entry per hour or day (`shares`, optional: the part of its slot a bar fills, below 1 for a day the range cuts, which sits
+// against its neighbor: the first against the right edge of its slot, the last against the left), where `down` and
 // `up` are bytes or null for an hour with no figure, and `gaps[i]` says why: 'unpublished' (the router has not published the
 // hour yet) or 'nodata' (never stored). A gap is a hatched bar full height, never a bar of 0: a router that has not told is
 // not a router that moved nothing. Colors are tokens, read when it draws (a theme change draws it again).
@@ -57,6 +58,28 @@ function datasets(c, canvas) {
   return sets;
 }
 
+// Makes the bars of a day the range cuts narrower in proportion to its hours: the plugin changes the elements' width and place
+// just before they are drawn (and hit-tested), so the tooltip still finds them.
+const narrow = {
+  id: 'partialDays',
+  beforeDatasetsDraw(chart) {
+    const shares = chart.options.plugins.partialDays && chart.options.plugins.partialDays.shares;
+    if (!shares || shares.every((s) => s >= 1)) return;
+    const slot = chart.chartArea.width / shares.length;
+    chart.data.datasets.forEach((set, i) => {
+      chart.getDatasetMeta(i).data.forEach((bar, j) => {
+        const f = shares[j];
+        if (f === undefined || f >= 1 || bar.$narrowed === bar.width) return;
+        const center = chart.scales.x.getPixelForValue(j);
+        const shift = (j === 0 ? 1 : j === shares.length - 1 ? -1 : 0) * (1 - f) * slot / 2;
+        bar.x = center + (bar.x - center) * f + shift;
+        bar.width *= f;
+        bar.$narrowed = bar.width;
+      });
+    });
+  }
+};
+
 // Draws `c` into `canvas`. Returns {update(c), unmount()}; update draws again only for new data (or `force`, a new theme).
 export function hoursChart(canvas) {
   let chart = null;
@@ -73,6 +96,7 @@ export function hoursChart(canvas) {
         y: { beginAtZero: true, grace: '6%', afterFit: (scale) => { scale.width = 58; }, ticks: { font: { size: 10 }, maxTicksLimit: 5, callback: (v) => formatBytes(v) } }
       },
       plugins: {
+        partialDays: { shares: cur ? cur.shares : null },
         legend: { display: false },
         tooltip: {
           filter: (item) => item.raw !== null && item.raw !== undefined,
@@ -87,7 +111,7 @@ export function hoursChart(canvas) {
 
   return {
     update(c, force) {
-      const sig = JSON.stringify([c.labels, c.down, c.up, c.gaps, c.titles]);
+      const sig = JSON.stringify([c.labels, c.down, c.up, c.gaps, c.titles, c.shares]);
       if (chart && sig === shown && !force) {
         canvas.setAttribute('aria-label', c.label);
         return;
@@ -97,11 +121,12 @@ export function hoursChart(canvas) {
       canvas.setAttribute('aria-label', c.label);
       const sets = datasets(c, canvas);
       if (!chart) {
-        chart = new Chart(canvas, { type: 'bar', data: { labels: c.labels, datasets: sets }, options: options() });
+        chart = new Chart(canvas, { type: 'bar', data: { labels: c.labels, datasets: sets }, options: options(), plugins: [narrow] });
         return;
       }
       chart.data.labels = c.labels;
       chart.data.datasets = sets;
+      chart.options.plugins.partialDays = { shares: c.shares || null };
       chart.update('none');
     },
     unmount() { if (chart) chart.destroy(); chart = null; shown = null; }

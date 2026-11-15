@@ -1,6 +1,7 @@
 // The figures under the title: the five stat cells, the status badge, the units, and the loss of a list of history rows.
 
 import { badge } from '../../js/dom.js';
+import { stepWords } from '../../js/ranges.js';
 import { labels } from './state.js';
 
 const LEVEL = { ok: 'good', degraded: 'warn', outage: 'crit', busy: 'busy', no_data: 'unknown' };
@@ -16,7 +17,7 @@ export function setStats(cells, names = labels()) {
 }
 export const unit = (v, u, digits = 1) => (num(v) ? `${fmt(v, digits)}<small>${u}</small>` : '–');
 export const stateBadge = (cell) => (cell ? badge(LEVEL[cell] || 'unknown', STATE_WORD[cell] || 'No data') : '–');
-export const per = (bucket) => (bucket >= 60 ? `${bucket / 60} min` : `${bucket} s`);
+export const per = stepWords;
 
 // The figures of a list of history rows: sent and answered probes give the loss (the bucket average without counts).
 export function lossOf(rows, c) {

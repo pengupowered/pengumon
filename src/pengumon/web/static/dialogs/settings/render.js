@@ -12,6 +12,7 @@ import { problemList, problemSummary } from './problems.js';
 import { resetEditing } from './secrets.js';
 import { aboutHtml, LIST_HEADING, sectionHtml } from './sections.js';
 import { S, changeCount, hasProblems, listItems, listState, load, setList } from './store.js';
+import { fetchStorage } from './storage.js';
 import { savedAgo } from './versions.js';
 import { $, U, editors } from './ui.js';
 
@@ -24,6 +25,7 @@ export async function getJson(url) {
 export async function fetchState() {
   const [schema, server] = await Promise.all([S.schema ? Promise.resolve(S.schema) : getJson('/api/settings/schema'), getJson('/api/settings'), loadAccess()]);
   load(schema, server);
+  fetchStorage(); // not awaited: dbstat takes a moment, and the table fills in when it is here
 }
 
 // ---------- the page ----------

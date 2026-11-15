@@ -9,3 +9,5 @@
 /* the legend's squares: apart from each other (this was once leaked into the card by the channels dialog's own rule) */
 [data-panel="heat"] .scale-legend i { margin-left: var(--sp-3); }
 [data-panel="heat"] .scale-legend i:first-child { margin-left: 0; }
+/* an hour outside the window (the oldest day before it begins, the newest after now): blank, which is not "no data" */
+.heat > i.outside { background: transparent; }

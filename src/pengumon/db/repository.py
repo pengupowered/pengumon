@@ -4,6 +4,7 @@ the domain's own module (see the guard test in tests/test_repository_composition
 from pengumon.db.clients import ClientQueries
 from pengumon.db.core import RepositoryCore
 from pengumon.db.devices import DeviceQueries
+from pengumon.db.evidence import EvidenceQueries
 from pengumon.db.incidents import IncidentQueries
 from pengumon.db.path import PathQueries
 from pengumon.db.probes import ProbeQueries
@@ -14,7 +15,7 @@ from pengumon.db.traffic import TrafficQueries
 
 
 class DatabaseRepository(
-    ClientQueries, DeviceQueries, IncidentQueries, PathQueries, SettingsQueries, SpeedTestQueries, TargetQueries,
+    ClientQueries, DeviceQueries, EvidenceQueries, IncidentQueries, PathQueries, SettingsQueries, SpeedTestQueries, TargetQueries,
     TrafficQueries, ProbeQueries, RepositoryCore,
 ):
     """Every method callers use is defined in one of the mixins; the shared connections and caches are RepositoryCore's."""

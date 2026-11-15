@@ -293,6 +293,9 @@ async def test_a_client_list_poll_stores_counts_and_per_node_counts_never_a_clie
     samples = await repo.get_device_samples("router", 0, 1e12)
     assert [(s.clients_online, s.clients_wired, s.clients_wifi_2g, s.clients_wifi_5g, s.clients_wifi_other)
             for s in samples] == [(5, 2, 1, 1, 1), (None,) * 5]
+    # the readings are from 1970, long past the raw retention: read from the quarter-hour tier, bucket widened to 900 s
+    assert await repo.get_mesh_counts("router", 0, 1e12, 1) == [(900, "000001", 2.0), (900, "000002", 2.0), (900, "000003", 1.0)]
+    repo.retention_days = 100_000  # raw covers them: the raw answer
     assert await repo.get_mesh_counts("router", 0, 1e12, 1) == [(1000, "000001", 2.0), (1000, "000002", 2.0), (1000, "000003", 1.0)]
     # the whole database file holds no client: no name, address or MAC
     await repo.close()
@@ -307,9 +310,10 @@ async def test_retention_prunes_mesh_counts_like_device_samples(repo):
     now = time.time()
     from pengumon.db.samples import MeshCount
     await repo.insert_mesh_counts([MeshCount("router", now - 9 * 86400, "000001", 3), MeshCount("router", now - 60, "000001", 4)])
-    removed = await repo.run_retention(retention_days=7) if hasattr(repo, "run_retention") else await repo._prune(7, 90, 400)
+    removed = await repo.cleanup_old_samples(retention_days=7)
     assert removed["mesh_samples"] == 1
-    assert [r[2] for r in await repo.get_mesh_counts("router", 0, now + 1, 60)] == [4.0]
+    # the raw reading goes, its quarter hour stays (mesh_rollup_15m: kept for mesh_retention_days)
+    assert [r[2] for r in await repo.get_mesh_counts("router", 0, now + 1, 60)] == [3.0, 4.0]
 
 
 def _v9_database(path, monkeypatch):
@@ -547,6 +551,9 @@ async def test_history_endpoint_serves_bucketed_counts_and_nodes(app_state, repo
         res = await ac.get(f"/api/devices/router/clients/history?start_time={start}&end_time={start + 36000}")
         day = await ac.get("/api/devices/router/clients/history")
         bad = await ac.get("/api/devices/router/clients/history?start_time=10&end_time=5")
+        old = await ac.get(f"/api/devices/router/clients/history?start_time=10&end_time={start + 600}")
+    # a range older than the longest tier is clipped to it (raw, minute and quarter tiers: db/device_tiers.py)
+    assert old.json()["start_time"] >= time.time() - repo.router_history_days() * 86400 - 5
     body = res.json()
     assert res.status_code == 200 and body["bucket_seconds"] == clients_api.bucket_seconds(start, start + 36000) == 180
     assert 0 < len(body["points"]) <= 300

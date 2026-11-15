@@ -377,7 +377,7 @@ async def test_v11_migration_computes_percentiles_for_stored_minutes(tmp_path):
 @pytest.mark.asyncio
 async def test_history_is_clipped_to_retention(tmp_path):
     repo = DatabaseRepository(db_path=str(tmp_path / "clip.db"), sample_flush_seconds=3600,
-                              retention_days=1, rollup_retention_days=2, long_rollup_retention_days=2)
+                              retention_days=1, rollup_retention_days=2, latency_retention_days=2)
     await repo.initialize()
     now = time.time()
     await repo.insert_samples(_samples(now - 3 * DAY, 120, targets=("a",)))   # beyond both retentions
@@ -455,7 +455,9 @@ async def test_retention_prunes_raw_and_rollups_separately_and_frees_pages(repo)
 @pytest.mark.asyncio
 async def test_time_range_queries_use_the_primary_key_on_a_large_table(repo):
     """500k samples: every history query is a primary-key range search, never a table scan."""
-    now = int(time.time())
+    # mid-quarter: a range whose ends both fall on whole quarters has no edge minutes, so no rollup_1m part to plan
+    # (at about 7 seconds of every 15 minutes of the clock it had none, and the test failed)
+    now = int(time.time()) // 900 * 900 - 450
     con = sqlite3.connect(repo.db_path)
     con.executemany("INSERT INTO targets (id, key) VALUES (?, ?)", [(i, f"t{i}") for i in range(1, 11)])
     con.executemany(
@@ -717,10 +719,10 @@ async def _incident(repo, start, resolved, title):
 
 
 @pytest.mark.asyncio
-async def test_incidents_are_kept_forever_by_default(repo):
+async def test_incidents_are_kept_forever_when_set_to_zero(repo):
     now = time.time()
     await _incident(repo, now - 900 * DAY, True, "ancient")
-    assert repo.incident_retention_days == 0
+    repo.incident_retention_days = 0
     removed = await repo.cleanup_old_samples()
     assert "incidents" not in removed and [i.title for i in await repo.get_recent_incidents()] == ["ancient"]
 
@@ -749,12 +751,11 @@ def test_incident_retention_days_in_the_config_and_the_settings():
     from pengumon.config import DatabaseConfig
     from pengumon.settings import registry
 
-    assert DatabaseConfig().incident_retention_days == 0
-    assert DatabaseConfig(incident_retention_days=400).incident_retention_days == 400
-    assert DatabaseConfig(long_rollup_retention_days=900, incident_retention_days=900).incident_retention_days == 900
-    with pytest.raises(ValueError, match="incident_retention_days must be 0"):
-        DatabaseConfig(incident_retention_days=399)
-    with pytest.raises(ValueError, match="incident_retention_days must be 0"):
-        DatabaseConfig(long_rollup_retention_days=900, incident_retention_days=400)
+    assert DatabaseConfig().incident_retention_days == 180
+    assert DatabaseConfig(incident_retention_days=0).incident_retention_days == 0
+    assert DatabaseConfig(incident_retention_days=30).incident_retention_days == 30
+    for bad in (1, 29):
+        with pytest.raises(ValueError, match="incident_retention_days must be 0"):
+            DatabaseConfig(incident_retention_days=bad)
     setting = registry.get("database.incident_retention_days")
-    assert setting.label == "Keep resolved incidents for" and setting.default() == 0 and "forever" in setting.effect
+    assert setting.label == "Delete incidents older than" and setting.default() == 180 and "forever" in setting.effect

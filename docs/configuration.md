@@ -6,8 +6,12 @@ YAML; Import reads such a file back.
 
 `config.yaml` still exists, with a narrow job:
 
-- It holds the **listen address, the port, the database path and the probe interval** (`server.host`, `server.port`,
-  `database.db_path`, `prober.interval_seconds`); these are read at every start.
+- It holds the **listen address, the port and the database path** (`server.host`, `server.port`, `database.db_path`);
+  these are read at every start.
+- **The probe interval is a setting since 0.28** (Settings > Probing > Probe every: 1, 2, 5, 10, 30 or 60 s). The first
+  start of 0.28 stores the `prober.interval_seconds` that `config.yaml` sets, once, moved to the nearest of those choices
+  (the log says so when it moved); after that the file's value is ignored and the log says that too. In Settings >
+  Import it is a normal setting.
 - It is the **bootstrap of the first import**: on the first start of 0.21 or later, Pengumon copies the other
   sections of the file into the Settings page, once.
 - After that, **edits to any other part of `config.yaml` are ignored**, and the startup log says so
@@ -104,7 +108,7 @@ goes on. Webhook URLs and plain header values move to `secrets.json` at that imp
 `secret:<id>_<header>`), so the store holds no credential. `prober.ping_count_per_probe` did nothing and is dropped.
 
 After that the file is read at every start only for the **bootstrap keys**: `server.host`, `server.port`,
-`database.db_path` and `prober.interval_seconds` (strictly: a bad one stops the start), and the probe path's one-time
+and `database.db_path` (strictly: a bad one stops the start), and the probe path's one-time
 import (`targets:`). Everything else in it is ignored, and the startup log says how many of its keys differ from the
 dashboard ("config.yaml is ignored for settings (managed in the dashboard since <date>); 3 keys differ: ..."). Settings
 > Export writes the stored settings as YAML in this syntax (no secrets), and Settings > Import reads such a file (or a
@@ -131,7 +135,8 @@ What the first import reads, in `config.yaml` syntax (start from `config.example
 
 ```yaml
 prober:
-  interval_seconds: 1.0
+  interval_seconds: 1       # one of 1, 2, 5, 10, 30, 60 (a setting since 0.28; the first 0.28 start imports it once)
+  dns_interval_seconds: 5   # optional: the DNS lookups' own interval (a whole multiple of interval_seconds, not shorter)
   timeout_seconds: 1.0
   hop_status:                    # when a single target turns amber / red on the dashboard (all optional)
     degraded_loss_fraction: 0.1  # share of the judged probes (classifier.window_probes) lost, strictly above: degraded
@@ -150,16 +155,20 @@ Other keys the first import reads (all optional, shown with example values; the 
 
 ```yaml
 database:
-  retention_days: 7              # raw probe samples, DOCSIS, router metrics (line-capacity learning and the rules preview need 7)
-  slot_retention_days: 7         # the 10-second rollups (the latency chart's 10 s buckets); at least retention_days (unset:
-                                 # 7 or retention_days, the longer), at most rollup_retention_days
-  rollup_retention_days: 90      # per-minute rollups (history charts, report, dossier at one-minute detail); 30-1000
-  long_rollup_retention_days: 400  # quarter-hour rollups (ranges older than the per-minute ones), speed tests and
-                                 # device events (router restarts, WAN link changes);
-                                 # 30-3650, at least rollup_retention_days (unset: 400 or rollup_retention_days, the longer)
-  traffic_retention_days: 400    # the router's traffic per client and hour, and its app windows (1-1000)
-  incident_retention_days: 0     # resolved incidents: 0 keeps them forever, else at least long_rollup_retention_days;
+  # What is kept past the fixed full detail, one number per kind of data (Settings > Retention). Days, at least 30.
+  latency_retention_days: 180    # probes' 15-minute history (was long_rollup_retention_days, still read as this)
+  router_retention_days: 180     # the router's load, speeds and client counts, 15-minute steps
+  mesh_retention_days: 180       # clients per mesh node, 15-minute steps
+  line_retention_days: 180       # the cable line's per-channel readings
+  traffic_retention_days: 180    # the router's traffic per client and hour, and its app windows
+  speedtest_retention_days: 180  # speed tests (never under 32 days) and device events (router restarts, WAN link changes)
+  incident_retention_days: 180   # resolved incidents and their evidence; 0 keeps them forever, else at least 30;
                                  # an open incident is never deleted
+  # Full detail, the same for every kind of data (Settings > Advanced): change only if you know why.
+  retention_days: 7              # raw 1 s samples and the router, mesh and line readings (1-90); line-capacity learning
+                                 # and the rules preview need 7, an incident's evidence is written ~16 minutes after it (>= 1)
+  slot_retention_days: 7         # the 10-second rollups; at least retention_days (unset: 7 or retention_days, the longer)
+  rollup_retention_days: 30      # per-minute rollups of the probes and the router; 30-1000, at least slot_retention_days
 
 line:                            # internet line capacity; unset = learned from the router history
   down_mbps: 1000

@@ -2,10 +2,9 @@
 them: hourly totals, clients ranked by download with their top apps, apps ranked, the hours an incident or a busy spell
 covers, and a client's main app as a hint.
 
-The router counts apps only over 24 hours. Over a day or less the apps are its latest 24-hour window; over a longer
-range they are the sum of the whole local days in it: the windows that end exactly at a local midnight, one per day and
-client, kept as the day's row (devices/monitors.py, `day_of_window`). A day without such a row is not counted, and the
-answer says how many days were.
+The router counts apps only over 24 hours. A range's apps are the stored 24-hour windows that lie inside the range
+(`cover_apps`), added up; what they do not account for is the range's total minus them, shown as "not broken down by
+app", so a list always adds up to its total. Ranges are rolling windows ending at the newest hour read (windows.py).
 
 Everything is computed on read from `traffic_hourly` and `traffic_apps` (db/traffic.py). The rows name clients by MAC;
 what a reader is shown of a client follows `Namer`: "full" (its name and MAC), "masked" (its maker and the last four hex
@@ -16,14 +15,16 @@ dossier and the AI pack, whose texts may leave the household).
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone, tzinfo
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pengumon.capabilities import Capability, Client, ClientsReading
 from pengumon.drivers.common import BRACES
+from pengumon.windows import day_cells
 
 HOUR = 3600
 DEFAULT_HOURS = 24
 MAX_HOURS = 24 * 400
+MAX_DAYS = MAX_HOURS // 24
 TOP_APPS = 3                 # apps listed per client
 HINT_SHARE = 0.8             # a client whose traffic is at least this share one recognized app gets it as a hint ...
 HINT_MIN_BYTES = 50 * 10**6  # ... when it moved at least this much in the window ...
@@ -178,11 +179,6 @@ def _range(hours: int, now: float) -> Tuple[int, int]:
     return end - hours * HOUR, end
 
 
-# --- whole local days ---------------------------------------------------------------------------------------------------
-
-MAX_DAYS = MAX_HOURS // 24
-
-
 def midnight(day: date, tz: tzinfo) -> int:
     """The epoch second `day` starts at in `tz`."""
     return int(datetime(day.year, day.month, day.day, tzinfo=tz).timestamp())
@@ -197,158 +193,162 @@ def day_of_window(window_end: int, tz: tzinfo) -> Optional[str]:
     return day.isoformat() if midnight(day + timedelta(days=1), tz) == int(window_end) else None
 
 
-def whole_days(count: int, now: float, tz: tzinfo) -> List[date]:
-    """The `count` whole local days that end at the last midnight at or before `now`, oldest first."""
-    today = datetime.fromtimestamp(now, tz).date()
-    return [today - timedelta(days=k) for k in range(count, 0, -1)]
+# --- the apps of a rolling window -------------------------------------------------------------------------------------
+
+APP_WINDOW = 24 * HOUR  # the router counts apps over 24 hours only
 
 
-async def day_apps(repository, device_id: str, days: Sequence[date],
-                   tz: tzinfo) -> Tuple[Dict[str, List[Tuple[str, int, int]]], List[str]]:
-    """The apps of each client ('' = every client together) summed over the day rows of `days` that are whole days in
-    `tz` (a row cut on another zone, or one stored before rows had to be, is left out), and the days counted (those
-    with the row of every client together), oldest first."""
-    if not days:
-        return {}, []
-    ends = {d.isoformat(): midnight(d + timedelta(days=1), tz) for d in days}
-    sums: Dict[str, Dict[str, List[int]]] = {}
-    counted = set()
-    for client, day, window_end, apps in await repository.get_traffic_app_day_range(
-            device_id, days[0].isoformat(), days[-1].isoformat()):
-        if ends.get(day) != int(window_end):
-            continue
-        if client == "":
-            counted.add(day)
-        acc = sums.setdefault(client, {})
+def cover_apps(windows: Iterable[Tuple[int, Sequence[Sequence]]], start: float,
+               end: float) -> List[Tuple[int, Sequence[Sequence]]]:
+    """The stored 24-hour app windows `(window_end, apps)` that tile [start, end) best: only a window whose whole 24
+    hours lie inside, chosen newest first, each ending at or before the start of the one chosen before it (so none
+    overlap). Windows ending at every hour tile it exactly: H, H - 24 h, H - 48 h, ... Newest first."""
+    chosen: List[Tuple[int, Sequence[Sequence]]] = []
+    limit = end
+    for window_end, apps in sorted(windows, key=lambda w: -w[0]):
+        if window_end <= limit and window_end - APP_WINDOW >= start:
+            chosen.append((window_end, apps))
+            limit = window_end - APP_WINDOW
+    return chosen
+
+
+def sum_apps(chosen: Sequence[Tuple[int, Sequence[Sequence]]]) -> List[Tuple[str, int, int]]:
+    """The apps of the chosen windows added up: (app, up, down)."""
+    acc: Dict[str, List[int]] = {}
+    for _, apps in chosen:
         for name, up, down in apps:
             a = acc.setdefault(str(name), [0, 0])
             a[0] += int(up)
             a[1] += int(down)
-    return ({c: [(n, u, d) for n, (u, d) in acc.items()] for c, acc in sums.items()},
-            sorted(counted))
+    return [(n, u, d) for n, (u, d) in acc.items()]
+
+
+def unattributed(total: Tuple[int, int], apps: Sequence[Sequence]) -> Dict[str, int]:
+    """What of a client's (or the network's) total (up, down) over the window no app list accounts for: the total minus
+    the apps' sum, each direction on its own and never below 0."""
+    return {"up": max(0, int(total[0]) - sum(int(a[1]) for a in apps)),
+            "down": max(0, int(total[1]) - sum(int(a[2]) for a in apps))}
+
+
+def _by_client(rows: Iterable[Tuple[str, int, Sequence[Sequence]]]) -> Dict[str, List[Tuple[int, Sequence[Sequence]]]]:
+    out: Dict[str, List[Tuple[int, Sequence[Sequence]]]] = {}
+    for client, window_end, apps in rows:
+        out.setdefault(client, []).append((window_end, apps))
+    return out
+
+
+def _covered(chosen: Sequence[Tuple[int, Sequence[Sequence]]]) -> Dict[str, Any]:
+    return {"hours": len(chosen) * 24, "windows": [w for w, _ in chosen]}
+
+
+async def _window(repository, device_id: str, hours: int, days: Optional[int], now: float) -> Tuple[int, int, int]:
+    """(start, end, hours) of a range: the last `hours` hours (`days` * 24 with `days`) that end at the newest hour
+    the router published when that is within an hour of the current hour, else at the current hour (the hour in
+    progress is never counted)."""
+    hours = days * 24 if days else hours
+    floor = hour_floor(now)
+    newest, _ = await repository.get_traffic_latest(device_id)
+    end = newest + HOUR if newest is not None and abs(floor - (newest + HOUR)) <= HOUR else floor
+    return end - hours * HOUR, end, hours
+
+
+def _daily(rows: Sequence[Dict[str, Any]], start: float, end: float, tz: tzinfo) -> List[Dict[str, Any]]:
+    """The totals per local calendar day inside the window ([start, end), windows.day_cells): {day, start, end, up, down
+    (null without a stored hour), hours, partial, stored}. An hour belongs to the day it begins in."""
+    out = []
+    for cell in day_cells(start, end, tz):
+        mine = [r for r in rows if cell["start"] <= r["hour"] < cell["end"] and r["down"] is not None]
+        out.append({**cell, "up": sum(r["up"] for r in mine) if mine else None,
+                    "down": sum(r["down"] for r in mine) if mine else None, "stored": len(mine)})
+    return out
 
 
 async def summary(repository, device_id: str, hours: int, namer: Namer, now: Optional[float] = None,
-                  top: Optional[int] = None, *, days: Optional[int] = None,
-                  tz: Optional[tzinfo] = None) -> Dict[str, Any]:
-    """The last `hours` complete clock hours, or with `days` the last `days` whole local days in `tz` (up to the last
-    midnight, with the WAN's totals per day in `daily` and `wan` empty): hourly WAN totals (null for an hour not
-    stored), the totals,
-    clients ranked by download with their top apps and hint, and the apps of every client together, ranked by
-    download.
+                  top: Optional[int] = None, *, days: Optional[int] = None, tz: Optional[tzinfo] = None,
+                  with_hours: Optional[bool] = None) -> Dict[str, Any]:
+    """The last `hours` hours (`days` * 24 with `days`), a rolling window that ends at the newest hour the router
+    published (see `_window`): hourly WAN totals (null for an hour not stored; left out of a range over 7 days unless
+    `with_hours`), the totals, `daily` (per local calendar day inside the window, the first and last `partial`, for
+    ranges of two days or more), clients ranked by download with their top apps and hint, and the apps of every
+    client together, ranked by download.
 
-    The apps: over 24 hours or less, the router's latest 24-hour window (`apps_window_end`); over more, the sum of the
-    whole days in the range (`hours // 24` of them up to the last midnight, or the `days`), described by `apps_days`
-    (first and last day, how many were wanted and how many had a row)."""
+    The apps cover the same window and add up: the stored 24-hour windows that lie inside it (`cover_apps`, listed in
+    `apps_covered`), summed; `apps_unattributed` is the part of the total they do not account for ("not broken down
+    by app"), so apps plus it equal `totals`."""
     now = time.time() if now is None else now
     tz = tz or timezone.utc
-    start, end, hours, wanted = _window(hours, days, now, tz)
+    start, end, hours = await _window(repository, device_id, hours, days, now)
     rows = await repository.get_traffic_hours(device_id, start, end, client="")
     by_hour = {h: (u, d) for h, _, u, d in rows}
     wan = [{"hour": h, "up": by_hour[h][0] if h in by_hour else None, "down": by_hour[h][1] if h in by_hour else None}
            for h in range(start, end, HOUR)]
     totals = {c: (u, d) for c, u, d, _ in await repository.get_traffic_totals(device_id, start, end)}
-    if wanted:
-        summed, counted = await day_apps(repository, device_id, wanted, tz)
-        apps_end = midnight(date.fromisoformat(counted[-1]) + timedelta(days=1), tz) if counted else None
-        windows = {c: (apps_end, apps) for c, apps in summed.items()}
-        apps_days = _apps_days(wanted, counted)
-    else:
-        windows = {c: (w, apps) for c, _, w, _, apps in await repository.get_traffic_apps(device_id)}
-        apps_days = None
+    windows = _by_client(await repository.get_traffic_app_windows(device_id, start + APP_WINDOW, end))
+    covers = {c: cover_apps(w, start, end) for c, w in windows.items()}
     clients = []
     for mac, (up, down) in sorted(((c, t) for c, t in totals.items() if c), key=lambda kv: (-kv[1][1], -kv[1][0])):
         if not (up or down):
             continue
-        window_end, apps = windows.get(mac, (None, []))
-        hint = hint_of(apps, window_end, now) if window_end is not None else None
+        chosen = covers.get(mac, [])
+        apps = sum_apps(chosen)
+        hint = hint_of(apps, chosen[0][0], now) if chosen else None
         clients.append({**namer.row(mac), "up": up, "down": down, "apps": _apps(apps, TOP_APPS),
-                        "traffic_hint": hint})
+                        "apps_unattributed": unattributed((up, down), apps), "traffic_hint": hint})
     if top:
         clients = clients[:top]
-    all_end, all_apps = windows.get("", (None, []))
+    all_chosen = covers.get("", [])
+    all_apps = sum_apps(all_chosen)
     newest, read_at = await repository.get_traffic_latest(device_id)
     wan_up, wan_down = totals.get("", (0, 0))
+    with_hours = hours <= 7 * 24 if with_hours is None else with_hours
     return {
         "hours": hours, "days": days or None, "start": start, "end": end,
         "window_end": newest + HOUR if newest is not None else None,
         "stored_at": read_at,
-        "wan": [] if days else wan,  # with days the chart is per day: the hours are left out (85 % of a 30 day answer)
-        "daily": _daily(wan, wanted, tz) if days else None,
+        "wan": wan if with_hours else [],  # a 30 day answer leaves the hours out (85 % of its size): `daily` has them
+        "daily": _daily(wan, start, end, tz) if hours >= 48 else None,
         "totals": {"up": wan_up, "down": wan_down},
         "clients": clients,
         "apps": _apps(all_apps, top),
-        "apps_window_end": all_end,
-        "apps_days": apps_days,
+        "apps_unattributed": unattributed((wan_up, wan_down), all_apps),
+        "apps_covered": _covered(all_chosen),
+        "apps_window_end": all_chosen[0][0] if all_chosen else None,
     }
-
-
-def _window(hours: int, days: Optional[int], now: float, tz: tzinfo) -> Tuple[int, int, int, List[date]]:
-    """(start, end, hours, the whole days whose apps are summed) of a range: the last `hours` complete hours (the days:
-    the last hours // 24 up to the last midnight, none under 48 hours), or with `days` the last `days` whole days."""
-    if days:
-        wanted = whole_days(days, now, tz)
-        start = hour_floor(midnight(wanted[0], tz))
-        end = hour_floor(midnight(wanted[-1] + timedelta(days=1), tz))
-        return start, end, (end - start) // HOUR, wanted
-    start, end = _range(hours, now)
-    return start, end, hours, whole_days(hours // 24, now, tz) if hours >= 48 else []
-
-
-def _apps_days(wanted: Sequence[date], counted: List[str]) -> Dict[str, Any]:
-    return {"first": wanted[0].isoformat(), "last": wanted[-1].isoformat(), "wanted": len(wanted),
-            "stored": len(counted), "days": counted}
-
-
-def _daily(wan: List[Dict[str, Any]], days: Sequence[date], tz: tzinfo) -> List[Dict[str, Any]]:
-    """The WAN's totals per local day: {day, start, end, up, down (null without a stored hour), hours, stored}."""
-    out = []
-    for d in days:
-        s, e = hour_floor(midnight(d, tz)), hour_floor(midnight(d + timedelta(days=1), tz))
-        mine = [r for r in wan if s <= r["hour"] < e and r["down"] is not None]
-        out.append({"day": d.isoformat(), "start": s, "end": e,
-                    "up": sum(r["up"] for r in mine) if mine else None,
-                    "down": sum(r["down"] for r in mine) if mine else None,
-                    "hours": (e - s) // HOUR, "stored": len(mine)})
-    return out
 
 
 async def client_detail(repository, device_id: str, mac: str, hours: int, namer: Namer,
                         now: Optional[float] = None, tz: Optional[tzinfo] = None, *,
                         days: Optional[int] = None) -> Dict[str, Any]:
-    """One client over the last `hours` complete hours, or with `days` the last `days` whole local days in `tz` (with
-    its totals per day in `daily`, and `range_days`): its hourly series (0 for an hour the router has, with no row for
-    this client; null for an hour the router's WAN figure is missing too), its apps and hint over the range as
-    `summary` counts them (`apps_window_end`, `apps_days`), and its apps by whole local day (`days`, day_of_window)."""
+    """One client over the last `hours` hours (`days` * 24 with `days`; the window of `summary`): its hourly series (0
+    for an hour the router has, with no row for this client; null for an hour the router's WAN figure is missing
+    too; left out of a range over 7 days), `daily` as `summary` has it, its apps and hint over the window as
+    `summary` counts them (`apps_covered`, `apps_unattributed`, `apps_window_end`), and its apps by whole local day
+    (`days`, day_of_window)."""
     now = time.time() if now is None else now
     tz = tz or timezone.utc
-    start, end, hours, wanted = _window(hours, days, now, tz)
+    start, end, hours = await _window(repository, device_id, hours, days, now)
     rows = await repository.get_traffic_hours(device_id, start, end, client=mac)
     wan_hours = {h for h, _, _, _ in await repository.get_traffic_hours(device_id, start, end, client="")}
     mine = {h: (u, d) for h, _, u, d in rows}
     series = [{"hour": h, "up": mine.get(h, (0, 0))[0] if h in wan_hours or h in mine else None,
                "down": mine.get(h, (0, 0))[1] if h in wan_hours or h in mine else None}
               for h in range(start, end, HOUR)]
-    if wanted:
-        summed, counted = await day_apps(repository, device_id, wanted, tz)
-        apps = summed.get(mac, [])
-        window_end = midnight(date.fromisoformat(counted[-1]) + timedelta(days=1), tz) if counted and apps else None
-        apps_days = _apps_days(wanted, counted)
-    else:
-        latest = await repository.get_traffic_apps(device_id, client=mac)
-        window_end, apps = (latest[0][2], latest[0][4]) if latest else (None, [])
-        apps_days = None
+    chosen = cover_apps([(w, a) for _, w, a in await repository.get_traffic_app_windows(
+        device_id, start + APP_WINDOW, end, client=mac)], start, end)
+    apps = sum_apps(chosen)
+    total = (sum(u for u, _ in mine.values()), sum(d for _, d in mine.values()))
     by_day = [(day, w, a) for day, w, a in await repository.get_traffic_app_days(device_id, mac, start)
               if day_of_window(w, tz) == day]
     return {
-        "client": {**namer.row(mac), "traffic_hint": hint_of(apps, window_end, now) if window_end else None},
+        "client": {**namer.row(mac), "traffic_hint": hint_of(apps, chosen[0][0], now) if chosen else None},
         "hours": hours, "range_days": days or None, "start": start, "end": end,
-        "series": [] if days else series,  # (with days: per day only, as summary)
-        "daily": _daily(series, wanted, tz) if days else None,
-        "totals": {"up": sum(u for u, _ in mine.values()), "down": sum(d for _, d in mine.values())},
+        "series": series if hours <= 7 * 24 else [],
+        "daily": _daily(series, start, end, tz) if hours >= 48 else None,
+        "totals": {"up": total[0], "down": total[1]},
         "apps": _apps(apps),
-        "apps_window_end": window_end,
-        "apps_days": apps_days,
+        "apps_unattributed": unattributed(total, apps),
+        "apps_covered": _covered(chosen),
+        "apps_window_end": chosen[0][0] if chosen else None,
         "days": [{"day": day, "window_end": w, "apps": _apps(a, 10)} for day, w, a in by_day],
     }
 

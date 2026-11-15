@@ -2,7 +2,7 @@
    block with each day's name, hour blocks in their step of the loss scale (--f), an hour ruler, the scale between its labels and the
    sentence as a readout under a "Pattern" label (this theme's word, CSS text), after an orange band. */
 
-:root[data-look="starship"] [data-panel="heat"] .heat { grid-template-columns: 46px repeat(24, minmax(0, 1fr)); gap: 3px 2px; align-items: stretch; }
+:root[data-look="starship"] [data-panel="heat"] .heat { grid-template-columns: minmax(46px, max-content) repeat(24, minmax(0, 1fr)); gap: 3px 2px; align-items: stretch; }
 /* the hour ruler: a tick per hour, the quarter days named */
 :root[data-look="starship"] [data-panel="heat"] .heat .hd {
   height: 18px; border-bottom: 3px solid var(--ink-3); margin-bottom: 2px; text-align: left; overflow: visible; white-space: nowrap;

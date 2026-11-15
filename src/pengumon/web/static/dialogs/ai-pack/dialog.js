@@ -2,7 +2,7 @@
 // Opened from the header, the incident inspector (with that incident) and the dossier. The dialog starts at Full.
 //
 // The request and the answer (api/reports.py; this file is the only place that names them):
-//   GET /api/ai-pack?scope=window&hours=1|24|168 | scope=incident&incident_id=<id>  &level=full|vague|anonymized
+//   GET /api/ai-pack?scope=window&hours=1|24|168|720 | scope=incident&incident_id=<id>  &level=full|vague|anonymized
 //       &detail=short|detailed  &tz_offset_minutes=<minutes east of UTC>  &tz=<the browser's IANA zone>
 //   -> { markdown, roles: [{role, name}], modules: [{id, title, chars, budget_chars, trimmed}], tokens_estimate?, counts? }
 //   422/404: the choice is wrong; 429: another build runs (Retry-After); 503: no repository. The route allows 6 a minute, so
@@ -12,10 +12,11 @@ import { registerActions } from '../../js/dispatch.js';
 import { copyText } from '../../js/clipboard.js';
 import { keepKeyboard, openModal } from '../../js/modal.js';
 import { zoneParams } from '../../js/clock.js';
+import { rangeOptions } from '../../js/ranges.js';
 
 const AI_PACK_URL = '/api/ai-pack';
 const DEBOUNCE_MS = 600;
-const HOURS = { '1h': 1, '24h': 24, '7d': 168 };
+const HOURS = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 };
 const REFUSALS = { 404: 'that incident no longer exists', 422: 'those choices do not go together', 503: 'Pengumon has no stored history yet' };
 const $ = (id) => document.getElementById(id);
 
@@ -146,6 +147,8 @@ function choiceChanged() {
 export function openAiPackModal(el) {
   const id = el && el.dataset ? Number(el.dataset.arg) : NaN;
   incidentId = Number.isFinite(id) && el.dataset.arg !== '' ? id : null;
+  // the same words as every range control (js/ranges.js); a chat model's text must stay small, so it stops at 30 days
+  rangeOptions({ min: '1h', max: '30d', all: false }).forEach((o) => { const opt = $('aiPackWindow').querySelector(`option[value="${o.id}"]`); if (opt) opt.textContent = o.words; });
   const option = $('aiPackIncidentOption');
   option.hidden = option.disabled = incidentId === null;
   $('aiPackWindow').value = incidentId === null ? '24h' : 'incident';

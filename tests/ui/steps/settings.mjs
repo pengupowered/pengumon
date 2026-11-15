@@ -54,6 +54,15 @@ const inView = (page, sel) => page.$eval(sel, (e) => {
 });
 const scrollBottom = (page) => page.$eval("#settingsBody", (e) => { e.scrollTop = e.scrollHeight; });
 
+// the disk figures of Retention, as the page asks for them (GET /api/storage), made up so the numbers are known
+const stubStorage = (page, body) => page.evaluate((b) => {
+  window.__storageFetch = window.__storageFetch || window.fetch;
+  window.fetch = async (input, init) => (String(input).split("?")[0].endsWith("/api/storage")
+    ? new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } }) : window.__storageFetch(input, init));
+}, body);
+const unstubStorage = (page) => page.evaluate(() => { if (window.__storageFetch) { window.fetch = window.__storageFetch; window.__storageFetch = null; } });
+const storageDrawn = (page, until) => until(() => document.querySelector("#set-sec-retention [data-extra=storage] tbody tr") !== null);
+
 export const steps = [
   ["Settings opens from the header button and from #settings; the sections are in order, About last", async (ctx) => {
     const { eq, page, until, text } = ctx;
@@ -159,7 +168,7 @@ export const steps = [
     await page.evaluate(() => { history.replaceState({ e0: 1 }, ""); history.pushState({ e1: 1 }, ""); }); // the page the user came from, and this one
     await settingsOpen(ctx);
     ok("Save is off with no change", await page.$eval("#btnSettingsSave", (b) => b.disabled));
-    eq("the standard value is shown", await page.$eval(`${settingsRow(LOSS)} .set-def`, (e) => e.textContent.trim()), "Standard: 3 s");
+    eq("the standard value is shown", await page.$eval(`${settingsRow(LOSS)} .set-def`, (e) => e.textContent.trim()), "Standard: 3 lost probes in a row");
     await settingsType(page, LOSS, "5");
     eq("one change", await settingsSaveLabel(page), "Save 1 change");
     eq("badge Unsaved", await page.$eval(`${settingsRow(LOSS)} [data-badge=unsaved]`, (e) => e.textContent), "Unsaved");
@@ -273,6 +282,111 @@ export const steps = [
     await ctx.click("#btnSettingsCancel");  // the address is reset by the Export / Import step (Saves are rate limited: 20 a minute)
   }],
 
+  ["Retention: the seven kinds, the fixed full detail under Advanced, and a disk table that follows the numbers (Now, When full, Change) and asks before a lowered number deletes data", async (ctx) => {
+    const { eq, ok, page, until, text, click } = ctx;
+    const MB = 1e6;
+    const kind = (id, label, setting, bytes, days, perDay, fixed, tiered) => ({ id, label, setting, tables: [], bytes: bytes * MB, days_stored: days, per_day: perDay * MB, fixed: fixed * MB, tiered, estimate: false });
+    const kinds = [
+      kind("full", "Full detail", null, 440, 41, 60, 440, false),
+      kind("latency", "Latency history", "database.latency_retention_days", 4, 41, 0.1, 3, true),
+      kind("router", "Router history", "database.router_retention_days", 20, 100, 0.2, 6, true),
+      kind("mesh", "Mesh history", "database.mesh_retention_days", 1, 10, 0.1, 3, true),
+      kind("line", "Cable line history", "database.line_retention_days", 2, 20, 0.1, 0, false),
+      kind("traffic", "Internet use", "database.traffic_retention_days", 0.4, 4, 0.1, 0, false),
+      kind("speedtest", "Speed tests and router events", "database.speedtest_retention_days", 0.02, 7, 0.001, 0, false),
+      kind("incident", "Incidents and their evidence", "database.incident_retention_days", 3, 75, 0.04, 0, false),
+      kind("other", "Other", null, 0.2, 0, 0, 0.2, false)
+    ];
+    const storage = { generated_at: 1, took_seconds: 0.1, estimate: false, fixed_days: 30, kinds, total_bytes: 470.62 * MB, free_bytes: 0, file_bytes: 500 * MB, wal_bytes: 0, disk: { total: 1e12, used: 5e11, free: 5e11 } };
+    await stubStorage(page, storage);
+    const cell = (id, name) => page.$eval(`#set-sec-retention [data-extra=storage] tr[data-kind=${id}] [data-cell=${name}]`, (e) => e.textContent.trim());
+    try {
+      await settingsOpen(ctx);
+      await storageDrawn(page, until);
+      const keys = await page.$$eval("#set-sec-retention .set-row[data-key]", (rows) => rows.map((r) => r.dataset.key));
+      eq("the seven kinds, one number each", keys.join(), ["latency", "router", "mesh", "line", "traffic", "speedtest", "incident"].map((k) => `database.${k}_retention_days`).join());
+      eq("the three fixed tiers are under Advanced", (await page.$$eval("#set-sec-advanced .set-row[data-key^='database.']", (rows) => rows.map((r) => r.dataset.key))).join(), "database.retention_days,database.slot_retention_days,database.rollup_retention_days");
+      eq("the incidents' label", await text(`${settingsRow("database.incident_retention_days")} .set-label`), "Delete incidents older than");
+      eq("the rows of the table", (await page.$$eval("#set-sec-retention [data-extra=storage] tbody tr", (r) => r.map((x) => x.dataset.kind))).join(), "full,latency,router,mesh,line,traffic,speedtest,incident,other,total");
+      eq("router now", await cell("router", "now"), "20 MB");
+      eq("router, 180 days at today's rate: its fixed part and 150 days more", await cell("router", "full"), "36 MB");
+      eq("less history than the number: said so", await cell("router", "keep"), "180 days (100 of 180 days stored)");
+      eq("nothing changes at the saved number", await cell("router", "change"), "\u2014");
+      eq("the full detail is fixed", await cell("full", "full"), "440 MB");
+      eq("the total", `${await cell("total", "now")} | ${await cell("total", "full")}`, "471 MB | 556 MB");
+      ok("the disk line and the fixed periods", /Disk: 500 MB now · 500 GB free/.test(await text("[data-storage-disk]")) && /Full detail \(every second, 10 seconds, 1 minute\) is kept 7 \/ 7 \/ 30 days/.test(await text("#set-sec-retention [data-extra=storage]")));
+      await settingsType(page, "database.latency_retention_days", "365");
+      eq("raising a number raises When full", await cell("latency", "full"), "37 MB");
+      ok("and shows the growth", /^\+\d+ MB$/.test(await cell("latency", "change")));
+      await settingsType(page, "database.incident_retention_days", "0");
+      eq("0 keeps incidents forever: a yearly rate", await cell("incident", "full"), "grows ~15 MB a year");
+      ok("the total says so", /incidents without end/.test(await cell("total", "full")));
+      await settingsDiscard(ctx);
+      // lowering: what is freed, and Save asks first
+      await settingsOpen(ctx);
+      await storageDrawn(page, until);
+      await settingsType(page, "database.router_retention_days", "90");
+      eq("When full follows the typed number", await cell("router", "full"), "18 MB");
+      eq("the days stored beyond it are freed", await cell("router", "change"), "frees 2 MB");
+      eq("the total frees the same", await cell("total", "change"), "frees 2 MB");
+      await click("#btnSettingsSave");
+      await until(() => !document.getElementById("settingsConfirm").hidden);
+      eq("the question says what goes", await text("#settingsConfirmText"), "Deletes about 2 MB of router history older than 90 days at the next hourly cleanup. This can't be undone.");
+      eq("with its own button", await text("#btnConfirmYes"), "Delete and save");
+      await click("#btnConfirmNo");
+      eq("keep editing: nothing was saved", await settingsSaveLabel(page), "Save 1 change");
+      eq("the saved value is still 180", (await settingsValuesNow(page)).values["database.router_retention_days"], 180);
+      await settingsDiscard(ctx); // (Saves are rate limited, 20 a minute: the bare variant saves)
+    } finally {
+      await unstubStorage(page);
+    }
+  }],
+
+  ["Retention: Delete and save saves a lowered number, a raised one saves without a question", async (ctx) => {
+    const { eq, page, until, click } = ctx;
+    const router = { id: "router", label: "Router history", setting: "database.router_retention_days", tables: [], bytes: 2e7, days_stored: 100, per_day: 2e5, fixed: 6e6, tiered: true, estimate: false };
+    await stubStorage(page, { generated_at: 1, took_seconds: 0, estimate: false, fixed_days: 30, kinds: [router], total_bytes: 2e7, free_bytes: 0, file_bytes: 5e8, wal_bytes: 0, disk: { total: 1e12, used: 5e11, free: 5e11 } });
+    const saved = () => until(() => document.getElementById("toast")?.classList.contains("on") && document.querySelector("#btnSettingsSave").textContent.trim() === "Save");
+    try {
+      await settingsOpen(ctx);
+      await storageDrawn(page, until);
+      await settingsType(page, "database.router_retention_days", "90");
+      await click("#btnSettingsSave");
+      await until(() => !document.getElementById("settingsConfirm").hidden);
+      await click("#btnConfirmYes");
+      await saved();
+      eq("yes saves it", (await settingsValuesNow(page)).values["database.router_retention_days"], 90);
+      await settingsType(page, "database.router_retention_days", "120");
+      await click("#btnSettingsSave");
+      await saved();
+      eq("a raised number saves at once", (await settingsValuesNow(page)).values["database.router_retention_days"], 120);
+      await click("#btnSettingsCancel");
+      await page.evaluate(async () => {
+        const state = await (await fetch("/api/settings")).json();
+        await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: state.revision, values: { "database.router_retention_days": null }, lists: {}, secrets: {} }) });
+      });
+    } finally {
+      await unstubStorage(page);
+    }
+  }, { variants: ["bare"] }], // Saves: the full variant's steps are at the limit of 20 a minute (api/settings.py)
+
+  ["Retention at 390 px: the table scrolls inside its box, not the page", async (ctx) => {
+    const { ok, page, phone, until } = ctx;
+    const body = { generated_at: 1, took_seconds: 0, estimate: false, fixed_days: 30, kinds: [{ id: "router", label: "Router history", setting: "database.router_retention_days", tables: [], bytes: 2e7, days_stored: 100, per_day: 2e5, fixed: 6e6, tiered: true, estimate: false }], total_bytes: 2e7, free_bytes: 0, file_bytes: 5e8, wal_bytes: 0, disk: { total: 1e12, used: 5e11, free: 5e11 } };
+    await phone(async () => { // (the viewport switch reloads the page: the stub goes in after it)
+      await stubStorage(page, body);
+      try {
+        await settingsOpen(ctx);
+        await storageDrawn(page, until);
+        ok("the table is there", await page.$eval("#set-sec-retention .set-storage", (e) => e.getBoundingClientRect().width > 0));
+        ok("the page does not scroll sideways", await ctx.noSideScroll("settingsModal"));
+        await ctx.click("#btnSettingsCancel");
+      } finally {
+        await unstubStorage(page);
+      }
+    });
+  }],
+
   ["Speed test section: choices made of numbers stay numbers in the draft the server validates, and the window's two ends go together", async (ctx) => {
     const { eq, ok, page, until } = ctx;
     const row = (name) => settingsRow(`speedtest.${name}`);
@@ -356,6 +470,59 @@ export const steps = [
     await ctx.click(`${row("provider")} button[data-arg=cloudflare]`);
     eq("and goes with the choice", await note(), false);
     await settingsDiscard(ctx);
+  }],
+
+  ["Probing section: the probe interval has its six choices and says what a choice does to the rules, the missed drops and the cost; the rules read in probes with their time beside them; the DNS lookups' interval must fit", async (ctx) => {
+    const { eq, ok, page, until } = ctx;
+    const row = (name) => settingsRow(`prober.${name}`);
+    const lines = () => page.$$eval("#set-sec-probing [data-extra=interval-estimate] .set-line", (els) => els.map((e) => e.textContent));
+    const time = (key) => page.$eval(`${settingsRow(key)} [data-time]`, (e) => e.textContent.trim());
+    const choose = (name, value) => page.select(`${row(name)} select`, value);
+    // the numbers the page's cost line should show, from the path and the settings as the API gives them (a count of
+    // its own, not the page's): ICMP echoes past the gateway are 244 B a round (IPv4), a lookup 150 B
+    const api = await page.evaluate(async () => ({ path: await (await fetch("/api/path", { cache: "no-store" })).json(), settings: await (await fetch("/api/settings", { cache: "no-store" })).json() }));
+    const hops = api.path.hops.filter((h) => h.enabled !== false);
+    const past = hops.filter((h) => h.category === "isp" || h.category === "public").length;
+    const lookups = api.settings.lists.dns_probes.items.filter((d) => d.enabled !== false).length;
+    const month = (interval) => (past * 244 / interval + lookups * 150 / interval) * 86400 * 30;
+    const day = (interval) => (hops.length / interval + lookups / interval) * 86400 * 40;
+    const size = (bytes) => (bytes >= 1e9 ? `${Math.round(bytes / 1e8) / 10} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e5) / 10} MB` : `${Math.round(bytes / 1e3)} KB`);
+    await settingsOpen(ctx);
+    eq("the six choices, in order", await page.$$eval(`${row("interval_seconds")} select option`, (o) => o.map((x) => x.value).join()), "1,2,5,10,30,60");
+    eq("worded", await page.$$eval(`${row("interval_seconds")} select option`, (o) => o[0].textContent + " | " + o[5].textContent), "Every second | Every minute");
+    eq("one second is the standard and the box shows it", await page.$eval(`${row("interval_seconds")} select`, (e) => e.value), "1");
+    eq("standard, in words", await page.$eval(`${row("interval_seconds")} .set-def`, (e) => e.textContent.trim()), "Standard: Every second");
+    eq("the lookups' interval can be left to the round", await page.$eval(`${row("dns_interval_seconds")} select option`, (o) => o.textContent), "with every probe round");
+    eq("the rule at 1 s: 3 lost probes are 3 s", await time(LOSS), "3 s at a 1 s interval");
+    eq("the window", await time("classifier.window_probes"), "10 s at a 1 s interval");
+    eq("what the standard interval does", (await lines())[0], "At 1 s: outages open after about 3 s, latency incidents after about 10 s. Drops shorter than about 1 s may go unseen.");
+    eq("and costs: traffic from the path, storage from the hops", (await lines())[1].replace(/, from the .*$/, ""),
+      `Costs about ${size(month(1))} of internet traffic a month and ${size(day(1))} of storage a day (the 7 days of raw samples)`);
+    await choose("interval_seconds", "10");
+    eq("at 10 s the rules stretch", (await lines())[0], "At 10 s: outages open after about 30 s, latency incidents after about 100 s. Drops shorter than about 10 s may go unseen.");
+    eq("the loss rule keeps its count and shows its time", await page.$eval(`${settingsRow(LOSS)} input[data-key]`, (e) => e.value) + " | " + await time(LOSS), "3 | 30 s at a 10 s interval");
+    eq("the recovery rule too", await time("classifier.consecutive_successes_for_recovery"), "30 s at a 10 s interval");
+    eq("a tenth of the traffic and storage", (await lines())[1].replace(/, from the .*$/, ""),
+      `Costs about ${size(month(10))} of internet traffic a month and ${size(day(10))} of storage a day (the 7 days of raw samples)`);
+    eq("one change", await settingsSaveLabel(page), "Save 1 change");
+    await settingsType(page, LOSS, "5");
+    eq("a new count: the page's line follows it", (await lines())[0].slice(0, 62), "At 10 s: outages open after about 50 s, latency incidents afte");
+    eq("and its row", await time(LOSS), "50 s at a 10 s interval");
+    // the lookups: not shorter than the round and a whole multiple of it
+    await choose("dns_interval_seconds", "5");
+    ok("5 s lookups on a 10 s round are said to be too often", /cannot run more often than the probes/.test(await ctx.text(`${row("dns_interval_seconds")} [data-dns-problem]`)));
+    await until(() => /must not be shorter/.test(document.querySelector('[data-key="prober.interval_seconds"] [data-msg]')?.textContent ?? ""));
+    ok("and the server refuses the save while it stands", await page.$eval("#btnSettingsSave", (b) => b.disabled));
+    await choose("dns_interval_seconds", "30");
+    eq("30 s lookups on a 10 s round fit", await ctx.count(`${row("dns_interval_seconds")} [data-dns-problem]`), 0);
+    await until(() => !document.querySelector('[data-key="prober.interval_seconds"] [data-msg]')?.textContent);
+    ok("Save is on again", await page.$eval("#btnSettingsSave", (b) => !b.disabled));
+    await choose("dns_interval_seconds", "");
+    eq("back to every round", await page.$eval(`${row("dns_interval_seconds")} select`, (e) => e.value), "");
+    await choose("interval_seconds", "60");
+    eq("a minute, with the loss rule at 5", (await lines())[0], "At 60 s: outages open after about 5 min, latency incidents after about 10 min. Drops shorter than about 60 s may go unseen.");
+    await settingsDiscard(ctx);
+    eq("discarded: the live interval did not move", (await settingsValuesNow(page)).values["prober.interval_seconds"], 1);
   }],
 
   ["Speed test section: the interval is any whole number of hours, days or weeks, shown in the largest unit that fits, with the range in words", async (ctx) => {
@@ -443,6 +610,7 @@ export const steps = [
   ["an out-of-range value gets its message in the browser and Save is off; a server warning shows as a note", async (ctx) => {
     const { eq, ok, page, until, text } = ctx;
     await settingsOpen(ctx);
+    await page.$eval("#set-sec-advanced", (e) => { e.open = true; }); // the raw samples' days are under Advanced
     const key = "database.retention_days";
     await settingsType(page, key, "0");
     ok("the message", /at least 1|from 1 to 90/i.test(await text(`${settingsRow(key)} [data-msg]`)));
@@ -461,6 +629,7 @@ export const steps = [
     const { eq, ok, page, until } = ctx;
     await settingsOpen(ctx);
     ok("no Preview without a rule in the draft", await page.$eval("#btnSettingsPreview", (b) => b.hidden));
+    await page.$eval("#set-sec-advanced", (e) => { e.open = true; });
     await settingsType(page, "database.retention_days", "9");
     ok("none for a retention change", await page.$eval("#btnSettingsPreview", (b) => b.hidden));
     // the seeded gateway drop lost about 90 s of probes: with 120 s before a loss outage starts it would not have opened
@@ -879,14 +1048,16 @@ export const steps = [
 
   ["the latency chart opens on the default range from Settings", async (ctx) => {
     const { eq, page, until } = ctx;
-    await page.evaluate(async () => {
-      const state = await (await fetch("/api/settings")).json();
-      await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: state.revision, lists: {}, secrets: {}, values: { "display.default_latency_range": "1h" } }) });
-    });
-    await page.reload({ waitUntil: "load" });
-    await ctx.layoutMounted();
-    await until(() => /last 1 h/.test(document.getElementById("chartModeLabel").textContent));
-    eq("the 1 h button is pressed", await page.$eval('#timeRangeButtons [data-arg="3600"]', (b) => b.getAttribute("aria-pressed")), "true");
+    for (const [choice, , label] of [["30d", "2592000", "last 30 d"]]) { // (one save: the settings route takes 20 a minute and this file uses most of them; the 1 h to 7 d buttons are the latency step's)
+      await page.evaluate(async (value) => {
+        const state = await (await fetch("/api/settings")).json();
+        await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: state.revision, lists: {}, secrets: {}, values: { "display.default_latency_range": value } }) });
+      }, choice);
+      await page.reload({ waitUntil: "load" });
+      await ctx.layoutMounted();
+      await until((re) => new RegExp(re).test(document.getElementById("chartModeLabel").textContent), label);
+      eq(`the ${choice} range is chosen`, await page.$eval("#timeRangeButtons select", (s) => s.value), choice);
+    }
     await page.evaluate(async () => {
       const state = await (await fetch("/api/settings")).json();
       await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision: state.revision, lists: {}, secrets: {}, values: { "display.default_latency_range": null } }) });

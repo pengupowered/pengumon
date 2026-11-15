@@ -457,7 +457,7 @@ CORE_MODULES = ["main.js", "live.js", "live-delta.js", "bus.js", "layout.js", "t
 # what the core may import: itself, the shared helpers and the one list of panels
 CORE_IMPORTABLE = {*CORE_MODULES, "state.js", "help.js", "chart-theme.js", "themes.js", "settings-values.js",
                    "panels/index.js", "targets.js", "dom.js", "device-text.js", "clock.js", "format.js", "escape.js", "modal.js",
-                   "host.js", "password.js", "clipboard.js", "export-view.js", "view-only.js"}
+                   "host.js", "password.js", "clipboard.js", "export-view.js", "view-only.js", "update-bar.js"}
 OPTIONAL_WORDS = re.compile(
     r"docsis|modem|router|mesh|grafana|topology|xfinity|asus|channel|dossier|inspector|incident|report|sparkline|"
     r"\bclients?\b|\bservices?\b|\bdiagnosis\b|\bmatrix\b|\blatency\b|\bline\b", re.IGNORECASE)

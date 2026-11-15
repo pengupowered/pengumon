@@ -33,6 +33,11 @@
   <!-- a theme's animated effect draws here, behind everything (js/themes.js) -->
   <div class="fx-layer" id="fxLayer" aria-hidden="true"></div>
 
+  <!-- Shown by js/update-bar.js when the server's version is no longer the one this page was loaded with -->
+  <div class="update-bar" id="updateBar" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span class="ub-text"><b>Pengumon was updated to <span data-f="version"></span>.</b> Reload to use it.</span>
+    <button type="button" class="btn sm primary" data-action="reloadPage">Reload</button>
+    <button type="button" class="btn sm icon ub-close" data-action="closeUpdateBar" aria-label="Hide this notice" title="Hide until the next update"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+
   <!-- Header: brand, overall status (written by the panel that owns the verdict), live socket, tools -->
   <header id="topbar" class="topbar st-unknown">
     <div class="tb-inner">

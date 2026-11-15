@@ -100,7 +100,7 @@ class DisplayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     grafana_url: Optional[str] = None
-    default_latency_range: Literal["live", "15m", "1h", "24h"] = "live"
+    default_latency_range: Literal["live", "15m", "1h", "24h", "7d", "30d"] = "live"
     theme: str = Field(theme_rules.DEFAULT_ID, json_schema_extra={"ui_type": "theme"})
     effects: bool = True
     themes: List[ThemeItem] = Field(default_factory=list, max_length=theme_rules.MAX_CUSTOM)

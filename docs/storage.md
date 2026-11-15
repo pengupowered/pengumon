@@ -51,6 +51,9 @@ cannot read a newer schema, and going back needs that backup.
 | v18 | 10-second and quarter-hour rollups (`rollup_10s`, `rollup_15m`), built from what is stored; the per-minute retention's new default ([below](#rollups-and-retention-schema-v18)) |
 | v19 | The router's uptime, CPU temperature and WAN link speed (`device_samples` columns), device events (`device_events`) and the router's traffic per client and hour (`traffic_hourly`, `traffic_apps`), below |
 | v20 | The names given to connected devices in Pengumon (`client_names`), below |
+| v21 | The router's and mesh's storage tiers (`device_rollup_1m`, `device_rollup_15m`, `mesh_rollup_15m`) and the hourly app lists (`traffic_app_hours`), [below](#router-and-mesh-tiers-and-hourly-app-lists-schema-v21) |
+| v22 | The evidence each incident keeps (`incident_evidence`, `incident_evidence_probes`, `incident_evidence_readings`), filled for the resolved incidents when the schema is upgraded ([below](#incident-evidence-schema-v22)) |
+| v23 | Retention by kind of data: a stored `long_rollup_retention_days` becomes `latency_retention_days` ([above](#retention-by-kind-of-data)) |
 
 ## Rollups and retention (schema v18)
 
@@ -59,10 +62,10 @@ Probe history is kept at four widths, each written in the same transaction as th
 
 | Table | One row per target and | Kept for | Read by |
 | --- | --- | --- | --- |
-| `samples` | probe (about 1 a second) | `database.retention_days` (7) | raw history up to 6 h, buckets that are not whole tens of seconds, the incident inspector |
+| `samples` | probe (one per target per probe round: every second by default, up to every 60 s; Settings > Probing) | `database.retention_days` (7) | raw history up to 6 h, buckets that are not whole tens of seconds, the incident inspector |
 | `rollup_10s` | 10 s (`slot` = ts // 10) | `database.slot_retention_days` (7; never shorter than the raw samples) | history buckets of whole tens of seconds, up to a day (the latency chart's 10 s buckets, with the band) |
-| `rollup_1m` | minute | `database.rollup_retention_days` (90) | history buckets of whole minutes, the AI pack, incident windows, hop totals of windows under 6 h, the edges of quarter-hour reads |
-| `rollup_15m` | quarter hour (`quarter` = ts // 900) | `database.long_rollup_retention_days` (400) | the report, the loss grid, the uptime strips, hop totals of windows of 6 h or more, history buckets of whole quarters, every range older than the per-minute rows |
+| `rollup_1m` | minute | `database.rollup_retention_days` (30) | history buckets of whole minutes, the AI pack, incident windows, hop totals of windows under 6 h, the edges of quarter-hour reads |
+| `rollup_15m` | quarter hour (`quarter` = ts // 900) | `database.latency_retention_days` (180) | the report, the loss grid, the uptime strips, hop totals of windows of 6 h or more, history buckets of whole quarters, every range older than the per-minute rows |
 
 `rollup_10s` has the columns of `rollup_1m`: n, ok, the latency sum, min and max of the answered probes, the jitter sum
 and count, and the slot's own 10th and 90th percentile (nearest rank). The flush recomputes the slots, minutes and
@@ -82,28 +85,30 @@ weighted by their answered probes, the way per-minute buckets average the minute
 up to a day, where the raw query left it out past 6 h). Latency and jitter means are sums divided by counts at every
 width; summed in another order they can round to the other side of a last-digit tie (0.01 ms).
 
-**Retention.** The hourly cleanup deletes `rollup_10s` rows older than `slot_retention_days` (7; at least
-`retention_days` and at most `rollup_retention_days`; left unset it is 7 or `retention_days`, the longer),
-`rollup_1m` rows older than `rollup_retention_days` and `rollup_15m` rows (and speed tests and device events) older
-than `long_rollup_retention_days`, which is at least `rollup_retention_days` (left unset it is 400 or
-`rollup_retention_days`, the longer). The 10-second rollups no longer follow the raw samples, so a shorter
-`retention_days` keeps the latency chart's 10 s buckets for `slot_retention_days` (the 10 s buckets of a window older
-than the raw samples miss at most the partial slot at either end). Resolved incidents are deleted only when
-`database.incident_retention_days` is set: 0 (the default) keeps them forever; otherwise they go that many days after
-they ended (at least `long_rollup_retention_days`). An open incident is never deleted, and the incident list refreshes
-when rows go.
+**Retention.** What each table is kept for, and the setting that says so, is under [Retention by kind of
+data](#retention-by-kind-of-data). The 10-second rollups do not follow the raw samples, so a shorter `retention_days`
+keeps the latency chart's 10 s buckets for `slot_retention_days` (the 10 s buckets of a window older than the raw
+samples miss at most the partial slot at either end). An open incident is never deleted, and the incident list
+refreshes when rows go.
+
+**The probe interval scales the raw samples only.** A row per target per round, about 40 bytes each (measured: 326 MB over
+8.2 million rows): at 1 s a 14-target path writes about 48 MB a day, at 2 s 24 MB, at 5 s 10 MB, at 10 s 5 MB. `rollup_10s`,
+`rollup_1m` and `rollup_15m` have one row per bucket whatever the interval, so a long interval shrinks only the 7-day
+raw part (`rollup_10s` is still written at 10 s and longer, where it is about the size of the raw samples). Settings >
+Probing shows the figure for the interval chosen.
 
 **Why raw samples stay at 7 days.** They are most of the file (about 85 %), and with `rollup_10s` the charts no longer
 read them beyond a day, but two readers still need the week: line-capacity learning (the 99.9th percentile of seven days
 of the router's WAN rates in `device_samples`, which the same `retention_days` prunes; Settings warns under 7 days) and
 the rules preview (`engine/replay.py` replays the stored raw samples, one probe round at a time, for up to
-`retention_days` days; the 10-second rollups have no per-probe detail to replay). The default therefore stays 7; an
-install that does not use those two can set `retention_days` lower in Settings.
+`retention_days` days; the 10-second rollups have no per-probe detail to replay). The value is fixed at 7 by default and lives under Settings > Advanced; an
+install that does not use those two can set `retention_days` lower there (at least 1: an incident's evidence is written
+about 16 minutes after it).
 
 **The upgrade.** The v18 migration builds `rollup_15m` from every `rollup_1m` row and `rollup_10s` from every raw sample
 (about 35 s for 9.7 M samples and 37 days of 16 targets; 60 s with a year of per-minute rows), during which the API does
 not answer. A per-minute retention stored at the old default, 400 days (which the one-time import of config.yaml stored
-when the file was copied from config.example.yaml), goes back to the new default, 90 days, as a settings version of its
+when the file was copied from config.example.yaml), goes back to the default as a settings version of its
 own (source `upgrade`); any other stored value stays. The storage component migrates before the retention component's
 start-up cleanup, so the per-minute rows that cleanup then deletes are already in `rollup_15m`.
 
@@ -121,8 +126,8 @@ loaded_down_ms, loaded_up_ms, bytes_down, bytes_up, wan_down_mbps, wan_up_mbps)`
 scheduled or manual, whatever came of it (`status` is `ok`, `partial`, `skipped` or `failed`; a skipped row has a
 `reason` and no measurement). `down_mbps` / `up_mbps` are the test's own rates; `wan_down_mbps` / `wan_up_mbps` the line's
 peak rate the router's counters showed during each direction (read once a second since 0.25.1; the peak of the 10 s polls
-in 0.25.0). Which of the two a test's headline is, is worked out when read (speedtest/quality.py `headline`). One row per test: one a day with the default interval, at most one an hour. They are kept as long as the quarter-hour rollups
-(`database.long_rollup_retention_days`, 400 by default, and at least 32 days): the hourly cleanup deletes older ones. The monthly data cap sums
+in 0.25.0). Which of the two a test's headline is, is worked out when read (speedtest/quality.py `headline`). One row per test: one a day with the default interval, at most one an hour. They are kept for `database.speedtest_retention_days`
+(180 by default, never less than 32 days): the hourly cleanup deletes older ones. The monthly data cap sums
 `bytes_down + bytes_up` of the calendar month's rows. The install's random schedule offset is in `meta`
 (`speedtest_offset_s`).
 
@@ -134,7 +139,7 @@ in 0.25.0). Which of the two a test's headline is, is worked out when read (spee
 - `device_events(id, device_id, ts, kind, detail)`, indexed on `(device_id, ts)`: `restarted` (the device's uptime went
   back; `detail` has `boot_at`, `previous_boot_at`, `uptime_s`) and `wan_link` (the WAN port's link speed changed, went
   down or came back; `old`, `new` in Mb/s). `detail` is compact JSON. A few rows a month, and they explain old
-  incidents: kept as long as the quarter-hour rollups (`database.long_rollup_retention_days`, 400 days by default).
+  incidents: kept for `database.speedtest_retention_days` (180 days by default).
 - `traffic_hourly(device_id, hour, client, up, down, read_at)`, primary key `(device_id, hour, client)`, WITHOUT ROWID:
   bytes per client (a MAC in upper case with `:`; `''` is the whole WAN) and clock hour (`hour` is its start, epoch
   seconds), as the router counted them. A later read of an hour replaces it (the router publishes an hour a minute or so
@@ -144,11 +149,45 @@ in 0.25.0). Which of the two a test's headline is, is worked out when read (spee
   `''` is the latest window read for the client (replaced at each read); a date (`YYYY-MM-DD`, in the zone set in
   Settings) is the window that ends at that day's midnight (the whole day), kept so app history exists by day. `apps` is compact JSON
   `[[name, up, down], ...]` in the router's order.
-- Both traffic tables are pruned by the hourly cleanup after `database.traffic_retention_days` (400 by default; the
+- Both traffic tables are pruned by the hourly cleanup after `database.traffic_retention_days` (180 by default; the
   latest app window too, by its age).
 - `client_names(mac, name, updated_at)`, primary key `mac`, WITHOUT ROWID (v20): the name given to a connected device
   in its traffic dialog, shown instead of the router's wherever names are shown in full; at most 1000, 40 characters
   each, never pruned (removing a name deletes its row).
+
+## Incident evidence (schema v22)
+
+What the incident inspector shows (the probes around the incident, the hop table, the router's polls and the modem's
+readings) used to be rebuilt on every open from the shared tables, which lose raw probes and device readings after
+`database.retention_days` (7). Now each resolved incident keeps its own copy, so the inspector shows an incident a year
+old as it showed it on the day, and opens fast (one primary-key range per incident, no scan of `samples`).
+
+- **Written** by the incident-evidence component (`incidents/evidence.py`, code in `db/evidence.py`) at start and then
+  every minute: a few resolved incidents without evidence per pass, once nothing that belongs to them can still arrive
+  (their end, plus 45 s of window, plus the longer of 2 minutes and the modem's poll interval for the readings, plus a
+  margin of 30 s). Each is one write transaction; the `incident_evidence` row (`resolution`, window, `written_at`)
+  marks it done, so it is never written twice. An open incident gets nothing until it closes: the inspector reads the
+  shared tables for it. The upgrade (v22) writes the evidence of every resolved incident from what is stored then,
+  before the shorter retentions can remove it.
+- **What is kept**, for the inspector's window (the incident from 45 s before its start to 45 s after its end):
+  - `incident_evidence_probes`, one row per probe or bucket, primary key `(incident_id, target, ts)`, WITHOUT ROWID:
+    every raw probe (`width` 0); for a window longer than 30 minutes the raw probes of its first and last 15 minutes
+    and 10-second buckets between (`width` 10: probes, answered, latency sum/min/max, jitter sum and count, the
+    columns of `rollup_10s`), which give the same hop table. Where the raw probes are already gone, the per-minute
+    rollups of the window (`width` 60). `resolution` of the incident is `raw`, `mixed`, `minute` or `none` (nothing was
+    stored then: the inspector reads the shared tables, as before).
+  - `incident_evidence_readings`, `(incident_id, kind, device_id, ts, payload)`: `router` (a `device_samples` row) and
+    `line` (a `line_samples` row) as compact JSON, the router's polls within 2 minutes of the window and the modem's
+    readings within 2 minutes, or, when there is none, those within its poll interval (the nearest is shown).
+- **Read**: the inspector takes probes, hop table, router polls and modem readings from the evidence when the incident
+  has some (resolution other than `none`). Device events, the router's traffic in the hours and the path trace still
+  come from where they are. For a window of 30 minutes or less the answer is the one the shared tables give; for a longer
+  one the chart buckets are a multiple of 10 s wide (the hop table is the same).
+- **Size** (measured on the live data): about 53 bytes a probe row; a typical incident (a few minutes, 14 targets)
+  about 75 KB with its readings, the longest seen (9 minutes) about 290 KB; an incident older than the raw probes
+  that is kept as per-minute rollups about 1.6 KB.
+- **Kept and deleted with the incident**: the hourly cleanup deletes the evidence of incidents that no longer exist
+  (`database.incident_retention_days`); no other retention touches it.
 
 ## The 0.2.0 migration (schema v2)
 
@@ -231,3 +270,81 @@ that read took longer than the request timeout and, when it did return, the log 
 anything. It was removed: status now uses the power and SNR averages, and the dossier and the incident inspector also
 use the codeword errors. Schema v9 drops the `docsis_logs` table and the T3/T4 and `event_log_ok` columns with
 `docsis_signals`.
+
+## Retention by kind of data
+
+Every range up to 30 days is drawn from full detail, which is the same for every kind of data and fixed: 1 s and 10 s
+for 7 days (`retention_days` and `slot_retention_days`) and 1 minute for 30 days (`rollup_retention_days`). They live
+under Settings > Advanced for people who know why, and nowhere else. Past 30 days, what is kept is the owner's choice
+**per kind of data**, one "keep for" number each, at least 30 days, under Settings > Retention:
+
+| Setting | Keeps | Tables | Default |
+| --- | --- | --- | --- |
+| `database.latency_retention_days` | the probes' 15-minute history (was `long_rollup_retention_days`) | `rollup_15m` | 180 |
+| `database.router_retention_days` | the router's 15-minute history | `device_rollup_15m` | 180 |
+| `database.mesh_retention_days` | clients per mesh node, 15-minute | `mesh_rollup_15m` | 180 |
+| `database.line_retention_days` | the cable line's readings, as they were read (about 0.1 MB a day) | `line_samples` | 180 |
+| `database.traffic_retention_days` | Internet use per hour and the daily app lists | `traffic_hourly`, `traffic_apps` | 180 |
+| `database.speedtest_retention_days` | speed tests (never under 32 days) and the router's events | `speed_tests`, `device_events` | 180 |
+| `database.incident_retention_days` | resolved incidents and their evidence; 0 keeps them forever, else at least 30 | `incidents`, `incident_evidence*` | 180 |
+
+Full detail is `samples`, `rollup_10s`, `rollup_1m`, `device_samples`, `device_rollup_1m`, `mesh_samples` and
+`traffic_app_hours` (31 days, `TRAFFIC_APP_HOURS_DAYS`). The only ordering rule is raw <= 10 s <= per-minute: a kind's
+number has no tie to the tiers (an incident keeps its own evidence, so it does not need the quarter-hour tier). An open
+incident is never deleted. Every value a person set is kept on upgrade; the ones never set take the new defaults, and no
+install holds data older than 180 days yet, so the lower defaults delete nothing. A stored `long_rollup_retention_days`
+becomes `latency_retention_days` (migration v23, a settings version with source `upgrade`; config.yaml and Settings >
+Import read the old key as the new one).
+
+**The hourly cleanup** (`db/core.py` `_prune`) deletes each table's old rows in batches by its kind's number, and logs
+one line that names the kinds, for example `Retention (full detail 7 / 7 / 30 days; kept for, in days: latency 180,
+router 180, ...): removed ...`. Lowering a number deletes what is older at the next cleanup; the file is shrunk by the
+incremental vacuum that follows.
+
+**The disk table.** `GET /api/storage` (owner only; [api.md](api.md)) says what each kind holds on disk, read from
+SQLite's `dbstat` (the bytes of each table and its indexes; every table has a kind in `db/storage_stats.py`, and a test
+fails for a table that has none). Settings > Retention shows it as a table, with the arithmetic done in the page as a
+number is typed:
+
+| Column | Meaning |
+| --- | --- |
+| Keep | the number as typed; "41 of 180 days stored" while the history is shorter |
+| Now | the bytes the kind holds now |
+| When full | `fixed + per_day x max(0, days - 30)` for a kind with a 15-minute tier (its first 30 days are `fixed`), `per_day x days` for the others, "at today's rate"; 0 days (incidents) is "grows ~N MB a year" |
+| Change | what lowering the number frees at the next cleanup (`per_day x` the days stored beyond it), else the difference when full |
+
+`per_day` is measured over the kind's rows of the last 7 days (or of what is stored, if less). Saving a lowered number
+asks first: "Deletes about 380 MB of router history older than 90 days at the next hourly cleanup. This can't be
+undone." The answer also has the database file and WAL sizes and the free space of the disk (`shutil.disk_usage`),
+shown as "Disk: X now, Y free". Without `dbstat` (some SQLite builds) each table is estimated as its rows times the
+average row of a sample and the answer says `estimate: true` (the indexes are left out). The answer is cached for a
+minute: `dbstat` reads every page (0.6 s on a 450 MB database).
+
+## Router and mesh tiers and hourly app lists (schema v21)
+
+The router's and the mesh's history follow the probes' pattern: full detail recently, consolidated further back, so
+router history is not limited to the 7 days of raw polls (how long it reaches is [by kind](#retention-by-kind-of-data)).
+
+| Table | One row per | Kept for | Holds |
+| --- | --- | --- | --- |
+| `device_samples` | poll (about every 10 s) | `database.retention_days` (7) | the raw polls, as before |
+| `device_rollup_1m` | device and minute (`minute` = ts // 60) | `database.rollup_retention_days` (30) | per figure (WAN rx and tx Mbps, CPU %, memory %, client count, CPU temperature): sum, count of polls that measured it, max; the lowest WAN link speed; the five client counts (online, wired, per band): sum and count |
+| `device_rollup_15m` | device and quarter hour (`quarter` = ts // 900) | `database.router_retention_days` (180) | the same columns, summed from the minutes |
+| `mesh_rollup_15m` | device, quarter hour and mesh node | `database.mesh_retention_days` (180) | clients on the node: sum, count of readings, max |
+| `traffic_app_hours` | device, client and window end | 31 days (`TRAFFIC_APP_HOURS_DAYS`, db/core.py) | the router's 24-hour app list of every hourly round, the compact JSON of `traffic_apps`; the reader for it is `get_traffic_app_windows` |
+
+Sums and counts, not averages, so a bucket of any width merges raw polls, minutes and quarters exactly (an average is
+`SUM(sum) / SUM(n)`). Every poll stored recomputes its minute and its quarter in the same transaction, from what is
+stored; a mesh reading recomputes its quarters. The migration fills the tiers from the 7 days of raw rows present (its
+oldest minute and quarter can be partial, so their averages are of the polls that were there); the app lists start
+empty and fill from the next round. (On a copy of a live database, 447 MB, the migration took half a second and added
+1.6 MB; the tiers grow about 0.2 MB a day for the minutes, 15 KB for the quarters, 10 KB for the mesh, and the app lists about 0.4 MB a day.)
+
+**What a reader gets** (`db/device_tiers.py`; `get_device_samples_bucketed`, `get_client_counts`, `get_mesh_counts`). A
+range the raw polls cover is read from them alone, by the same query as before the tiers. A range that starts before the
+first whole minute (quarter, for the mesh) raw still holds is read in parts: raw from there on, whole quarters from the
+quarter tier, and the minutes from the minute tier for the partial quarters at the edges; the parts are summed into the
+same epoch-aligned buckets. Where a tier is read, a bucket narrower than the tier is widened to it (60 s for minutes, 900 s
+for quarters; a wider bucket stays) and the start of the range is rounded out to the whole minute (quarter) it lies in; a
+range edge older than the minute tier is read as its whole quarter. The router and client-count history routes clip a range
+to `router_retention_days` (the longer of it and `rollup_retention_days`), and the mesh counts to `mesh_retention_days`.

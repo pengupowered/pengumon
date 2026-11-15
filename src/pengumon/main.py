@@ -23,6 +23,7 @@ from pengumon.devices import component as devices
 from pengumon.engine import line_load, probing
 from pengumon.engine.classifier import component as classifier
 from pengumon.engine.discovery import component as discovery
+from pengumon.incidents import evidence as incident_evidence
 from pengumon.live import component as live
 from pengumon.notify import component as notify
 from pengumon.observability import apply_config_level, get_logger, grafana, setup_logging
@@ -56,6 +57,7 @@ COMPONENTS = [
     line_load,      # line capacity, the load backfills, the monitors' load and probe-loss hooks
     notify,         # ntfy, for the classifier and the service checks
     classifier,     # needs the line load and the notifier; its path traces end before the database closes
+    incident_evidence,  # optional: each closed incident's own copy of the inspector's data (db/evidence.py)
     speedtest,      # optional: the scheduled speed test; needs the line load and the classifier (it masks its verdicts)
     settings_preview,  # the outage-rules preview jobs; a running replay is killed at shutdown
     services,       # optional: host service checks

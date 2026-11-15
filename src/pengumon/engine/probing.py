@@ -3,7 +3,8 @@ the custom targets), the prober with every target and the probe loop (engine/loo
 component has registered. It owns the app's ICMP backend (engine/icmp_select.shared_backend), which traceroute and
 the incident path trace use too.
 
-Saved settings it applies without a restart (`subscribe`): the probe timeouts, the window the hop colors judge loss
+Saved settings it applies without a restart (`subscribe`): the probe interval (the loop reads it every round; the
+repository keeps a copy for the dead-minute rule), the probe timeouts, the window the hop colors judge loss
 over (classifier.window_probes) and the DNS lookups list (the prober keeps copies). Everything else the probe round
 reads (the hop colors, the outage rules, the busy level) is the live config object itself, which the settings manager
 updates in place before the appliers run; so are the line and router levels the device monitors grade by
@@ -18,7 +19,7 @@ from pengumon.engine.prober import NetworkProber
 from pengumon.engine.prober_settings import HISTORY_PROBES
 
 
-def subscribe(hub, config, prober: NetworkProber) -> None:
+def subscribe(hub, config, prober: NetworkProber, repository=None) -> None:
     """The appliers of the settings this component owns. Each reads the live config, which the settings manager has
     already updated in place when it publishes the change."""
 
@@ -26,6 +27,12 @@ def subscribe(hub, config, prober: NetworkProber) -> None:
     def _timeouts(change) -> None:
         prober.ping_timeout = config.prober.timeout_seconds
         prober.dns_timeout = config.prober.dns_timeout_seconds
+
+    @hub.on(keys=["prober.interval_seconds"], name="probing.interval")
+    def _interval(change) -> None:
+        # The loop reads the interval from the live config every round; the repository's dead-minute rule follows it.
+        if repository is not None:
+            repository.probe_interval_seconds = config.prober.interval_seconds
 
     @hub.on(keys=["classifier.window_probes"], name="probing.window")
     def _window(change) -> None:
@@ -54,11 +61,13 @@ async def register(ctx: Context) -> Component:
     for d in config.dns_probes:
         prober.register_dns_target(d)
     path.prober = prober
+    if repository is not None:
+        repository.probe_interval_seconds = config.prober.interval_seconds
     ctx.state.prober = prober
     ctx.state.path = path
     hub = getattr(ctx, "settings", None)  # the settings hub (Context.settings); absent before the settings component
     if hub is not None:
-        subscribe(hub, config, prober)
+        subscribe(hub, config, prober, repository)
 
     async def start() -> None:
         try:

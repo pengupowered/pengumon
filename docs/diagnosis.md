@@ -41,7 +41,7 @@ load explains the delay, so it is expected and no incident opens; see Load-aware
 degraded level (15 % by default) or the down level (40 %) is what moves a stage there (The levels, below). An incident
 has a **cause**, worded as a hypothesis, and a stable machine-readable **kind**; both place it in one category (router,
 gateway, line, ISP, internet, DNS, load, service), the groups the incident timeline, the reliability report and the
-dossier use. Open an incident in the list to get its inspector: the probes around it, stage by stage. The scenarios
+dossier use. Open an incident in the list to get its inspector: the probes around it, stage by stage (a closed incident keeps its own copy of them, [storage.md](storage.md#incident-evidence-schema-v22)). The scenarios
 and the placement rules follow; the panels are described in [dashboard.md](dashboard.md).
 
 ## Outages
@@ -109,8 +109,8 @@ answered is read as `isp`.
 Each level below is a setting (`classifier.*`); the defaults are what the classifier always used. A change applies
 from the next probe round and never relabels stored incidents.
 
-- **The window** ("Judge each hop by its last", `window_probes`, 10 probes; 3 to 60, shown in seconds of probe
-  rounds): every level below is judged over each target's last N probes. **Loss** is the share of them lost.
+- **The window** ("Judge each hop by its last", `window_probes`, 10 probes; 3 to 60, counted in probes, with
+  the time they mean at the probe interval shown beside it): every level below is judged over each target's last N probes. **Loss** is the share of them lost.
   **Latency** is the median of the role's answered probes in the window (of an even count the lower middle value),
   and **jitter** the median change from one answered probe to the next, per target, averaged over the role's targets.
   So a role counts as slow only when more than half of its probes are slow, and as jittery only when more than half of
@@ -127,10 +127,12 @@ from the next probe round and never relabels stored incidents.
   reported as a DNS outage.
 - **Latency and jitter** per role: `local_*`, `gateway_*` and `public_*_spike_threshold_ms`. The ISP hops have
   `isp_latency_spike_threshold_ms`; empty, they use the internet's level (80 ms).
-- **When incidents start and end** (rounds of 1 s): a loss incident opens after
+- **When incidents start and end** (counted in probe rounds, 1 s each at the default interval; Settings > Probing > Probe
+  every changes the time a round takes, not these counts): a loss incident opens after
   `consecutive_failures_for_incident` faulty rounds (3), a latency-only one after
   `consecutive_failures_for_latency_incident` (10), and either ends after `consecutive_successes_for_recovery`
-  healthy rounds in a row (3). The end time is the last faulty round.
+  healthy rounds in a row (3). The end time is the last faulty round. DNS lookups that run less often than the round
+  (`dns_interval_seconds`) are counted in lookups: the rounds between them neither add to a DNS fault nor end it.
 - **Internal, not settings:** DNS is judged only while every lower layer loses under 10 %; an ISP outage names the
   ISP hop from 30 % ISP-hop loss, otherwise peering; a sample over 150 ms makes its target an affected one.
 

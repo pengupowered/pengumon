@@ -286,15 +286,41 @@ async def _episode_stats(repository, calc_start: float, calc_end: float, window_
     return [], False
 
 
+def end_of(start_time: float, end_time: Optional[float], duration_seconds: Optional[float], resolved: bool) -> float:
+    """When an incident ended; one still open has lasted until now, and one with no duration at all, 10 seconds."""
+    if end_time:
+        return end_time
+    if duration_seconds:
+        return start_time + duration_seconds
+    if not resolved:  # still open (no duration yet): the whole of it so far, not its first 10 seconds
+        return max(start_time + 10.0, time.time())
+    return start_time + 10.0
+
+
 def _incident_end(incident: Incident) -> float:
-    """When the incident ended; one still open has lasted until now, and one with no duration at all, 10 seconds."""
-    if incident.end_time:
-        return incident.end_time
-    if incident.duration_seconds:
-        return incident.start_time + incident.duration_seconds
-    if not incident.resolved:  # still open (no duration yet): the whole of it so far, not its first 10 seconds
-        return max(incident.start_time + 10.0, time.time())
-    return incident.start_time + 10.0
+    return end_of(incident.start_time, incident.end_time, incident.duration_seconds, incident.resolved)
+
+
+@dataclass(frozen=True)
+class InspectionWindow:
+    """The times the inspector reads for one incident (the incident's evidence, db/evidence.py, keeps the same ones)."""
+
+    end: float  # when the incident ended
+    window_start: float  # the window shown: the incident +- WINDOW_PADDING_SECONDS
+    window_end: float
+    calc_start: float  # the degradation episode the hop table is computed over
+    calc_end: float
+
+
+def inspection_window(start_time: float, end_time: Optional[float], duration_seconds: Optional[float],
+                      resolved: bool) -> InspectionWindow:
+    end = end_of(start_time, end_time, duration_seconds, resolved)
+    # Per-hop impact is computed specifically during the degradation episode, with a lead-in buffer to capture the
+    # initial packet drops that triggered the incident
+    calc_start = start_time - CALC_LEAD_SECONDS
+    return InspectionWindow(end=end, window_start=start_time - WINDOW_PADDING_SECONDS,
+                            window_end=end + WINDOW_PADDING_SECONDS, calc_start=calc_start,
+                            calc_end=max(end + CALC_TAIL_SECONDS, calc_start + CALC_MIN_SECONDS))
 
 
 async def _hops_and_samples(repository, targets: Sequence, window_start: float, window_end: float, calc_start: float,
@@ -329,11 +355,22 @@ async def _hops_and_samples(repository, targets: Sequence, window_start: float, 
 
 
 async def _nearby_snapshots(line, incident: Incident, window_start: float, window_end: float,
-                            snapshot_reach_seconds: float):
-    """The modem's snapshots within or surrounding the incident window, and the one nearest to the incident start."""
+                            snapshot_reach_seconds: float, evidence=None, repository=None):
+    """The modem's snapshots within or surrounding the incident window, and the one nearest to the incident start.
+    With the incident's evidence, from the readings it kept (the same rule over them)."""
     docsis_snapshots: List[DocsisSignalSnapshot] = []
     nearest_snapshot = None
-    if line is not None:
+    if line is not None and evidence is not None and getattr(line, "device_id", None) is not None:
+        from pengumon.lines.docsis import TECHNOLOGY, snapshot_from_sample
+        kept = [snapshot_from_sample(s) for s in await repository.evidence_line_samples(incident.id, line.device_id)
+                if s.technology == TECHNOLOGY]
+        pad = SNAPSHOT_PADDING_SECONDS
+        docsis_snapshots = [s for s in kept if window_start - pad <= s.timestamp <= window_end + pad]
+        reach = docsis_snapshots or [s for s in kept if window_start - snapshot_reach_seconds <= s.timestamp
+                                     <= window_end + snapshot_reach_seconds]
+        if reach:
+            nearest_snapshot = min(reach, key=lambda s: abs(s.timestamp - incident.start_time))
+    elif line is not None:
         docsis_snapshots = await line.get_docsis_snapshots_in_range(
             start_time=window_start, end_time=window_end, padding_seconds=SNAPSHOT_PADDING_SECONDS
         )
@@ -349,6 +386,34 @@ async def _nearby_snapshots(line, incident: Incident, window_start: float, windo
     return docsis_snapshots, nearest_snapshot
 
 
+async def _evidence_of(repository, incident: Incident):
+    """The evidence a closed incident kept, when it holds anything (resolution other than "none"); else None."""
+    if incident.id is None or not incident.resolved or not hasattr(repository, "get_incident_evidence"):
+        return None
+    evidence = await repository.get_incident_evidence(incident.id)
+    return evidence if evidence is not None and evidence.resolution != "none" else None
+
+
+async def _evidence_hops_and_samples(repository, targets: Sequence, incident: Incident, evidence,
+                                     win: InspectionWindow):
+    """_hops_and_samples from the incident's evidence: its raw probes (resolution "raw"), or buckets of the probes it
+    kept ("mixed": 10-second buckets and raw ends; "minute": the per-minute rollups), with the hop table summed over
+    the episode, else over the whole window. Same return."""
+    if evidence.resolution == "raw":
+        samples = await repository.evidence_raw_samples(incident.id, win.window_start, win.window_end)
+        return hop_impact(samples, win.calc_start, win.calc_end, targets), samples, None, False
+    minute = evidence.resolution == "minute"
+    width = await repository.evidence_bucket_width(incident.id, win.window_end - win.window_start,
+                                                   60 if minute else 10)
+    samples = bucketed_samples(await repository.evidence_buckets(incident.id, win.window_start, win.window_end, width))
+    stats: List[Dict[str, Any]] = []
+    for lo, hi in ((win.calc_start, win.calc_end), (win.window_start, win.window_end)):
+        stats = await repository.evidence_stats(incident.id, lo, hi)
+        if stats:
+            break
+    return hop_impact_from_stats(stats, targets), samples, width, minute
+
+
 async def inspect_incident(repository, targets: Sequence, incident: Incident,
                            snapshot_reach_seconds: float = SNAPSHOT_REACH_SECONDS, *, line=None,
                            router=None, classifier: Optional[ClassifierConfig] = None, traffic=None,
@@ -362,29 +427,38 @@ async def inspect_incident(repository, targets: Sequence, incident: Incident,
     covers get their top clients by download. `tz`: the zone the traffic texts give clock times in (None: local).
     An incident still open has lasted until now."""
     # Time window: 45 seconds before start to 45 seconds after end
-    end_time = _incident_end(incident)
-    window_start = incident.start_time - WINDOW_PADDING_SECONDS
-    window_end = end_time + WINDOW_PADDING_SECONDS
+    win = inspection_window(incident.start_time, incident.end_time, incident.duration_seconds, incident.resolved)
+    end_time, window_start, window_end = win.end, win.window_start, win.window_end
 
-    # Per-hop impact is computed specifically during the degradation episode, with a 10 s lead-in buffer to capture
-    # the initial packet drops that triggered the incident
-    calc_start = incident.start_time - CALC_LEAD_SECONDS
-    calc_end = max(end_time + CALC_TAIL_SECONDS, calc_start + CALC_MIN_SECONDS)
-
-    hops, samples, sample_bucket_seconds, minute_hops = await _hops_and_samples(
-        repository, targets, window_start, window_end, calc_start, calc_end)
+    # A closed incident keeps its own evidence (db/evidence.py): read first, the shared tables only without it
+    evidence = await _evidence_of(repository, incident)
+    if evidence is not None:
+        hops, samples, sample_bucket_seconds, minute_hops = await _evidence_hops_and_samples(
+            repository, targets, incident, evidence, win)
+    else:
+        hops, samples, sample_bucket_seconds, minute_hops = await _hops_and_samples(
+            repository, targets, window_start, window_end, win.calc_start, win.calc_end)
 
     docsis_snapshots, nearest_snapshot = await _nearby_snapshots(line, incident, window_start, window_end,
-                                                                 snapshot_reach_seconds)
+                                                                 snapshot_reach_seconds, evidence, repository)
 
     correlation = docsis_correlation(incident, hops, docsis_snapshots, nearest_snapshot, minute_hops=minute_hops,
                                      local_loss_pct=(classifier or _DEFAULT_RULES).degraded_loss_pct)
 
     router_snapshots: List[RouterMetricsSnapshot] = []
     if router is not None:
-        router_snapshots = await router.get_router_snapshots_in_range(
-            start_time=window_start, end_time=window_end, padding_seconds=SNAPSHOT_PADDING_SECONDS
-        )
+        router_samples = None
+        if evidence is not None and getattr(router, "device_id", None) is not None:
+            router_samples = await repository.evidence_device_samples(incident.id, router.device_id)
+        if router_samples is not None:
+            from pengumon.devices.samples import router_snapshot
+            pad = SNAPSHOT_PADDING_SECONDS
+            router_snapshots = [router_snapshot(s) for s in router_samples
+                                if window_start - pad <= s.ts <= window_end + pad]
+        else:
+            router_snapshots = await router.get_router_snapshots_in_range(
+                start_time=window_start, end_time=window_end, padding_seconds=SNAPSHOT_PADDING_SECONDS
+            )
 
     device_events = [e.as_dict(tz) for e in await events_between(
         repository, None, incident.start_time - EVENT_REACH_SECONDS, end_time + EVENT_REACH_SECONDS)

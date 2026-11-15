@@ -1,7 +1,7 @@
 // What the Settings page knows: the schema, the server's state at the revision it loaded, and the draft, a change
 // against that state. Nothing is sent anywhere from here; dialog.js saves the draft. The draft is
 //   { values: {key: stored value | null (reset)}, lists: {name: items | null (reset)}, secrets: {slot: text | '' (remove)} }
-// in the server's units (rounds, fractions, seconds); fields.js converts what is shown.
+// in the server's units (probes, fractions, seconds); fields.js converts what is shown.
 
 import { clone, same, sameItems } from './model.js';
 
@@ -22,8 +22,6 @@ const listeners = new Set();
 // fn() runs after every edit of the draft (the Save label, the stale mark of a preview, the validation timer).
 export const watchDraft = (fn) => { listeners.add(fn); };
 export const changed = () => listeners.forEach((fn) => fn());
-
-export const roundSeconds = () => (S.schema ? S.schema.round_seconds : 1);
 
 export function load(schema, server) {
   S.schema = schema;

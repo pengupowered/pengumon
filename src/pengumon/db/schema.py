@@ -396,8 +396,9 @@ CREATE TABLE IF NOT EXISTS rollup_10s (
 # rollup_15m: rollup_1m summed per target and quarter hour (`quarter` = ts // 900 = minute / 15). Every time zone's
 # offset is a multiple of 15 minutes, so a local hour or day is whole quarters. The band is kept as the weighted sums
 # _rollup_query divides (p10_sum = SUM(lat_p10 * ok), p10_ok = the ok of the minutes that have a lat_p10; p90 alike),
-# so re-aggregating quarters gives the per-minute band; dead_minutes counts the minutes with every probe (of at least
-# 10) lost, as the uptime strips do. Kept for long_rollup_retention_days, past the per-minute rollups.
+# so re-aggregating quarters gives the per-minute band; dead_minutes counts the minutes with every probe lost (of at
+# least probe_interval.dead_minute_probes of them, by the interval in force when the quarter is written), as the uptime
+# strips do. Kept for long_rollup_retention_days, past the per-minute rollups.
 CREATE_ROLLUP_15M_TABLE = """
 CREATE TABLE IF NOT EXISTS rollup_15m (
     quarter INTEGER NOT NULL,
@@ -448,18 +449,27 @@ UPSERT_ROLLUP_10S_FROM_SAMPLES = (
     + slot_rows_from_samples("ts >= ? AND ts < ?")
 )
 
-# (Re)computes the rollup_15m rows of every quarter in the minutes [?, ?) (both multiples of 15) from rollup_1m.
-UPSERT_ROLLUP_15M_FROM_1M = """
+# (Re)computes the rollup_15m rows of every quarter in the minutes [?, ?) (both multiples of 15) from rollup_1m. A minute
+# is dead when every probe in it was lost and it held at least `dead_probes` of them (probe_interval.dead_minute_probes
+# of the interval in force when the row is written).
+def upsert_rollup_15m_from_1m(dead_probes: int) -> str:
+    return _UPSERT_ROLLUP_15M_FROM_1M.replace("{dead}", str(int(dead_probes)))
+
+
+_UPSERT_ROLLUP_15M_FROM_1M = """
 INSERT OR REPLACE INTO rollup_15m (quarter, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n,
                                    p10_sum, p10_ok, p90_sum, p90_ok, dead_minutes)
 SELECT minute / 15 AS quarter, target, SUM(n), SUM(ok), SUM(lat_sum), MIN(lat_min), MAX(lat_max), SUM(jit_sum), SUM(jit_n),
        SUM(lat_p10 * ok), SUM(CASE WHEN lat_p10 IS NOT NULL THEN ok END),
        SUM(lat_p90 * ok), SUM(CASE WHEN lat_p90 IS NOT NULL THEN ok END),
-       SUM(CASE WHEN ok = 0 AND n >= 10 THEN 1 ELSE 0 END)
+       SUM(CASE WHEN ok = 0 AND n >= {dead} THEN 1 ELSE 0 END)
 FROM rollup_1m
 WHERE minute >= ? AND minute < ?
 GROUP BY quarter, target
 """
+
+# What the migrations that built the quarters ran: the dead-minute rule of a 1 s interval.
+UPSERT_ROLLUP_15M_FROM_1M = upsert_rollup_15m_from_1m(10)
 
 # --- schema v19: router uptime, temperature and WAN link; device events; traffic per client and hour ----------------
 #
@@ -525,5 +535,176 @@ CREATE TABLE IF NOT EXISTS client_names (
     mac TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     updated_at REAL NOT NULL
+) WITHOUT ROWID;
+"""
+
+# --- schema v21: the router's and the mesh's storage tiers; the router's hourly app lists --------------------------------
+#
+# The same pattern as the probes (rollup_1m, rollup_15m): the raw polls are kept `retention_days`, a minute tier
+# `rollup_retention_days` and a quarter-hour tier `long_rollup_retention_days`. Sums and counts, never averages, so
+# a bucket of any width merges raw polls, minutes and quarters exactly: avg = SUM(sum) / SUM(n). `<c>_n` counts the
+# polls that measured the figure (NULL is not an idle line). The six figures of the router history chart, then the
+# lowest WAN link speed, then the five client counts (each its own sum and count: a poll may carry only some).
+DEVICE_ROLLUP_FIGURES = ("wan_rx_mbps", "wan_tx_mbps", "cpu_pct", "mem_pct", "client_count", "cpu_temp_c")
+DEVICE_ROLLUP_CLIENT_COLUMNS = DEVICE_SAMPLES_V10_COLUMNS
+
+
+def _device_rollup_columns() -> str:
+    cols = [f"{c}_sum REAL, {c}_n INTEGER NOT NULL DEFAULT 0, {c}_max REAL" for c in DEVICE_ROLLUP_FIGURES]
+    cols.append("wan_link_min INTEGER")
+    cols += [f"{c}_sum INTEGER, {c}_n INTEGER NOT NULL DEFAULT 0" for c in DEVICE_ROLLUP_CLIENT_COLUMNS]
+    return ",\n    ".join(cols)
+
+
+CREATE_DEVICE_ROLLUP_1M_TABLE = f"""
+CREATE TABLE IF NOT EXISTS device_rollup_1m (
+    device_id TEXT NOT NULL,
+    minute INTEGER NOT NULL,
+    {_device_rollup_columns()},
+    PRIMARY KEY (device_id, minute)
+) WITHOUT ROWID;
+"""
+
+CREATE_DEVICE_ROLLUP_15M_TABLE = f"""
+CREATE TABLE IF NOT EXISTS device_rollup_15m (
+    device_id TEXT NOT NULL,
+    quarter INTEGER NOT NULL,
+    {_device_rollup_columns()},
+    PRIMARY KEY (device_id, quarter)
+) WITHOUT ROWID;
+"""
+
+# Clients per mesh node and quarter hour (the mesh counts are read every few minutes: no minute tier).
+CREATE_MESH_ROLLUP_15M_TABLE = """
+CREATE TABLE IF NOT EXISTS mesh_rollup_15m (
+    device_id TEXT NOT NULL,
+    quarter INTEGER NOT NULL,
+    node_id TEXT NOT NULL,
+    clients_sum INTEGER NOT NULL,
+    clients_n INTEGER NOT NULL,
+    clients_max INTEGER NOT NULL,
+    PRIMARY KEY (device_id, quarter, node_id)
+) WITHOUT ROWID;
+"""
+
+# The router's 24-hour app list of every round (hourly), per client ('' = every client): `window_end` is the end of the
+# 24 hours the list covers (traffic_apps keeps only the latest and the midnight ones). `apps` is the compact JSON of
+# traffic_apps. Kept TRAFFIC_APP_HOURS_DAYS days (db/core.py).
+CREATE_TRAFFIC_APP_HOURS_TABLE = """
+CREATE TABLE IF NOT EXISTS traffic_app_hours (
+    device_id TEXT NOT NULL,
+    client TEXT NOT NULL,
+    window_end INTEGER NOT NULL,
+    read_at REAL NOT NULL,
+    apps TEXT NOT NULL,
+    PRIMARY KEY (device_id, client, window_end)
+) WITHOUT ROWID;
+"""
+
+def _device_rollup_select() -> str:
+    """The aggregate columns (after the key columns) of a device rollup row, from raw device_samples rows."""
+    parts = [f"SUM({c}), COUNT({c}), MAX({c})" for c in DEVICE_ROLLUP_FIGURES]
+    parts.append("MIN(wan_link_mbps)")
+    # the client counts of the polls that carry counts (the reading that sets clients_online sets them all)
+    parts += [f"SUM(CASE WHEN clients_online IS NOT NULL THEN {c} END), "
+              f"COUNT(CASE WHEN clients_online IS NOT NULL THEN {c} END)" for c in DEVICE_ROLLUP_CLIENT_COLUMNS]
+    return ", ".join(parts)
+
+
+_DEVICE_ROLLUP_COLUMN_NAMES = ", ".join(
+    [f"{c}_{s}" for c in DEVICE_ROLLUP_FIGURES for s in ("sum", "n", "max")] + ["wan_link_min"]
+    + [f"{c}_{s}" for c in DEVICE_ROLLUP_CLIENT_COLUMNS for s in ("sum", "n")])
+
+# (Re)computes the device_rollup_1m rows of the minutes [?, ?) (seconds, both multiples of 60) of one device (?3) from
+# its raw polls. Recomputing keeps the rows exact when a poll is replaced.
+UPSERT_DEVICE_ROLLUP_1M_FROM_SAMPLES = (
+    f"INSERT OR REPLACE INTO device_rollup_1m (device_id, minute, {_DEVICE_ROLLUP_COLUMN_NAMES}) "
+    f"SELECT device_id, CAST(ts / 60 AS INTEGER) AS minute, {_device_rollup_select()} FROM device_samples "
+    "WHERE device_id = ?3 AND ts >= ?1 AND ts < ?2 GROUP BY device_id, minute")
+
+# The same for every device (the migration's backfill).
+UPSERT_DEVICE_ROLLUP_1M_FROM_SAMPLES_ALL = (
+    f"INSERT OR REPLACE INTO device_rollup_1m (device_id, minute, {_DEVICE_ROLLUP_COLUMN_NAMES}) "
+    f"SELECT device_id, CAST(ts / 60 AS INTEGER) AS minute, {_device_rollup_select()} FROM device_samples "
+    "WHERE ts >= ?1 AND ts < ?2 GROUP BY device_id, minute")
+
+
+def _sum_columns() -> str:
+    parts = [f"SUM({c}_sum), SUM({c}_n), MAX({c}_max)" for c in DEVICE_ROLLUP_FIGURES]
+    parts.append("MIN(wan_link_min)")
+    parts += [f"SUM({c}_sum), SUM({c}_n)" for c in DEVICE_ROLLUP_CLIENT_COLUMNS]
+    return ", ".join(parts)
+
+
+# (Re)computes the device_rollup_15m rows of the quarters in the minutes [?1, ?2) (both multiples of 15) from
+# device_rollup_1m, for one device (?3).
+UPSERT_DEVICE_ROLLUP_15M_FROM_1M = (
+    f"INSERT OR REPLACE INTO device_rollup_15m (device_id, quarter, {_DEVICE_ROLLUP_COLUMN_NAMES}) "
+    f"SELECT device_id, minute / 15 AS quarter, {_sum_columns()} FROM device_rollup_1m "
+    "WHERE device_id = ?3 AND minute >= ?1 AND minute < ?2 GROUP BY device_id, quarter")
+
+UPSERT_DEVICE_ROLLUP_15M_FROM_1M_ALL = (
+    f"INSERT OR REPLACE INTO device_rollup_15m (device_id, quarter, {_DEVICE_ROLLUP_COLUMN_NAMES}) "
+    f"SELECT device_id, minute / 15 AS quarter, {_sum_columns()} FROM device_rollup_1m "
+    "WHERE minute >= ?1 AND minute < ?2 GROUP BY device_id, quarter")
+
+# (Re)computes the mesh_rollup_15m rows of the quarters touched by the raw readings in [?1, ?2) (seconds, multiples of
+# 900), every device (?3 given: one).
+UPSERT_MESH_ROLLUP_15M_FROM_SAMPLES = (
+    "INSERT OR REPLACE INTO mesh_rollup_15m (device_id, quarter, node_id, clients_sum, clients_n, clients_max) "
+    "SELECT device_id, CAST(ts / 900 AS INTEGER) AS quarter, node_id, SUM(clients), COUNT(clients), MAX(clients) "
+    "FROM mesh_samples WHERE ts >= ?1 AND ts < ?2 AND (?3 IS NULL OR device_id = ?3) "
+    "GROUP BY device_id, quarter, node_id")
+# --- schema v22: each incident keeps its own evidence ---------------------------------------------------------------
+#
+# What the incident inspector shows (probes, the modem's and the router's readings around the incident), copied when
+# the incident has closed (db/evidence.py), so it outlives the shared tables that are pruned by age. Deleted with the
+# incident (db/core.py _prune), never by another retention. One incident_evidence row per incident means "written", so
+# it is never written twice; `resolution` is "raw" (every probe), "mixed" (a long window: raw probes at both ends, 10 s
+# buckets between), "minute" (only per-minute rollups were left) or "none" (nothing stored then).
+CREATE_INCIDENT_EVIDENCE_TABLE = """
+CREATE TABLE IF NOT EXISTS incident_evidence (
+    incident_id INTEGER PRIMARY KEY,
+    written_at REAL NOT NULL,
+    window_start REAL NOT NULL,
+    window_end REAL NOT NULL,
+    resolution TEXT NOT NULL
+);
+"""
+
+# One probe or one bucket of probes per row. width 0: a raw probe (target, ts, ok, latency_ms, jitter_ms, error as in
+# `samples`; the bucket columns are NULL). width 10 or 60: a bucket starting at ts of that many seconds, with the
+# columns of rollup_10s / rollup_1m (n probes, ok answered, lat_* over the answered ones, jit_sum over jit_n probes
+# that reported a jitter); latency_ms, jitter_ms and error are NULL.
+CREATE_INCIDENT_EVIDENCE_PROBES_TABLE = """
+CREATE TABLE IF NOT EXISTS incident_evidence_probes (
+    incident_id INTEGER NOT NULL,
+    target INTEGER NOT NULL,
+    ts REAL NOT NULL,
+    width INTEGER NOT NULL,
+    n INTEGER,
+    ok INTEGER NOT NULL,
+    lat_sum REAL,
+    lat_min REAL,
+    lat_max REAL,
+    jit_sum REAL,
+    jit_n INTEGER,
+    latency_ms REAL,
+    jitter_ms REAL,
+    error TEXT,
+    PRIMARY KEY (incident_id, target, ts)
+) WITHOUT ROWID;
+"""
+
+# A reading of a device around the incident: kind "router" (a device_samples row) or "line" (a line_samples row), the
+# row's columns without the device and time as compact JSON.
+CREATE_INCIDENT_EVIDENCE_READINGS_TABLE = """
+CREATE TABLE IF NOT EXISTS incident_evidence_readings (
+    incident_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    ts REAL NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (incident_id, kind, device_id, ts)
 ) WITHOUT ROWID;
 """

@@ -11,10 +11,14 @@ const { escapeHtml } = kit;
 // fill is --f (an hour to come is i.later), so a theme can restyle the cells and keep their colors.
 function gridMarkup(vm) {
   const head = `<span></span>${vm.hours.map((h) => `<span class="hd">${h}</span>`).join('')}`;
+  // the one cell in the tab order (the roving focus starts there): the oldest hour inside the window that can be opened
+  const first = vm.rows.flatMap((row) => row.cells).find((c) => !c.outside && !c.future)?.id;
   const rows = vm.rows.map((row) => `<span data-item="day-${row.id}" data-v="day">${escapeHtml(row.name)}</span>${row.cells.map((c) => {
     const fill = c.q === null ? 'var(--nodata)' : `var(--q${c.q})`;
+    if (c.folded) return `<i class="fold" style="--f:${fill}" data-item="${c.id}" data-v="tip" role="img" aria-label="${escapeHtml(c.aria)}" data-tip="${escapeHtml(c.tip)}"></i>`;
+    if (c.outside) return `<i class="outside" style="--f:transparent" data-item="${c.id}" data-v="tip" aria-hidden="true"></i>`;
     if (c.future) return `<i class="later" style="--f:${fill}" data-item="${c.id}" data-v="tip" aria-label="${escapeHtml(c.aria)}" data-tip="${escapeHtml(c.tip)}"></i>`;
-    return `<button type="button" class="cell" tabindex="${c.id === '0-0' ? 0 : -1}" style="--f:${fill}" data-item="${c.id}" data-v="tip" data-action="showIncidentWindow" data-start="${numText(c.start)}" data-end="${numText(c.end)}"`
+    return `<button type="button" class="cell" tabindex="${c.id === first ? 0 : -1}" style="--f:${fill}" data-item="${c.id}" data-v="tip" data-action="showIncidentWindow" data-start="${numText(c.start)}" data-end="${numText(c.end)}"`
       + ` data-label="${escapeHtml(c.label)}" data-lost="${numText(c.lost)}" data-sent="${numText(c.sent)}" data-tip="${escapeHtml(c.tip)}" aria-label="${escapeHtml(c.aria)}"></button>`;
   }).join('')}`).join('');
   return head + rows;

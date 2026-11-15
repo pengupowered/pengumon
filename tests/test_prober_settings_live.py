@@ -247,7 +247,7 @@ async def test_the_line_and_router_levels_apply_in_place():
 async def test_the_appliers_subscribe_to_what_they_apply():
     config = AppConfig()
     hub, _ = _wired(config)
-    assert hub.names == ["probing.timeouts", "probing.window", "probing.dns_probes"]
+    assert hub.names == ["probing.timeouts", "probing.interval", "probing.window", "probing.dns_probes"]
     assert hub.subscribers(Change.of(keys=["prober.hop_status.local_latency_ms"])) == []  # live through the config
     assert hub.subscribers(Change.of(keys=["line_signal.ds_snr_critical_db"])) == []  # the monitors read the config
 

@@ -8,6 +8,7 @@ export const isOpen = () => $(MODAL).classList.contains('active');
 export const U = {
   saving: false,
   draftSource: '', // '' | 'restore' (a loaded version) | 'yaml_import' (an imported file): sent as ?source= on Save
+  storage: null, // GET /api/storage (storage.js), for the disk table under Retention; undefined while it is being read, null for a viewer or when it failed
   versions: null, // GET /api/settings/versions, once read
   versionsShown: false,
   validateSeq: 0, // the newest validation; an answer for an older one is dropped

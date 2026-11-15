@@ -5,6 +5,7 @@
 
 import { kit } from '../../js/cards.js';
 import { paint } from '../../js/dom.js';
+import { fillRangeSelect, monthLabel, monthTicks } from '../../js/ranges.js';
 import { series, token } from '../../js/chart-theme.js';
 import { localFormat } from '../../js/clock.js';
 
@@ -118,9 +119,7 @@ function legend(c, canvas) {
 // The history chart and its range buttons. A part: another view can put it in a box of its own.
 function chartPart(box) {
   const bar = el('div', 'spd-chart-bar');
-  const seg = el('span', 'seg');
-  seg.setAttribute('role', 'group');
-  seg.setAttribute('aria-label', 'History range');
+  const seg = el('span', 'range-host');
   const keys = el('span', 'spd-legend');
   bar.append(keys, seg);
   const wrap = el('div', 'chart-box spd-chart-box');
@@ -141,12 +140,14 @@ function chartPart(box) {
         x: {
           type: 'linear', min: cur.xMin, max: cur.xMax, grid: { display: false },
           afterBuildTicks(scale) {
-            const step = (cur.days <= 7 ? 1 : 5) * 86400000;
+            // 4 h to a day, a day to a week, 5 days to a month, 15 days to 90 days; months past that (a tick at each first of the month)
+            if (cur.days > 90) { scale.ticks = monthTicks(cur.xMin, cur.xMax).map((value) => ({ value })); return; }
+            const step = cur.days <= 1 ? 4 * 3600000 : (cur.days <= 7 ? 1 : cur.days <= 30 ? 5 : 15) * 86400000;
             const ticks = [];
             for (let v = cur.xMax; v >= cur.xMin; v -= step) ticks.unshift({ value: v });
             scale.ticks = ticks;
           },
-          ticks: { font: { size: 10 }, maxRotation: 0, callback: (v) => localFormat(v, { month: 'short', day: 'numeric' }) }
+          ticks: { font: { size: 10 }, maxRotation: 0, callback: (v) => (cur.days > 90 ? monthLabel(v) : localFormat(v, cur.days <= 1 ? { hour: '2-digit', minute: '2-digit' } : { month: 'short', day: 'numeric' })) }
         },
         y: { beginAtZero: true, grace: '8%', ticks: { font: { size: 10 }, maxTicksLimit: 5, callback: (v) => `${v}` }, title: { display: true, text: 'Mbps', font: { size: 10 } } }
       },
@@ -168,15 +169,8 @@ function chartPart(box) {
       const sig = JSON.stringify(c);
       if (chart && sig === shown && !force) return; // nothing changed: a hover stays
       shown = sig;
-      paint(seg, c.modes, () => c.modes.forEach((m) => {
-        const b = el('button', null, m.label);
-        b.type = 'button';
-        b.dataset.action = m.action;
-        b.dataset.arg = String(m.arg);
-        b.title = m.title;
-        b.setAttribute('aria-pressed', String(m.pressed));
-        seg.appendChild(b);
-      }));
+      const pressed = c.modes.find((m) => m.pressed);
+      fillRangeSelect(seg, { options: c.modes.map((m) => ({ id: String(m.arg), words: m.label })), value: String(pressed ? pressed.arg : c.modes[0].arg), action: 'speedRange', label: 'History range' });
       keys.replaceChildren(...legend(c, canvas).map((k) => {
         const s = el('span', 'spd-key');
         const sw = k.style ? el('i', 'spd-shape', k.style) : el('i', `key ${k.cls}`);

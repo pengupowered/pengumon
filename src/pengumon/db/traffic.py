@@ -3,6 +3,7 @@ changes). Rows name clients by MAC: they are read back only by the routes and re
 setting (devices/traffic.py)."""
 
 import json
+import math
 from typing import Callable, Iterable, List, Optional, Tuple
 
 from pengumon.capabilities import TrafficApps, TrafficHour
@@ -22,12 +23,14 @@ class TrafficQueries:
     async def store_traffic_apps(self, device_id: str, windows: Iterable[TrafficApps], read_at: float,
                                  day_of: Callable[[int], Optional[str]]) -> None:
         """Each window replaces the client's latest one (day ''). A window that is a whole local day (`day_of` names it:
-        it ends at a midnight) also becomes that day's row, unless the day already has one."""
-        latest, days = [], []
+        it ends at a midnight) also becomes that day's row, unless the day already has one. Every window is also kept
+        as an hourly list (traffic_app_hours, 31 days), a read of the same window replacing the one before."""
+        latest, days, hours = [], [], []
         for w in windows:
             apps = json.dumps([[name, int(up), int(down)] for name, up, down in w.apps], ensure_ascii=False,
                               separators=(",", ":"))
             latest.append((device_id, w.client, "", int(w.window_end), read_at, apps))
+            hours.append((device_id, w.client, int(w.window_end), read_at, apps))
             day = day_of(int(w.window_end))
             if day:
                 days.append((device_id, w.client, day, int(w.window_end), read_at, apps))
@@ -41,6 +44,9 @@ class TrafficQueries:
                 await db.executemany(
                     "INSERT OR IGNORE INTO traffic_apps (device_id, client, day, window_end, read_at, apps) "
                     "VALUES (?, ?, ?, ?, ?, ?)", days)
+            await db.executemany(
+                "INSERT OR REPLACE INTO traffic_app_hours (device_id, client, window_end, read_at, apps) "
+                "VALUES (?, ?, ?, ?, ?)", hours)
 
     async def get_traffic_hours(self, device_id: str, start_hour: float, end_hour: float,
                                 client: Optional[str] = None) -> List[Tuple[int, str, int, int]]:
@@ -114,6 +120,28 @@ class TrafficQueries:
                 "AND day != '' ORDER BY day, client", (device_id, first_day, last_day),
             ) as cursor:
                 return [(c, d, w, _apps(a)) for c, d, w, a in await cursor.fetchall()]
+
+    async def get_traffic_app_windows(self, device_id: str, first_end: float, last_end: float,
+                                      client: Optional[str] = None) -> List[Tuple[str, int, list]]:
+        """(client, window_end, apps) of every stored 24-hour app window ending in first_end <= window_end <= last_end,
+        for every client or one, newest first: the hourly ones (traffic_app_hours, kept 31 days) and the latest one of
+        each client and the day rows (traffic_apps, kept with the traffic). A window stored more than once (hourly, as
+        a client's latest, as a day's row) is returned once; the copies hold the same list."""
+        lo, hi = math.ceil(first_end), math.floor(last_end)
+        where = "device_id = ? AND window_end >= ? AND window_end <= ?" + (" AND client = ?" if client is not None else "")
+        one = [device_id, lo, hi] + ([client] if client is not None else [])
+        sql = (f"SELECT client, window_end, apps, 0 AS src FROM traffic_app_hours WHERE {where} "
+               f"UNION ALL SELECT client, window_end, apps, CASE WHEN day = '' THEN 2 ELSE 1 END FROM traffic_apps "
+               f"WHERE {where} ORDER BY window_end DESC, src")
+        async with self._db.read() as db:
+            async with db.execute(sql, one + one) as cursor:
+                rows = [(c, w, a) for c, w, a, _ in await cursor.fetchall()]
+        seen, out = set(), []
+        for c, w, a in rows:
+            if (c, w) not in seen:
+                seen.add((c, w))
+                out.append((c, w, _apps(a)))
+        return out
 
     async def insert_device_event(self, device_id: str, ts: float, kind: str, detail: dict) -> None:
         async with self._db.write() as db:

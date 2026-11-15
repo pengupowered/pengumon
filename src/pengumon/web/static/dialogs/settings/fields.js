@@ -5,15 +5,20 @@
 
 import { escapeHtml } from '../../js/escape.js';
 import { panelTitles } from '../../js/layout.js';
-import { HOUR_UNITS, choiceFor, fmt, hoursText, isNumeric, parse, problem, readHours, same, speedEstimate, splitHours, toShown } from './model.js';
-import { S, changed, isEnv, inDraft, listItems, roundSeconds, setValue, valueOf, valueState } from './store.js';
+import { HOUR_UNITS, choiceFor, dnsIntervalProblem, fmt, hoursText, intervalLines, isNumeric, parse, probesTime, problem, readHours, same, speedEstimate, splitHours, toShown } from './model.js';
+import { refreshStorage } from './storage.js';
+import { S, changed, isEnv, inDraft, listItems, setValue, valueOf, valueState } from './store.js';
 
 const ISP = 'classifier.isp_latency_spike_threshold_ms';
 const ZONE = 'general.timezone';
+const INTERVAL = 'prober.interval_seconds';
+const DNS_INTERVAL = 'prober.dns_interval_seconds';
+const OUTAGE_PROBES = 'classifier.consecutive_failures_for_incident';
+const LATENCY_PROBES = 'classifier.consecutive_failures_for_latency_incident';
 const LAYOUT_KEYS = ['dashboard.order', 'dashboard.hidden', 'dashboard.colors'];
 
 const inputId = (section, key) => `set-in-${section}-${key.replace(/[^a-z0-9]+/gi, '-')}`;
-const num = (spec, stored) => (stored === null || stored === undefined ? '' : String(toShown(spec, stored, roundSeconds())));
+const num = (spec, stored) => (stored === null || stored === undefined ? '' : String(toShown(spec, stored)));
 
 // ---------- values in words ----------
 
@@ -93,7 +98,7 @@ export function shownValue(spec, v) {
   if (spec.type === 'timezone') return zoneLabel(v);
   if (spec.type === 'time') return clockText(v);
   if (spec.type === 'hours') return hoursText(v);
-  return fmt(spec, v, roundSeconds());
+  return fmt(spec, v);
 }
 
 // "Standard: 15 %": the one form of a row's standard (default) value.
@@ -154,7 +159,8 @@ function inputHtml(spec, section) {
       return `<span class="seg" role="group" aria-labelledby="${id}-l" id="${id}">${choices.map((c) =>
         `<button type="button" data-action="settingsChoice" data-key="${escapeHtml(spec.key)}" data-arg="${escapeHtml(c)}" aria-pressed="${String(c) === String(value)}"${env ? ' disabled' : ''}>${escapeHtml(choiceLabel(spec, c))}</button>`).join('')}</span>`;
     }
-    return `<select class="input" ${common}${env ? ' disabled' : ''}>${choices.map((c) => `<option value="${escapeHtml(c)}"${String(c) === String(value) ? ' selected' : ''}>${escapeHtml(choiceLabel(spec, c))}</option>`).join('')}</select>`;
+    const blank = spec.nullable ? `<option value=""${value === null || value === undefined ? ' selected' : ''}>${escapeHtml(spec.empty || 'none')}</option>` : '';
+    return `<select class="input" ${common}${env ? ' disabled' : ''}>${blank}${choices.map((c) => `<option value="${escapeHtml(c)}"${String(c) === String(value) ? ' selected' : ''}>${escapeHtml(choiceLabel(spec, c))}</option>`).join('')}</select>`;
   }
   if (spec.type === 'timezone') {
     return `<select class="input" ${common}${env ? ' disabled' : ''}>${zoneOptions(value)}</select>`;
@@ -221,10 +227,13 @@ function stateHtml(keys, resetHtml) {
 function metaHtml(spec) {
   const reset = `<button type="button" class="set-lnk" data-action="settingsReset" data-key="${escapeHtml(spec.key)}" data-needs-edit>Reset to standard</button>`;
   const warn = S.warnings.filter((w) => w.where === `values.${spec.key}`).map((w) => `<span class="set-warn">${escapeHtml(w.message)}</span>`).join('');
+  const time = spec.rounds ? `<span class="set-time" data-time>${escapeHtml(probesTime(Number(valueOf(spec.key)), Number(valueOf(INTERVAL))))}</span>` : '';
+  const dnsBad = spec.key === DNS_INTERVAL ? dnsIntervalProblem(Number(valueOf(INTERVAL)), valueOf(DNS_INTERVAL)) : '';
   const clock = spec.key === 'alerts.quiet_hours.start' || spec.key === 'alerts.quiet_hours.end' || spec.key === ZONE ? zoneClock() : '';
   const zone = spec.key === ZONE ? useZoneHtml() : '';
-  const extra = clock || zone ? `<span class="set-extra">${clock} ${zone}</span>` : '';
-  return `<span class="set-effect">${escapeHtml(spec.effect)}</span><span class="set-side"><span class="set-def">${escapeHtml(standardText(spec))}</span> ${stateHtml([spec.key], reset)}${extra}</span>${warn}`;
+  const extra = clock || zone || time ? `<span class="set-extra">${time} ${clock} ${zone}</span>` : '';
+  const bad = dnsBad ? `<span class="set-warn" data-dns-problem>${escapeHtml(dnsBad)}</span>` : '';
+  return `<span class="set-effect">${escapeHtml(spec.effect)}</span><span class="set-side"><span class="set-def">${escapeHtml(standardText(spec))}</span> ${stateHtml([spec.key], reset)}${extra}</span>${warn}${bad}`;
 }
 
 // A row that relates to a setting elsewhere (a hop color to its incident level) names it, its value, and links to it.
@@ -277,6 +286,16 @@ export function speedEstimateRowHtml() {
   return `<div class="set-row set-note" data-extra="speed-estimate"><p class="set-estimate" data-estimate aria-live="polite">${escapeHtml(estimateNow())}</p></div>`;
 }
 
+// The probe interval's line under its rows: what the rules mean at it, what drops it can miss, and its cost. Follows the draft.
+const dnsLookups = () => listItems('dns_probes').filter((d) => d && d.enabled !== false).length;
+const intervalNow = () => intervalLines(valueOf(INTERVAL), valueOf(DNS_INTERVAL), dnsLookups(), S.server && S.server.probing,
+  { outage: Number(valueOf(OUTAGE_PROBES)), latency: Number(valueOf(LATENCY_PROBES)) });
+const intervalHtml = () => intervalNow().map((line) => `<span class="set-line">${escapeHtml(line)}</span>`).join('');
+
+export function intervalEstimateRowHtml() {
+  return `<div class="set-row set-note" data-extra="interval-estimate"><p class="set-estimate" data-estimate aria-live="polite">${intervalHtml()}</p></div>`;
+}
+
 export function speedMlabRowHtml() {
   return `<div class="set-row set-note" data-extra="speed-mlab"${valueOf('speedtest.provider') === 'mlab' ? '' : ' data-inactive'}><p class="set-privacy"><b>Privacy:</b> <span data-privacy>${escapeHtml(MLAB_NOTE)}</span></p></div>`;
 }
@@ -303,10 +322,10 @@ function readInput(el, spec) {
     return readHours(box.querySelector('input').value, box.querySelector('select').value, spec.max);
   }
   const text = el.value;
-  const why = problem(spec, text, roundSeconds());
+  const why = problem(spec, text);
   if (why) return { problem: why };
-  if (spec.type === 'choice') return { stored: choiceFor(spec, text) };
-  return { stored: spec.type === 'timezone' || spec.type === 'theme' ? text : parse(spec, text, roundSeconds()) };
+  if (spec.type === 'choice') return { stored: text === '' && spec.nullable ? null : choiceFor(spec, text) }; // '': the empty choice
+  return { stored: spec.type === 'timezone' || spec.type === 'theme' ? text : parse(spec, text) };
 }
 
 // An edit of a row's input (typing, switching, picking).
@@ -387,13 +406,18 @@ export function refreshRows(root = document.getElementById('settingsModal')) {
       return;
     }
     if (spec.type === 'boolean') input.checked = !!value;
-    else if (isNumeric(spec)) { if (parse(spec, input.value, roundSeconds()) !== value) input.value = num(spec, value); }
+    else if (isNumeric(spec)) { if (parse(spec, input.value) !== value) input.value = num(spec, value); }
     else if (input.value !== String(value ?? '')) input.value = value ?? '';
   });
   root.querySelectorAll('[data-action=settingsChoice]').forEach((b) => {
     b.setAttribute('aria-pressed', String(String(valueOf(b.dataset.key)) === b.dataset.arg));
   });
+  refreshStorage(root);
   root.querySelectorAll('.set-row[data-extra=speed-estimate] [data-estimate]').forEach((p) => { p.textContent = estimateNow(); });
+  root.querySelectorAll('.set-row[data-extra=interval-estimate] [data-estimate]').forEach((p) => {
+    const html = intervalHtml();
+    if (p._html !== html) { p.innerHTML = html; p._html = html; }
+  });
   root.querySelectorAll('.set-row[data-extra=speed-mlab]').forEach((row) => { row.toggleAttribute('data-inactive', valueOf('speedtest.provider') !== 'mlab'); });
   root.querySelectorAll('.set-row[data-extra=layout]').forEach((row) => {
     row.querySelector('[data-layout]').textContent = layoutNow();

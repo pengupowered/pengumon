@@ -13,13 +13,17 @@ import { localFormat } from '../../js/clock.js';
 import { clientsDevice, setTopologyClients, setTopologyFilter } from './topology.js';
 import { series } from '../../js/chart-theme.js';
 import { levelOfGrade } from '../../js/grades.js';
+import { allStoredWords, axisLabel, distinctTickIndexes, fillRangeSelect, loadFromOldest, rangeOptions, retentionDays } from '../../js/ranges.js';
 
 const REFRESH_MS = 60000;
 const color = (i) => series(i);
+// The ranges on offer: 1 h up to what the router's client counts are kept for (js/ranges.js)
+const options = () => rangeOptions({ days: retentionDays('router'), min: '1h' });
 
 const view = {
   data: null, // the last /clients answer
   history: null, // the last /clients/history answer
+  since: null, // where All starts when that is the oldest stored count (not the retention's start), else null
   sortKey: 'label',
   sortDir: 1,
   showOffline: false,
@@ -69,6 +73,7 @@ function openNetworkModal(nodeId) {
   document.querySelectorAll('#networkModal .clients-only').forEach((el) => { el.hidden = !lists; });
   document.getElementById('clientsEmpty').hidden = lists;
   document.getElementById('clientsUpdated').textContent = '';
+  markRange();
   keepKeyboard(document.getElementById('networkModal'));
   openModal('networkModal');
   if (nodeId !== undefined) view.filter = nodeId ? { kind: 'node', value: nodeId } : null;
@@ -116,14 +121,30 @@ async function loadHistory() {
   const mine = ++historySeq;
   const end = Math.floor(Date.now() / 1000);
   try {
-    const res = await fetch(`${deviceUrl()}/clients/history?start_time=${end - view.rangeSeconds}&end_time=${end}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const history = await res.json();
+    const all = !!options().find((o) => o.seconds === view.rangeSeconds && o.all);
+    const ask = async (from, to) => {
+      const res = await fetch(`${deviceUrl()}/clients/history?start_time=${from}&end_time=${to}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+    // All starts at the oldest stored count when that is younger than the retention (js/ranges.js)
+    const { answer: history, since } = await loadFromOldest({
+      all, start: end - view.rangeSeconds, end, ask, current: () => mine === historySeq,
+      widthOf: (h) => h.bucket_seconds, oldest: (h) => (h.points.length ? h.points[0].ts : null)
+    });
     if (mine !== historySeq) return;
     view.history = history;
+    view.since = since;
     renderChart();
   } catch (e) {
     if (mine !== historySeq) return;
+    // the chart must not go on showing the previous range under the new one's name: empty it, with the reason in the note
+    view.history = null;
+    if (view.chart) {
+      view.chart.data = { labels: [], datasets: [] };
+      view.chart.update();
+    }
+    document.getElementById('clientsLegend').replaceChildren();
     document.getElementById('clientsChartNote').textContent = `Could not load the history: ${e.message}`;
   }
 }
@@ -257,9 +278,11 @@ function renderClients() {
   list.forEach(c => body.appendChild(row(c, hasNodes)));
 }
 
-function timeLabel(ts) {
+// An axis label by the span drawn (All starts at the oldest stored count, so its kind is that span's, not the retention's).
+function timeLabel(ts, seconds) {
+  if (seconds > 604800) return axisLabel(ts * 1000, seconds);
   const hm = localFormat(ts * 1000, { hour: '2-digit', minute: '2-digit' });
-  return view.rangeSeconds > 86400 ? `${localFormat(ts * 1000, { weekday: 'short' })} ${hm}` : hm;
+  return seconds > 86400 ? `${localFormat(ts * 1000, { weekday: 'short' })} ${hm}` : hm;
 }
 
 function seriesFor(history) {
@@ -279,8 +302,11 @@ function renderChart() {
   if (!history) return;
   if (view.chartMode === 'node' && !history.nodes.length) view.chartMode = 'band';
   const note = document.getElementById('clientsChartNote');
-  note.textContent = history.points.length
-    ? `One point per ${formatDuration(history.bucket_seconds)} (mean of the readings in it)`
+  const pts = history.points;
+  const drawn = pts.length > 1 ? pts[pts.length - 1].ts - pts[0].ts : 0;
+  const all = !!options().find((o) => o.seconds === view.rangeSeconds && o.all);
+  note.textContent = pts.length
+    ? `${all ? `${allStoredWords(retentionDays('router'), view.since)} · ` : ''}One point per ${formatDuration(history.bucket_seconds)} (mean of the readings in it)`
     : 'No client counts stored for this range yet.';
   const sets = seriesFor(history);
   const legend = document.getElementById('clientsLegend');
@@ -299,7 +325,7 @@ function renderChart() {
     borderWidth: 1.5,
     tension: 0.2
   }));
-  const data = { labels: history.points.map(p => timeLabel(p.ts)), datasets };
+  const data = { labels: pts.map(p => timeLabel(p.ts, drawn)), datasets };
   if (view.chart) {
     view.chart.data = data;
     view.chart.update();
@@ -314,7 +340,9 @@ function renderChart() {
       animation: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0, font: { size: 10 } } },
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0, font: { size: 10 } },
+        // no label twice in a row (many points share a date or a month)
+        afterBuildTicks: (scale) => { const t = distinctTickIndexes(scale.chart.data.labels, scale.options.ticks.maxTicksLimit); if (t) scale.ticks = t; } },
         y: { stacked: true, min: 0, grid: {}, ticks: { precision: 0, font: { size: 10 }, maxTicksLimit: 5 } }
       },
       plugins: { legend: { display: false } }
@@ -326,9 +354,19 @@ function markActive(containerId, arg) {
   document.querySelectorAll(`#${containerId} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.arg === String(arg))));
 }
 
+function markRange() {
+  const host = document.getElementById('clientsRangeButtons');
+  if (!host) return;
+  const list = options();
+  const hit = list.find((o) => o.seconds === view.rangeSeconds) || list.find((o) => o.id === '24h') || list[0];
+  view.rangeSeconds = hit.seconds; // (a range the retention no longer keeps gives way to 24 h)
+  fillRangeSelect(host, { options: list, value: hit.id, action: 'setClientsRange', label: 'Time range' });
+}
+
 function setClientsRange(seconds) {
+  if (!options().some((o) => o.seconds === seconds)) return;
   view.rangeSeconds = seconds;
-  markActive('clientsRangeButtons', seconds);
+  markRange();
   loadHistory();
 }
 
@@ -382,9 +420,9 @@ registerActions('click', {
   filterClientsNode: (el) => filterClientsNode(el.dataset.arg),
   filterClientsBand: (el) => filterClientsBand(el.dataset.arg),
   clearClientsFilter: () => setClientsNodeFilter(''),
-  setClientsRange: (el) => setClientsRange(Number(el.dataset.arg)),
   setClientsChartMode: (el) => setClientsChartMode(el.dataset.arg)
 });
 registerActions('change', {
+  setClientsRange: (el) => { const hit = options().find((o) => o.id === el.value); if (hit) setClientsRange(hit.seconds); },
   toggleOfflineClients: (el) => toggleOfflineClients(el.checked)
 });

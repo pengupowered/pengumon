@@ -5,7 +5,7 @@ export const subject = "dialog:target-history";
 export const variants = ["full"];
 
 export const steps = [
-  ["clicking a target row opens its history modal with data; the range buttons refetch", async ({ click, eq, ok, outDir, page, path, text, until }) => {
+  ["clicking a target row opens its history modal with data; the range control refetches", async ({ chooseRange, click, eq, ok, outDir, page, path, text, until }) => {
     await click("#hopMatrixBody tr:first-child");
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
     ok("title", /Local Router/.test(await text("#targetHistTitle")));
@@ -13,9 +13,9 @@ export const steps = [
     const points = (id) => page.evaluate((i) => Chart.getChart(document.getElementById(i))?.data.datasets[0]?.data.length ?? 0, id);
     await until(() => (Chart.getChart(document.getElementById("targetHistLatency"))?.data.datasets[0]?.data.length ?? 0) > 20);
     ok("loss chart has the same points", (await points("targetHistLoss")) > 20);
-    ok("1 h is active", await page.$eval('#targetHistRanges button[data-arg="3600"]', (b) => b.classList.contains("active")));
-    await click('#targetHistRanges button[data-arg="86400"]');
-    await until(() => document.querySelector('#targetHistRanges button[data-arg="86400"]').classList.contains("active"));
+    eq("1 h is chosen", await page.$eval("#targetHistRanges select", (s) => s.value), "1h");
+    await chooseRange("#targetHistRanges", "24h");
+    await until(() => document.querySelector("#targetHistRanges select").value === "24h");
     await until(() => /points, one per 10 min/.test(document.getElementById("targetHistStatus").textContent));
     await page.screenshot({ path: path.join(outDir, "target-history.png") });
     await click("[data-action=closeModal][data-arg=targetHistModal]");
@@ -42,12 +42,12 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=targetHistModal]");
   }],
 
-  ["target detail dialog: stats, latency chart with band, loss, 24 h strip; five ranges; Live refreshes; Escape closes", async ({ click, count, eq, ok, page, shots, showCard, until }) => {
+  ["target detail dialog: stats, latency chart with band, loss, 24 h strip; eight ranges; Live refreshes; Escape closes", async ({ chooseRange, click, count, eq, ok, page, rangeState, shots, showCard, until }) => {
     await showCard("diagnosis"); // Path health is not drawn while it is off screen
     await click('#pathChain .node[data-node^="Gateway"]');
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
-    eq("five ranges", await count("#targetHistRanges button"), 5);
-    eq("ranges", await page.$$eval("#targetHistRanges button", (b) => b.map((x) => x.textContent).join(",")), "Live,15 m,1 h,24 h,7 d");
+    eq("eight ranges (180 days of probes are kept)", (await rangeState("#targetHistRanges")).ids.length, 8);
+    eq("ranges", (await rangeState("#targetHistRanges")).words.join(","), "Live,Last 15 minutes,Last hour,Last 24 hours,Last 7 days,Last 30 days,Last 90 days,All · 180 d");
     await until(() => document.querySelectorAll("#targetHistStrip .strip i").length === 96);
     await until(() => /ms/.test(document.querySelectorAll("#targetHistStats .val")[1].textContent));
     eq("five figures", await count("#targetHistStats .stat"), 5);
@@ -56,12 +56,23 @@ export const steps = [
     eq("line first", await page.evaluate(() => Chart.getChart(document.getElementById("targetHistLatency")).data.datasets[0].id), "line");
     const bars = await page.evaluate(() => Chart.getChart(document.getElementById("targetHistLoss")).data.datasets[0].data.map((p) => p.y));
     ok(`a bar only where probes were lost (${bars.filter((y) => y > 0).length} of ${bars.length})`, bars.length > 20 && !bars.includes(0));
-    for (const [sec, word] of [[300, /one per 2 s/], [900, /one per 10 s/], [604800, /one per 60 min/]]) {
-      await click(`#targetHistRanges button[data-arg="${sec}"]`);
+    for (const [id, word] of [["live", /one per 2 s/], ["15m", /one per 10 s/], ["7d", /one per 15 min/], ["30d", /one per 1 h/], ["90d", /one per 3 h/], ["all", /one per (?!3 h)\d/]]) { // (All starts at the oldest stored probe: this seed holds a few days, so its bucket is not the 90 d one)
+      await chooseRange("#targetHistRanges", id);
       await until((w) => new RegExp(w).test(document.getElementById("targetHistStatus").textContent), word.source);
-      eq(`pressed ${sec}`, await page.$eval(`#targetHistRanges button[data-arg="${sec}"]`, (b) => b.getAttribute("aria-pressed")), "true");
+      eq(`chosen ${id}`, await page.$eval("#targetHistRanges select", (s) => s.value), id);
     }
-    await click('#targetHistRanges button[data-arg="300"]');
+    await chooseRange("#targetHistRanges", "30d");
+    await until(() => /one per 1 h/.test(document.getElementById("targetHistStatus").textContent));
+    // 30 d asked for the last 30 days, ending now, in 1-hour buckets, and drew them
+    const asked = await page.evaluate(() => {
+      const url = new URL(performance.getEntriesByType("resource").filter((e) => e.name.includes("/api/history?")).pop().name);
+      const q = url.searchParams;
+      return { span: Number(q.get("end_time")) - Number(q.get("start_time")), bucket: q.get("bucket_seconds"), lag: Date.now() / 1000 - Number(q.get("end_time")) };
+    });
+    eq("the 30 d request spans 30 days", asked.span, 30 * 86400);
+    eq("in 1 h buckets", asked.bucket, "3600");
+    ok(`and ends now (${asked.lag.toFixed(0)} s ago)`, asked.lag >= 0 && asked.lag < 60);
+    await chooseRange("#targetHistRanges", "live");
     await shots("target-detail");
     await page.keyboard.press("Escape");
     await until(() => !document.getElementById("targetHistModal").classList.contains("active"));
@@ -74,7 +85,7 @@ export const steps = [
     await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
     eq("the title says what the node says", await text("#targetHistTitle"), "Internet · median of 3 public servers");
     // the number on the node is in the dialog: opened on Live, the node's own figure shown as it is now, the window said
-    eq("a path node opens on Live", await page.$eval('#targetHistRanges button[data-arg="300"]', (b) => b.getAttribute("aria-pressed")), "true");
+    eq("a path node opens on Live", await page.$eval("#targetHistRanges select", (s) => s.value), "live");
     await until(() => {
       const v = document.querySelector('#pathChain .node[data-node^="Internet"] .node-val').textContent.replace(/ms$/, "");
       const now = document.getElementById("targetHistNow");
@@ -163,4 +174,59 @@ export const steps = [
     await page.evaluate(() => { window.__smokeMutate = null; });
     await page.setViewport({ width: 1400, height: 1000 });
   }],
+
+  ["every range draws the target's latency and loss (400-800 points from 7 d on, axis labels of the range's kind), on a desktop, a phone and in every theme", async ({ atEveryRange, axisOk, chartAxis, chooseRange, click, eq, everyLook, noSideScroll, ok, openPanel, phone, rangeState, settled, until }) => {
+    const open = async (onPhone = false) => {
+      if (onPhone) await openPanel("matrix", "live"); // (the hop table is on the Live tab, and a tap needs it on screen)
+      await until(() => document.querySelectorAll("#hopMatrixBody tr [data-f=last]").length >= 3); // (the rows are drawn from the first message on)
+      await click("#hopMatrixBody tr:first-child");
+      await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
+    };
+    const check = (where) => async (id, s) => {
+      const what = `${where} ${id}`;
+      ok(`${what}: the chart is drawn`, !!s);
+      const long = ["7d", "30d", "90d", "all"].includes(id);
+      ok(`${what}: ${s.sets[0].n} points (${long ? "300-820" : "at least 20"})`, long ? s.sets[0].n >= 300 && s.sets[0].n <= 820 : s.sets[0].n >= 20);
+      axisOk(what, id, s);
+      ok(`${what}: nothing sticks out sideways`, await noSideScroll("targetHistModal"));
+    };
+    await open();
+    eq("eight ranges", (await rangeState("#targetHistRanges")).ids.join(), "live,15m,1h,24h,7d,30d,90d,all");
+    await atEveryRange("#targetHistRanges", "#targetHistLatency", check("desktop"));
+    await everyLook(async (look) => {
+      for (const id of ["24h", "all"]) {
+        await chooseRange("#targetHistRanges", id);
+        await settled();
+        await check(look)(id, await chartAxis("#targetHistLatency"));
+      }
+    });
+    await click("[data-action=closeModal][data-arg=targetHistModal]");
+    await phone(async () => {
+      await open(true);
+      await atEveryRange("#targetHistRanges", "#targetHistLatency", check("phone"));
+      await click("[data-action=closeModal][data-arg=targetHistModal]");
+    });
+  }, { variants: ["longhistory"] }],
+
+  ["All starts at the oldest stored probe when that is younger than the retention: the target history (42 days of data, then 400)", async ({ chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, until, youngData }) => {
+    for (const { days, kind, age } of [{ days: 42, kind: "date", age: 42 }, { days: 400, kind: "month", age: 180 }]) { // (the probes' rollups are kept 180 days: the server answers no more)
+      await youngData(days);
+      await until(() => document.querySelectorAll("#hopMatrixBody tr [data-f=last]").length >= 3);
+      await click("#hopMatrixBody tr:first-child");
+      await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
+      eq(`${days}: the retention is a year`, (await rangeState("#targetHistRanges")).words.at(-1), "All · 1 y");
+      await chooseRange("#targetHistRanges", "all");
+      await settled();
+      const s = await chartAxis("#targetHistLatency");
+      const x = await page.evaluate(() => { const c = Chart.getChart(document.getElementById("targetHistLatency")); return { min: c.scales.x.min / 1000, first: c.data.datasets[0].data[0].x / 1000, now: Date.now() / 1000 }; });
+      const back = (x.now - x.first) / 86400;
+      ok(`${days}: the first point is ${back.toFixed(1)} days back (about ${age}, not 365)`, Math.abs(back - age) < 1.5);
+      ok(`${days}: the axis starts there (${((x.now - x.min) / 86400).toFixed(1)} days back)`, Math.abs((x.now - x.min) / 86400 - age) < 1.5);
+      ok(`${days}: ${s.sets[0].n} points (400-800)`, s.sets[0].n >= 400 && s.sets[0].n <= 800);
+      ok(`${days}: the labels are ${kind}s (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => (kind === "date" ? /^[A-Z][a-z]{2} \d{1,2}$/ : /^[A-Z][a-z]{2} \d{4}$/).test(l)));
+      ok(`${days}: no label twice in a row`, s.labels.every((l, i) => i === 0 || l !== s.labels[i - 1]));
+      await click("[data-action=closeModal][data-arg=targetHistModal]");
+    }
+    await youngData(null);
+  }, { variants: ["longhistory"] }],
 ];

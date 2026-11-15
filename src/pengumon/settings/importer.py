@@ -6,8 +6,7 @@ one the models refuse is left out and reported by its key with the reason, never
 not set stays unset (its default). A value the file sets is stored even when it equals the default: the owner wrote
 it. A list the file has, even an empty one, is stored as set, in file order; a list it leaves out stays at its default.
 
-Left alone: the bootstrap keys (server.host, server.port, database.db_path, prober.interval_seconds; they stay in
-config.yaml) and `targets:` (the probe path has its own store). `prober.ping_count_per_probe` does nothing and is
+Left alone: the bootstrap keys (server.host, server.port, database.db_path; they stay in config.yaml) and `targets:` (the probe path has its own store). `prober.ping_count_per_probe` does nothing and is
 dropped with a note.
 
 Webhooks: each gets an id from its name. At the one-time import its `url` moves to secrets.json (slot
@@ -23,7 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from pydantic import ValidationError
 
-from pengumon.config import BOOTSTRAP_KEYS, AppConfig
+from pengumon.config import BOOTSTRAP_KEYS, REPLACED_DATABASE_KEYS, AppConfig
 from pengumon.notify.settings import SECRET_PREFIX, WebhookConfig, WebhookItem, webhook_id
 from pengumon.settings import lenient, registry
 from pengumon.settings.dotted import pop_dotted, present
@@ -188,6 +187,7 @@ def read_settings(raw: Any, *, hop_ids: Iterable[str] = (), move_secrets: bool =
         return result
     data = copy.deepcopy(raw)
     data.pop("targets", None)
+    _replaced_keys(data, result)
     raw_hooks = pop_dotted(data, "notifications.webhooks")
     for key, why in DROPPED_KEYS.items():
         if present(raw, key):
@@ -234,6 +234,20 @@ def read_settings(raw: Any, *, hop_ids: Iterable[str] = (), move_secrets: bool =
         lists[name] = items
     result.document = SettingsDocument(values=values, lists=lists)
     return result
+
+
+def _replaced_keys(data: dict, result: ReadResult) -> None:
+    """A key an earlier version wrote (database.long_rollup_retention_days) is read as its replacement, unless the file
+    sets the replacement too."""
+    database = data.get("database")
+    if not isinstance(database, dict):
+        return
+    for old, new in REPLACED_DATABASE_KEYS.items():
+        if old in database:
+            value = database.pop(old)
+            if new not in database:
+                database[new] = value
+            result.notes.append(f"database.{old}: now database.{new}")
 
 
 ONSET_KEY = "classifier.consecutive_failures_for_incident"

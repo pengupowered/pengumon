@@ -192,7 +192,8 @@ async def get_device_history(
     With bucket_seconds and/or max_points the answer is instead bucketed: {"bucket_seconds", "start_time",
     "end_time", "fields", "rows", "capacity"}, rows in field order (avg and max of WAN rx/tx Mbps, CPU %, memory %,
     clients and CPU temperature per bucket, then the lowest WAN link speed; no padding). The width is at least
-    bucket_seconds and large enough for max_points (default 400) buckets; the range is clipped to the retention. `capacity` is the line capacity in Mbps
+    bucket_seconds and large enough for max_points (default 400) buckets; the range is clipped to the longest tier's retention (raw polls,
+    then 1-minute and 15-minute rollups: db/device_tiers.py). `capacity` is the line capacity in Mbps
     ({"down_mbps", "up_mbps"}, null where unknown), for a reference line."""
     device = device_or_404(state, device_id)
     if not device.driver.offers & _HISTORY_CAPABILITIES:
@@ -210,7 +211,7 @@ async def get_device_history(
         body = _ROUTER_SNAPSHOTS.dump_json(snapshots)
         record_answer("device_history", len(snapshots), len(body))
         return Response(body, media_type="application/json")
-    st = max(st, now - state.repository.retention_days * 86400)
+    st = max(st, now - state.repository.router_history_days() * 86400)  # raw, minute and quarter tiers
     width = bucket_width(et - st, bucket_seconds, max_points)
     rows = await bucketed_router_history(state.repository, device.id, st, et, width) if et >= st else []
     record_answer("device_history_bucketed", len(rows))
@@ -227,11 +228,13 @@ async def get_device_channels_history(
     end_time: Optional[float] = Query(None, allow_inf_nan=False),
     channel_id: Optional[int] = Query(None),
     direction: Optional[Literal["downstream", "upstream"]] = Query(None),
+    bucket_seconds: Optional[int] = Query(None, ge=1),
 ):
     """Per-channel history of a DOCSIS line: {"fields", "rows"} with rows [ts, direction ("d"/"u"), channel_id,
     power_dbmv, snr_db, uncorrectables_recent], oldest first; defaults to the last 24 hours, clipped to the
-    retention; channel_id and direction narrow it. 404 for an unknown id, 400 for a device without an access line
-    or whose line is not DOCSIS."""
+    retention; channel_id and direction narrow it. `bucket_seconds` keeps only the newest reading of each bucket
+    (epoch-aligned), for a long range: 180 days of readings every 30 minutes are 330,000 rows without it. 404 for
+    an unknown id, 400 for a device without an access line or whose line is not DOCSIS."""
     device = device_or_404(state, device_id)
     if Capability.ACCESS_LINE not in device.driver.offers:
         raise HTTPException(status_code=400, detail="This device reports no access line")
@@ -240,8 +243,8 @@ async def get_device_channels_history(
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
     now = time.time()
-    st = max(start_time if start_time is not None else now - 86400, now - state.repository.retention_days * 86400)
+    st = max(start_time if start_time is not None else now - 86400, now - state.repository.line_retention_days * 86400)
     et = end_time if end_time is not None else now
-    rows = (await docsis.DocsisHistory(state.repository, device.id).get_channel_history(st, et, channel_id, direction)
-            if et >= st else [])
+    history = docsis.DocsisHistory(state.repository, device.id)
+    rows = await history.get_channel_history(st, et, channel_id, direction, bucket_seconds) if et >= st else []
     return {"fields": list(CHANNEL_HISTORY_FIELDS), "rows": rows}

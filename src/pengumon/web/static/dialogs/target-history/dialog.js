@@ -1,5 +1,5 @@
 // Target detail modal: one probe target's latency band (p10 to p90, where the server knows it), loss and 24 h uptime
-// strip, over Live / 15 m / 1 h / 24 h / 7 d, from the server-side buckets of GET /api/history?target_ids=&bucket_seconds=
+// strip, over Live / 15 m / 1 h / 24 h / 7 d / 30 d / 90 d / All (the range control, js/ranges.js), from the server-side buckets of GET /api/history?target_ids=&bucket_seconds=
 // and GET /api/uptime. Opened by clicking a hop, a matrix row or a strip's name. The modal is built on first use (so the
 // page template stays small); fetched on open and on a range change, and every few seconds in the Live range.
 //
@@ -28,18 +28,21 @@ import { ensureModal } from './build.js';
 import { makeChart } from './charts.js';
 import { num, setStats } from './figures.js';
 import { load } from './load.js';
-import { LIVE, RANGES, T, win } from './state.js';
+import { fillRangeSelect, onRetentionChange } from '../../js/ranges.js';
+import { LIVE, T, rangeList, win } from './state.js';
 
 let liveTimer = null;
 let nodeKey = null; // the path node the dialog was opened from (panels/diagnosis): its figure is shown as it is now
 
 function markRange() {
-  document.querySelectorAll('#targetHistRanges button').forEach((b) => {
-    const on = b.dataset.arg === String(T.rangeSeconds);
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  });
+  const host = document.getElementById('targetHistRanges');
+  if (!host) return;
+  const list = rangeList();
+  const hit = list.find((r) => r[0] === T.rangeSeconds) || list.find((r) => r[0] === 3600) || list[0];
+  T.rangeSeconds = hit[0]; // (a range the retention no longer keeps gives way to the nearest on offer)
+  fillRangeSelect(host, { options: list.map((r) => ({ id: r[3], words: r[4] })), value: hit[3], action: 'setTargetHistoryRange', label: 'Range' });
 }
+onRetentionChange(markRange);
 
 function keepLive() {
   clearInterval(liveTimer);
@@ -153,7 +156,7 @@ export function setTargetHistoryView(arg) {
 }
 
 export function setTargetHistoryRange(seconds) {
-  if (!RANGES.some((r) => r[0] === seconds) || !(T.targetId || T.group)) return;
+  if (!rangeList().some((r) => r[0] === seconds) || !(T.targetId || T.group)) return;
   T.rangeSeconds = seconds;
   markRange();
   keepLive();
@@ -165,6 +168,8 @@ export function setTargetHistoryRange(seconds) {
 // The actions this module's markup names (see dispatch.js).
 registerActions('click', {
   openTargetHistory: (el) => openTargetHistory(el.dataset.arg, el.dataset.group, { range: el.dataset.range, node: el.dataset.node }),
-  setTargetHistoryView: (el) => setTargetHistoryView(el.dataset.arg),
-  setTargetHistoryRange: (el) => setTargetHistoryRange(Number(el.dataset.arg))
+  setTargetHistoryView: (el) => setTargetHistoryView(el.dataset.arg)
+});
+registerActions('change', {
+  setTargetHistoryRange: (el) => { const hit = rangeList().find((r) => r[3] === el.value); if (hit) setTargetHistoryRange(hit[0]); }
 });

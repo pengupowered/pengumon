@@ -6,9 +6,14 @@ import { escapeHtml } from '../../js/escape.js';
 import { formatClock, localFormat } from '../../js/clock.js';
 import { token } from '../../js/chart-theme.js';
 import { num } from './figures.js';
+import { axisLabel, distinctTicks, stepWords } from '../../js/ranges.js';
 import { LIVE, T } from './state.js';
 
-const clock = (ms) => (T.rangeSeconds === LIVE ? formatClock(ms, false, true) : formatClock(ms, T.rangeSeconds > 86400));
+// The clock for a day or less, date and clock to a week, dates to 90 days, months beyond (the axis and the tooltip's title
+// name the bucket: a long range's bucket is hours wide)
+// (by the span drawn, which All shortens to the oldest stored probe)
+const clock = (ms) => (T.rangeSeconds === LIVE ? formatClock(ms, false, true) : axisLabel(ms, T.spanSeconds));
+const titleOf = (ms) => (T.spanSeconds > 604800 ? localFormat(ms, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : clock(ms));
 
 // The address changes of the target shown (chart.pgMarks: [{x: ms, text}]): a dashed line each, labeled on the latency
 // chart (chart.pgMarkLabels).
@@ -52,14 +57,14 @@ export function makeChart(id, type, yTitle, yExtra) {
       parsing: false,
       interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
-        x: { type: 'linear', grid: { display: false }, border: { color: () => token('--line-strong') }, ticks: { maxTicksLimit: 8, font: { size: 10 }, callback: (v) => clock(v) } },
+        x: { type: 'linear', grid: { display: false }, border: { color: () => token('--line-strong') }, ticks: { maxTicksLimit: 8, font: { size: 10 }, callback: distinctTicks(clock) } },
         y: { beginAtZero: true, afterFit: (scale) => { scale.width = 56; }, ...yExtra, title: { display: true, text: yTitle, font: { size: 10 } }, grid: { color: () => token('--line') }, border: { display: false }, ticks: { font: { size: 10 } } }
       },
       plugins: {
         legend: { display: false },
         tooltip: {
           filter: (item) => !String(item.dataset.id || '').startsWith('band_'),
-          callbacks: { title: (items) => (items.length ? clock(items[0].parsed.x) : '') }
+          callbacks: { title: (items) => (items.length ? `${titleOf(items[0].parsed.x)}${T.spanSeconds > 86400 ? ` · ${stepWords(T.bucket)}` : ''}` : '') }
         }
       }
     }
@@ -67,7 +72,7 @@ export function makeChart(id, type, yTitle, yExtra) {
 }
 
 export function setRange(c, end) {
-  c.options.scales.x.min = (end - T.rangeSeconds) * 1000;
+  c.options.scales.x.min = (T.start === null ? end - T.rangeSeconds : T.start) * 1000;
   c.options.scales.x.max = end * 1000;
   c.update();
 }

@@ -2,7 +2,7 @@
 
 import { icon } from '../../js/dom.js';
 import { keepKeyboard } from '../../js/modal.js';
-import { RANGES, labels } from './state.js';
+import { labels } from './state.js';
 
 function make(tag, className, text) {
   const el = document.createElement(tag);
@@ -28,17 +28,8 @@ export function ensureModal() {
   h2.tabIndex = -1;
   head.appendChild(make('span', 'modal-m')).id = 'targetHistMeta';
   const tools = head.appendChild(make('div', 'tools'));
-  const ranges = tools.appendChild(make('span', 'seg'));
-  ranges.setAttribute('role', 'group');
-  ranges.setAttribute('aria-label', 'Range');
+  const ranges = tools.appendChild(make('span', 'range-host'));
   ranges.id = 'targetHistRanges';
-  RANGES.forEach(([seconds, label]) => {
-    const b = make('button', '', label);
-    b.type = 'button';
-    b.dataset.action = 'setTargetHistoryRange';
-    b.dataset.arg = String(seconds);
-    ranges.appendChild(b);
-  });
   const close = make('button', 'btn icon m-close');
   close.innerHTML = icon('close');
   close.type = 'button';

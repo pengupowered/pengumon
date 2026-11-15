@@ -68,50 +68,57 @@ class ServerConfig(BaseModel):
         return value.strip()
 
 
-LONG_ROLLUP_RETENTION_DEFAULT = 400
+KIND_RETENTION_DEFAULT = 180  # days, every kind of data kept past the fixed full-detail tiers
+# The key an earlier version used for the probes' quarter-hour tier; read as `latency_retention_days` (config.yaml,
+# Settings > Import, and the settings store at start: settings/manager.py).
+REPLACED_DATABASE_KEYS = {"long_rollup_retention_days": "latency_retention_days"}
 
 
 class DatabaseConfig(BaseModel):
     db_path: Optional[str] = None  # unset: <data directory>/pengumon.db; a relative path is relative to the cwd (legacy)
+    # Full detail, fixed for every kind of data (1 s and 10 s for 7 days, 1 min for 30); Settings > Advanced only.
     retention_days: int = Field(7, ge=1, le=90)  # raw samples; line-capacity learning needs 7
     # the 10-second rollups (the latency chart's 10 s buckets), at least retention_days; when not set, the longer of 7
     # and retention_days, so a raw retention stored before this existed keeps its 10-second rollups as long
     slot_retention_days: int = Field(7, ge=1, le=90)
-    rollup_retention_days: int = Field(90, ge=30, le=1000)  # per-minute rollups, at least retention_days
-    # quarter-hour rollups (and speed tests), at least rollup_retention_days; when not set, the longer of its default
-    # and rollup_retention_days, so a longer per-minute setting stored before it existed stays valid
-    long_rollup_retention_days: int = Field(LONG_ROLLUP_RETENTION_DEFAULT, ge=30, le=3650)
+    rollup_retention_days: int = Field(30, ge=30, le=1000)  # per-minute rollups (probes, router, mesh), at least slot
+    # What is kept past those, one number per kind of data (Settings > Retention); each at least 30 days
+    latency_retention_days: int = Field(KIND_RETENTION_DEFAULT, ge=30, le=3650)  # the probes' quarter-hour tier
+    router_retention_days: int = Field(KIND_RETENTION_DEFAULT, ge=30, le=3650)  # the router's quarter-hour tier
+    mesh_retention_days: int = Field(KIND_RETENTION_DEFAULT, ge=30, le=3650)  # the mesh nodes' quarter-hour tier
+    line_retention_days: int = Field(KIND_RETENTION_DEFAULT, ge=30, le=3650)  # the cable line's readings
     # the router's traffic per client and hour and its app windows (devices/traffic.py)
-    traffic_retention_days: int = Field(400, ge=1, le=1000)
-    # resolved incidents (a few hundred rows a year); 0 keeps them forever, else at least long_rollup_retention_days
-    incident_retention_days: int = Field(0, ge=0, le=36500)
+    traffic_retention_days: int = Field(KIND_RETENTION_DEFAULT, ge=30, le=1000)
+    # speed tests and the router's restarts and WAN link changes (speed tests: never under SPEED_TEST_MIN_DAYS)
+    speedtest_retention_days: int = Field(KIND_RETENTION_DEFAULT, ge=30, le=3650)
+    # resolved incidents and their evidence; 0 keeps them forever, else at least 30
+    incident_retention_days: int = Field(KIND_RETENTION_DEFAULT, ge=0, le=36500)
 
     @model_validator(mode="before")
     @classmethod
-    def _long_follows_per_minute(cls, data):
-        if isinstance(data, dict) and data.get("slot_retention_days") is None:
+    def _earlier_keys_and_defaults(cls, data):
+        if not isinstance(data, dict):
+            return data
+        for old, new in REPLACED_DATABASE_KEYS.items():
+            if old in data:
+                value = data[old]
+                data = {k: v for k, v in data.items() if k != old}
+                if data.get(new) is None:
+                    data[new] = value
+        if data.get("slot_retention_days") is None:
             raw_days = data.get("retention_days")
             if isinstance(raw_days, int) and not isinstance(raw_days, bool) and 7 < raw_days <= 90:
                 data = {**data, "slot_retention_days": raw_days}
-        if isinstance(data, dict) and data.get("long_rollup_retention_days") is None:
-            minute_days = data.get("rollup_retention_days")
-            if isinstance(minute_days, int) and not isinstance(minute_days, bool) \
-                    and LONG_ROLLUP_RETENTION_DEFAULT < minute_days <= 3650:
-                data = {**data, "long_rollup_retention_days": minute_days}
         return data
 
     @model_validator(mode="after")
-    def _rollups_outlive_raw(self):
-        if self.rollup_retention_days < self.retention_days:
-            raise ValueError("rollup_retention_days must be at least retention_days")
+    def _ordering(self):
         if self.slot_retention_days < self.retention_days:
             raise ValueError("slot_retention_days must be at least retention_days")
         if self.rollup_retention_days < self.slot_retention_days:
             raise ValueError("rollup_retention_days must be at least slot_retention_days")
-        if self.long_rollup_retention_days < self.rollup_retention_days:
-            raise ValueError("long_rollup_retention_days must be at least rollup_retention_days")
-        if self.incident_retention_days and self.incident_retention_days < self.long_rollup_retention_days:
-            raise ValueError("incident_retention_days must be 0 (keep forever) or at least long_rollup_retention_days")
+        if self.incident_retention_days and self.incident_retention_days < 30:
+            raise ValueError("incident_retention_days must be 0 (keep forever) or at least 30")
         return self
 
 
@@ -211,7 +218,7 @@ def load_server_config(config_path: Optional[str] = None) -> ServerConfig:
 
 # The keys read from config.yaml at every start, before the database opens; strictly: a bad one stops the start.
 # Everything else is a setting, owned by the settings store once it was imported (pengumon.settings).
-BOOTSTRAP_KEYS = ("server.host", "server.port", "database.db_path", "prober.interval_seconds")
+BOOTSTRAP_KEYS = ("server.host", "server.port", "database.db_path")
 
 
 def _bootstrap(raw: dict) -> None:
@@ -244,6 +251,11 @@ def load_config(config_path: Optional[str] = None, *, lenient_rest: bool = False
     if lenient_rest:
         _bootstrap(raw)
         rest = {k: v for k, v in raw.items() if k != "targets"}
+        database = rest.get("database")
+        if isinstance(database, dict):
+            for old_key, new_key in REPLACED_DATABASE_KEYS.items():
+                if old_key in database:
+                    _log.info(f"config.yaml: database.{old_key} is now database.{new_key}; the old key is read as it")
         config, dropped = lenient.validate_leniently(AppConfig, rest)
         if dropped:
             _log.warning(f"config.yaml: {len(dropped)} value(s) refused and left at their defaults: "

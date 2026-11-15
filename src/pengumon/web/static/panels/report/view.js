@@ -23,7 +23,7 @@ function hero(box, vm) {
 function days(box, vm) {
   const l = vm.lost;
   kit.html(box, `<h3 class="rb-t">${esc(l.title)}</h3>`
-    + `<div class="days" style="grid-template-columns: repeat(${l.columns}, 1fr)" role="img" aria-label="${esc(l.aria)}">${l.bars.map((b) => `<div class="day${b.nodata ? ' nodata' : ''}" data-item="day-${esc(b.id)}" data-v="tip" aria-label="${esc(b.tip)}" data-tip="${esc(b.tip)}"><i style="height:${b.height.toFixed(0)}%"></i><span>${esc(b.letter)}</span></div>`).join('')}</div>`
+    + `<div class="days" style="${esc(l.style)}" role="img" aria-label="${esc(l.aria)}">${l.bars.map((b) => `<div class="day${b.nodata ? ' nodata' : ''}" data-item="day-${esc(b.id)}" data-v="tip" aria-label="${esc(b.tip)}" data-tip="${esc(b.tip)}"><i style="height:${b.height.toFixed(0)}%"></i><span>${esc(b.letter)}</span></div>`).join('')}</div>`
     + `<p class="rep-note" data-v="worstDay">${esc(l.note)}</p>`);
 }
 

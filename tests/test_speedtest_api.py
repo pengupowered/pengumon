@@ -96,17 +96,17 @@ async def test_the_bytes_of_a_range_count_both_directions_and_skips_count_nothin
 
 # --- retention -----------------------------------------------------------------------------------------------------
 
-async def test_retention_removes_tests_older_than_the_quarter_hour_retention_and_keeps_newer_ones(repo):
-    """Speed tests are kept as long as the quarter-hour rollups (long_rollup_retention_days), not the per-minute ones."""
+async def test_retention_removes_tests_older_than_the_speed_test_retention_and_keeps_newer_ones(repo):
+    """Speed tests are kept for speedtest_retention_days, not as long as the per-minute rollups."""
     now = time.time()
     await repo.insert_speed_test(row(now - 61 * DAY))
     await repo.insert_speed_test(row(now - 59 * DAY))
     await repo.insert_speed_test(row(now - 1 * DAY))
-    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, long_rollup_retention_days=60)
+    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, speedtest_retention_days=60)
     assert removed["speed_tests"] == 1
     assert len(await repo.get_speed_tests(0, now + 1)) == 2
     assert (await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30,
-                                           long_rollup_retention_days=60))["speed_tests"] == 0
+                                           speedtest_retention_days=60))["speed_tests"] == 0
 
 
 async def test_retention_keeps_a_month_and_a_day_of_tests_for_the_monthly_cap(repo):
@@ -115,15 +115,15 @@ async def test_retention_keeps_a_month_and_a_day_of_tests_for_the_monthly_cap(re
     now = time.time()
     await repo.insert_speed_test(row(now - 33 * DAY, bytes_down=1))
     await repo.insert_speed_test(row(now - 31 * DAY, bytes_down=10))
-    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, long_rollup_retention_days=30)
+    removed = await repo.cleanup_old_samples(retention_days=7, rollup_retention_days=30, speedtest_retention_days=30)
     assert removed["speed_tests"] == 1
     assert await repo.speed_test_bytes(0, now) == 10
 
 
-async def test_the_default_retention_keeps_a_year_of_tests(repo):
+async def test_the_default_retention_keeps_half_a_year_of_tests(repo):
     now = time.time()
-    await repo.insert_speed_test(row(now - 300 * DAY))
-    await repo.insert_speed_test(row(now - 500 * DAY))
+    await repo.insert_speed_test(row(now - 170 * DAY))
+    await repo.insert_speed_test(row(now - 200 * DAY))
     assert (await repo.cleanup_old_samples())["speed_tests"] == 1
 
 

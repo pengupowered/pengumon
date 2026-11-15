@@ -19,15 +19,36 @@ function markup(vm) {
     }
     const cells = r.cells.map((c, i) => `<button type="button" class="cell ${c.cls}" tabindex="${i ? -1 : 0}" data-item="${c.id}" data-v="tip" data-action="showIncidentWindow" data-start="${numText(c.start)}" data-end="${numText(c.end)}"`
       + ` data-label="${esc(c.label)}" data-state="${esc(c.state)}" data-tip="${esc(c.tip)}" aria-label="${esc(c.aria)}"></button>`).join('');
-    return `${head}<div class="strip" style="--n:${r.cells.length}" data-item="strip-${esc(r.id)}" data-v="summary" role="group" data-roving aria-label="${esc(r.aria)}">${cells}</div>`
+    return `${head}<div class="strip" style="--n:${r.cells.length}${r.cols ? `; --cols:${esc(r.cols)}` : ''}" data-item="strip-${esc(r.id)}" data-v="summary" role="group" data-roving aria-label="${esc(r.aria)}">${cells}</div>`
       + `<span class="s-pct num" data-item="pct-${esc(r.id)}" data-v="availability">${esc(r.pct)}</span>`;
   }).join('');
   return `<span class="s-hd">${esc(vm.columns[0])}</span><span class="s-hd">${esc(vm.columns[1])}</span><span class="s-hd r">${esc(vm.columns[2])}</span>${rows}`
     + `<span></span><div class="s-axis" data-v="axis">${vm.axis.map((a) => `<span>${esc(a)}</span>`).join('')}</div><span></span>`;
 }
 
+// On a narrow card the strips scroll sideways when their blocks don't fit (panel.css): they open at now, at the right
+// end, and stay there through the refreshes and when the card is shown again, unless the reader has scrolled back; another
+// range opens at now again.
+function atNow(box) {
+  let pinned = true;
+  let range = null;
+  const toEnd = () => { if (pinned && box.scrollWidth > box.clientWidth) box.scrollLeft = box.scrollWidth; };
+  const followScroll = () => { pinned = box.scrollLeft + box.clientWidth >= box.scrollWidth - 2; };
+  box.addEventListener('scroll', followScroll, { passive: true });
+  const seen = typeof ResizeObserver === 'function' ? new ResizeObserver(toEnd) : null; // (a hidden tab has no width to scroll)
+  if (seen) seen.observe(box);
+  return {
+    drawn(vm) {
+      if (vm.meta !== range) { range = vm.meta; pinned = true; }
+      toEnd();
+    },
+    stop() { box.removeEventListener('scroll', followScroll); if (seen) seen.disconnect(); }
+  };
+}
+
 // The grid of strips (a part: another view can draw it into a box of its own).
 function grid(box) {
+  const now = atNow(box);
   return {
     update(vm) {
       const had = document.activeElement && box.contains(document.activeElement) ? document.activeElement : null;
@@ -35,12 +56,13 @@ function grid(box) {
       if (vm.state === 'error') kit.html(box, `<div class="empty" style="grid-column: 1 / -1" data-v="error">${esc(vm.error)}</div>`);
       else kit.html(box, markup(vm));
       if (vm.state === 'ready') box.dataset.blocks = String(vm.blocks); else delete box.dataset.blocks;
+      now.drawn(vm);
       if (focus && !box.contains(document.activeElement)) {
         const strip = focus.strip ? [...box.querySelectorAll('.strip')].find((s) => s.dataset.item === focus.strip) : box;
         (strip && strip.querySelector(`[data-item="${focus.item}"]`))?.focus({ preventScroll: true });
       }
     },
-    unmount() {}
+    unmount() { now.stop(); }
   };
 }
 

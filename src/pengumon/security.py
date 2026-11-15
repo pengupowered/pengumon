@@ -83,7 +83,7 @@ PUBLIC_PATHS = ("/api/health", "/login", "/favicon.ico")
 # viewer sees (client details masked).
 VIEWER_POLICY = ViewerPolicy(
     allow=("/", "/api/**", "/metrics"),
-    deny=("/api/path/export", "/api/settings/export", "/api/backup", "/api/devices/*/credentials",
+    deny=("/api/path/export", "/api/settings/export", "/api/backup", "/api/storage", "/api/devices/*/credentials",
           "/api/devices/*/credentials/**"),
     websockets=("/ws",),
     reader_post=("/mcp", "/mcp/"),

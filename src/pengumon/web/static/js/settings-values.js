@@ -24,6 +24,7 @@ async function read() {
     const body = await res.json();
     values = body.values || {};
     revision = body.revision;
+    document.dispatchEvent(new CustomEvent('settingsvalues')); // (the range controls offer what the new retention keeps: js/ranges.js)
   } catch (e) {
     return false; // the texts keep their fallbacks
   }

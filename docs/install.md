@@ -134,7 +134,7 @@ docker compose up -d                  # or: podman compose up -d
 
 Open `http://<host>:8000` and press **Review** on the banner (see [Your first minutes](#your-first-minutes)).
 Settings (devices, service checks, alerts, thresholds, your line's capacity) live on the dashboard's **Settings** page.
-`config.yaml` holds only the listen address, the port, the database path, the probe interval and the bootstrap of the
+`config.yaml` holds only the listen address, the port, the database path and the bootstrap of the
 first import: on the first start Pengumon copies what the file says into the Settings page, once. After that, edits to
 the file are ignored and the log says so (`config.yaml is ignored for settings`). The container mounts it read-only
 anyway. The example has no active `targets:` (the path is discovered); a `targets:` list there is an optional fixed list,

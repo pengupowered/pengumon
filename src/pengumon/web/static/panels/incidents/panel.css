@@ -3,15 +3,15 @@
 .tl { position: relative; margin-bottom: var(--sp-4); padding-bottom: 2px; }
 .tl-lane { display: grid; grid-template-columns: 64px 1fr; align-items: center; height: 24px; }
 .tl-l { font-size: var(--fs-xs); color: var(--ink-3); }
-.tl-track { position: relative; height: 16px; border-radius: 4px; background: repeating-linear-gradient(90deg, var(--surface-2) 0 calc(100% / 7 - 1px), var(--line) calc(100% / 7 - 1px) calc(100% / 7)); }
+.tl-track { position: relative; height: 16px; border-radius: 4px; background-color: var(--surface-2); } /* the hairlines between days are drawn inline: the window's midnights are not equally far apart */
 .tl-bar { position: absolute; top: 2px; bottom: 2px; min-width: 5px; border: 0; border-radius: 3px; background: var(--st-fill, var(--st)); cursor: pointer; padding: 0; }
 .tl-bar.exp { background: repeating-linear-gradient(135deg, var(--st) 0 3px, color-mix(in srgb, var(--st) 40%, transparent) 3px 6px); }
 .tl-bar.ongoing { box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 3px var(--st); }
 .tl-bar:hover { filter: brightness(1.2); }
 .tl-axis { display: grid; grid-template-columns: 64px 1fr; font-size: var(--fs-xs); color: var(--ink-3); margin-top: 4px; }
-.tl-axis > div { display: grid; grid-template-columns: repeat(7, 1fr); }
-.tl-axis > div span { padding-left: 4px; }
-.tl-now { position: absolute; top: 0; bottom: 18px; width: 2px; background: var(--accent); border-radius: 1px; }
+.tl-axis > div { position: relative; height: 1.3em; }
+.tl-axis > div span { position: absolute; left: min(var(--at), calc(100% - 2.8em)); padding-left: 4px; white-space: nowrap; } /* a label near now is pulled back inside the lane */
+.tl-now { position: absolute; top: 0; bottom: 18px; margin-left: -2px; width: 2px; background: var(--accent); border-radius: 1px; }
 .inc-list .when { color: var(--ink-2); white-space: nowrap; }
 /* One line per incident: the title is cut with an ellipsis, the rest is the inspector's (a row opens it). */
 .inc-list td { padding-block: 6px; }

@@ -1,7 +1,8 @@
 // The traffic dialog of one device (opened from a row of the Internet use card): its download and upload over 24 hours or
 // 7 days (per hour) or 30 days (per day), opening in the range the card shows, with buttons for the others; the totals, the
-// busiest hour or day, its apps over the range (as the card counts them: the router's latest 24-hour window over 24 hours,
-// the sum of the whole days over 7 and 30) and the apps of each day, from GET /api/devices/{id}/traffic/clients/{key}.
+// busiest hour or day, its apps over the range (as the card counts them: the router's 24-hour counts inside the range, and
+// what they do not account for as "Not broken down by app") and the apps of each day, from
+// GET /api/devices/{id}/traffic/clients/{key}.
 // The pencil by its name (shown where names are: privacy "full") gives it a name in Pengumon, shown instead of the router's
 // (PUT /api/devices/{id}/clients/{key}/name); the card is asked again so its row says it too. Back, Escape and Done close it (js/modal.js); every value goes in through textContent.
 
@@ -10,7 +11,8 @@ import { CLIENT_KINDS } from '../../js/device-text.js';
 import { formatBytes } from '../../js/format.js';
 import { formatClock } from '../../js/clock.js';
 import { closeModal, keepKeyboard, openModal } from '../../js/modal.js';
-import { RANGES, dayNotes, dayWords, daysOf, gapNotes, hoursOf, refreshTraffic, shownRange } from './model.js';
+import { NOT_BROKEN_DOWN, NOT_BROKEN_DOWN_WHY, WEEKLY_FROM_HOURS, dayNotes, dayWords, daysOf, gapNotes, hoursOf, loadTraffic, rangeList, refreshTraffic, shownRange, weeklyOf } from './model.js';
+import { allStoredWords, fillRangeSelect } from '../../js/ranges.js';
 import { hoursChart, legendOf } from './chart.js';
 import { appRow } from './view.js';
 import { has } from '../../js/values.js';
@@ -22,8 +24,8 @@ let chart = null;
 let seq = 0;
 let lastBody = null; // the answer drawn, for a redraw after a theme change
 let shown = null; // {deviceId, key} of the device the dialog is open on
-let range = '168'; // the range chosen in the dialog (a RANGES arg)
-const chosen = () => RANGES.find((r) => r.arg === range) || RANGES[0];
+let range = '7d'; // the range chosen in the dialog (a range id of js/ranges.js)
+const chosen = () => rangeList().find((r) => r.arg === range) || rangeList()[0];
 
 const make = (tag, cls, text) => {
   const node = document.createElement(tag);
@@ -53,23 +55,24 @@ function show(body) {
   $('trafficClientTitle').textContent = c.label;
   $('trafficClientMeta').textContent = [kind ? kind[0] : null, c.vendor, c.mac, c.router_label ? `the router calls it ${c.router_label}` : null].filter(Boolean).join(' · ');
   $('trafficClientRename').hidden = body.privacy !== 'full' || !$('trafficClientNameForm').hidden;
-  const perDay = Array.isArray(body.daily);
-  const span = chosen().title.toLowerCase(); // "last 7 days"
-  const h = perDay ? daysOf(body.daily) : hoursOf(body.series, body.hours > 24);
-  const rows = perDay ? body.daily : body.series;
+  const perDay = !body.series.length && Array.isArray(body.daily); // 30 days and more: a bar per calendar day
+  const weekly = perDay && body.hours > WEEKLY_FROM_HOURS; // past 90 days: a bar per week
+  const span = body.all ? allStoredWords(Math.round(body.hours / 24), body.since) : chosen().title.toLowerCase(); // "last 7 days"
+  const rows = perDay ? (weekly ? weeklyOf(body.daily) : body.daily) : body.series;
+  const h = perDay ? daysOf(rows) : hoursOf(body.series, body.hours > 24);
   const busiest = rows.reduce((best, r) => (has(r.down) && (!best || r.down > best.down) ? r : best), null);
   const busy = busiest && busiest.down > 0;
   const stats = $('trafficClientStats');
   stats.replaceChildren(
     stat('Downloaded', formatBytes(body.totals.down), span, 'down'),
     stat('Uploaded', formatBytes(body.totals.up), span, 'up'),
-    stat(perDay ? 'Busiest day' : 'Busiest hour', busy ? formatBytes(busiest.down) : '–',
-      !busy ? 'no traffic' : perDay ? dayWords(busiest.day, true) : `${formatClock(busiest.hour * 1000, true)}-${formatClock((busiest.hour + 3600) * 1000)}`, 'busiest'),
-    stat('Mostly', c.traffic_hint || '–', c.traffic_hint ? `at least 80 % of its traffic, ${body.apps_days ? span : 'last 24 hours'}` : 'no single app stands out', 'hint')
+    stat(weekly ? 'Busiest week' : perDay ? 'Busiest day' : 'Busiest hour', busy ? formatBytes(busiest.down) : '–',
+      !busy ? 'no traffic' : weekly ? `week of ${dayWords(busiest.day)}` : perDay ? dayWords(busiest.day, true) : `${formatClock(busiest.hour * 1000, true)}-${formatClock((busiest.hour + 3600) * 1000)}`, 'busiest'),
+    stat('Mostly', c.traffic_hint || '–', c.traffic_hint ? `at least 80 % of its traffic the router counted apps for, ${span}` : 'no single app stands out', 'hint')
   );
-  $('trafficClientPer').textContent = perDay ? 'Per day' : 'Per hour';
-  $('trafficClientSpan').textContent = perDay ? `${span}, whole days; today is in 24 h` : span;
-  const data = { ...h, label: `${c.label}: download and upload per ${perDay ? 'day' : 'hour'} over the ${span}, ${formatBytes(body.totals.down)} down, ${formatBytes(body.totals.up)} up.` };
+  $('trafficClientPer').textContent = weekly ? 'Per week' : perDay ? 'Per day' : 'Per hour';
+  $('trafficClientSpan').textContent = perDay ? `${span}, a bar per ${weekly ? 'week' : 'calendar day'} (the first and last cut by the range)` : span;
+  const data = { ...h, label: `${c.label}: download and upload per ${weekly ? 'week' : perDay ? 'day' : 'hour'} over ${body.all ? "" : "the "}${span}, ${formatBytes(body.totals.down)} down, ${formatBytes(body.totals.up)} up.` };
   const canvas = $('trafficClientChart');
   if (!chart) chart = hoursChart(canvas);
   chart.update(data, true);
@@ -81,16 +84,20 @@ function show(body) {
     s.append(sw, k.name);
     return s;
   }));
-  $('trafficClientNotes').replaceChildren(...(perDay ? dayNotes(body.daily) : gapNotes(h)).map((n) => { const p = make('p', 'trf-note', n.text); p.dataset.v = n.key; return p; }));
+  $('trafficClientNotes').replaceChildren(...(perDay ? dayNotes(rows) : gapNotes(h)).map((n) => { const p = make('p', 'trf-note', n.text); p.dataset.v = n.key; return p; }));
 
   const end = body.apps_window_end;
-  $('trafficClientAppsWindow').textContent = body.apps_days ? span
-    : has(end) ? `the 24 h to ${formatClock(end * 1000, Date.now() / 1000 - end > 20 * 3600)}` : 'the router\'s latest 24 h';
+  const counted = body.apps_covered ? body.apps_covered.hours : 0;
+  $('trafficClientAppsWindow').textContent = !counted ? 'no 24 h count of the router in this range'
+    : `${counted === body.hours ? span : `counted over ${counted} of ${body.hours} h`}, to ${formatClock(end * 1000, Date.now() / 1000 - end > 20 * 3600)}`;
   const apps = $('trafficClientApps');
-  const max = body.apps.length ? Math.max(...body.apps.map((a) => a.down)) : 0;
-  apps.replaceChildren(...(body.apps.length ? body.apps.map((a) => appRow({
-    key: a.app, name: a.app, down: formatBytes(a.down), up: formatBytes(a.up), pct: max > 0 ? Math.max(2, Math.round((a.down / max) * 100)) : 0
-  })) : [make('p', 'trf-empty', body.apps_days ? 'No whole day of app figures is stored for this device in this range yet.' : 'The router has no app figures for this device in its latest window.')]));
+  const rest = body.apps_unattributed || { up: 0, down: 0 };
+  const left = rest.down > 0 || rest.up > 0;
+  const max = Math.max(0, ...body.apps.map((a) => a.down), left ? rest.down : 0);
+  const pct = (v) => (max > 0 ? Math.max(2, Math.round((v / max) * 100)) : 0);
+  const list = body.apps.map((a) => appRow({ key: a.app, name: a.app, down: formatBytes(a.down), up: formatBytes(a.up), pct: pct(a.down) }));
+  if (left) list.push(appRow({ key: 'rest', name: NOT_BROKEN_DOWN, title: NOT_BROKEN_DOWN_WHY, muted: true, down: formatBytes(rest.down), up: formatBytes(rest.up), pct: pct(rest.down) }));
+  apps.replaceChildren(...(list.length ? list : [make('p', 'trf-empty', 'The router has no app figures for this device in this range.')]));
 
   const days = $('trafficClientDays');
   days.replaceChildren(...(body.days.length ? body.days.slice().reverse().map((d) => {
@@ -108,34 +115,32 @@ function show(body) {
     li.appendChild(list);
     li.title = `The router's totals for the 24 h to ${formatClock(d.window_end * 1000, true)}`;
     return li;
-  }) : [make('li', 'trf-empty', 'No daily app history stored in this range yet: Pengumon keeps the router\'s count of each whole day, read just after midnight.')]));
+  }) : [make('li', 'trf-empty', 'No app history by calendar day is stored in this range yet.')]));
   $('trafficClientStatus').hidden = true;
   $('trafficClientBody').hidden = false;
 }
 
-// The range buttons, the chosen one pressed.
+// The range control, the chosen one shown.
 function rangeButtons() {
-  $('trafficClientRange').replaceChildren(...RANGES.map((r) => {
-    const b = make('button', null, r.label);
-    b.type = 'button';
-    b.dataset.action = 'trafficClientRange';
-    b.dataset.arg = r.arg;
-    b.title = r.title;
-    b.setAttribute('aria-pressed', String(r.arg === range));
-    return b;
-  }));
+  const list = rangeList();
+  if (!list.some((r) => r.arg === range)) range = list[0].arg;
+  fillRangeSelect($('trafficClientRange'), { options: list.map((r) => ({ id: r.arg, words: r.title })), value: range, action: 'trafficClientRange', label: 'Range' });
 }
 
 async function load() {
   const mine = ++seq;
   const { deviceId, key } = shown;
   try {
-    const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/traffic/clients/${encodeURIComponent(key)}?${chosen().query}`);
+    let missing = false;
+    const body = await loadTraffic(chosen(), async (hours) => {
+      const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/traffic/clients/${encodeURIComponent(key)}?hours=${hours}`);
+      if (res.status === 404) { missing = true; return null; }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }, () => mine === seq);
     if (mine !== seq) return;
-    if (res.status === 404) return problem('The router has no traffic stored for this device.');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
-    if (mine === seq) show(body);
+    if (missing) return problem('The router has no traffic stored for this device.');
+    show(body);
   } catch (e) {
     if (mine === seq) problem(`Could not load this device's traffic: ${e.message}`);
   }
@@ -228,11 +233,13 @@ registerActions('click', {
   openTrafficClient: (el) => openTrafficClient(el.dataset.arg, el.dataset.arg2),
   trafficClientRename: () => startRename(),
   trafficClientRenameCancel: () => { endRename(); $('trafficClientRename').focus(); },
-  trafficClientNameClear: () => saveName(true),
-  // another range: the figures stay until the new answer replaces them (the buttons show the choice at once)
+  trafficClientNameClear: () => saveName(true)
+});
+registerActions('change', {
+  // another range: the figures stay until the new answer replaces them (the control shows the choice at once)
   trafficClientRange: (el) => {
-    const arg = el.dataset.arg;
-    if (!shown || !RANGES.some((r) => r.arg === arg) || arg === range) return;
+    const arg = el.value;
+    if (!shown || !rangeList().some((r) => r.arg === arg) || arg === range) return;
     range = arg;
     rangeButtons();
     load();

@@ -47,7 +47,6 @@ class ValidationContext:
     # candidate(document, secret, problems): the document as a config mapping, a webhook's URL from `secret(slot)`
     secret_value: Callable[[str], Optional[str]]         # a secret slot's value, from its sources
     slots: Callable[[Optional[SettingsDocument]], List[str]]  # the secret slots a document uses
-    round_seconds: Callable[[], float]                   # the prober's interval
 
 
 @dataclass
@@ -370,5 +369,5 @@ async def validate(ctx: ValidationContext, values: Mapping[str, Any], lists: Map
     if "webhooks" in lists:
         _removed_webhook_secrets(ctx, document, out)
     out.document = document
-    out.summary = describe(ctx.document(), document, out.slots, ctx.round_seconds())
+    out.summary = describe(ctx.document(), document, out.slots)
     return out

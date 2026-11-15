@@ -3,6 +3,7 @@
 // (chart-theme.js) and series colors from the tokens (a card's own colors apply). docs/themes.md, "Drawing a card"; a
 // theme's own view of this card gets these parts as ctx.std.parts (`charts` draws both charts into two canvases).
 
+import { distinctTickIndexes } from '../../js/ranges.js';
 import { kit } from '../../js/cards.js';
 import { token } from '../../js/chart-theme.js';
 import { formatMs } from '../../js/format.js';
@@ -139,8 +140,23 @@ function datasets(m, at) {
   return sets;
 }
 
-// How many time labels fit across a chart this wide.
+// How many time labels fit across a chart this wide: at most 3, 4 or 6 by width, and no more than the labels themselves
+// leave room for in the theme's font (a monospaced theme's "03:34:26 AM" is about 95 px wide: three of them do not fit
+// on a phone). Measured each time the axis is updated, so a theme switch or a resize counts.
 const timeTicks = (width) => (width < 480 ? 3 : width < 800 ? 4 : 6);
+let measurer = null;
+function fittingTicks(chart) {
+  const width = chart.width;
+  const labels = chart.data.labels || [];
+  if (!labels.length) return timeTicks(width);
+  measurer = measurer || document.createElement('canvas').getContext('2d');
+  measurer.font = Chart.helpers.toFont({ ...Chart.defaults.font, ...(chart.scales.x?.options.ticks.font || {}) }).string;
+  const sample = [labels[0], labels[Math.floor(labels.length / 2)], labels[labels.length - 1]];
+  const widest = Math.max(...sample.map((l) => measurer.measureText(String(l ?? '')).width));
+  // the labels share the plot area between the two value axes (the last layout's; the whole width before the first)
+  const room = chart.chartArea ? chart.chartArea.right - chart.chartArea.left : width;
+  return Math.max(2, Math.min(timeTicks(width), Math.floor(room / (widest + 24))));
+}
 
 // The two charts in two canvases: the latency and the loss lane under it, whose plot area starts and ends where the
 // latency chart's does (its right axis and line-end names included), so a lost probe sits under the moment it belongs to.
@@ -156,7 +172,8 @@ function charts(latencyCanvas, lossCanvas) {
   lat = new Chart(latencyCanvas, {
     type: 'line',
     data: { labels: [], datasets: [] },
-    plugins: [pathPlugin(vm)],
+    // (set on the chart's options before its axes are built: an axis's own options are made again on every update)
+    plugins: [pathPlugin(vm), { id: 'fitTimeLabels', beforeUpdate: (chart) => { chart.options.scales.x.ticks.maxTicksLimit = fittingTicks(chart); } }],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -165,12 +182,13 @@ function charts(latencyCanvas, lossCanvas) {
       interaction: { mode: 'index', intersect: false },
       // fewer time labels on a narrow chart (a phone): six "HH:MM:SS" labels do not fit in ~200 px; no line-end names
       onResize: (chart, size) => {
-        chart.options.scales.x.ticks.maxTicksLimit = timeTicks(size.width);
         chart.options.layout.padding.right = size.width < 480 ? 0 : 70;
         if (lost) requestAnimationFrame(() => { if (!lost) return; alignLossLane(); lost.update('none'); });
       },
       scales: {
-        x: { grid: { display: false }, ticks: { maxTicksLimit: timeTicks(window.innerWidth), maxRotation: 0, autoSkipPadding: 16 } },
+        x: { grid: { display: false }, ticks: { maxTicksLimit: timeTicks(window.innerWidth), maxRotation: 0, autoSkipPadding: 16 },
+          // no label twice in a row (many points share a date or a month)
+          afterBuildTicks: (scale) => { const t = distinctTickIndexes(scale.chart.data.labels, scale.options.ticks.maxTicksLimit); if (t) scale.ticks = t; } },
         // a hard floor: one bad reading must not move 0 ms to mid-chart
         y: { min: 0, suggestedMax: 30, ticks: { callback: (v) => `${v} ms`, maxTicksLimit: 5 }, border: { display: false } },
         yLoad: { position: 'right', min: 0, suggestedMax: 100, grid: { drawOnChartArea: false }, display: false,
@@ -182,6 +200,7 @@ function charts(latencyCanvas, lossCanvas) {
           // the p10-p90 band has no reading of its own; a WAN gap (no router reading near that moment) is left out too
           filter: (item) => !String(item.dataset.id).startsWith('band_') && !(item.dataset.id === 'wan_load' && !has(item.parsed.y)),
           callbacks: {
+            title: (items) => (m && items.length && m.titleAt(items[0].dataIndex)) || (items.length ? items[0].label : ''),
             label: (c) => (c.dataset.id === 'wan_load' ? ` WAN download: ${c.parsed.y} Mbps`
               : ` ${c.dataset.label}: ${fmtMs(c.parsed.y)}`),
             afterLabel: (c) => (m && String(c.dataset.id).startsWith('path_') ? m.memberLines(c.dataset.id, c.dataIndex) : [])

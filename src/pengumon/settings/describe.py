@@ -17,7 +17,7 @@ def hours_text(hours: int) -> str:
     return str(hours)
 
 
-def _shown(setting: registry.Setting, value: Any, round_seconds: float) -> str:
+def _shown(setting: registry.Setting, value: Any) -> str:
     """A value as the page shows it, for the version line."""
     if value is None:
         return setting.empty or "none"
@@ -28,7 +28,7 @@ def _shown(setting: registry.Setting, value: Any, round_seconds: float) -> str:
     if setting.unit == "h" and isinstance(value, int) and value > 0:
         return hours_text(value)
     if isinstance(value, (int, float)):
-        number = value * round_seconds if setting.rounds else value * setting.scale
+        number = value * setting.scale
         text = f"{round(number, 4):g}"
         return f"{text} {setting.unit}" if setting.unit else text
     if isinstance(value, list):
@@ -65,16 +65,15 @@ def _describe_list(name: str, old: Optional[List[dict]], new: Optional[List[dict
     return f"{label}: {'; '.join(parts)}" if parts else None
 
 
-def describe(old: SettingsDocument, new: SettingsDocument, slots: Iterable[str] = (),
-             round_seconds: float = 1.0) -> str:
+def describe(old: SettingsDocument, new: SettingsDocument, slots: Iterable[str] = ()) -> str:
     """The version line of a change: "Loss counts as down from 40 % → 35 %; Webhooks: added home"."""
     parts: List[str] = []
     for setting in registry.SETTINGS:
         before, after = old.values.get(setting.key), new.values.get(setting.key)
         if (setting.key in old.values) == (setting.key in new.values) and before == after:
             continue
-        was = _shown(setting, before if setting.key in old.values else setting.default(), round_seconds)
-        now = _shown(setting, after if setting.key in new.values else setting.default(), round_seconds)
+        was = _shown(setting, before if setting.key in old.values else setting.default())
+        now = _shown(setting, after if setting.key in new.values else setting.default())
         parts.append(f"{setting.label} {was} → {now}" if was != now else f"{setting.label} {now}")
     for name in registry.LISTS:
         text = _describe_list(name, old.lists.get(name), new.lists.get(name))

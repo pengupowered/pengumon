@@ -27,6 +27,7 @@ SETTINGS_INITIALIZED_KEY = "settings_initialized"
 SETTINGS_LISTS_SET_KEY = "settings_lists_set"
 SETTINGS_IMPORT_REPORT_KEY = "settings_import_report"
 SETTINGS_IMPORTED_AT_KEY = "settings_imported_at"
+PROBE_INTERVAL_IMPORTED_KEY = "settings_probe_interval_imported"  # 0.28: prober.interval_seconds left config.yaml
 MAX_VERSIONS = 50
 SUMMARY_MAX = 300
 
@@ -175,6 +176,29 @@ class SettingsQueries:
             await _put_meta(db, SETTINGS_IMPORT_REPORT_KEY, _dumps(report))
             await _put_meta(db, SETTINGS_IMPORTED_AT_KEY, repr(now))
         return True
+
+    async def import_probe_interval(self, key: str, value: Optional[int], summary: str) -> Optional[int]:
+        """The one-time import of the probe interval, which was a config.yaml-only bootstrap key before 0.28: `value`
+        (already one of the choices; None: the file sets none) is stored as the next revision (source "import") unless
+        the store has the key already, and the import is marked done either way. Returns the new revision, or None
+        when nothing was written (done before, nothing to import, or the store already had a value)."""
+        now = time.time()
+        async with self._db.write() as db:
+            if await _meta(db, PROBE_INTERVAL_IMPORTED_KEY) == "1":
+                return None
+            revision = None
+            old = await _document(db)
+            if value is not None and key not in old.values:
+                await _write(db, {key: value}, {}, now)
+                revision = await _revision(db) + 1
+                await _put_meta(db, SETTINGS_REVISION_KEY, str(revision))
+                await _store_version(db, revision, "import", summary, await _document(db), now)
+            await _put_meta(db, PROBE_INTERVAL_IMPORTED_KEY, "1")
+        return revision
+
+    async def probe_interval_imported(self) -> bool:
+        async with self._db.read() as db:
+            return await _meta(db, PROBE_INTERVAL_IMPORTED_KEY) == "1"
 
     async def settings_conflicts(self, base_revision: int, keys: Iterable[str],
                                  lists: Iterable[str]) -> Tuple[int, List[str]]:

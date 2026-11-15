@@ -1,10 +1,15 @@
 """Device and line samples (schema v9) per device id, and the WAN rates read from them."""
 
 import math
+import time
 from bisect import bisect_left, bisect_right
 from dataclasses import astuple
 from typing import List, Optional, Tuple
 
+from pengumon.db.device_tiers import device_parts
+from pengumon.db.schema import (
+    DEVICE_ROLLUP_FIGURES, UPSERT_DEVICE_ROLLUP_15M_FROM_1M, UPSERT_DEVICE_ROLLUP_1M_FROM_SAMPLES,
+)
 from pengumon.db.samples import DEVICE_SAMPLE_COLUMNS, LINE_SAMPLE_COLUMNS, DeviceSample, LineSample
 
 
@@ -42,9 +47,15 @@ class DeviceQueries:
 
     async def insert_device_sample(self, sample: DeviceSample):
         """Stores one poll of a device. A second row with the same device id and time is refused (IntegrityError):
-        two pollers for one device would be a bug, and the monitor logs storage failures."""
+        two pollers for one device would be a bug, and the monitor logs storage failures. In the same transaction the
+        poll's minute (device_rollup_1m) and its quarter hour (device_rollup_15m) are recomputed from what is stored,
+        as the probes' flush does, so a rollup is never ahead of or behind its source."""
         async with self._db.write() as db:
             await db.execute(self._DEVICE_INSERT, astuple(sample))
+            minute = int(sample.ts // 60)
+            await db.execute(UPSERT_DEVICE_ROLLUP_1M_FROM_SAMPLES, (minute * 60, (minute + 1) * 60, sample.device_id))
+            await db.execute(UPSERT_DEVICE_ROLLUP_15M_FROM_1M,
+                             (minute // 15 * 15, (minute // 15 + 1) * 15, sample.device_id))
 
     async def get_device_samples(self, device_id: str, start_time: float, end_time: float,
                                  padding_seconds: float = 0.0) -> List[DeviceSample]:
@@ -72,18 +83,43 @@ class DeviceQueries:
         """The device's polls with start_time <= ts <= end_time, grouped into buckets of bucket_seconds: per bucket
         (bucket start, then avg and max of rx Mbps, tx Mbps, CPU %, memory %, clients, CPU temperature, then the lowest
         WAN link speed). NULLs (a poll that could not
-        measure) are left out of both aggregates; a bucket with none gives NULL. Oldest first."""
+        measure) are left out of both aggregates; a bucket with none gives NULL. Oldest first.
+
+        Raw polls are read where they are kept (`retention_days`); before that the minute tier and then the quarter-hour
+        tier (db/device_tiers.py), with the same figures: while raw covers the range the answer is exactly the raw one.
+        Where the tiers are read, a bucket narrower than the tier (60 s, 900 s) is widened to it, and the start of the
+        range is rounded out to the whole minute (quarter) it falls in."""
         b = max(1, int(bucket_seconds))
+        async with self._db.read() as db:
+            async with db.execute("SELECT MIN(minute) FROM device_rollup_1m WHERE device_id = ?", (device_id,)) as c:
+                floor = (await c.fetchone())[0]
+            merged = device_parts(device_id, start_time, end_time, b, time.time(), self.retention_days, floor)
+            if merged is None:
+                return await self._raw_bucketed(db, device_id, start_time, end_time, b)
+            sql, params = merged
+            if not sql:
+                return []
+            outer = ", ".join(self._MERGE_COLUMNS)
+            async with db.execute(f"SELECT bucket, {outer} FROM ({sql}) GROUP BY bucket ORDER BY bucket",
+                                  params) as cursor:
+                return [tuple(r) for r in await cursor.fetchall()]
+
+    # avg (sum / count) and max of the six figures, then the lowest link speed, of the partial aggregates of
+    # db/device_tiers.py
+    _MERGE_COLUMNS = ([f"SUM({c}_sum) * 1.0 / SUM({c}_n), MAX({c}_max)" for c in DEVICE_ROLLUP_FIGURES]
+                      + ["MIN(wan_link_min)"])
+
+    @staticmethod
+    async def _raw_bucketed(db, device_id: str, start_time: float, end_time: float, b: int) -> List[tuple]:
         cols = ", ".join(f"AVG({c}), MAX({c})" for c in ("wan_rx_mbps", "wan_tx_mbps", "cpu_pct", "mem_pct",
                                                         "client_count"))
         cols += ", AVG(cpu_temp_c), MAX(cpu_temp_c), MIN(wan_link_mbps)"
-        async with self._db.read() as db:
-            async with db.execute(
-                f"SELECT CAST(ts / ? AS INTEGER) * ? AS b, {cols} FROM device_samples "
-                "WHERE device_id = ? AND ts >= ? AND ts <= ? GROUP BY b ORDER BY b",
-                (b, b, device_id, start_time, end_time),
-            ) as cursor:
-                return [tuple(r) for r in await cursor.fetchall()]
+        async with db.execute(
+            f"SELECT CAST(ts / ? AS INTEGER) * ? AS b, {cols} FROM device_samples "
+            "WHERE device_id = ? AND ts >= ? AND ts <= ? GROUP BY b ORDER BY b",
+            (b, b, device_id, start_time, end_time),
+        ) as cursor:
+            return [tuple(r) for r in await cursor.fetchall()]
 
     async def insert_line_sample(self, sample: LineSample):
         """Stores one access-line reading; `summary` and `detail` are the technology's own JSON, stored as given."""
@@ -91,13 +127,21 @@ class DeviceQueries:
             await db.execute(self._LINE_INSERT, astuple(sample))
 
     async def get_line_samples(self, device_id: str, start_time: float, end_time: float,
-                               padding_seconds: float = 0.0) -> List[LineSample]:
+                               padding_seconds: float = 0.0,
+                               bucket_seconds: Optional[float] = None) -> List[LineSample]:
         """The device's line readings with start_time - padding_seconds <= ts <= end_time + padding_seconds, oldest
-        first."""
+        first. With `bucket_seconds` only the newest reading of every bucket of that many seconds (epoch-aligned), so a
+        long range reads about as many readings as it has buckets."""
+        lo, hi = start_time - padding_seconds, end_time + padding_seconds
+        newest = ""
+        params: list = [device_id, lo, hi]
+        if bucket_seconds:
+            newest = (" AND ts IN (SELECT MAX(ts) FROM line_samples WHERE device_id = ? AND ts >= ? AND ts <= ? "
+                      "GROUP BY CAST(ts / ? AS INTEGER))")
+            params += [device_id, lo, hi, float(bucket_seconds)]
         async with self._db.read() as db:
             async with db.execute(
-                f"{self._LINE_SELECT} WHERE device_id = ? AND ts >= ? AND ts <= ? ORDER BY ts",
-                (device_id, start_time - padding_seconds, end_time + padding_seconds),
+                f"{self._LINE_SELECT} WHERE device_id = ? AND ts >= ? AND ts <= ?{newest} ORDER BY ts", params,
             ) as cursor:
                 return [LineSample(*r) for r in await cursor.fetchall()]
 
