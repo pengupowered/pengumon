@@ -37,10 +37,13 @@ def load(pct):
                        down_source="configured", up_source="configured")
 
 
-def make(repository=None, failures=3, recoveries=None):
-    """Recovery defaults to the onset count, which it always was before it became a setting of its own."""
+def make(repository=None, failures=3, recoveries=None, wait=0.0):
+    """Recovery defaults to the onset count, which it always was before it became a setting of its own. `wait`
+    (latency_incident_after_seconds) defaults to 0, the behavior these tests were written for: a latency incident opens
+    at once (test_latency_spikes.py tests the wait)."""
     config = ClassifierConfig(consecutive_failures_for_incident=failures,
-                              consecutive_successes_for_recovery=failures if recoveries is None else recoveries)
+                              consecutive_successes_for_recovery=failures if recoveries is None else recoveries,
+                              latency_incident_after_seconds=wait)
     return IncidentTracker(config, repository)
 
 

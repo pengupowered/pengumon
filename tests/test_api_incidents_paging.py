@@ -19,6 +19,14 @@ async def repo(tmp_path):
     await r.close()
 
 
+@pytest.fixture
+async def bare(tmp_path):
+    r = DatabaseRepository(db_path=str(tmp_path / "range.db"))
+    await r.initialize()
+    yield r
+    await r.close()
+
+
 def _titles(rows):
     return [row["title"] for row in rows]
 
@@ -103,3 +111,71 @@ async def test_one_dossier_is_built_at_a_time_and_a_second_asker_is_told_to_wait
         release.set()
         assert (await first).status_code == 200
         assert (await ac.get("/api/incidents/dossier?hours=72")).status_code == 200  # the lock was let go
+
+
+async def test_a_range_answers_every_incident_that_overlaps_it(app_state, bare, monkeypatch):
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", [])):
+        monkeypatch.setattr(security_config, name, value)
+    app_state.repository = bare
+    for i in range(1200):  # far past the old 1000-row page limit
+        iid = await bare.create_incident(Incident(start_time=5000.0 + i, cause_code="unknown_outage", title=f"r {i}", description="d",
+                                                  severity="warning", kind="gateway_down"))
+        await bare.resolve_incident(iid, 5000.0 + i + 0.5)
+    rows = (await _get(since=5000.0)).json()
+    assert len(rows) == 1200 and rows[0]["title"] == "r 1199" and rows[-1]["title"] == "r 0"  # newest first, none dropped
+    assert len((await _get(since=5000.0 + 1000)).json()) == 200
+    assert [r["title"] for r in (await _get(since=5000.0, until=5002.0)).json()] == ["r 2", "r 1", "r 0"]
+    assert (await _get(since=9e9)).json() == []  # nothing is that new
+
+
+async def test_a_range_includes_an_incident_that_began_before_it_and_one_still_open(app_state, bare, monkeypatch):
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", [])):
+        monkeypatch.setattr(security_config, name, value)
+    app_state.repository = bare
+    straddler = await bare.create_incident(Incident(start_time=100.0, cause_code="unknown_outage", title="straddles", description="d",
+                                                    severity="warning", kind="gateway_down"))
+    await bare.resolve_incident(straddler, 300.0)
+    await bare.create_incident(Incident(start_time=150.0, cause_code="unknown_outage", title="open", description="d",
+                                        severity="warning", kind="gateway_down"))
+    done = await bare.create_incident(Incident(start_time=10.0, cause_code="unknown_outage", title="over", description="d",
+                                               severity="warning", kind="gateway_down"))
+    await bare.resolve_incident(done, 20.0)
+    titles = _titles((await _get(since=200.0)).json())
+    assert titles == ["open", "straddles"]  # "over" ended before the range
+
+
+async def test_a_range_beyond_the_bound_answers_its_newest_and_pages_on(app_state, repo, monkeypatch):
+    from pengumon.api import incidents as api
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", [])):
+        monkeypatch.setattr(security_config, name, value)
+    app_state.repository = repo
+    assert (await _get(since=0, limit=api.RANGE_MAX + 1)).status_code == 422
+    first = _titles((await _get(since=0, limit=5)).json())
+    second = _titles((await _get(since=0, limit=5, offset=5)).json())
+    assert first == ["inc 11", "inc 10", "inc 9", "inc 8", "inc 7"] and second[0] == "inc 6"
+    assert (await _get(limit=1001)).status_code == 422  # without since the old bounds stay
+    assert (await _get(until=5.0)).status_code == 422
+
+
+async def test_the_list_fields_leave_out_the_path_trace(app_state, bare, monkeypatch):
+    from pengumon.models.probes import PathTraceHop
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", [])):
+        monkeypatch.setattr(security_config, name, value)
+    app_state.repository = bare
+    iid = await bare.create_incident(Incident(start_time=7000.0, cause_code="unknown_outage", title="traced", description="d",
+                                              severity="warning", kind="gateway_down"))
+    await bare.update_incident_path_trace(iid, [PathTraceHop(hop=1, ip="192.0.2.1")])
+    full = (await _get(since=7000.0)).json()[0]
+    slim = (await _get(since=7000.0, fields="list")).json()[0]
+    assert full["path_trace"] and slim["path_trace"] is None
+    assert {k: v for k, v in full.items() if k != "path_trace"} == {k: v for k, v in slim.items() if k != "path_trace"}
+
+
+async def test_the_list_fields_also_slim_a_plain_page(app_state, repo, monkeypatch):
+    from pengumon.models.probes import PathTraceHop
+    for name, value in (("access_token", ""), ("allowed_hosts", []), ("allowed_origins", [])):
+        monkeypatch.setattr(security_config, name, value)
+    app_state.repository = repo
+    await repo.update_incident_path_trace(1, [PathTraceHop(hop=1, ip="192.0.2.1")])
+    assert (await _get(limit=12)).json()[-1]["path_trace"]
+    assert all(r["path_trace"] is None for r in (await _get(limit=12, fields="list")).json())

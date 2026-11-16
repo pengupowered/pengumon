@@ -51,3 +51,8 @@
 :root[data-look="starship"] [data-panel="incidents"] .inc-list .chip.maint { border-radius: 0; background: var(--ink-2); color: var(--bg); border: 0; padding: 0 8px; }
 :root[data-look="starship"] [data-panel="incidents"] .inc-list tr.drop-row td { background: none; border-top-style: dotted; }
 :root[data-look="starship"] [data-panel="incidents"] .inc-list tr.drop-row td.lead { padding-left: 32px; }
+/* the latency spikes: a readout after an orange band, columns of flat blocks */
+:root[data-look="starship"] [data-panel="incidents"] .inc-spikes { background: none; border-radius: 0; border-left: 8px solid var(--accent); padding-block: 0; }
+:root[data-look="starship"] [data-panel="incidents"] .inc-spikes .sp-t { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .06em; font-weight: var(--fw-bold); }
+:root[data-look="starship"] [data-panel="incidents"] .sp-day i { border-radius: 0; opacity: 1; }
+:root[data-look="starship"] [data-panel="incidents"] .sp-days { border-bottom: 3px solid var(--ink-3); }

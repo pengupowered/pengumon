@@ -24,7 +24,8 @@ try:
     for n, b in rows: print("  %-34s %7.1f MB" % (n, b / 1e6))
 except sqlite3.Error as e:
     print("\n(dbstat unavailable: %s)" % e)
-# Schema v2 (0.2.0): samples(ts, target, ok, ...) clustered by time, plus per-minute rollup_1m.
+# Schema v2 (0.2.0): samples(ts, target, ok, ...) clustered by time, plus per-minute rollup_1m. Since v25 its latency
+# and jitter are integer hundredths of a millisecond (latency_cms, jitter_cms); the time column is the same.
 # Older databases still have probe_samples(timestamp, ...).
 sample_table, ts_col = ("samples", "ts") if "samples" in tables else ("probe_samples", "timestamp")
 print("\nschema version (user_version):", c.execute("pragma user_version").fetchone()[0])

@@ -31,30 +31,33 @@ class Kind:
     load_explainable: bool = False  # heavy line load explains it: latency or jitter only, or loss seen only at ISP hops
     isp_line: bool = False  # loss diagnosed at the ISP hops (the intermediate-hop rule applies to these)
     scope: Scope = "network"
+    # raised on latency or jitter with no loss: one that ends before classifier.latency_incident_after_seconds is a
+    # latency spike (incidents.spikes), not an incident
+    latency_only: bool = False
 
 
 _ROWS = (
     Kind("nominal", "unknown"),
     Kind("local_down", "router"),
     Kind("local_loss", "router"),
-    Kind("local_latency", "router", load_explainable=True),
+    Kind("local_latency", "router", load_explainable=True, latency_only=True),
     Kind("gateway_down", "gateway"),
     Kind("gateway_loss", "gateway"),
-    Kind("gateway_latency", "gateway", load_explainable=True),
+    Kind("gateway_latency", "gateway", load_explainable=True, latency_only=True),
     # the cause code decides: access_line_drop (the provider's first hop times out: line) or
     # internet_backbone_transit_loss (it answers, the internet does not: isp); see incident_cause for older rows
     Kind("isp_outage", None, isp_line=True),
     Kind("isp_loss", "line", load_explainable=True, isp_line=True),
     Kind("backbone_loss", "isp"),
-    Kind("upstream_latency", "isp", load_explainable=True),
+    Kind("upstream_latency", "isp", load_explainable=True, latency_only=True),
     Kind("dns_outage", "dns"),
     Kind("dns_loss", "dns"),
     Kind("dns_slow", "dns"),
-    Kind("busy_latency", "load", load_explainable=True),
+    Kind("busy_latency", "load", load_explainable=True, latency_only=True),
     Kind("busy_isp_hops", "load"),
     Kind("busy_speedtest", "load", load_explainable=True),  # a speed test fills the line on purpose (pengumon.speedtest)
     Kind("hop_deprioritized", "isp"),
-    Kind("legacy_latency", None, load_explainable=True),  # only from the schema v6 backfill of older incidents
+    Kind("legacy_latency", None, load_explainable=True, latency_only=True),  # only from the schema v6 backfill of older incidents
     Kind("legacy_other", None),
     Kind("internet_outage", "internet"),  # public targets fail while no LAN target is configured: not attributable
     Kind("internet_loss", "internet"),
@@ -92,6 +95,7 @@ CauseCode = Literal[tuple(CAUSE_CODES)]
 
 LOAD_EXPLAINABLE_KINDS: FrozenSet[str] = frozenset(k.name for k in _ROWS if k.load_explainable)
 ISP_LINE_KINDS: FrozenSet[str] = frozenset(k.name for k in _ROWS if k.isp_line)
+LATENCY_ONLY_KINDS: FrozenSet[str] = frozenset(k.name for k in _ROWS if k.latency_only)
 
 
 def register_kind(kind: Kind) -> None:

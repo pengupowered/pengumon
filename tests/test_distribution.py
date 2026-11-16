@@ -414,6 +414,45 @@ def test_the_image_takes_the_wheel_by_copy_so_the_build_cache_keys_on_its_conten
     assert "COPY --from=wheel" in dockerfile
 
 
+def _prune(directory: Path, keep: int):
+    if sys.platform == "win32":
+        pytest.skip("scripts/prune-backups.sh belongs to the maintainer's bash deploy on Linux")
+    return subprocess.run(["bash", str(ROOT / "scripts" / "prune-backups.sh"), str(directory), str(keep)],
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False)
+
+
+def test_prune_backups_keeps_the_newest_stamps_and_nothing_else_is_touched(tmp_path):
+    """The deploy backups are removed oldest first down to KEEP (by stamp, HHMM counting as HHMM00); a folder that is
+    not a deploy stamp, a file and a link are never touched. (A GNU `find -regex` with {n} counts matched nothing.)"""
+    stamps = ["2026-11-08-1641", "2026-11-11-092824", "2026-11-12-150535", "2026-11-12-1532", "2026-11-15-122628"]
+    for s in stamps:
+        (tmp_path / s).mkdir()
+        (tmp_path / s / "pengumon.db").write_text("x")
+    (tmp_path / "pengumon-config").mkdir()
+    (tmp_path / "2026-11-01-1200.tar").write_text("not a folder")
+    (tmp_path / "2026-11-01-120000").symlink_to(tmp_path / "pengumon-config")
+    res = _prune(tmp_path, 3)
+    assert res.returncode == 0, res.stderr
+    left = {p.name for p in tmp_path.iterdir()}
+    assert left == {"2026-11-01-120000", "2026-11-01-1200.tar", "2026-11-12-150535", "2026-11-12-1532",
+                    "2026-11-15-122628", "pengumon-config"}
+    assert res.stdout.count("removed ") == 2
+    # fewer than KEEP: nothing goes
+    assert _prune(tmp_path, 3).stdout == "" and len(list(tmp_path.iterdir())) == 6
+    assert _prune(tmp_path, -1).returncode == 2  # not a whole number
+
+
+def test_deploy_prunes_with_the_script_and_applies_the_pids_limit():
+    deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+    assert '"$ROOT/scripts/prune-backups.sh" "$BACKUPS" "$KEEP_BACKUPS"' in deploy and "-regex" not in deploy
+    assert 'KEEP_BACKUPS="${PENGUMON_KEEP_BACKUPS:-3}"' in deploy
+    # podman-compose 1.0.6 drops pids_limit: deploy.sh sets it from docker-compose.yml and checks it took
+    # (podman update --pids-limit lasts only until a restart on podman 4.9: the limit goes to podman run)
+    assert '--podman-run-args="--pids-limit $PIDS_LIMIT" up -d' in deploy and "{{.HostConfig.PidsLimit}}" in deploy
+    assert not re.search(r"^\s*[^#\s].*podman update", deploy, re.M)
+    assert re.search(r"^\s*pids_limit: *256\b", (ROOT / "docker-compose.yml").read_text(encoding="utf-8"), re.M)
+
+
 def test_deploy_and_the_container_test_check_the_image_holds_this_trees_code():
     deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
     container_test = (ROOT / "scripts" / "test-container.sh").read_text(encoding="utf-8")
@@ -511,8 +550,11 @@ def test_deploy_refuses_to_reuse_a_backup_folder(deploy_tree, tmp_path):
 
 
 def test_deploy_removes_only_folders_it_made_after_a_good_deploy():
+    # (what is removed is tested on the script itself: test_prune_backups_keeps_the_newest_stamps_and_nothing_else_is_touched)
     deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
-    assert "-regex" in deploy and "umask 077" in deploy
+    after_health = deploy.split("Pengumon is up", 1)[1]
+    assert "prune-backups.sh" in after_health and '[ -f "$BACKUPS/$STAMP/pengumon.db" ]' in after_health
+    assert "umask 077" in deploy
 
 
 def test_the_image_is_tagged_with_the_version_and_latest_only_after_its_attestation_succeeded():
@@ -531,3 +573,54 @@ def test_the_image_is_tagged_with_the_version_and_latest_only_after_its_attestat
     assert publish["permissions"] == {"contents": "read", "packages": "write"}
     assert any(str(s.get("uses", "")).startswith("docker/login-action@") for s in publish["steps"])
     assert "publish-image" in jobs["release"]["needs"] and "attest-image" in jobs["release"]["needs"]
+
+
+# Variables the app reads that the compose files deliberately do not pass, each with the reason.
+NOT_PASSED_BY_COMPOSE = {
+    "PENGUMON_DATA": "the image fixes the data directory (the pengumon_data volume at /app/data)",
+    "PENGUMON_CONFIG": "the compose files mount config.yaml at the path the image reads it from",
+    "PENGUMON_LOG_FORMAT": "set in an override file when wanted (Settings > Logging has the levels)",
+    "PENGUMON_LOG_LEVEL": "a setting (server.log_level); an override file may set the variable",
+    "PENGUMON_LOG_LEVELS": "a setting (server.log_levels); an override file may set the variable",
+    "PENGUMON_WEBHOOK_SECRET_": "a prefix: one variable per webhook, named after it, so there is nothing to list",
+    "PENGUMON_DEVICE_": "a prefix: one pair per device id; the compose files list the modem's and the router's",
+}
+
+
+def _variables_the_app_reads() -> set:
+    """Every PENGUMON_ name the code reads: quoted names in src, and the names the vendored homeguard builds from its
+    profile's prefix (f"{prefix}_ACCESS_TOKEN" ...)."""
+    found = set()
+    for path in (ROOT / "src").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        found |= set(re.findall(r"[\"'](PENGUMON_[A-Z0-9_]+)[\"']", text))
+        if "_vendor" in path.parts:
+            found |= {"PENGUMON" + suffix for suffix in re.findall(r"f\"\{prefix\}(_[A-Z0-9_]+)\"", text)}
+    return found
+
+
+def test_the_compose_files_pass_every_variable_the_app_reads_or_say_why_not():
+    read = _variables_the_app_reads()
+    assert {"PENGUMON_TRUSTED_PROXIES", "PENGUMON_COOKIE_SECURE", "PENGUMON_MAX_BODY_BYTES", "PENGUMON_ALLOWED_ORIGINS",
+            "PENGUMON_ACCESS_TOKEN"} <= read  # the scan itself finds the ones it was written for
+    for name in ("docker-compose.yml", "compose.release.yaml"):
+        service = yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))["services"]["pengumon"]
+        passed = {entry.split("=", 1)[0] for entry in service["environment"]}
+        missing = sorted(v for v in read if v not in passed and v not in NOT_PASSED_BY_COMPOSE)
+        assert not missing, f"{name} does not pass {missing}: add them, or list them in NOT_PASSED_BY_COMPOSE with a reason"
+    stale = sorted(v for v in NOT_PASSED_BY_COMPOSE if v not in read and not v.endswith("_"))
+    assert not stale, f"NOT_PASSED_BY_COMPOSE lists variables nothing reads: {stale}"
+
+
+def test_an_empty_value_means_unset_for_each_newly_passed_variable(monkeypatch):
+    """The compose files pass `${VAR:-}`: an empty string reaches the app, and must act as the variable being unset."""
+    from pengumon.main import proxy_options
+    from pengumon.security import SecurityConfig
+    for name in ("ACCESS_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "COOKIE_SECURE", "MAX_BODY_BYTES",
+                 "SESSION_MAX_AGE_DAYS", "VIEW_WITHOUT_TOKEN", "TRUSTED_PROXIES"):
+        monkeypatch.setenv(f"PENGUMON_{name}", "")
+    assert proxy_options() == {"proxy_headers": False}  # an empty PENGUMON_TRUSTED_PROXIES trusts no proxy
+    config = SecurityConfig.from_env()
+    unset = SecurityConfig()
+    assert (config.allowed_origins, config.cookie_secure, config.max_body_bytes) == (
+        unset.allowed_origins, unset.cookie_secure, unset.max_body_bytes)

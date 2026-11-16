@@ -1,15 +1,17 @@
-"""The reliability report, the loss-by-hour grid and the uptime strips (built in pengumon.reports).
+"""The reliability report, the loss-by-hour grid, the uptime strips and the latency spikes (built in pengumon.reports).
 
 Every route that puts times in days or hours takes `tz` (the viewer's IANA zone) and `tz_offset_minutes` (minutes east
 of UTC, the fallback of older pages); the zone used is the one set in Settings, else `tz`, else the offset, else UTC
 (timeofday.viewer_zone), and days and hours follow its daylight saving.
 
-The report, the loss grid and the uptime strips are kept for the rest of the minute (reports/cache.py): the dashboard
-asks for all three at every page load, and they change slowly. A kept answer is dropped as soon as the path is applied
-(or a removed hop's history deleted), a setting is saved or an incident changes. Only a few are built at once (the
+The report, the loss grid, the uptime strips and the latency spikes are kept for the rest of the minute
+(reports/cache.py): the dashboard asks for them at every page load, and they change slowly. A kept answer is dropped as
+soon as the path is applied (or a removed hop's history deleted), a setting is saved or an incident (or a latency spike)
+changes. Only a few are built at once (the
 cache's MAX_BUILDS), so that answers asked for with ever-changing parameters cannot take every database reader; and the
 answers that are not kept count against a rate limit per client (REPORTS_RATE; a kept one is free)."""
 
+import time
 from typing import Annotated, Any, Awaitable, Callable, Hashable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -20,6 +22,7 @@ from pengumon.observability.telemetry import ai_pack_exports, api_rate_limited
 from pengumon.reports.common import pack_building
 from pengumon.reports.loss_grid import build_loss_grid
 from pengumon.reports.reliability import build_report
+from pengumon.reports.spikes import spike_summary
 from pengumon.reports.uptime import build_uptime
 from pengumon.security import rate_limit
 from pengumon.timeofday import viewer_zone
@@ -103,6 +106,34 @@ async def get_uptime(
     return await _kept(state, request, ("uptime", window, zone),
                        lambda: build_uptime(state.repository, state.config, window, tz=zone))
 
+
+SPIKE_MAX_DAYS = 3650  # incidents kept forever: the longest range a route answers (js/ranges.js FOREVER_DAYS)
+
+
+@router.get("/latency-spikes")
+async def get_latency_spikes(
+    state: StateDep,
+    request: Request,
+    hours: int = Query(168, ge=1, le=SPIKE_MAX_DAYS * 24),
+    days: Optional[int] = Query(None, ge=1, le=SPIKE_MAX_DAYS, description="`days` N means 24 * N hours and wins"),
+    tz_offset_minutes: TzOffset = 0,
+    tz: TzName = None,
+):
+    """Brief latency spikes (latency or jitter with no loss that ended before
+    classifier.latency_incident_after_seconds, so not incidents) over the rolling window of the last `hours` hours
+    (`days` N: 24 * N hours, and it wins), ending now: the count (expected ones left out, counted in `expected`), the
+    split by stage, and the count per local calendar day (the first and last `partial`, with the `hours` they hold).
+    Days in the zone of /api/report. Kept and rate limited like the report (docs/api.md)."""
+    if not state.repository:
+        raise HTTPException(status_code=503, detail="Repository not initialized")
+    seconds = (days * 24 if days is not None else hours) * 3600
+    zone = viewer_zone(state.config, tz, tz_offset_minutes)[0]
+
+    async def build():
+        end = time.time()
+        return await spike_summary(state.repository, state.config, end - seconds, end, zone)
+
+    return await _kept(state, request, ("latency-spikes", seconds, zone), build)
 
 
 @router.get("/ai-pack", dependencies=[Depends(rate_limit("ai_pack", 6, 60))])

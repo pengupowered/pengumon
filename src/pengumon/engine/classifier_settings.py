@@ -35,6 +35,9 @@ class ClassifierConfig(BaseModel):
     consecutive_failures_for_incident: int = Field(3, ge=1, le=600)  # faulty rounds (with loss) before an incident
     consecutive_failures_for_latency_incident: int = Field(10, ge=1, le=3600)  # latency/jitter only
     consecutive_successes_for_recovery: int = Field(3, ge=1, le=600)  # healthy rounds in a row that end one
+    # A latency/jitter-only episode that met the start rule becomes an incident once it has lasted this long (it then
+    # starts where the episode started); one that ends sooner is a latency spike (incidents.spikes). 0: at once.
+    latency_incident_after_seconds: float = Field(120.0, ge=0, le=3600)
     # WAN load (% of line capacity) at which latency, and loss seen only at ISP hops, counts as expected.
     busy_load_pct: float = Field(60.0, ge=10, le=100)
     # Traced (traceroute) when an incident starts, to record the path at that moment.

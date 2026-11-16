@@ -129,7 +129,7 @@ async function loadHistory() {
     };
     // All starts at the oldest stored count when that is younger than the retention (js/ranges.js)
     const { answer: history, since } = await loadFromOldest({
-      all, start: end - view.rangeSeconds, end, ask, current: () => mine === historySeq,
+      all, kind: 'router', start: end - view.rangeSeconds, end, ask, current: () => mine === historySeq,
       widthOf: (h) => h.bucket_seconds, oldest: (h) => (h.points.length ? h.points[0].ts : null)
     });
     if (mine !== historySeq) return;

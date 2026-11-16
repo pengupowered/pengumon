@@ -112,10 +112,11 @@ The sign-in itself is on the Settings page (above). These are environment variab
   that address were believed, any of them could choose the address its failed sign-ins and the rate limits are
   counted under (a new one for every guess, or yours, to lock you out). `*` is refused at start.
 
-In the compose files only the variables listed under `environment:` reach the container (`docker-compose.yml` lists
-`PENGUMON_ACCESS_TOKEN`, `PENGUMON_ALLOWED_HOSTS`, `PENGUMON_SESSION_MAX_AGE_DAYS`, `PENGUMON_VIEW_WITHOUT_TOKEN`,
-`PENGUMON_TLS_CERT` and `PENGUMON_TLS_KEY` among them). For any other variable above, such as
-`PENGUMON_TRUSTED_PROXIES`, `PENGUMON_ALLOWED_ORIGINS` or `PENGUMON_COOKIE_SECURE`, add a line to the `environment:` list of an
+In the compose files only the variables listed under `environment:` reach the container. Both pass every sign-in
+variable above (`PENGUMON_ACCESS_TOKEN`, `_ALLOWED_HOSTS`, `_ALLOWED_ORIGINS`, `_COOKIE_SECURE`, `_MAX_BODY_BYTES`,
+`_SESSION_MAX_AGE_DAYS`, `_TRUSTED_PROXIES`, `_VIEW_WITHOUT_TOKEN`, `_TLS_CERT` and `_TLS_KEY`) from your shell or the
+git-ignored `.env`; an empty value is the same as unset for each (an empty `PENGUMON_TRUSTED_PROXIES` trusts no proxy). For
+any other variable, such as `PENGUMON_LOG_LEVELS`, add a line to the `environment:` list of an
 override file (`docker-compose.override.yml` next to `docker-compose.yml`, `compose.override.yaml` next to `compose.yaml`);
 compose merges the lists.
 
@@ -246,8 +247,8 @@ your alert channels. Turn it on only where that is fine for everyone who can rea
 speed tests and the AI pack. It is off by default (`mcp.enabled`, Settings > Sign-in) and read-only. It sits behind the same guards as the
 API: the `Host` allow-list, the `Origin` check (a foreign one is `403`; non-browser clients send none), the body limit,
 the read token (or the password) as `Authorization: Bearer ...` (open while no password is set), and a rate limit of 120 a minute (the `ai_pack` tool: 6 builds a minute, as for the API). Viewers (see above) cannot use
-it without the read token. No secret, client name or client address is in any answer, and no device address or login: a failed device poll is
-told in fixed words, not the driver's message. While it is off, `/mcp` is a plain `404` to every method. Over plain HTTP the bearer token
+it without the read token. No secret is in any answer, and no device address or login: a failed device poll is
+told in fixed words, not the driver's message. Hop names, host names and home addresses are in the answers unless "Answers use real names and addresses" (`mcp.real_names`, on by default) is off, and connected clients' names and addresses only as `privacy.client_details` allows that caller (the read token gets them masked); see [mcp.md](mcp.md#what-a-tool-returns-real-names-or-role-words). What the assistant sees goes to the company that runs it. While it is off, `/mcp` is a plain `404` to every method. Over plain HTTP the bearer token
 crosses the LAN in clear: use [HTTPS](#https) if that matters.
 
 ## Signing out
@@ -280,5 +281,6 @@ upgrade, a copied cookie included, work again: change the password after such a 
 `PENGUMON_ACCESS_TOKEN`): the dashboard is then open until you set the variable.
 
 `docker-compose.yml` passes `PENGUMON_ACCESS_TOKEN`, `PENGUMON_ALLOWED_HOSTS`, `PENGUMON_SESSION_MAX_AGE_DAYS`,
-`PENGUMON_VIEW_WITHOUT_TOKEN`, `PENGUMON_NOTIFY_URL`,
+`PENGUMON_VIEW_WITHOUT_TOKEN`, `PENGUMON_TRUSTED_PROXIES`, `PENGUMON_ALLOWED_ORIGINS`, `PENGUMON_COOKIE_SECURE`,
+`PENGUMON_MAX_BODY_BYTES`, `PENGUMON_NOTIFY_URL`,
 `PENGUMON_NOTIFY_TOKEN` and the modem/router passwords on from the git-ignored `.env` (see `.env.example`).

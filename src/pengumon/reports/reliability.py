@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from pengumon.reports.common import _canonical_order, _split_incidents, _targets, cause_totals, lasted
 from pengumon.reports.outages import outage_totals, outages_of
 from pengumon.reports.queries import daily_availability, hourly_loss
+from pengumon.reports.spikes import spike_summary
 from pengumon.timeofday import utc_offset
 from pengumon.windows import day_cells
 
@@ -19,7 +20,9 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
     with probes, each marked in `partial` (the window cuts it: the first and last) with the `hours` it holds inside
     the window. Day and hour buckets are the clock's in `tz` (timeofday.viewer_zone; the container runs
     in UTC). Loss by hour is the loss grid's rule: the hops that ignore ping (`ignoring`) and the hops removed from the
-    path are left out. tz_offset_minutes: the zone's offset now."""
+    path are left out. tz_offset_minutes: the zone's offset now. `latency_spikes`: the window's brief latency spikes
+    (reports/spikes.py: count, expected, by_stage, incident_after_seconds), and `availability.latency_spikes` their count
+    per day of `availability.days`."""
     now = now or time.time()
     end_time = now if window_end is None else window_end
     start_time = end_time - days * 86400
@@ -64,6 +67,9 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
     ]
     worst_hours = [h for h in sorted(hourly, key=lambda h: (-h["loss_pct"], h["hour"])) if h["lost"] > 0][:5]
 
+    spikes = await spike_summary(repository, config, start_time, end_time, tz)
+    spikes_per_day = {d["day"]: d["count"] for d in spikes["days"]}
+
     return {
         "days": days,
         "tz_offset_minutes": utc_offset(now, tz) // 60,
@@ -72,7 +78,8 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
         "window_end": end_time,
         "availability": {"days": day_list, "hops": hops,
                          "partial": [bool(cells[d]["partial"]) if d in cells else False for d in day_list],
-                         "hours": [cells[d]["hours"] if d in cells else 24.0 for d in day_list]},
+                         "hours": [cells[d]["hours"] if d in cells else 24.0 for d in day_list],
+                         "latency_spikes": [spikes_per_day.get(d, 0) for d in day_list]},
         "incidents": {
             "count": len(incidents),
             "minutes": round(sum(lasted(r, now) for r in incidents) / 60.0, 1),
@@ -83,4 +90,6 @@ async def build_report(repository, config, days: int, now: Optional[float] = Non
         },
         "loss_by_hour": hourly,
         "worst_hours": worst_hours,
+        # brief latency-only episodes, not incidents (incidents/spikes.py); per day: availability.latency_spikes
+        "latency_spikes": {k: spikes[k] for k in ("count", "expected", "by_stage", "incident_after_seconds")},
     }

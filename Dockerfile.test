@@ -4,7 +4,9 @@ WORKDIR /app
 
 # Security updates of OS packages (test image matches production; APT_REFRESH: see Dockerfile).
 ARG APT_REFRESH=
-RUN apt-get update && apt-get -y --no-install-recommends upgrade && rm -rf /var/lib/apt/lists/*
+# faketime (libfaketime, test image only): scripts/test-clock.sh runs the suite at a chosen wall-clock time (docs/testing.md).
+RUN apt-get update && apt-get -y --no-install-recommends upgrade && apt-get install -y --no-install-recommends faketime \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 COPY requirements-dev.txt requirements-build.txt ./

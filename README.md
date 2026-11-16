@@ -35,6 +35,7 @@ provider a report instead of a hunch.
 - **Every outage explained.** A classifier places each problem in your home network, the line, the provider or beyond,
   and records an incident with per-hop evidence, the modem's signal and the line load at the time.
   Drops that belong together, such as a line that flaps for half an hour, are shown and alerted as one outage.
+  Brief latency blips with no loss are counted per day as latency spikes instead of filling the incident list.
 - **Busy is not broken.** Router WAN traffic is taken into account, so lag while someone is downloading is marked as
   expected rather than reported as a fault.
 - **Patterns over time.** Loss by hour of the week, per-target uptime, a reliability report, and an ISP dossier to send

@@ -95,6 +95,9 @@ classifier:
   dns_timeout_threshold_ms: 300.0
   consecutive_failures_for_incident: 3
   consecutive_failures_for_latency_incident: 10
+  # A latency/jitter problem with no loss becomes an incident only once it has lasted this long (seconds; it then
+  # starts where it began); one that ends sooner is counted as a latency spike, never alerted. 0: an incident at once.
+  latency_incident_after_seconds: 120
   # Each target's last N probes (3-60) that loss, latency and jitter are judged over. Latency and jitter are medians:
   # high only when more than half of those probes are, so one stalled probe is no spike.
   window_probes: 10

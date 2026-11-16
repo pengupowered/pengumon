@@ -10,7 +10,7 @@ import pytest
 from pengumon.analysis.incident import INSPECT_RAW_MAX_SECONDS, inspect_incident
 from pengumon.db import evidence as evidence_module
 from pengumon.db.evidence import EVIDENCE_RAW_EDGE_SECONDS, settle_seconds
-from pengumon.db.migrations import v022_incident_evidence
+from pengumon.db.migrations import v022_incident_evidence, v025_slim_samples
 from pengumon.db.repository import DatabaseRepository
 from pengumon.devices.samples import RouterHistory, device_sample
 from pengumon.devices.snapshots import RouterMetricsSnapshot
@@ -19,6 +19,7 @@ from pengumon.incidents.model import Incident
 from pengumon.lines.docsis import DocsisHistory, line_sample
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.models.probes import ProbeSample
+from old_schema import SAMPLES_BEFORE_V25
 
 TARGET_IDS = ["router", "gateway", "isp"]
 TARGETS = [SimpleNamespace(id=t, name=t.title(), category=c) for t, c in zip(TARGET_IDS, ("local", "gateway", "isp"))]
@@ -259,14 +260,18 @@ async def test_the_migration_writes_the_evidence_of_every_resolved_incident(tmp_
     open_one = Incident(start_time=incident.start_time, title="o", description="d", severity="warning",
                         cause_code="unknown_outage", resolved=False)
     open_id = await repo.create_incident(open_one)
-    async with repo._db.write() as db:  # as a database from before v22 is
+    await repo.flush_samples()
+    async with repo._db.write() as db:  # as a database from before v22 is (and its samples, from before v25)
         for table in ("incident_evidence", "incident_evidence_probes", "incident_evidence_readings"):
             await db.execute(f"DROP TABLE {table}")
+        for statement in SAMPLES_BEFORE_V25:
+            await db.execute(statement)
     import aiosqlite
     async with aiosqlite.connect(repo.db_path, isolation_level=None) as db:
-        await db.execute("BEGIN IMMEDIATE")
-        await v022_incident_evidence.migrate(db)
-        await db.execute("COMMIT")
+        for step in (v022_incident_evidence.migrate, v025_slim_samples.migrate):  # the evidence, then the slimmer rows
+            await db.execute("BEGIN IMMEDIATE")
+            await step(db)
+            await db.execute("COMMIT")
     assert (await repo.get_incident_evidence(incident.id)).resolution == "raw"
     assert await repo.get_incident_evidence(open_id) is None
     await forget_shared_data(repo)

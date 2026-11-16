@@ -11,6 +11,9 @@
 #                               `-n <N>` on the command line wins.
 #   PENGUMON_TEST_MEMORY=<size> memory cap, no swap (default: 1g plus 800m per worker, so 4200m with 4: each run is an
 #                               app, Node and Chromium, which take 300-600 MB; /tmp is a tmpfs and counts too).
+# Fake clock (scripts/test-clock.sh --ui, docs/testing.md "Tests at other clock times"):
+# PENGUMON_FAKE_EPOCH (the start, as epoch seconds; PENGUMON_FAKE_TIME is not used here) and PENGUMON_TEST_TZ. libfaketime is preloaded in the whole container: the test
+# process, the app, node and Chromium (so the page's Date) all read the same shifted clock.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${UI_RUNNER_BASE:-localhost/ui-test-runner:1}"
@@ -24,6 +27,9 @@ if [ "$workers" -gt 1 ]; then
 fi
 cmd+=(tests/test_ui_smoke.py tests/test_ui_lint.py tests/test_ui_steps.py)
 mounts=()
+env=()
+if [ -n "${PENGUMON_TEST_TZ:-}" ]; then env+=(-e "TZ=$PENGUMON_TEST_TZ"); fi
+if [ -n "${PENGUMON_STEP_ONLY:-}" ]; then env+=(-e "PENGUMON_STEP_ONLY=$PENGUMON_STEP_ONLY"); fi  # (debugging: only the steps whose label holds this text)
 if [ "${1:-}" = "--command" ]; then
     shift
     cmd=("$@")
@@ -43,6 +49,14 @@ fi
 # work tree's previous image is removed after the build (scripts/lib-test-image.sh): no dangling images are left.
 . "$ROOT/scripts/lib-test-image.sh"
 build_test_image pengumon-ui-test "$ROOT" Dockerfile.ui --build-arg "BASE=$BASE"
+
+# Fake clock: one fixed offset from the real clock, worked out now (after the build), not "start at <time>" as scripts/test.sh
+# does: the app, node, Chromium and its helper processes start at different moments, and each would begin at that time on
+# its own. With an offset they all read the same clock. The run starts at PENGUMON_FAKE_EPOCH plus the seconds podman needs.
+if [ -n "${PENGUMON_FAKE_EPOCH:-}" ]; then
+    env+=(-e "LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1" -e FAKETIME_DONT_FAKE_MONOTONIC=1
+          -e "FAKETIME=$(printf '%+d' $((PENGUMON_FAKE_EPOCH - $(date +%s))))s" -e "PENGUMON_FAKE_EPOCH=$PENGUMON_FAKE_EPOCH")
+fi
 
 # A shared runner script, when UI_RUNNER_DIR names one (several projects keeping the hardening in one place).
 if [ -n "$RUNNER" ] && [ -x "$RUNNER/run.sh" ]; then
@@ -74,5 +88,5 @@ exec podman run --rm \
     --memory "$memory" --memory-swap "$memory" \
     --pids-limit 1024 \
     --shm-size 512m \
-    "${mounts[@]}" \
+    "${mounts[@]}" "${env[@]}" \
     "$built" "${cmd[@]}" "$@"

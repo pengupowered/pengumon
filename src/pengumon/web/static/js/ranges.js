@@ -11,6 +11,7 @@
 // chart shows what is stored when that is less.
 
 import { formatClock, localFormat, zoneOffsetMs } from './clock.js';
+import { oldestStored } from './oldest.js';
 import { settingsValues, val } from './settings-values.js';
 
 const DAY = 86400;
@@ -171,20 +172,33 @@ export function fillRangeSelect(host, { options, value, action, label, id, extra
 }
 
 // "All" shows what is stored: when the oldest stored row is later than the window's start by more than a bucket or two, the
-// chart starts there. This asks once for the whole window and, when the answer starts late, again from its oldest row (floored
-// to a whole bucket of the new width), so the buckets suit the span drawn (400-800 points) and not the retention's.
+// chart starts there. `kind` (probes, router, mesh, line, speedtest: js/oldest.js, GET /api/oldest) says where the data
+// starts, so this asks once, for the window from the oldest row (floored to a whole bucket of that span's width, so the
+// buckets suit the span drawn: 400-800 points, not the retention's). Without `kind`, or when the server does not say, it asks
+// for the whole window and, when the answer starts late, again from its oldest row. A device younger than the oldest row of its
+// kind (a second router) still gets that second request.
 //   ask(start, end, bucket) -> an answer (null when the request failed); oldest(answer) -> epoch seconds of its oldest row, or null
 //   bucketOf(seconds) -> the bucket width of a span (omit when the server picks it: then `widthOf(answer)` says what it chose)
 //   current() -> false when a newer choice was made: the second request is then not sent (callers check their own `seq` after)
 // Returns { answer, start, bucket, since }; `since` is the start (epoch seconds) when drawn from the oldest row, else null.
-export async function loadFromOldest({ all, start, end, bucketOf, widthOf, ask, oldest, current = () => true }) {
+export async function loadFromOldest({ all, kind, start, end, bucketOf, widthOf, ask, oldest, current = () => true }) {
   let bucket = bucketOf ? bucketOf(end - start) : undefined;
+  let since = null;
+  const stored = all && kind ? await oldestStored(kind) : null;
+  if (stored !== null && current() && stored - start > (bucket || 900) * 2) {
+    const next = bucketOf ? bucketOf(end - stored) : undefined;
+    const unit = next || 60;
+    start = Math.floor(stored / unit) * unit;
+    bucket = next;
+    since = start;
+  }
   const answer = await ask(start, end, bucket);
-  const whole = { answer, start, bucket, since: null };
+  const whole = { answer, start, bucket, since };
   if (!all || !answer || !current()) return whole;
   const first = oldest(answer);
   const width = (widthOf && widthOf(answer)) || bucket || 60;
-  if (first === null || first === undefined || first - start <= width * 2) return whole;
+  // (a start the server's oldest time gave is right to within a quarter hour: one target or device may begin a little later than the rest)
+  if (first === null || first === undefined || first - start <= Math.max(width * 2, since === null ? 0 : 900)) return whole;
   const next = bucketOf ? bucketOf(end - first) : undefined;
   const unit = next || 60;
   const from = Math.floor(first / unit) * unit;

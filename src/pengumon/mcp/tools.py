@@ -7,13 +7,19 @@ arguments the schema cannot catch (a JSON-RPC -32602). Nothing here imports the 
 (docs/architecture.md: what the routes and the tools share lives in the feature packages).
 
 Nothing a tool returns holds a secret: devices are summarized from their latest snapshot (never their configuration or
-credentials), clients are counts only (`traffic` and the traffic hours of `incident` describe a device by its kind, maker
-and main app, never by name or address), and the AI pack carries its own redaction. No device host either: the
-classifier's titles and descriptions name the router and gateway with their addresses ("reaching Mesh (192.168.88.1)"),
-so they pass the hops' redactor at Vague (a hop by its role word, reports.contributions.hop_redactor), and every string
-of a tool's answer passes the Vague scan's patterns (`scrubbed`: home addresses, MACs, home host names, secrets in
-URLs), whatever field carries it (a target id made from an address, a hop named after its host name, a device's own
-words). `services` (the owner's own check URLs) and `ai_pack` (its own levels) are left to themselves. Times are ISO 8601
+credentials), clients are counts only in `devices`, and the AI pack carries its own redaction. Every string of an
+answer passes the scan of secrets in URLs, whatever field carries it.
+
+What else is hidden depends on `mcp.real_names` (Settings > Sign-in, on by default). On: the tools show what the
+dashboard shows the same caller: hops and devices by their names, host names, home addresses and the path trace as
+traced, free text as the classifier wrote it, and connected clients as `privacy.client_details` allows this caller
+(`client_details` below, set per request by api/mcp.py from api.clients.privacy_mode: "full" names and addresses, or
+"masked" a maker and the last four characters of the hardware address; hardware addresses are shown only in "full").
+Off: every string of an answer also passes the Vague scan's patterns (`scrubbed`: home addresses, MACs, home host
+names), free text passes the hops' redactor at Vague (a hop by its role word, reports.contributions.hop_redactor), the
+incident's path trace shows the household's side as "private", and `traffic` and `incident` describe a client by its
+kind, maker and main app only. `services` (the owner's own check URLs) and `ai_pack` (its own levels) are left to
+themselves either way. Times are ISO 8601
 in the zone set in Settings (general.timezone; UTC when none).
 """
 
@@ -21,6 +27,7 @@ import ipaddress
 import re
 import time
 from collections import deque
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
@@ -40,6 +47,7 @@ from pengumon.reports.redact import SCAN_RULES, VAGUE
 from pengumon.reports.queries import DNS_NAME
 from pengumon.reports.reliability import build_report
 from pengumon.reports.speed import summarize
+from pengumon.reports.spikes import after_words, spike_summary
 from pengumon.reports.uptime import build_uptime
 from pengumon.services.summary import service_list
 from pengumon.speedtest.grade import bufferbloat_grade
@@ -128,34 +136,69 @@ def _repository(state):
     return state.repository
 
 
-# --- what no answer carries: home addresses and names ---------------------------------------------------------------
+# --- what no answer carries: secrets always; home addresses and names unless `mcp.real_names` -----------------------
 
-_NET = tuple((re.compile(pattern, re.IGNORECASE), repl) for _, pattern, repl in SCAN_RULES[VAGUE])
+# The Vague scan's patterns, by what they hide: secrets in URLs (never shown), MACs, and home addresses and names.
+_SECRET_RULES = tuple((re.compile(pattern, re.IGNORECASE), repl) for rule, pattern, repl in SCAN_RULES[VAGUE]
+                      if rule == "secret")
+_MAC_RULES = tuple((re.compile(pattern, re.IGNORECASE), repl) for rule, pattern, repl in SCAN_RULES[VAGUE]
+                   if rule == "mac")
+_NET = tuple((re.compile(pattern, re.IGNORECASE), repl) for _, pattern, repl in SCAN_RULES[VAGUE])  # all of them
+
+# What the caller of this request may see of the connected clients ("full" or "masked": api.clients.privacy_mode,
+# which the route works out and protocol.handle sets). Masked unless said: a read token, or no password set.
+client_details: ContextVar[str] = ContextVar("mcp_client_details", default="masked")
 
 
-def scrubbed(value: Any) -> Any:
-    """`value` (plain data) with every string passed through the Vague scan's patterns."""
+def real_names(state) -> bool:
+    """`mcp.real_names`: the tools show hop and device names, host names and home addresses as the dashboard does."""
+    return bool(getattr(getattr(getattr(state, "config", None), "mcp", None), "real_names", True))
+
+
+def scrubbed(value: Any, real: bool = False, macs: bool = False) -> Any:
+    """`value` (plain data) with every string passed through the Vague scan's patterns. `real`: only the secrets in
+    URLs and (unless `macs`: the caller may see client details) the hardware addresses are taken out; the names and
+    home addresses stay."""
+    rules = (*_SECRET_RULES, *(() if macs else _MAC_RULES)) if real else _NET
+    return _scrub(value, rules)
+
+
+def _scrub(value: Any, rules) -> Any:
     if isinstance(value, str):
-        for pattern, repl in _NET:
+        for pattern, repl in rules:
             value = pattern.sub(repl, value)
         return value
     if isinstance(value, dict):
-        return {k: scrubbed(v) for k, v in value.items()}
+        return {k: _scrub(v, rules) for k, v in value.items()}
     if isinstance(value, list):
-        return [scrubbed(v) for v in value]
+        return [_scrub(v, rules) for v in value]
     return value
 
 
 def _scrubbing(handler: Callable[[Any, Dict[str, Any]], Awaitable[Any]]):
     async def run(state, args):
-        return scrubbed(plain(await handler(state, args)))
+        real = real_names(state)
+        return scrubbed(plain(await handler(state, args)), real, macs=real and client_details.get() == "full")
     return run
 
 
 async def _hop_words(state):
-    """The hops' redactor at Vague: free text (titles, descriptions) names a hop by its role word."""
+    """The hops' redactor at Vague: free text (titles, descriptions) names a hop by its role word. None with
+    `mcp.real_names`: the text stays as the dashboard shows it."""
+    if real_names(state):
+        return None
     from pengumon.reports.contributions import hop_redactor  # imported when asked, as the AI pack's build is
     return await hop_redactor(state.repository, state.config, VAGUE)
+
+
+async def _clients_namer(state):
+    """(mode, names) naming connected clients: by kind and maker only without `mcp.real_names`; with it, as the
+    dashboard names them for this caller (client_details: "full" with the names given in Pengumon, or "masked")."""
+    if not real_names(state):
+        return "generic", None
+    mode = client_details.get()
+    names = await state.client_names.load(state.repository) if mode == "full" and state.repository else None
+    return mode, names
 
 
 def _said(rx, text: Optional[str]) -> Optional[str]:
@@ -234,6 +277,7 @@ async def _incidents(state, args):
     found = list(reversed(await outages_since(repo, rules, since, now)))
     rx = await _hop_words(state)
     outages = [_outage_summary(o.summary(now, rules), tz, rx) for o in found[:limit]]
+    spikes = await spike_summary(repo, state.config, since, now, tz)
     return {"period": period, "total_in_period": len(inside), "returned": len(shown),
             "may_be_incomplete": len(rows) == _INCIDENT_SCAN and len(inside) == len(rows),
             "incidents": [incident_summary(i, tz, ids, rx=rx) for i in shown],
@@ -241,7 +285,20 @@ async def _incidents(state, args):
             "outage_note": "An outage joins incidents at neighboring places of the path that follow each other within "
                            f"{int(rules.gap_seconds // 60)} minutes (0: grouping is off): one event at the provider "
                            "often shows as several incidents. Count outages for how often the line went down. "
-                           "likely_maintenance is a guess from the hour of the day, not a fact."}
+                           "likely_maintenance is a guess from the hour of the day, not a fact.",
+            "latency_spikes": _spikes_field(spikes)}
+
+
+def _spikes_field(spikes: Dict[str, Any]) -> Dict[str, Any]:
+    """The `latency_spikes` of `incidents`: the period's brief latency spikes, per local day and by stage."""
+    after = after_words(spikes["incident_after_seconds"])
+    return {"count": spikes["count"], "expected": spikes["expected"], "by_stage": spikes["by_stage"],
+            "per_day": [{"day": d["day"], "count": d["count"], "partial": d["partial"]} for d in spikes["days"]],
+            "incident_after_seconds": spikes["incident_after_seconds"],
+            "note": f"Latency or jitter with no packet loss that ended within {after} is counted here as a latency "
+                    "spike, not listed as an incident (one that lasts longer becomes an incident from its start). "
+                    "Counted on the day it started; the first and last day are cut by the period (partial). "
+                    "Expected ones (a busy line) are left out of count."}
 
 
 async def _outage_ids(repo, rules: Rules, incidents, now: float) -> Dict[int, int]:
@@ -279,7 +336,7 @@ def _addresses(targets, categories: Tuple[str, ...]) -> frozenset:
                      for ip in [_ip(getattr(t, "address", None))] if ip is not None)
 
 
-def _trace_without_lan(hops, targets=()):
+def _trace_without_lan(hops, targets=(), real=False):
     """The incident's path trace with every hop on the household's side shown as "private" and without its name: the
     first hops are the router and modem, whose addresses are the devices' hosts (no device host in any tool's output).
     That side is every private, link-local or loopback hop, a hop at the address of the router or gateway target (a
@@ -290,6 +347,9 @@ def _trace_without_lan(hops, targets=()):
     allows, is left out)."""
     if not isinstance(hops, list):
         return hops
+    if real:  # as the dashboard shows it; a reverse name that is not a host name is still left out
+        return [{**hop, "hostname": None} if isinstance(hop, dict) and hop.get("hostname") is not None
+                and not _is_host_name(hop["hostname"]) else hop for hop in hops]
     home, provider = _addresses(targets, ("local", "gateway")), _addresses(targets, ("isp",))
     first_provider = next((k for k, hop in enumerate(hops)
                            if isinstance(hop, dict) and _ip(hop.get("ip")) in provider), None)
@@ -325,10 +385,11 @@ async def _incident(state, args):
     line = state.devices.primary(Capability.ACCESS_LINE) if state.devices is not None else None
     poll = line.interval_seconds if line else None
     reach = {"snapshot_reach_seconds": poll} if poll else {}
+    mode, names = await _clients_namer(state)
     inspection = await run_inspection(repo, targets, incident, **reach,
                                       line=line_history(state.devices, repo), router=router_history(state.devices, repo),
                                       classifier=getattr(cfg, "classifier", None),
-                                      traffic=router_traffic.traffic_source(state.devices, "generic"),
+                                      traffic=router_traffic.traffic_source(state.devices, mode, names=names),
                                       tz=tz)
     evidence = plain(inspection.to_response())
     out = {k: v for k, v in evidence.items() if k not in _DROPPED_EVIDENCE}
@@ -342,7 +403,7 @@ async def _incident(state, args):
     return localize({
         "incident": {**incident_summary(incident, tz, rx=rx), "description": _said(rx, incident.description),
                      "affected_targets": incident.affected_targets, "loss_seconds": incident.loss_seconds,
-                     "path_trace": _trace_without_lan(plain(incident.path_trace), targets)},
+                     "path_trace": _trace_without_lan(plain(incident.path_trace), targets, real_names(state))},
         "evidence": out,
         "evidence_note": "Per-hop impact over the incident, the modem correlation, and counts of the raw samples "
                          "left out; the dashboard has the charts.",
@@ -555,7 +616,8 @@ async def _traffic(state, args):
         return {"available": False, "reason": "No configured router reports traffic per client.", "clients": []}
     hours = int(args.get("hours", 24))
     top = int(args.get("top", TRAFFIC_TOP_DEFAULT))
-    namer = router_traffic.Namer("generic", getattr(device.monitor, "latest_clients", None))
+    mode, names = await _clients_namer(state)
+    namer = router_traffic.Namer(mode, getattr(device.monitor, "latest_clients", None), names=names)
     status = router_traffic.status_of(device)
     body = await router_traffic.summary(repo, device.id, hours, namer, top=top, tz=tz, with_hours=True)
 
@@ -564,8 +626,11 @@ async def _traffic(state, args):
 
     clients = []
     for c in body["clients"]:
-        clients.append({"device": c["label"], "vendor": c["vendor"], "download_bytes": c["down"],
-                        "upload_bytes": c["up"], "top_apps": apps(c["apps"]), "main_app": c["traffic_hint"]})
+        who = {"device": c["label"], "vendor": c["vendor"]}
+        if c.get("mac"):  # the dashboard's "full" view of a client (real names, caller allowed to see them)
+            who["address"] = c["mac"]
+        clients.append({**who, "download_bytes": c["down"], "upload_bytes": c["up"], "top_apps": apps(c["apps"]),
+                        "main_app": c["traffic_hint"]})
     busiest = sorted((h for h in body["wan"] if h["down"] is not None), key=lambda h: -h["down"])[:3]
     return {
         "device": device.id, "available": status.available, "reason": status.reason,
@@ -604,8 +669,10 @@ TOOLS: List[Tool] = [
          "how long they lasted, the kind and cause, severity and the line load at the time. Each has an `outage_id`: an "
          "outage joins incidents at neighboring places of the path that follow each other within a few minutes (a "
          "flapping line or one provider event is several incidents but one outage), and `outages` lists them with "
-         "their drops, down time and whether they are likely maintenance (a guess from the hour). Use it to see how "
-         "stable the network has been, then call `incident` with an id for the evidence.",
+         "their drops, down time and whether they are likely maintenance (a guess from the hour). `latency_spikes` "
+         "counts the brief latency spikes (latency or jitter with no loss that ended within about 2 minutes, which are "
+         "not incidents) per day and by stage. Use it to see how stable the network has been, then call `incident` "
+         "with an id for the evidence.",
          _schema(period=_period_schema("7d"), limit=_limit_schema()), _scrubbing(_incidents)),
     Tool("incident",
          "One incident in full: its description, the path trace taken when it began, and the evidence for its cause "
@@ -624,7 +691,7 @@ TOOLS: List[Tool] = [
     Tool("devices",
          "The modem and router Pengumon polls: what each is, whether the last poll worked, its headline readings "
          "(cable line signal levels and error counts, WAN rates, CPU and memory load) with Pengumon's grades, and "
-         "counts of connected clients (never who they are). No passwords or addresses.",
+         "counts of connected clients (never who they are). No passwords, and no device addresses.",
          _schema(), _scrubbing(_devices)),
     Tool("services",
          "The apps on the machine running Pengumon whose health it checks: each one's name, whether it is up, "
@@ -649,7 +716,9 @@ TOOLS: List[Tool] = [
          "hour the router published): the totals, the busiest hours, the devices ranked by download with their top "
          "apps (and the app a device mostly uses), and the apps of all devices together, with what the router "
          "could not break down by app (apps_not_broken_down). Use it to explain a busy line or a slow evening. A device is described by its kind and maker "
-         "(\"game console\", \"phone\"), never by name or address. Empty when no router reports it.",
+         "(\"game console\", \"phone\") unless Settings lets the assistant see real names; then by the name the "
+         "dashboard shows this caller, and by address only where the dashboard shows addresses. Empty when no router "
+         "reports it.",
          _schema(hours={"type": "integer", "minimum": 1, "maximum": 720,
                         "description": "How many complete hours back, a rolling window (default 24, up to 720 = 30 days)."},
                  top={"type": "integer", "minimum": 1, "maximum": 50,

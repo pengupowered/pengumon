@@ -75,9 +75,10 @@ TCP_CHECK_BYTES = 700
 HTTP_CHECK_BYTES = 1500
 HTTPS_CHECK_BYTES = 5000
 DNS_LOOKUP_BYTES = 150
-# Storage: the samples table's pages over its rows on the live database (326 MB over 8.2 million rows: its primary
-# key is the table, so there is no separate index), rounded up.
-SAMPLE_ROW_BYTES = 40.0
+# Storage: the samples table's pages over its rows on a live database with the slimmer rows of schema v25 (213.5 MB
+# over 8.46 million rows, 25.2 bytes each: its primary key is the table, so there is no separate index), rounded up.
+# (Before v25, with latency and jitter as REALs: 335.8 MB, 40 bytes a row.)
+SAMPLE_ROW_BYTES = 26.0
 SECONDS_A_DAY = 86400
 DAYS_A_MONTH = 30
 

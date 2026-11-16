@@ -91,3 +91,15 @@ def test_probe_identity_changes_with_every_probe_field():
 def test_target_stats_carry_the_method_and_default_to_none():
     s = TargetStats(target_id="h", name="Hop", category="public", address="192.0.2.10", enabled=True)
     assert (s.probe, s.probe_label, s.probe_note) == (None, None, None)
+
+
+def test_the_limit_on_socket_hops_does_not_say_every_second():
+    """The probe interval is a setting (1 to 60 s) since 0.28: a connection is opened every probe round."""
+    from pengumon.engine.probe_rules import socket_hop_problem
+    hops = [hop(id=f"h{k}", probe="tcp", port=443) for k in range(MAX_SOCKET_HOPS + 1)]
+    message = socket_hop_problem(hops)
+    assert message is not None and "every probe round" in message and "every second" not in message
+    with pytest.raises(ValidationError, match="every probe round"):
+        from pengumon.config import AppConfig
+        AppConfig(targets=[t.model_dump() for t in hops])
+    assert "every second" not in refusal(port=25, probe="tcp")

@@ -15,6 +15,7 @@ from pengumon.db.schema import (
     UPSERT_ROLLUP_10S_FROM_SAMPLES,
     upsert_rollup_15m_from_1m,
     UPSERT_ROLLUP_1M_FROM_SAMPLES,
+    sample_cms,
     slot_rows_from_samples,
 )
 from pengumon.observability import get_logger
@@ -87,12 +88,11 @@ class ProbeQueries:
             async with self._db.write() as db:
                 ids = await self._resolve_target_ids(db, {s.target_id for s in batch})
                 await db.executemany(
-                    """
-                    INSERT OR IGNORE INTO samples (ts, target, ok, latency_ms, jitter_ms, error)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
+                    "INSERT OR IGNORE INTO samples (ts, target, ok, latency_cms, jitter_cms, error) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     [
-                        (s.timestamp, ids[s.target_id], 1 if s.success else 0, s.latency_ms, s.jitter_ms, s.error)
+                        (s.timestamp, ids[s.target_id], 1 if s.success else 0, sample_cms(s.latency_ms),
+                         sample_cms(s.jitter_ms), s.error)
                         for s in batch
                     ],
                 )
@@ -145,7 +145,7 @@ class ProbeQueries:
                    limit: Optional[int] = None) -> Tuple[str, list]:
         clause, params = self._target_clause("target", ids)
         sql = (
-            "SELECT target, ts, ok, latency_ms, jitter_ms, error FROM samples "
+            "SELECT target, ts, ok, latency_cms / 100.0, jitter_cms / 100.0, error FROM samples "
             f"WHERE ts >= ? AND ts <= ?{clause} ORDER BY ts LIMIT ?"
         )
         return sql, [start, end, *params, limit or HISTORY_ROW_CAP]
@@ -156,18 +156,22 @@ class ProbeQueries:
         of each bucket are computed too, which sorts them; without it the two columns are NULL."""
         clause, params = self._target_clause("target", ids)
         b = int(bucket)
+        # each row's milliseconds (latency_cms / 100.0 is the REAL the column held before v25), averaged as before: a
+        # bucket of 10 s gives what the 10-second rollup's lat_sum / ok gives, to the last bit
+        latency = "ROUND(AVG(CASE WHEN ok = 1 THEN latency_cms / 100.0 END), 2)"
+        jitter = "ROUND(AVG(jitter_cms / 100.0), 2)"
         if band:
             sql = f"""
                 SELECT target, bucket,
-                       ROUND(AVG(CASE WHEN ok = 1 THEN latency_ms END), 2),
+                       {latency},
                        ROUND((COUNT(*) - SUM(ok)) * 100.0 / COUNT(*), 1),
-                       ROUND(AVG(jitter_ms), 2),
+                       {jitter},
                        SUM(ok), COUNT(*),
-                       ROUND(MIN(CASE WHEN ok = 1 AND rank * 10 >= answered THEN latency_ms END), 2),
-                       ROUND(MIN(CASE WHEN ok = 1 AND rank * 10 >= answered * 9 THEN latency_ms END), 2)
+                       ROUND(MIN(CASE WHEN ok = 1 AND rank * 10 >= answered THEN latency_cms / 100.0 END), 2),
+                       ROUND(MIN(CASE WHEN ok = 1 AND rank * 10 >= answered * 9 THEN latency_cms / 100.0 END), 2)
                 FROM (
-                    SELECT target, CAST(ts / {b} AS INT) * {b} AS bucket, ok, latency_ms, jitter_ms,
-                           ROW_NUMBER() OVER (PARTITION BY target, CAST(ts / {b} AS INT), ok ORDER BY latency_ms) AS rank,
+                    SELECT target, CAST(ts / {b} AS INT) * {b} AS bucket, ok, latency_cms, jitter_cms,
+                           ROW_NUMBER() OVER (PARTITION BY target, CAST(ts / {b} AS INT), ok ORDER BY latency_cms) AS rank,
                            COUNT(*) OVER (PARTITION BY target, CAST(ts / {b} AS INT), ok) AS answered
                     FROM samples
                     WHERE ts >= ? AND ts <= ?{clause}
@@ -179,9 +183,9 @@ class ProbeQueries:
         else:
             sql = f"""
                 SELECT target, CAST(ts / {b} AS INT) * {b} AS bucket,
-                       ROUND(AVG(CASE WHEN ok = 1 THEN latency_ms END), 2),
+                       {latency},
                        ROUND((COUNT(*) - SUM(ok)) * 100.0 / COUNT(*), 1),
-                       ROUND(AVG(jitter_ms), 2),
+                       {jitter},
                        SUM(ok), COUNT(*), NULL, NULL
                 FROM samples
                 WHERE ts >= ? AND ts <= ?{clause}
@@ -287,9 +291,10 @@ class ProbeQueries:
 
     def _shape_history(self, kind: str, rows: list, compact: bool):
         """The rows as the API gives them, from the tuples the queries return: a list of dicts, or with `compact`
-        {"fields": [...], "rows": [[...], ...]} (no dict per row). kind "raw" is a `samples` row (target, ts, ok,
-        latency_ms, jitter_ms, error), anything else a bucket row (target, bucket start, ..., see _BUCKET_KEYS).
-        Rows of hidden targets are left out. Plain data in and out and only reads of the target map, so it can run
+        {"fields": [...], "rows": [[...], ...]} (no dict per row). kind "raw" is a _raw_query row (target, ts, ok,
+        latency_ms, jitter_ms, error: milliseconds, converted in SQL), anything else a bucket row (target, bucket start,
+        ..., see _BUCKET_KEYS). Rows of hidden targets are left out. Plain data in and out and only reads of the target
+        map, so it can run
         in a thread."""
         keys = self._target_keys
         if kind == "raw":
@@ -444,10 +449,10 @@ class ProbeQueries:
             async with db.execute(
                 """
                 SELECT target, COUNT(*), SUM(ok),
-                       AVG(CASE WHEN ok = 1 THEN latency_ms END),
-                       MIN(CASE WHEN ok = 1 THEN latency_ms END),
-                       MAX(CASE WHEN ok = 1 THEN latency_ms END),
-                       AVG(jitter_ms)
+                       AVG(CASE WHEN ok = 1 THEN latency_cms / 100.0 END),
+                       MIN(CASE WHEN ok = 1 THEN latency_cms / 100.0 END),
+                       MAX(CASE WHEN ok = 1 THEN latency_cms / 100.0 END),
+                       AVG(jitter_cms / 100.0)
                 FROM samples
                 WHERE ts >= ? AND ts <= ?
                 GROUP BY target

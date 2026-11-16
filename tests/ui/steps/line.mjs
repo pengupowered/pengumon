@@ -184,7 +184,7 @@ export const steps = [
     });
   }, { variants: ["longhistory"] }],
 
-  ["All starts at the oldest stored reading when that is younger than the retention: the channel history (42 days of data, then 400)", async ({ LINE, chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, until, youngData }) => {
+  ["All starts at the oldest stored reading when that is younger than the retention: the channel history (42 days of data, then 400)", async ({ LINE, chartAxis, chooseRange, click, eq, forgetRequests, ok, page, rangeState, requestsTo, settled, until, youngData }) => {
     for (const { days, kind, age } of [{ days: 42, kind: "date", age: 42 }, { days: 400, kind: "month", age: 180 }]) { // (the line keeps readings for 180 days: the server answers no more)
       await youngData(days);
       await click(`${LINE} [data-action=openChannelsModal]`);
@@ -197,8 +197,10 @@ export const steps = [
       });
       await until(() => !!Chart.getChart(document.getElementById("chHistDetailChart")));
       eq(`${days}: the retention is a year`, (await rangeState("#chHistRanges")).words.at(-1), "All · 1 y");
+      forgetRequests();
       await chooseRange("#chHistRanges", "all");
       await settled();
+      eq(`${days}: All asks the channel history once (${requestsTo(/\/channels\/history\?/).join(" ")})`, requestsTo(/\/channels\/history\?/).length, 1);
       const s = await chartAxis("#chHistDetailChart");
       const from = await page.$eval("#chHistCanvas", (c) => (Date.now() / 1000 - Number(c.dataset.from)) / 86400);
       ok(`${days}: the heatmap starts ${from.toFixed(1)} days back (about ${age}, not 365)`, Math.abs(from - age) < 1.5);

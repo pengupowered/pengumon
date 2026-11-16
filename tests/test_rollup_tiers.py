@@ -23,6 +23,7 @@ from pengumon.db.rollups import split_minutes
 from pengumon.db.schema import UPSERT_ROLLUP_15M_FROM_1M
 from pengumon.models.probes import ProbeSample
 from pengumon.reports import queries
+from old_schema import samples_before_v25
 
 DAY = 86400
 UTC = timezone.utc
@@ -268,8 +269,8 @@ def _random_samples(rng, start, seconds, targets=("a", "b")):
         while ts < start + seconds:
             ok = rng.random() > 0.08
             out.append(ProbeSample(target_id=t, timestamp=ts, success=ok,
-                                   latency_ms=round(rng.uniform(1, 80), 3) if ok else None,
-                                   jitter_ms=round(rng.uniform(0, 5), 3) if rng.random() < 0.7 else None,
+                                   latency_ms=round(rng.uniform(1, 80), 2) if ok else None,
+                                   jitter_ms=round(rng.uniform(0, 5), 2) if rng.random() < 0.7 else None,
                                    packet_loss_pct=0.0 if ok else 100.0, error=None if ok else "x"))
             ts += rng.uniform(0.3, 1.7)
     return out
@@ -352,6 +353,29 @@ async def test_10_second_buckets_equal_the_raw_buckets_with_their_exact_band(rep
                         # the slots' unrounded percentiles are in rollup_10s; their rounded ones are within 0.005
                         mean = sum(p * k for p, k in weighted) / sum(k for _, k in weighted)
                         assert p10 == pytest.approx(mean, abs=0.011)
+    finally:
+        con.close()
+
+
+async def test_a_mean_on_a_rounding_tie_is_the_same_from_the_slot_and_from_the_raw_samples(repo):
+    """Means that fall exactly on x.xx5 ms: a 10-second bucket from rollup_10s is the raw bucket to the last digit. Both
+    average each probe's milliseconds (latency_cms / 100.0, the REAL stored before v25) in the same order, so they
+    round a tie alike; a mean computed another way (an integer sum divided once) can round it the other way."""
+    start = int(time.time() // 60) * 60 - 3600
+    groups = [(42.63, 42.64), (0.01, 0.02), (1.11, 1.12), (2.67, 2.68), (99.99, 100.0), (8.13, 8.14),
+              (19.73, 19.74, 19.74, 19.73), (0.07, 0.08, 0.07, 0.08, 0.05, 0.06)]
+    samples = [ProbeSample(target_id="a", timestamp=start + k * 10 + i + 0.5, success=True, latency_ms=lat,
+                           jitter_ms=lat, packet_loss_pct=0.0)
+               for k, group in enumerate(groups) for i, lat in enumerate(group)]  # one slot per group
+    await repo.insert_samples(samples)
+    await repo.flush_samples()
+    con = sqlite3.connect(repo.db_path)
+    try:
+        slots = con.execute(*repo._slot_query(start, start + 80, 10)).fetchall()
+        raw = con.execute(*repo._raw_bucket_query(start, start + 80, 10, band=True)).fetchall()
+        assert slots == raw and len(slots) == len(groups)
+        for row, group in zip(slots, groups):
+            assert abs(row[2] - sum(group) / len(group)) <= 0.005 + 1e-9 and row[4] == row[2]
     finally:
         con.close()
 
@@ -452,6 +476,7 @@ async def _v17(path, seed):
     with sqlite3.connect(path) as db:
         db.execute("DROP TABLE rollup_10s")
         db.execute("DROP TABLE rollup_15m")
+        samples_before_v25(db)
         db.execute("PRAGMA user_version=17")
 
 

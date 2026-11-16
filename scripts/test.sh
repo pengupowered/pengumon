@@ -18,6 +18,11 @@
 #                               Set it too when you raise PENGUMON_TEST_WORKERS by much.
 #   PENGUMON_TEST_HANG_S=<s>    one test running longer than this prints every thread's stack and ends the run
 #                               (default 60: faulthandler_timeout in pyproject.toml).
+# Fake clock (scripts/test-clock.sh, docs/testing.md "Tests at other clock times"):
+#   PENGUMON_FAKE_TIME="YYYY-MM-DD hh:mm:ss"  every process starts with the wall clock at this time, read in the zone of
+#                               PENGUMON_TEST_TZ (default UTC), and runs on from it, at PENGUMON_FAKE_SPEED (default 1).
+#                               libfaketime in the test image; the monotonic clock stays real. PENGUMON_FAKE_EPOCH: the
+#                               same instant as epoch seconds, for tests/test_clock_shift.py.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -27,6 +32,7 @@ if [ "$workers" -gt 1 ]; then
     cmd+=(-n "$workers")
 fi
 mounts=()
+env=()
 if [ "${1:-}" = "--command" ]; then
     shift
     cmd=("$@")
@@ -39,6 +45,14 @@ else
     if [ -n "${PENGUMON_TEST_HANG_S:-}" ]; then
         cmd+=(-o "faulthandler_timeout=$PENGUMON_TEST_HANG_S")
     fi
+fi
+
+if [ -n "${PENGUMON_TEST_TZ:-}" ]; then env+=(-e "TZ=$PENGUMON_TEST_TZ"); fi
+if [ -n "${PENGUMON_FAKE_TIME:-}" ]; then
+    # libfaketime: every process of the run (pytest, its workers, the apps and subprocesses the tests start) begins at this
+    # wall-clock time and goes on at PENGUMON_FAKE_SPEED (default 1). The monotonic clock stays real (timeouts, the hang guard).
+    env+=(-e "LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1" -e FAKETIME_DONT_FAKE_MONOTONIC=1
+          -e "FAKETIME=@$PENGUMON_FAKE_TIME x${PENGUMON_FAKE_SPEED:-1}" -e "PENGUMON_FAKE_EPOCH=${PENGUMON_FAKE_EPOCH:-}")
 fi
 
 # Runs the image this build produced, by its id: two runs at once never test each other's code. The image is tagged per
@@ -57,4 +71,4 @@ limits=(--timeout "${PENGUMON_TEST_TIMEOUT:-900}" --memory "$memory" --memory-sw
 #   --read-only + --tmpfs /tmp    the image is immutable; pytest's tmp dirs and the test databases live in the tmpfs.
 sandbox=(--network none --user 10001:0 -e HOME=/tmp --cap-drop=ALL --cap-add=NET_RAW
          --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,size=1g,nosuid,nodev)
-exec podman run --rm "${limits[@]}" "${sandbox[@]}" "${mounts[@]}" "$built" "${cmd[@]}" "$@"
+exec podman run --rm "${limits[@]}" "${sandbox[@]}" "${mounts[@]}" "${env[@]}" "$built" "${cmd[@]}" "$@"

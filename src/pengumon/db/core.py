@@ -220,7 +220,8 @@ class RepositoryCore:
         - by kind past that: probes' quarter-hours (`latency_retention_days`), the router's (`router_retention_days`),
           the mesh's (`mesh_retention_days`), the cable line's readings (`line_retention_days`), the router's traffic
           (`traffic_retention_days`), speed tests and device events (`speedtest_retention_days`, speed tests never under
-          SPEED_TEST_MIN_DAYS) and resolved incidents with their evidence (`incident_retention_days`, 0: forever).
+          SPEED_TEST_MIN_DAYS) and resolved incidents with their evidence and the latency spikes
+          (`incident_retention_days`, 0: forever).
 
         `overrides` (RETENTION_SETTINGS names, in days) replace the repository's own value for this call."""
         unknown = set(overrides) - set(RETENTION_SETTINGS)
@@ -306,7 +307,10 @@ class RepositoryCore:
             removed["incidents"] = await delete(
                 "incidents", "resolved = 1 AND COALESCE(end_time, start_time) < ?",
                 (now - days["incident_retention_days"] * DAY,), "rowid")
-            if removed["incidents"]:
+            # the latency spikes are kept like the incidents (incidents/spikes.py)
+            removed["latency_spikes"] = await delete(
+                "latency_spikes", "end_time < ?", (now - days["incident_retention_days"] * DAY,), "rowid")
+            if removed["incidents"] or removed["latency_spikes"]:
                 self._incidents_version += 1  # the incident-list caches and the dashboards refetch
         # an incident's evidence goes with it (db/evidence.py); no other retention touches it
         removed["incident_evidence"] = await self.prune_incident_evidence()

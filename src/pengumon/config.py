@@ -165,7 +165,7 @@ class AppConfig(BaseModel):
     def _few_socket_hops(cls, v):
         # config.yaml's first import goes through PathManager.load without PathManager.check, so the cap is checked here too
         if sum(1 for t in v if t.probe != "icmp") > MAX_SOCKET_HOPS:
-            raise ValueError(f"at most {MAX_SOCKET_HOPS} targets may be probed by TCP or HTTP (each opens a connection every second)")
+            raise ValueError(f"at most {MAX_SOCKET_HOPS} targets may be probed by TCP or HTTP (each opens a connection every probe round)")
         return v
 
     @property

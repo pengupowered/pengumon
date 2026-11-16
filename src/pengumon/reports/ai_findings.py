@@ -34,6 +34,7 @@ from pengumon.reports.common import (
 from pengumon.reports.dossier import collect_dossier_facts
 from pengumon.reports.outages import gap_minutes, outages_of
 from pengumon.reports.queries import MinuteRow, episode_loss, incident_rows, minute_row_chunks
+from pengumon.reports.spikes import spike_rows, summarize_spikes, incident_after_seconds
 
 DAY = 86400.0
 
@@ -283,6 +284,7 @@ class PackFacts:
     tz: Optional[tzinfo] = None                         # the zone the days and hours are local to
     outages: List[Dict[str, Any]] = field(default_factory=list)   # the window's outages, oldest first (incidents.outages)
     outage_gap_minutes: int = 0                         # incidents.group_gap_minutes: 0, every drop is its own outage
+    spikes: Optional[Dict[str, Any]] = None             # the window's brief latency spikes (reports/spikes.py)
 
 
 def category_of(target: Any) -> str:
@@ -1039,12 +1041,16 @@ def _time_of_day_profile(order: Sequence[str], categories: Mapping[str, str], fo
     return profile
 
 
-def _per_day(real: Sequence[IncidentFact], clock: LocalClock, start: float, end: float) -> List[Dict[str, Any]]:
-    """Step 6, continued: the unexpected incidents and the minutes lost on each local day of the window."""
+def _per_day(real: Sequence[IncidentFact], clock: LocalClock, start: float, end: float,
+             spikes: Sequence[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]:
+    """Step 6, continued: the unexpected incidents, the minutes lost and the (unexpected) latency spikes on each local
+    day of the window."""
     days = range(clock.day(start), clock.day(max(start, end - 1e-6)) + 1)
+    spike_days = Counter(clock.day(r["start_time"]) for r in spikes if not r.get("expected"))
     return [{"day": day_name(d),
              "incidents": sum(1 for i in real if clock.day(i.start) == d),
-             "lost_minutes": round(sum(i.lost_for for i in real if clock.day(i.start) == d) / 60.0, 1)}
+             "lost_minutes": round(sum(i.lost_for for i in real if clock.day(i.start) == d) / 60.0, 1),
+             "spikes": spike_days.get(d, 0)}
             for d in days]
 
 
@@ -1121,7 +1127,8 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
     # 6. summaries over the unexpected incidents
     verdicts, coincided = _verdict_counts(real)
     profile = _time_of_day_profile(order, categories, folds, rules)
-    per_day = _per_day(real, clock, start, end)
+    spikes = await spike_rows(repository, start, end)
+    per_day = _per_day(real, clock, start, end, spikes)
 
     # 7. the window's first elevated hop (the dossier's rule, device-free)
     dossier = await collect_dossier_facts(repository, config, max(1, math.ceil((end - start) / 3600.0)), end,
@@ -1149,4 +1156,5 @@ async def collect_pack_facts(repository, config, *, start: float, end: float, ev
         service_outages=_service_outages(_rows_not_in(raw, network), now),
         load_codes=tuple(sorted(c for c, k in kinds.items() if "load" in getattr(k, "supports", ()))),
         tz=tz, outages=outages_of(network, config, now), outage_gap_minutes=gap_minutes(config),
+        spikes=summarize_spikes(spikes, start, end, tz, incident_after_seconds(config)),
     )

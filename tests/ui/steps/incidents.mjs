@@ -142,8 +142,8 @@ export const steps = [
     await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length > 0);
     await page.evaluate(() => {
       const now = Date.now() / 1000;
-      // 120 incidents, one every 3 days (so the first page already reaches back over the week); the outage is 9049, 9050 and 9051:
-      // the first page of 50 ends inside it
+      // 120 incidents, one every 3 days (the week holds the first 3); the outage is 9049, 9050 and 9051:
+      // the week ends before it
       const all = Array.from({ length: 120 }, (_, i) => ({ id: 9000 + i, kind: "isp_loss", title: `Synthetic ${i}`, description: "", severity: "critical", cause_code: "access_line_drop", cause: "line",
         start_time: now - 600 - i * 259200, end_time: now - 540 - i * 259200, duration_seconds: 60, expected: false, affected_targets: [] }));
       const outage = { id: 9049, start_time: all[51].start_time, end_time: all[49].end_time, ongoing: false, settling: false, duration_seconds: 2 * 259200 + 60, down_seconds: 180, affected_seconds: 180,
@@ -157,16 +157,16 @@ export const steps = [
         if (u.pathname === "/api/incidents/count") return json({ total: all.length, expected: 0 });
         if (u.pathname === "/api/outages") return json({ gap_minutes: 10, outages: [outage] });
         if (u.pathname !== "/api/incidents") return real(url, opts);
-        const limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0);
-        window.__asked.push(`${limit}@${offset}`);
-        return json(all.slice(offset, offset + limit));
+        const limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0), since = Number(u.searchParams.get("since") || 0);
+        window.__asked.push(`${since > 1e9 ? "range" : limit}@${offset}`);
+        return json(all.filter((i) => i.end_time >= since).slice(offset, offset + limit));
       };
     });
     await new Promise((r) => setTimeout(r, 2500)); // the first message has set the version the panel compares with
     await page.evaluate(() => { window.__smokeMutate = new Function("d", "d.incidents_version = (d.incidents_version || 0) + 1000"); });
     await until(() => window.__asked.length >= 2);
     await page.evaluate(() => { window.__smokeMutate = null; });
-    eq("the first page, then the next one because the outage reaches into it", await page.evaluate(() => window.__asked.slice(0, 2).join(" ")), "50@0 50@50");
+    eq("the week (3 incidents), then the next page because the outage reaches into it", await page.evaluate(() => window.__asked.slice(0, 2).join(" ")), "range@0 50@3");
     await page.select("#incidentPageSizeSelect", "100");
     await until(() => document.querySelectorAll("#incidentsBody tr.outage-row").length === 1);
     ok("the outage is a row", /3 drops/.test(await text("#incidentsBody tr.outage-row")));
@@ -483,11 +483,15 @@ export const steps = [
     });
   }],
 
-  ["the list loads in pages: one small page at start, older ones for the 7-day timeline, a search, the last page and a window older than the page", async ({ click, eq, ok, page, text, until, waitText }) => {
+  ["the list loads by range: one request for the week at start (and one for its outages), older ones in pages for a search and the last page", async ({ click, eq, ok, page, text, until, waitText }) => {
     await page.reload({ waitUntil: "load" });
     await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length > 0);
     const first = await page.evaluate(() => performance.getEntriesByType("resource").map((r) => r.name).filter((n) => /\/api\/incidents\?/.test(n)).map((n) => n.replace(/^.*\/api/, "/api")));
-    eq("the first fetch is a page of 50, not 500", first.join(" "), "/api/incidents?limit=50");
+    eq("the first fetch is one request for the 7-day timeline (every incident that overlaps it, the light fields)", first.length, 1);
+    ok(`it asks by time (${first[0]})`, /^\/api\/incidents\?since=\d+&limit=5000&fields=list$/.test(first[0]));
+    const week = Number(first[0].match(/since=(\d+)/)[1]);
+    ok("the week it asks for starts 7 days back", Math.abs(Date.now() / 1000 - 7 * 86400 - week) < 120);
+    eq("and one request for the outages", await page.evaluate(() => performance.getEntriesByType("resource").filter((r) => /\/api\/outages/.test(r.name)).length), 1);
     // a server with 130 incidents, one every 2 h (84 of them in the 7 days), newest first, honoring limit and offset
     await page.evaluate(() => {
       const now = Date.now() / 1000;
@@ -501,31 +505,38 @@ export const steps = [
         if (u.pathname === "/api/incidents/count") return Promise.resolve(new Response(JSON.stringify({ total: all.length, expected: 2 }), { headers: { "content-type": "application/json" } }));
         if (u.pathname === "/api/outages") return Promise.resolve(new Response(JSON.stringify({ gap_minutes: 10, outages: [] }), { headers: { "content-type": "application/json" } }));
         if (u.pathname !== "/api/incidents") return real(url, opts);
-        const limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0);
-        window.__asked.push(`${limit}@${offset}`);
-        return Promise.resolve(new Response(JSON.stringify(all.slice(offset, offset + limit)), { headers: { "content-type": "application/json" } }));
+        const limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0), since = Number(u.searchParams.get("since") || 0);
+        const until = u.searchParams.get("until") === null ? Infinity : Number(u.searchParams.get("until"));
+        window.__asked.push(`${since > 1e9 ? "range" : limit}@${offset}`);
+        const rows = all.filter((i) => i.end_time >= since && i.start_time <= until);
+        return Promise.resolve(new Response(JSON.stringify(rows.slice(offset, offset + limit)), { headers: { "content-type": "application/json" } }));
       };
     });
     const asked = () => page.evaluate(() => window.__asked.join(" "));
     await new Promise((r) => setTimeout(r, 2500)); // the first message has set the version the panel compares with
-    // the server says the list changed: what is loaded so far (one page) is fetched again, then the timeline asks for the week
+    // the server says the list changed: the week is read again, in one request
     await page.evaluate(() => { window.__smokeMutate = new Function("d", "d.incidents_version = (d.incidents_version || 0) + 1000"); });
-    await until(() => window.__asked.length >= 2);
+    await until(() => window.__asked.length >= 1);
     await page.evaluate(() => { window.__smokeMutate = null; });
-    eq("a page of 50 and the next page, which reaches back over the 7 days of the timeline", (await asked()).split(" ").slice(0, 2).join(" "), "50@0 50@50");
-    await waitText("#incidentCountBadge", /^128 recorded events$/); // the server's count (130 less the 2 hidden), not the 98 loaded
-    eq("the footer shows the same total as the badge (not 98+)", await text("#incidentPaginationInfo"), "Showing 1–10 of 128 events");
-    // Next from a last loaded page that is not full: the page fills up, no row is skipped (it showed 91-98, then 101-110)
-    for (let n = 2; n <= 10; n++) {
+    eq("one request for the 7 days of the timeline (no pages of 50)", (await asked()).split(" ").slice(0, 1).join(" "), "range@0");
+    await waitText("#incidentCountBadge", /^128 recorded events$/); // the server's count (130 less the 2 hidden), not the ones loaded
+    const inWeek = await page.evaluate(() => {
+      const now = Date.now() / 1000;
+      return Array.from({ length: 130 }, (_, i) => now - 560 - i * 7200).filter((t) => t >= now - 7 * 86400).length;
+    });
+    const rows = inWeek - 2; // (the two busy-line ones are hidden)
+    const pages = Math.ceil(rows / 10);
+    eq("the footer shows the same total as the badge (not the week's rows+)", await text("#incidentPaginationInfo"), "Showing 1–10 of 128 events");
+    for (let n = 2; n <= pages; n++) {
       await click("#btnPageNext");
-      await waitText("#incidentPageNum", new RegExp(`^Page ${n} of 10$`));
+      await waitText("#incidentPageNum", new RegExp(`^Page ${n} of ${pages}$`));
     }
-    eq("a short last page", await page.$$eval("#incidentsBody tr.incident-row", (r) => r.length), 8);
+    eq("a short last page", await page.$$eval("#incidentsBody tr.incident-row", (r) => r.length), rows - (pages - 1) * 10);
+    // Next from the last loaded page loads the next 50 (older than the week), the page fills up, no row is skipped
     await click("#btnPageNext");
     await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 10);
-    await waitText("#incidentPaginationInfo", /^Showing 91–100 of /);
-    await click("#btnPageNext");
-    await waitText("#incidentPaginationInfo", /^Showing 101–110 of /);
+    await waitText("#incidentPaginationInfo", new RegExp(`^Showing ${(pages - 1) * 10 + 1}–${pages * 10} of `));
+    eq("the older ones came in one page of 50 at the offset of what was loaded", (await asked()).split(" ").slice(1, 2).join(" "), `50@${inWeek}`);
     // the timeline is the last 7 x 24 hours ending now: count the synthetic incidents in it the same way (the two
     // busy-line ones may be hidden)
     const inWindow = await page.evaluate(() => {
@@ -634,22 +645,73 @@ export const steps = [
     ok("a changed incident redraws only its row", kept.kept && kept.redrawn && kept.title && kept.focus);
   }],
 
-  ["more than 500 incidents: the card says only the newest 500 are listed and where the rest is, and its count is the server's", async ({ eq, ok, page, stubFetch, text, until, waitText }) => {
+  ["more than 5000 incidents: the card says only the newest 5000 are listed and where the rest is, and its count is the server's", async ({ eq, ok, page, stubFetch, text, until, waitText }) => {
     const now = Math.floor(Date.now() / 1000);
-    const all = Array.from({ length: 500 }, (_, i) => ({ id: 20000 + i, kind: "gateway_down", title: `Synthetic ${i}`, description: "", severity: "warning", cause_code: "unknown_outage", cause: "isp",
-      start_time: now - 600 - i * 600, end_time: now - 560 - i * 600, duration_seconds: 40, expected: false, affected_targets: [] }));
+    const all = Array.from({ length: 5000 }, (_, i) => ({ id: 20000 + i, kind: "gateway_down", title: `Synthetic ${i}`, severity: "warning", cause_code: "unknown_outage", cause: "isp",
+      start_time: now - 600 - i * 600, end_time: now - 560 - i * 600, duration_seconds: 40, expected: false }));
     const stubs = (total) => ({ "GET /api/incidents": { body: all }, "GET /api/incidents/count": { body: { total, expected: 0 } }, "GET /api/outages": { body: { gap_minutes: 10, outages: [] } } });
-    await stubFetch(stubs(650));
-    await waitText("#incidentCountBadge", /^650 recorded events/);
-    eq("the badge keeps the server's count and says what is listed", await text("#incidentCountBadge"), "650 recorded events · newest 500 listed");
-    ok("the note names the cap, the real total and where the rest is", /^Only the newest 500 incidents are listed \(of 650 recorded\)\. Older ones are in the ISP dossier .*the reliability report .*the API \(\/api\/incidents with limit and offset\)\.$/.test(await text("#incidentCapNote")));
+    await stubFetch(stubs(6500));
+    await waitText("#incidentCountBadge", /^6,500 recorded events/);
+    eq("the badge keeps the server's count and says what is listed", await text("#incidentCountBadge"), "6,500 recorded events · newest 5000 listed");
+    ok("the note names the cap, the real total and where the rest is", /^Only the newest 5000 incidents are listed \(of 6,500 recorded\)\. Older ones are in the ISP dossier .*the reliability report .*the API \(\/api\/incidents with since, limit and offset\)\.$/.test(await text("#incidentCapNote")));
     await until(() => !document.getElementById("incidentCapNote").hidden);
-    eq("the footer does not claim more than is listed", await text("#incidentPaginationInfo"), "Showing 1–10 of 500 events, from the newest 500 incidents");
-    // exactly 500 recorded: nothing is left out, so nothing is said
-    await stubFetch(stubs(500));
-    await waitText("#incidentCountBadge", /^500 recorded events$/);
+    eq("the footer does not claim more than is listed", await text("#incidentPaginationInfo"), "Showing 1–10 of 5000 events, from the newest 5000 incidents");
+    // exactly 5000 recorded: nothing is left out, so nothing is said
+    await stubFetch(stubs(5000));
+    await waitText("#incidentCountBadge", /^5000 recorded events$/);
     ok("no note when the list holds everything", await page.$eval("#incidentCapNote", (e) => e.hidden));
     await stubFetch(null);
+  }],
+
+  ["90 d and All draw every incident of the range with 700 stored (no 500 limit): one request per range, only for what is older than the list holds", async ({ chooseRange, eq, ok, page, rangeState, settled, showCard, until }) => {
+    await showCard("incidents");
+    // a server with 700 incidents, one every 6 hours (175 days), newest first, answering ranges (since, until, limit, offset) as the real one does
+    await page.evaluate(() => {
+      const now = Date.now() / 1000;
+      const all = Array.from({ length: 700 }, (_, i) => ({ id: 30000 + i, kind: "gateway_down", title: `Range ${i}`, description: "", severity: "warning", cause_code: "unknown_outage", cause: "isp",
+        start_time: now - 600 - i * 21600, end_time: now - 560 - i * 21600, duration_seconds: 40, expected: false, affected_targets: [] }));
+      const real = window.fetch;
+      window.__realFetch = real;
+      window.__asked = [];
+      window.__outagesAsked = [];
+      const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
+      window.fetch = (url, opts) => {
+        const u = new URL(String(url), location.href);
+        if (u.pathname === "/api/incidents/count") return json({ total: all.length, expected: 0 });
+        if (u.pathname === "/api/outages") { window.__outagesAsked.push(u.search); return json({ gap_minutes: 10, outages: [] }); }
+        if (u.pathname !== "/api/incidents") return real(url, opts);
+        window.__asked.push(u.search);
+        const since = Number(u.searchParams.get("since") || 0), limit = Number(u.searchParams.get("limit")), offset = Number(u.searchParams.get("offset") || 0);
+        const until = u.searchParams.get("until") === null ? Infinity : Number(u.searchParams.get("until"));
+        return json(all.filter((i) => i.end_time >= since && i.start_time <= until).slice(offset, offset + limit));
+      };
+    });
+    await new Promise((r) => setTimeout(r, 2500)); // the first message has set the version the panel compares with
+    await page.evaluate(() => { window.__smokeMutate = new Function("d", "d.incidents_version = (d.incidents_version || 0) + 1000"); });
+    await until(() => window.__asked.length >= 1);
+    await page.evaluate(() => { window.__smokeMutate = null; });
+    await new Promise((r) => setTimeout(r, 2500)); // (a message already on its way may still ask for one more read)
+    await chooseRange("#incidentRanges", "7d");
+    await settled();
+    const bars = () => page.$$eval("[data-panel=incidents] .tl .tl-bar", (b) => b.length);
+    const inRange = (days) => page.evaluate((d) => { const now = Date.now() / 1000; return Array.from({ length: 700 }, (_, i) => now - 560 - i * 21600).filter((t) => t >= now - d * 86400).length; }, days);
+    eq("7 d: the week's incidents", await bars(), await inRange(7));
+    const before = await page.evaluate(() => window.__asked.length);
+    for (const id of ["90d", "all"]) {
+      await chooseRange("#incidentRanges", id);
+      await settled();
+      const days = id === "all" ? 180 : 90;
+      eq(`${id}: every incident of the range is drawn (${await inRange(days)})`, await bars(), await inRange(days));
+    }
+    const asked = await page.evaluate((n) => window.__asked.slice(n), before);
+    eq(`90 d and All: one request each (${asked.join(" ")})`, asked.length, 2);
+    ok(`each asks for what is older than the list holds (${asked.join(" ")})`, asked.every((q) => /until=/.test(q) && /limit=5000/.test(q)));
+    ok("and their outages are not asked again for each page", (await page.evaluate(() => window.__outagesAsked.length)) <= 4);
+    ok("more than 500 are stored and all of them are drawn", (await inRange(180)) > 500);
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await page.reload({ waitUntil: "load" });
+    await until(() => document.querySelectorAll("#incidentsBody tr.incident-row").length === 10);
+    eq("(the real page again)", (await rangeState("#incidentRanges")).value, "7d");
   }],
 
   ["a Save made between the page render and the live connection re-reads the incident list: the panel starts from the revision the page was rendered at", async ({ eq, layoutMounted, nextMessages, ok, page, sleep, waitText }) => {
@@ -713,5 +775,114 @@ export const steps = [
       await openPanel("incidents", "incidents");
       await atEveryRange("#incidentRanges", "#incidentTimeline", async (id) => { await check("phone")(id); }, { pause: 600 });
     });
+  }, { variants: ["longhistory"] }],
+
+  // ---- latency spikes: the block between the timeline and the list (panels/incidents/spikes.js) ----
+  ["latency spikes: the block counts the range's brief latency spells (the seed has 5 counted, 1 busy-line one left out), says where most were, draws a bar per day (cut days narrower), follows the range with one request, and opens nothing", async ({ chooseRange, count, eq, forgetRequests, ok, page, requestsTo, settled, showCard, text, until }) => {
+    await showCard("incidents");
+    await until(() => !document.getElementById("incidentSpikes").hidden);
+    eq("the title says what a spike is, with the setting's wait", await text("#incidentSpikes [data-v=spikesTitle]"), "Latency spikes (no loss, < 2 min):");
+    const sums = async () => page.$$eval("#incidentSpikes .sp-day", (bars) => bars.map((b) => Number(/ · (\d+) spikes?/.exec(b.dataset.tip)[1])));
+    const week = await sums();
+    eq("a bar per local day of the 7 days (the first and last cut by the window)", week.length >= 7 && week.length <= 8, true);
+    eq("the bars add up to the count (the busy-line spell is left out)", week.reduce((a, b) => a + b, 0), 5);
+    eq("the line: the count over the range and today's, the last bar's", await text("#incidentSpikes [data-v=spikes]"), `5 in 7 days · ${week[week.length - 1]} today`);
+    eq("where most were", await text("#incidentSpikes [data-v=spikesWhere]"), "mostly at the ISP hops");
+    const widths = await page.$$eval("#incidentSpikes .sp-day", (bars) => bars.map((b) => b.getBoundingClientRect().width));
+    ok(`the cut last day is narrower than a whole one (${widths.map((w) => w.toFixed(1))})`, widths[widths.length - 1] < widths[widths.length - 2] - 0.5 || widths[widths.length - 1] < widths[1] - 0.5);
+    ok("the cut days say so in their tooltip", (await page.$eval("#incidentSpikes .sp-day:last-child", (b) => b.dataset.tip)).includes("of this day are in the range"));
+    ok("a tooltip names the day and the count (Tue Nov 11 · 6 spikes)", /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · \d+ spikes?/.test(await page.$eval("#incidentSpikes .sp-day:nth-child(3)", (b) => b.dataset.tip)));
+    eq("the block is not a button and opens nothing", await count("#incidentSpikes button, #incidentSpikes [data-action], #incidentSpikes a"), 0);
+    // one request per range change
+    forgetRequests();
+    await chooseRange("#incidentRanges", "30d");
+    await settled();
+    await until(() => /in 30 days/.test(document.querySelector("#incidentSpikes [data-v=spikes]")?.textContent ?? ""));
+    eq("30 d asks once", requestsTo(/\/api\/latency-spikes/).map((u) => u.replace(/&tz.*$/, "")).join(), "/api/latency-spikes?hours=720");
+    const month = await sums();
+    eq("30 days: a bar per day (31 or 30 cells), adding up to the count", `${month.length >= 30 && month.length <= 31}|${month.reduce((a, b) => a + b, 0)}`, "true|5");
+    ok("a longer range contains the shorter", month.reduce((a, b) => a + b, 0) >= week.reduce((a, b) => a + b, 0));
+    forgetRequests();
+    await chooseRange("#incidentRanges", "7d");
+    await settled();
+    await until(() => /in 7 days/.test(document.querySelector("#incidentSpikes [data-v=spikes]")?.textContent ?? ""));
+    eq("and back to 7 d asks once", requestsTo(/\/api\/latency-spikes/).length, 1);
+  }],
+
+  ["latency spikes: the '< N min' follows the setting, a range without spikes has one quiet line, and an incident at once (0) has no block", async ({ chooseRange, eq, ok, page, settled, showCard, text, until }) => {
+    await showCard("incidents");
+    await until(() => !document.getElementById("incidentSpikes").hidden);
+    // the page's own copy of the answer, changed: another wait, none, then the rule 0
+    await page.evaluate(() => {
+      window.__realFetch = window.__realFetch || window.fetch.bind(window);
+      window.__spikeAnswer = (body) => body;
+      window.fetch = async (u, ...a) => {
+        const res = await window.__realFetch(u, ...a);
+        if (new URL(String(u), location.href).pathname !== "/api/latency-spikes" || !res.ok) return res;
+        return new Response(JSON.stringify(window.__spikeAnswer(await res.json())), { status: 200, headers: { "content-type": "application/json" } });
+      };
+    });
+    const again = async () => { await chooseRange("#incidentRanges", "30d"); await settled(); await chooseRange("#incidentRanges", "7d"); await settled(); };
+    await page.evaluate(() => { window.__spikeAnswer = (b) => ({ ...b, incident_after_seconds: 90 }); });
+    await again();
+    await until(() => /< 90 s\)/.test(document.querySelector("#incidentSpikes [data-v=spikesTitle]")?.textContent ?? ""));
+    await page.evaluate(() => { window.__spikeAnswer = (b) => ({ ...b, incident_after_seconds: 300 }); });
+    await again();
+    await until(() => /< 5 min\)/.test(document.querySelector("#incidentSpikes [data-v=spikesTitle]")?.textContent ?? ""));
+    await page.evaluate(() => { window.__spikeAnswer = (b) => ({ ...b, count: 0, expected: 0, by_stage: [], days: b.days.map((d) => ({ ...d, count: 0 })) }); });
+    await again();
+    await until(() => document.querySelector("#incidentSpikes [data-v=spikes]")?.textContent === "No latency spikes in this range");
+    eq("a range without spikes: one quiet line, no bars", await page.$$eval("#incidentSpikes .sp-day", (b) => b.length), 0);
+    ok("the quiet line is shown", await page.$eval("#incidentSpikes", (e) => !e.hidden && e.classList.contains("quiet")));
+    await page.evaluate(() => { window.__spikeAnswer = (b) => ({ ...b, incident_after_seconds: 0, count: 0, by_stage: [] }); });
+    await again();
+    await until(() => document.getElementById("incidentSpikes").hidden);
+    ok("with the wait at 0 (an incident at once) there is no block", await page.$eval("#incidentSpikes", (e) => e.hidden));
+    await page.evaluate(() => { window.fetch = window.__realFetch; });
+    await again();
+    await until(() => !document.getElementById("incidentSpikes").hidden && /^5 in 7 days/.test(document.querySelector("#incidentSpikes [data-v=spikes]")?.textContent ?? ""));
+  }],
+
+  ["latency spikes: the block is in every theme at 1400 and at 390 px, with the same bars, and nothing sticks out sideways", async ({ eq, everyLook, noSideways, ok, openPanel, page, phone, settled, showCard }) => {
+    const check = (where) => async () => {
+      await settled();
+      const sel = "[data-panel=incidents] .inc-spikes";
+      const box = await page.$eval(sel, (e) => { const r = e.getBoundingClientRect(); const card = e.closest(".panel").getBoundingClientRect(); return { hidden: e.hidden || r.width === 0, inside: r.left >= card.left - 1 && r.right <= card.right + 1, bars: e.querySelectorAll(".sp-day").length, tall: e.querySelectorAll(".sp-day i").length }; });
+      ok(`${where}: the block is shown, with a bar per day (${JSON.stringify(box)})`, !box.hidden && box.bars >= 7);
+      ok(`${where}: inside its card`, box.inside);
+      ok(`${where}: nothing sticks out sideways`, await noSideways());
+      eq(`${where}: the line is there`, await page.$eval(sel + " [data-v=spikes]", (e) => /^\d+ in 7 days · \d+ today$/.test(e.textContent)), true);
+    };
+    await showCard("incidents");
+    await check("desktop")();
+    await everyLook(async (look) => { await showCard("incidents"); await check(look || "default")(); });
+    await phone(async () => {
+      await openPanel("incidents", "incidents");
+      await check("phone")();
+      await everyLook(async (look) => { await openPanel("incidents", "incidents"); await check(`phone ${look || "default"}`)(); });
+    });
+  }],
+
+  ["latency spikes: 7 d, 30 d, 90 d and All hold each other, bars add up to the count at every range, one request per range", async ({ chooseRange, eq, forgetRequests, ok, page, requestsTo, settled, showCard, until }) => {
+    await showCard("incidents");
+    const read = () => page.evaluate(() => {
+      const m = /^(\d+) in (\d+) days/.exec(document.querySelector("#incidentSpikes [data-v=spikes]")?.textContent ?? "");
+      return { count: m ? Number(m[1]) : null, days: m ? Number(m[2]) : null,
+        sum: [...document.querySelectorAll("#incidentSpikes .sp-day")].reduce((a, b) => a + Number(/ · (\d+) spikes?/.exec(b.dataset.tip)[1]), 0), bars: document.querySelectorAll("#incidentSpikes .sp-day").length };
+    });
+    const seen = {};
+    for (const [id, days] of [["7d", 7], ["30d", 30], ["90d", 90], ["all", 180]]) {
+      forgetRequests();
+      await chooseRange("#incidentRanges", id);
+      await settled();
+      await until((d) => new RegExp(`in ${d} days`).test(document.querySelector("#incidentSpikes [data-v=spikes]")?.textContent ?? ""), days);
+      seen[id] = await read();
+      if (id !== "7d") eq(`${id}: one request`, requestsTo(/\/api\/latency-spikes/).length, 1); // (7 d is the range it starts on: choosing it again changes nothing)
+      eq(`${id}: the bars add up to the count (${JSON.stringify(seen[id])})`, seen[id].sum, seen[id].count);
+      ok(`${id}: a bar per day (${seen[id].bars} for ${days} days)`, seen[id].bars >= days && seen[id].bars <= days + 1);
+    }
+    ok(`a longer range holds the shorter (${["7d", "30d", "90d", "all"].map((i) => seen[i].count)})`, seen["7d"].count <= seen["30d"].count && seen["30d"].count <= seen["90d"].count && seen["90d"].count <= seen.all.count);
+    ok("the long history has more than the week", seen.all.count > seen["7d"].count + 10);
+    await chooseRange("#incidentRanges", "7d");
   }, { variants: ["longhistory"] }],
 ];

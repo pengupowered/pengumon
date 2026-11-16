@@ -55,9 +55,9 @@ def seed(path: str, days: int, n_targets: int, rollup_days: int) -> None:
     for tid in range(1, n_targets + 1):
         con.execute(f"""
             WITH RECURSIVE k(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM k WHERE i < {days * DAY - 1})
-            INSERT INTO samples (ts, target, ok, latency_ms, jitter_ms, error)
-            SELECT ts, {tid}, ok, CASE WHEN ok THEN {tid} * 1.5 + (abs(random()) % 4000) / 1000.0 END,
-                   CASE WHEN ok THEN (abs(random()) % 2000) / 1000.0 END, CASE WHEN ok THEN NULL ELSE 'timeout' END
+            INSERT INTO samples (ts, target, ok, latency_cms, jitter_cms, error)
+            SELECT ts, {tid}, ok, CASE WHEN ok THEN {tid} * 150 + (abs(random()) % 4000) / 10 END,
+                   CASE WHEN ok THEN (abs(random()) % 2000) / 10 END, CASE WHEN ok THEN NULL ELSE 'timeout' END
             FROM (SELECT {start} + i + {tid} / 64.0 AS ts,
                          CASE WHEN {tid} > 2 AND i % 21600 < 180 THEN 0
                               WHEN (i * 2654435761 + {tid} * 40503) % 1000 < 3 THEN 0 ELSE 1 END AS ok FROM k)

@@ -2,7 +2,9 @@
 resolves the network incidents (announced through the notifier, when there is one).
 
 At shutdown its path traces end first (they write to the repository, which closes after this component has
-stopped), then the incident still open is resolved: nothing watches it once the app has stopped.
+stopped), then the incident still open is resolved: nothing watches it once the app has stopped. A latency episode
+still waiting to become an incident is stored as a latency spike ending at its last faulty round (it never became an
+incident while it was watched).
 """
 
 import time
@@ -33,6 +35,10 @@ async def register(ctx: Context) -> Component:
 
     async def stop() -> None:
         await classifier.cancel_background()
+        try:
+            await classifier.tracker.flush_pending()
+        except Exception as e:
+            _log.error(f"Error storing the pending latency spike on shutdown: {e}")
         if classifier.active_incident and classifier.active_incident.id:
             try:
                 await repository.resolve_incident(classifier.active_incident.id, time.time())

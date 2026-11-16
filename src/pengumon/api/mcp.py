@@ -5,6 +5,7 @@ already checked Host, Origin, the sign-in and the body size, as for the API."""
 
 from fastapi import APIRouter, Depends, Request, Response
 
+from pengumon.api.clients import privacy_mode
 from pengumon.api.common import StateDep
 from pengumon.mcp import protocol
 from pengumon.security import rate_limit
@@ -30,7 +31,8 @@ async def post_mcp(request: Request, state: StateDep) -> Response:
     if not _enabled(state):
         return Response(status_code=404)
     await _RATE(request)
-    reply = await protocol.handle(await request.body(), state, request.headers.get("mcp-protocol-version"))
+    reply = await protocol.handle(await request.body(), state, request.headers.get("mcp-protocol-version"),
+                                  client_details=privacy_mode(request, state))  # as the dashboard shows this caller
     if reply.body is None:
         return Response(status_code=reply.status)
     return Response(protocol.encode(reply.body), status_code=reply.status, media_type="application/json")

@@ -1,5 +1,7 @@
 """SQLite database schema definitions for Pengumon."""
 
+from typing import Optional
+
 CREATE_PROBE_SAMPLES_TABLE = """
 CREATE TABLE IF NOT EXISTS probe_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,19 +112,8 @@ CREATE TABLE IF NOT EXISTS targets (
 );
 """
 
-# Clustered by time (no rowid, no secondary index): a time-range query is a single primary-key range
-# scan. packet_loss_pct is not stored; for a single probe it is (1 - ok) * 100.
-CREATE_SAMPLES_TABLE = """
-CREATE TABLE IF NOT EXISTS samples (
-    ts REAL NOT NULL,
-    target INTEGER NOT NULL,
-    ok INTEGER NOT NULL,
-    latency_ms REAL,
-    jitter_ms REAL,
-    error TEXT,
-    PRIMARY KEY (ts, target)
-) WITHOUT ROWID;
-"""
+# The raw probes: see schema v25 below for the table (`samples`). Until v25 it stored REALs; the migrations of that time
+# use the frozen copy in db/legacy_samples.py.
 
 # lat_* aggregate successful probes only (failed probes carry no latency); n - ok = lost probes. lat_p10 and lat_p90
 # are the 10th and 90th percentile (nearest rank) of that one minute's answered probes: a long chart's latency band
@@ -142,28 +133,6 @@ CREATE TABLE IF NOT EXISTS rollup_1m (
     lat_p90 REAL,
     PRIMARY KEY (minute, target)
 ) WITHOUT ROWID;
-"""
-
-# (Re)computes the rollup rows of every minute in [?, ?) from the raw samples. Recomputing instead of
-# adding the batch keeps rollups exact when INSERT OR IGNORE drops a duplicate sample. Both bounds must
-# be multiples of 60 so no minute is split.
-UPSERT_ROLLUP_1M_FROM_SAMPLES = """
-INSERT OR REPLACE INTO rollup_1m (minute, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)
-SELECT minute, target, COUNT(*), SUM(ok),
-       SUM(CASE WHEN ok = 1 THEN latency_ms END),
-       MIN(CASE WHEN ok = 1 THEN latency_ms END),
-       MAX(CASE WHEN ok = 1 THEN latency_ms END),
-       SUM(jitter_ms), COUNT(jitter_ms),
-       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered THEN latency_ms END),
-       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered * 9 THEN latency_ms END)
-FROM (
-    SELECT CAST(ts / 60 AS INTEGER) AS minute, target, ok, latency_ms, jitter_ms,
-           ROW_NUMBER() OVER w AS rank, COUNT(*) OVER (PARTITION BY CAST(ts / 60 AS INTEGER), target, ok) AS answered
-    FROM samples
-    WHERE ts >= ? AND ts < ?
-    WINDOW w AS (PARTITION BY CAST(ts / 60 AS INTEGER), target, ok ORDER BY latency_ms)
-)
-GROUP BY minute, target
 """
 
 # --- schema v3: targets added from the dashboard ----------------------------------------------------
@@ -419,35 +388,6 @@ CREATE TABLE IF NOT EXISTS rollup_15m (
 ) WITHOUT ROWID;
 """
 
-
-def slot_rows_from_samples(where: str) -> str:
-    """A SELECT of rollup_10s rows (slot, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)
-    computed from the raw samples that match `where` (a condition on ts), by the rules of UPSERT_ROLLUP_1M_FROM_SAMPLES:
-    the percentiles are nearest rank over the slot's answered probes."""
-    return f"""
-SELECT slot, target, COUNT(*), SUM(ok),
-       SUM(CASE WHEN ok = 1 THEN latency_ms END),
-       MIN(CASE WHEN ok = 1 THEN latency_ms END),
-       MAX(CASE WHEN ok = 1 THEN latency_ms END),
-       SUM(jitter_ms), COUNT(jitter_ms),
-       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered THEN latency_ms END),
-       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered * 9 THEN latency_ms END)
-FROM (
-    SELECT CAST(ts / 10 AS INTEGER) AS slot, target, ok, latency_ms, jitter_ms,
-           ROW_NUMBER() OVER w AS rank, COUNT(*) OVER (PARTITION BY CAST(ts / 10 AS INTEGER), target, ok) AS answered
-    FROM samples
-    WHERE {where}
-    WINDOW w AS (PARTITION BY CAST(ts / 10 AS INTEGER), target, ok ORDER BY latency_ms)
-)
-GROUP BY slot, target
-"""
-
-
-# (Re)computes the rollup_10s rows of every slot in [?, ?) (seconds, both multiples of 10) from the raw samples.
-UPSERT_ROLLUP_10S_FROM_SAMPLES = (
-    "INSERT OR REPLACE INTO rollup_10s (slot, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)"
-    + slot_rows_from_samples("ts >= ? AND ts < ?")
-)
 
 # (Re)computes the rollup_15m rows of every quarter in the minutes [?, ?) (both multiples of 15) from rollup_1m. A minute
 # is dead when every probe in it was lost and it held at least `dead_probes` of them (probe_interval.dead_minute_probes
@@ -708,3 +648,117 @@ CREATE TABLE IF NOT EXISTS incident_evidence_readings (
     PRIMARY KEY (incident_id, kind, device_id, ts)
 ) WITHOUT ROWID;
 """
+
+# --- latency spikes (db/migrations/v0*_latency_spikes.py) -------------------------------------------------------------
+#
+# One row per brief latency-only episode that ended before it became an incident (incidents/spikes.py): when it started
+# and ended (its first and last faulty round), the incident kind it would have had, that kind's stage (cause category:
+# router, gateway, line, isp, internet, load), whether a busy line explained it, and the slowest answered probe of the
+# stage's hops during it (ms; NULL: not known). Kept like the incidents (database.incident_retention_days).
+CREATE_LATENCY_SPIKES_TABLE = """
+CREATE TABLE IF NOT EXISTS latency_spikes (
+    id INTEGER PRIMARY KEY,
+    start_time REAL NOT NULL,
+    end_time REAL NOT NULL,
+    kind TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    expected INTEGER NOT NULL DEFAULT 0,
+    peak_ms REAL
+);
+"""
+
+CREATE_LATENCY_SPIKES_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_latency_spikes_start ON latency_spikes(start_time);
+"""
+
+
+# --- schema v25: slimmer raw probe rows ------------------------------------------------------------------------------
+#
+# One row per probe (one per target per probe round), clustered by time: no rowid, no secondary index, so a time-range
+# query is a single primary-key range search. `ts` is the probe's time (epoch seconds, as the prober read it).
+# `latency_cms` and `jitter_cms` are hundredths of a millisecond, NULL when there is none: integers instead of 8-byte
+# REALs (SQLite stores an integer in as few bytes as it needs, 1 to 3 here), exact because the prober rounds both to
+# 0.01 ms (engine/prober.py). packet_loss_pct is not stored; for a single probe it is (1 - ok) * 100.
+#
+# Readers convert each row in SQL (latency_cms / 100.0 is the very REAL the old column held) and aggregate the
+# milliseconds as before, so every sum, mean and rounding is what it was, bit for bit.
+def create_samples_table(name: str = "samples") -> str:
+    """The CREATE TABLE of the raw probe table, under `name` (the v25 migration builds it beside the old one)."""
+    return f"""
+CREATE TABLE IF NOT EXISTS {name} (
+    ts REAL NOT NULL,
+    target INTEGER NOT NULL,
+    ok INTEGER NOT NULL,
+    latency_cms INTEGER,
+    jitter_cms INTEGER,
+    error TEXT,
+    PRIMARY KEY (ts, target)
+) WITHOUT ROWID;
+"""
+
+
+CREATE_SAMPLES_TABLE = create_samples_table()
+
+
+def sample_cms(ms: Optional[float]) -> Optional[int]:
+    """A latency or jitter in milliseconds as samples.latency_cms / jitter_cms: the nearest hundredth of a millisecond,
+    halves away from zero, computed as SQLite computes CAST(ROUND(ms * 100) AS INTEGER) (it adds 0.5 to ms * 100 and
+    truncates), so a value stored by the flush and one converted by the v25 migration are the same integer. None stays
+    None. The prober's values are already whole hundredths (round(x, 2)): for them this is exact."""
+    if ms is None:
+        return None
+    x = ms * 100
+    return int(x + 0.5) if x >= 0 else -int(-x + 0.5)
+
+
+# The rollup columns (n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90) of the samples of a subquery
+# that has `rank` and `answered` (the probe's rank by latency among the answered probes of its group, and their count):
+# the percentiles are nearest rank. Each row's milliseconds are summed, as before v25.
+_ROLLUP_AGGREGATES = """
+       COUNT(*), SUM(ok),
+       SUM(CASE WHEN ok = 1 THEN latency_cms / 100.0 END),
+       MIN(CASE WHEN ok = 1 THEN latency_cms / 100.0 END),
+       MAX(CASE WHEN ok = 1 THEN latency_cms / 100.0 END),
+       SUM(jitter_cms / 100.0), COUNT(jitter_cms),
+       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered THEN latency_cms / 100.0 END),
+       MIN(CASE WHEN ok = 1 AND rank * 10 >= answered * 9 THEN latency_cms / 100.0 END)"""
+
+# (Re)computes the rollup rows of every minute in [?, ?) from the raw samples. Recomputing instead of adding the batch
+# keeps rollups exact when INSERT OR IGNORE drops a duplicate sample. Both bounds must be multiples of 60 so no minute
+# is split.
+UPSERT_ROLLUP_1M_FROM_SAMPLES = f"""
+INSERT OR REPLACE INTO rollup_1m (minute, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)
+SELECT minute, target,{_ROLLUP_AGGREGATES}
+FROM (
+    SELECT CAST(ts / 60 AS INTEGER) AS minute, target, ok, latency_cms, jitter_cms,
+           ROW_NUMBER() OVER w AS rank, COUNT(*) OVER (PARTITION BY CAST(ts / 60 AS INTEGER), target, ok) AS answered
+    FROM samples
+    WHERE ts >= ? AND ts < ?
+    WINDOW w AS (PARTITION BY CAST(ts / 60 AS INTEGER), target, ok ORDER BY latency_cms)
+)
+GROUP BY minute, target
+"""
+
+
+def slot_rows_from_samples(where: str) -> str:
+    """A SELECT of rollup_10s rows (slot, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)
+    computed from the raw samples that match `where` (a condition on ts), by the rules of UPSERT_ROLLUP_1M_FROM_SAMPLES:
+    the percentiles are nearest rank over the slot's answered probes."""
+    return f"""
+SELECT slot, target,{_ROLLUP_AGGREGATES}
+FROM (
+    SELECT CAST(ts / 10 AS INTEGER) AS slot, target, ok, latency_cms, jitter_cms,
+           ROW_NUMBER() OVER w AS rank, COUNT(*) OVER (PARTITION BY CAST(ts / 10 AS INTEGER), target, ok) AS answered
+    FROM samples
+    WHERE {where}
+    WINDOW w AS (PARTITION BY CAST(ts / 10 AS INTEGER), target, ok ORDER BY latency_cms)
+)
+GROUP BY slot, target
+"""
+
+
+# (Re)computes the rollup_10s rows of every slot in [?, ?) (seconds, both multiples of 10) from the raw samples.
+UPSERT_ROLLUP_10S_FROM_SAMPLES = (
+    "INSERT OR REPLACE INTO rollup_10s (slot, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n, lat_p10, lat_p90)"
+    + slot_rows_from_samples("ts >= ? AND ts < ?")
+)

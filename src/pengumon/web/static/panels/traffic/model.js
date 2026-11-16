@@ -14,7 +14,8 @@ import { createCard } from '../../js/cards.js';
 import { registerActions } from '../../js/dispatch.js';
 import { CLIENT_KINDS } from '../../js/device-text.js';
 import { formatBytes, plural } from '../../js/format.js';
-import { formatClock, localFormat } from '../../js/clock.js';
+import { formatClock, localFormat, nextMidnight } from '../../js/clock.js';
+import { oldestStored } from '../../js/oldest.js';
 import standard from './view.js';
 import { everyWhileVisible, whenVisible } from '../../js/timers.js';
 import { has } from '../../js/values.js';
@@ -61,9 +62,15 @@ const covers = (d) => (d.all ? allStoredWords(Math.round(d.hours / 24), d.since)
 // start at the data (days, or weeks only when the span drawn is past 90 days). `ask(hours)` -> the answer or null;
 // `current()` is false when a newer choice was made. The answer says `all` and, when it starts late, `since` (epoch seconds).
 export async function loadTraffic(chosen, ask, current) {
-  const body = await ask(chosen.hours);
+  // js/oldest.js says where the data starts: the first request is for the window from the first stored day, when that is later
+  const stored = chosen.all ? await oldestStored('traffic') : null;
+  const midnight = stored === null ? null : nextMidnight(stored * 1000) / 1000 - 86400;
+  const now = Date.now() / 1000;
+  const late = midnight !== null && midnight - (now - chosen.hours * 3600) > 2 * 86400 && current();
+  const body = await ask(late ? Math.max(24, Math.ceil((now - midnight) / 3600)) : chosen.hours);
   if (!chosen.all || !body || !Array.isArray(body.daily)) return body;
   body.all = true;
+  if (late) body.since = midnight;
   const first = body.daily.find((r) => has(r.down));
   if (!current() || !first || first.start - body.start <= 2 * 86400) return body;
   const again = await ask(Math.max(24, Math.ceil((body.end - first.start) / 3600)));

@@ -15,6 +15,7 @@ import pytest
 
 from pengumon.db.migrations import migrate
 from pengumon.db.migrations.v014_path_versions import BASELINE_SUMMARY
+from pengumon.db.schema import sample_cms
 from pengumon.engine import load as load_module
 from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.load import LineLoad
@@ -36,8 +37,8 @@ async def make_db(path, rows, rates=()):
     keys = sorted({r[1] for r in rows})
     conn.executemany("INSERT INTO targets (key) VALUES (?)", [(k,) for k in keys])
     ids = {k: i for i, k in conn.execute("SELECT id, key FROM targets")}
-    conn.executemany("INSERT OR IGNORE INTO samples (ts, target, ok, latency_ms) VALUES (?, ?, ?, ?)",
-                     [(ts, ids[k], 0 if lat is None else 1, lat) for ts, k, lat in rows])
+    conn.executemany("INSERT OR IGNORE INTO samples (ts, target, ok, latency_cms) VALUES (?, ?, ?, ?)",
+                     [(ts, ids[k], 0 if lat is None else 1, sample_cms(lat)) for ts, k, lat in rows])
     conn.executemany("INSERT INTO device_samples (device_id, ts, status, wan_rx_mbps, wan_tx_mbps) "
                      "VALUES (?, ?, 'ok', ?, ?)", [(DEVICE, ts, rx, tx) for ts, rx, tx in rates])
     conn.commit()
@@ -45,8 +46,10 @@ async def make_db(path, rows, rates=()):
 
 
 def spec_for(targets, start, end, draft=None, dns=("dns",), **extra):
-    """The replay's input; targets are (id, category, name, address, enabled)."""
-    classifier = ClassifierConfig().model_dump(mode="json")
+    """The replay's input; targets are (id, category, name, address, enabled). The rules are the defaults, except that a
+    latency incident opens at once (latency_incident_after_seconds 0), as these tests were written for: the wait has
+    tests of its own."""
+    classifier = ClassifierConfig(latency_incident_after_seconds=0).model_dump(mode="json")
     rules = {"classifier": classifier, "line": LINE}
     draft_rules = {"classifier": {**classifier, **(draft or {})}, "line": LINE}
     return {
@@ -70,12 +73,19 @@ async def test_replay_with_the_current_rules_gives_exactly_the_incidents_the_liv
     # which is what the scripted live load gave.
     monkeypatch.setattr(load_module, "LIVE_WINDOW_SECONDS", 0.5)
     monkeypatch.setattr(load_module, "STALE_AFTER_SECONDS", 0.5)
-    live, rows, rates = [], [], []
+    live, rows, rates, live_spikes = [], [], [], []
 
     def tap(classifier):
         started, resolved, evaluate = classifier.on_incident_started, classifier.on_incident_resolved, classifier.evaluate
         classifier.on_incident_started = lambda inc: (live.append(inc), started(inc))
         classifier.on_incident_resolved = resolved
+        store_spike = classifier.repository.create_latency_spike
+
+        async def spike_spy(spike):
+            live_spikes.append(spike)
+            return await store_spike(spike)
+
+        classifier.repository.create_latency_spike = spike_spy
 
         async def spy(samples, stats):
             pct = classifier.load.pct
@@ -107,6 +117,10 @@ async def test_replay_with_the_current_rules_gives_exactly_the_incidents_the_liv
     assert triples(draft) == expected
     assert result["changes"] == [] and result["current"] == result["draft"]
     assert result["current"]["incidents"] == len(live)
+    # the brief latency episodes (latency_waits: the default wait) are the live classifier's spikes, one for one
+    assert [s.model_dump() for s in current.spikes] == [s.model_dump(exclude={"id"}) | {"id": None} for s in live_spikes]
+    assert result["current"]["latency_spikes"] == len(live_spikes)
+    assert (name == "latency_waits") == bool(live_spikes)
 
 
 async def test_other_rules_give_other_incidents_and_the_changes_say_where(tmp_path):
@@ -198,6 +212,32 @@ async def test_load_makes_the_replay_call_a_slow_line_busy_and_counts_it(tmp_pat
     assert result["current"]["busy_hidden"] == 1 and result["current"]["incidents"] == 0
     assert result["draft"]["busy_hidden"] == 0 and result["draft"]["incidents"] == 1
     assert [c["in"] for c in result["changes"]] == ["draft"]
+
+
+async def test_a_draft_with_the_wait_turns_a_brief_latency_incident_into_a_spike(tmp_path):
+    # 40 slow rounds past the modem: a latency incident under rules that open it at once, a spike under the default wait
+    rows = [(T0 + k, t, 300.0 if t == "pub" and 20 <= k < 60 else 1.0) for k in range(100)
+            for t in ("local", "gw", "isp", "pub", "dns")]
+    db = tmp_path / "spike.db"
+    await make_db(db, rows)
+    targets = [("local", "local", "Local", "192.0.2.1", True), ("gw", "gateway", "Gateway", "192.0.2.2", True),
+               ("isp", "isp", "Hub", "198.51.100.1", True), ("pub", "public", "Public", "203.0.113.1", True)]
+    spec = spec_for(targets, T0, T0 + 100, draft={"latency_incident_after_seconds": 120})
+    result, (current, draft) = await replay(spec, sqlite3.connect(db))
+    assert (result["current"]["incidents"], result["current"]["latency_spikes"]) == (1, 0)
+    assert (result["draft"]["incidents"], result["draft"]["latency_spikes"]) == (0, 1)
+    (incident,), (spike,) = current.incidents, draft.spikes
+    assert (spike.start_time, spike.end_time, spike.kind) == (incident.start_time, incident.end_time, incident.kind)
+    assert spike.peak_ms == 300.0 and spike.stage == "isp"
+    assert [c["in"] for c in result["changes"]] == ["current"]
+    # a gap (the app stopped) with an episode still waiting: a spike there, as a shutdown stores it
+    rows = [(T0 + k, t, 300.0 if t == "pub" and 20 <= k < 60 else 1.0) for k in list(range(60)) + list(range(200, 220))
+            for t in ("local", "gw", "isp", "pub", "dns")]
+    db = tmp_path / "gap.db"
+    await make_db(db, rows)
+    result, (_, draft) = await replay(spec_for(targets, T0, T0 + 220, draft={"latency_incident_after_seconds": 120}),
+                                      sqlite3.connect(db))
+    assert result["draft"]["latency_spikes"] == 1 and draft.spikes[0].end_time == T0 + 59
 
 
 async def test_a_draft_window_is_judged_over_its_own_probes(tmp_path):
@@ -467,7 +507,8 @@ async def test_the_preview_spec_carries_the_running_grouping_and_the_cache_key_f
 # Both must change nothing in the answer.
 
 def _random_rows(seed, rounds=3000):
-    """One probe per target per second: calm, with bursts of loss and of slow answers at random places."""
+    """One probe per target per second: calm, with bursts of loss and of slow answers at random places. Latencies in
+    whole hundredths of a millisecond, as the prober reports them (and `samples` stores them)."""
     import random
     rng = random.Random(seed)
     names = ["local", "gw", "isp1", "isp2", "pub1", "pub2", "dns"]
@@ -483,7 +524,7 @@ def _random_rows(seed, rounds=3000):
                 lat = None if kind == "lost" else (base * 6 if kind == "slow" else base * 3)
                 left -= 1
             burst[name] = (left, kind)
-            rows.append((T0 + r + rng.random() * 0.1, name, lat))
+            rows.append((T0 + r + rng.random() * 0.1, name, None if lat is None else round(lat, 2)))
     return rows
 
 
@@ -555,3 +596,24 @@ def test_a_slow_http_probe_is_no_affected_target_in_the_replay_as_in_the_live_co
     assert round_metrics(prober.stats, [s for s in samples]).failed_targets == ("ping",)
     failed = [_Sample("web", 2.0, False, None)]
     assert round_metrics(stats, failed).failed_targets == ("web",)  # a failed HTTP probe still counts
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+async def test_skipping_calm_rounds_changes_no_latency_spike(tmp_path, monkeypatch, seed):
+    # a short window and a long recovery: an episode waiting to become an incident is still open in rounds whose
+    # window holds no slow probe any more, which the skip must not pass over
+    from pengumon.engine import replay as replay_module
+    db = tmp_path / "w.db"
+    await make_db(db, _random_rows(seed))
+    spec = spec_for(TARGETS5, T0, T0 + 3000, draft={"latency_incident_after_seconds": 120, "window_probes": 3,
+                                                     "consecutive_successes_for_recovery": 10})
+
+    def spikes(rule_sets):
+        return [[s.model_dump() for s in rs.spikes] for rs in rule_sets]
+
+    result, rule_sets = await replay(spec, sqlite3.connect(db))
+    skipped = (_document(result, rule_sets), spikes(rule_sets))
+    monkeypatch.setattr(replay_module, "SKIP_CALM_ROUNDS", False)
+    result, rule_sets = await replay(spec, sqlite3.connect(db))
+    assert skipped == (_document(result, rule_sets), spikes(rule_sets))
+    assert result["draft"]["latency_spikes"] > 0  # the scenario does have spikes, or the comparison proves little

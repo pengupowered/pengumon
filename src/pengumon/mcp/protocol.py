@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from pengumon import __version__
-from pengumon.mcp.tools import TOOLS, BadArguments, Tool, ToolFailure, plain
+from pengumon.mcp.tools import TOOLS, BadArguments, Tool, ToolFailure, client_details as client_details_var, plain
 from pengumon.observability.telemetry import mcp_calls
 
 _log = logging.getLogger("pengumon.mcp")
@@ -32,7 +32,7 @@ INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
 INSTRUCTIONS = (
-    "Pengumon is a home network monitor: it probes every hop between this network and the internet once a second (by ping, or by a TCP connection or "
+    "Pengumon is a home network monitor: it probes every hop between this network and the internet every probe round (once a second by default; by ping, or by a TCP connection or "
     "HTTP request where the owner chose one), "
     "records outages and slow spells as incidents, and polls the cable modem and router. Everything here is read-only. "
     "Start with the `status` tool to answer 'is the internet OK right now?'. Use `incidents` and `incident` to see what "
@@ -137,8 +137,17 @@ async def _call_tool(state, params: Any, request_id: Any) -> Reply:
     return _result(request_id, result)
 
 
-async def handle(raw: bytes, state, version_header: Optional[str] = None) -> Reply:
-    """One POST body to its answer. `state` is the app's AppState (tools read it)."""
+async def handle(raw: bytes, state, version_header: Optional[str] = None, client_details: str = "masked") -> Reply:
+    """One POST body to its answer. `state` is the app's AppState (tools read it). `client_details`: what this caller
+    may see of the connected clients, "full" or "masked" (api.clients.privacy_mode); the tools name clients by it."""
+    token = client_details_var.set(client_details)
+    try:
+        return await _handle(raw, state, version_header)
+    finally:
+        client_details_var.reset(token)
+
+
+async def _handle(raw: bytes, state, version_header: Optional[str]) -> Reply:
     if not version_supported(version_header):
         return _error(400, INVALID_REQUEST, "Unsupported MCP-Protocol-Version; supported: " + ", ".join(SUPPORTED_VERSIONS))
     try:

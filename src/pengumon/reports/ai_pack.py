@@ -51,7 +51,7 @@ You are helping someone who is not a network expert find out why their home inte
 
 ## How Pengumon measures
 
-- About once a second it pings every hop in "The path" and makes one lookup per DNS target; no reply within 2 s is a lost probe. Latency and jitter in ms, loss in % of probes, rates in Mbps, line signal in dBmV and dB, 24-hour times in the zone the first lines name.
+- Every probe round (once a second by default) it pings every hop in "The path" and makes one lookup per DNS target; no reply within 2 s is a lost probe. Latency and jitter in ms, loss in % of probes, rates in Mbps, line signal in dBmV and dB, 24-hour times in the zone the first lines name.
 - Every probe goes from the computer Pengumon runs on: it measures that computer's path to the internet, not other devices'.
 - Roles: *Router* = the home router or mesh; *Gateway* = the modem or gateway, pinged on its home-side address (those pings do not use the provider's line); *ISP hop n* = the provider's routers, in order (unless marked as a DNS server); *Internet n* = public servers, pinged side by side (not a chain); *DNS lookup* = name lookups.
 - "Normal" is the hop's own median over the last 7 days, of one-minute averages; "slow minutes" are minutes above twice normal (and at least 10 ms more).
@@ -203,6 +203,7 @@ class DayFact:
     date: str                       # local calendar day, ISO
     incidents: int
     lost_min: float
+    spikes: int = 0                 # brief latency spikes (not incidents) that started that day
 
 
 @dataclass(frozen=True)
@@ -643,9 +644,11 @@ class _Render:
             for m in f.modules:
                 for name, per_day in list((getattr(m.section, "day_columns", None) or {}).items())[:2]:
                     cols.append((name, per_day))
-            rows = [[self.rx.day(d.date), str(d.incidents), _num(d.lost_min)] + [self.t(c.get(d.date, "-"), table=True)
-                                                                                 for _, c in cols] for d in f.days]
-            out.append(_table(["Day", "Incidents", "Lost min"] + [n for n, _ in cols], rows))
+            spikes = any(d.spikes for d in f.days)  # the column only for a window that had some
+            rows = [[self.rx.day(d.date), str(d.incidents), _num(d.lost_min)] + ([str(d.spikes)] if spikes else [])
+                    + [self.t(c.get(d.date, "-"), table=True) for _, c in cols] for d in f.days]
+            out.append(_table(["Day", "Incidents", "Lost min"] + (["Latency spikes"] if spikes else [])
+                              + [n for n, _ in cols], rows))
         return "\n\n".join(out) + "\n\n"
 
     def _module_parts(self, m: ModuleInput, tables: bool):

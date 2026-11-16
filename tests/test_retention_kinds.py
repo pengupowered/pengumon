@@ -6,6 +6,7 @@ import os
 import sqlite3
 import time
 
+import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -349,6 +350,39 @@ async def test_without_dbstat_each_table_is_rows_times_a_sampled_row_and_says_es
     monkeypatch.setattr(storage_stats, "_has_dbstat", none)
     repo._storage_cache = None
     assert (await storage_stats.storage_answer(repo))["estimate"] is True
+
+
+@pytest.mark.skipif(not HAS_DBSTAT, reason="this SQLite has no dbstat to hold the estimate against")
+async def test_the_estimate_without_dbstat_is_close_to_dbstat_on_probe_history(repo):
+    """Probe rows as stored since schema v25 (integer hundredths, some failures with an error, a few without jitter):
+    the estimate of each large table, and of all of them, is near what dbstat measures. (Counting each value by its
+    digits overstated the samples by about half.)"""
+    import random
+    rng = random.Random(7)
+    now = time.time()
+    con = sqlite3.connect(repo.db_path)
+    con.executemany("INSERT INTO targets (id, key) VALUES (?, ?)", [(i, f"t{i}") for i in range(1, 15)])
+    rows = []
+    for r in range(15_000):  # 14 targets a round, a round a second, each probe a little after the round starts
+        for t in range(1, 15):
+            ok = rng.random() > 0.002
+            rows.append((now - 15_000 + r + t * 0.0137 + rng.random() * 0.01, t, 1 if ok else 0,
+                         int(rng.uniform(40, 3500)) if ok else None, int(rng.uniform(5, 900)) if ok and r % 50 else None,
+                         None if ok else "timeout"))
+    con.executemany("INSERT INTO samples (ts, target, ok, latency_cms, jitter_cms, error) VALUES (?, ?, ?, ?, ?, ?)", rows)
+    con.execute(
+        "INSERT INTO rollup_1m (minute, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n) SELECT "
+        "CAST(ts / 60 AS INTEGER), target, COUNT(*), SUM(ok), SUM(latency_cms) / 100.0, MIN(latency_cms) / 100.0, "
+        "MAX(latency_cms) / 100.0, SUM(jitter_cms) / 100.0, COUNT(jitter_cms) FROM samples GROUP BY 1, 2")
+    con.commit()
+    con.close()
+    async with aiosqlite.connect(repo.db_path) as db:
+        real = {t.name: t.bytes for t in await storage_stats.table_stats(db, now)}
+        estimated = {t.name: t.bytes for t in await storage_stats.table_stats(db, now, force_estimate=True)}
+    for table in ("samples", "rollup_1m"):
+        assert 0.85 < estimated[table] / real[table] < 1.15, (table, estimated[table], real[table])
+    both = sum(real[t] for t in ("samples", "rollup_1m"))
+    assert 0.9 < sum(estimated[t] for t in ("samples", "rollup_1m")) / both < 1.1
 
 
 async def test_the_answer_is_kept_for_a_minute(repo, app_state):

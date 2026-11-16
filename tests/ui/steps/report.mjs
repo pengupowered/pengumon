@@ -81,4 +81,67 @@ export const steps = [
       await atEveryRange("#reportRangeButtons", "#reportOutput", async (id) => { await check("phone")(id); });
     });
   }, { variants: ["longhistory"] }],
+
+  ["latency spikes per day: a row of bars in the report's cells, adding up to the count, with the average per day, at 7 d and 30 d; one /api/report request per range change", async ({ chooseRange, count, eq, forgetRequests, ok, page, requestsTo, settled, showCard, text, until }) => {
+    await showCard("report");
+    await chooseRange("#reportRangeButtons", "7d"); // (the step before leaves 30 d)
+    await settled();
+    await until(() => /^Last 7 days:/.test(document.getElementById("reportOutput").dataset.summary ?? ""));
+    const row = async () => page.evaluate(() => ({
+      title: document.querySelector("#reportOutput [data-v=spikesTitle]")?.textContent,
+      avg: document.querySelector("#reportOutput [data-v=spikesAvg]")?.textContent,
+      tips: [...document.querySelectorAll("#reportOutput .rep-sp .sp-day")].map((b) => b.dataset.tip),
+      lost: document.querySelectorAll("#reportOutput .days .day").length }));
+    const sum = (r) => r.tips.reduce((a, t) => a + Number(/ · (\d+) spikes?/.exec(t)[1]), 0);
+    await until(() => document.querySelector("#reportOutput [data-v=spikesAvg]"));
+    const week = await row();
+    eq("the row's title", week.title, "Latency spikes per day");
+    // (the report lists the days that have probes: the seed's probes cover the last two hours, so the night before has no cell here and its two spikes are in the average only)
+    eq("the average is the 5 counted spikes (the busy-line one left out) over 7 days", week.avg, "avg 0.7/day");
+    ok(`the bars hold the spikes of the days listed (${sum(week)} of 5)`, sum(week) >= 3 && sum(week) <= 5);
+    eq("a bar in each of the cells of the lost-per-day bars above it", week.tips.length, week.lost);
+    ok("the first and last cell are cut by the window, and the tip says so", /of this day are in the range/.test(week.tips[week.tips.length - 1]));
+    forgetRequests();
+    await chooseRange("#reportRangeButtons", "30d");
+    await settled();
+    await until(() => /^Last 30 days:/.test(document.getElementById("reportOutput").dataset.summary ?? ""));
+    eq("one report request for the range", requestsTo(/^\/api\/report\?/).length, 1);
+    eq("and none for the spikes: the report carries them", requestsTo(/latency-spikes/).length, 0);
+    const month = await row();
+    eq("30 days: the same 5 over 30 days, a bar for each cell above", `${month.avg}|${month.tips.length}`, `avg 0.2/day|${month.lost}`);
+    await chooseRange("#reportRangeButtons", "7d");
+    await settled();
+  }],
+
+  ["latency spikes per week past 31 days: the row follows the bars of what was lost (a bar a week), the average is still per day, in every theme and on a phone", async ({ chooseRange, eq, everyLook, noSideways, ok, openPanel, page, phone, settled, showCard, until }) => {
+    const row = () => page.evaluate(() => ({ title: document.querySelector("#reportOutput [data-v=spikesTitle]")?.textContent, avg: document.querySelector("#reportOutput [data-v=spikesAvg]")?.textContent,
+      tips: [...document.querySelectorAll("#reportOutput .rep-sp .sp-day")].map((b) => b.dataset.tip), widths: [...document.querySelectorAll("#reportOutput .rep-sp .sp-day")].map((b) => b.getBoundingClientRect().width),
+      lost: document.querySelectorAll("#reportOutput .days .day, #reportOutput .sw-col").length }));
+    const check = (where) => async (id) => {
+      await until(() => document.querySelector("#reportOutput .rep-sp .sp-day"));
+      const r = await row();
+      const unit = id === "90d" || id === "all" ? "week" : "day";
+      eq(`${where} ${id}: the title`, r.title, `Latency spikes per ${unit}`);
+      eq(`${where} ${id}: a bar for each cell of the bars above (${r.tips.length})`, r.tips.length, r.lost);
+      const total = r.tips.reduce((a, t) => a + Number(/ · (\d+) spikes?/.exec(t)[1]), 0);
+      const days = { "30d": 30, "90d": 90, all: 180 }[id];
+      // the bars add up to the count the report itself gives (every day of the long history has probes)
+      const said = await page.evaluate(async (d) => (await (await fetch(`/api/report?days=${d}`)).json()).latency_spikes.count, days);
+      eq(`${where} ${id}: the bars add up to the report's count`, total, said);
+      eq(`${where} ${id}: the average is the count over the days (${total} in ${days})`, r.avg, `avg ${(total / days).toFixed(1)}/day`);
+      ok(`${where} ${id}: the whole cells are at least 2 px wide (${Math.min(...r.widths.slice(1, -1)).toFixed(1)})`, Math.min(...r.widths.slice(1, -1)) >= 2);
+      ok(`${where} ${id}: nothing sticks out sideways`, await noSideways());
+    };
+    await showCard("report");
+    for (const id of ["30d", "90d", "all"]) { await chooseRange("#reportRangeButtons", id); await settled(); await check("desktop")(id); }
+    ok("a week's tip names the week", (await row()).tips.every((t) => /^week of [A-Z][a-z]{2} \d{1,2} · /.test(t)));
+    await everyLook(async (look) => {
+      await showCard("report");
+      for (const id of ["30d", "all"]) { await chooseRange("#reportRangeButtons", id); await settled(); await check(look || "default")(id); }
+    });
+    await phone(async () => {
+      await openPanel("report", "incidents");
+      for (const id of ["30d", "all"]) { await chooseRange("#reportRangeButtons", id); await settled(); await check("phone")(id); }
+    });
+  }, { variants: ["longhistory"] }],
 ];

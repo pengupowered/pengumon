@@ -26,7 +26,7 @@ classifier on the characterization scenario):
   preview does not change it): one alert per outage.
 
 How the samples become rounds: they are read in ts order, one hour at a time (`samples` is `(ts, target)` WITHOUT
-ROWID, so an hour is one primary-key range). A new round starts when a target id repeats or the time jumps by more than
+ROWID, so an hour is one primary-key range); latencies are stored in hundredths of a millisecond. A new round starts when a target id repeats or the time jumps by more than
 half a round. A round is classified at its latest sample's time. A gap of more than 30 s between rounds (the app was
 down) resolves an open incident at its last bad round, as a shutdown does, and starts over with empty windows, as a
 restart does.
@@ -56,6 +56,7 @@ from pengumon.engine.load_settings import LineConfig
 from pengumon.engine.prober import NetworkProber
 from pengumon.engine.prober_settings import DEFAULT_WINDOW_PROBES, DnsProbeConfig, HopStatusConfig
 from pengumon.incidents.model import Incident
+from pengumon.incidents.spikes import LatencySpike
 from pengumon.incidents.outages import GROUPABLE_PLACES, Drop, OutageBuilder, place_of
 from pengumon.incidents.settings import IncidentsConfig
 from pengumon.incidents.taxonomy import kinds_in_scope
@@ -173,6 +174,7 @@ class _RuleSet:
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     core: Any = None
     incidents: List[Incident] = field(default_factory=list)
+    spikes: List[LatencySpike] = field(default_factory=list)  # brief latency-only episodes, not incidents
     first_severity: Dict[int, str] = field(default_factory=dict)  # id(incident) -> its severity when it started
     escalated_at: Dict[int, float] = field(default_factory=dict)  # id(incident) -> when it rose to critical
     busy_runs: int = 0
@@ -186,8 +188,13 @@ class _RuleSet:
         self.in_busy = False
 
     def close_open(self) -> None:
-        """The incident still open when the app stopped: ended at its last bad round."""
+        """The incident still open when the app stopped: ended at its last bad round. A latency episode still waiting
+        to become an incident ends as a latency spike there, as a shutdown stores it."""
         tracker = self.core.tracker
+        spike = tracker.pending_spike()
+        if spike is not None:
+            self.spikes.append(spike)
+            tracker.pending = None
         incident = tracker.active_incident
         if incident is None:
             return
@@ -281,7 +288,7 @@ def _counts(rule_set: _RuleSet, last_ts: float, timezone_name: Optional[str] = N
     seconds = sum(((i.end_time if i.end_time is not None else last_ts) - i.start_time) for i in rule_set.incidents)
     return {"incidents": len(rule_set.incidents), "critical": critical, "warning": warning,
             "busy_hidden": rule_set.busy_runs, "total_seconds": round(seconds, 1),
-            "alerts": _alerts(rule_set, timezone_name, last_ts, incidents)}
+            "alerts": _alerts(rule_set, timezone_name, last_ts, incidents), "latency_spikes": len(rule_set.spikes)}
 
 
 def _overlap(a: Tuple[float, Optional[float]], b: Tuple[float, Optional[float]]) -> bool:
@@ -504,12 +511,9 @@ class _RoundRunner:
         reading = rule_set.load.current(ts)
         if reading is None:
             rule_set.rounds_without_load += 1
-        if calm:
-            tracker = rule_set.core.tracker
-            if (tracker.active_incident is None and not tracker.failure_counter
-                    and not tracker.loss_failure_counter and not tracker.latency_failure_counter):
-                rule_set.in_busy = False
-                return
+        if calm and rule_set.core.tracker.idle:
+            rule_set.in_busy = False
+            return
         window = rule_set.config.window_probes
         if window not in metrics:
             for tid, target in self.stats.items():
@@ -527,6 +531,8 @@ class _RoundRunner:
             rule_set.first_severity[id(result.outcome.started)] = result.outcome.started.severity
         if result.outcome.escalated is not None:
             rule_set.escalated_at.setdefault(id(result.outcome.escalated), ts)
+        if result.outcome.spike is not None:
+            rule_set.spikes.append(result.outcome.spike)
 
     async def run_round(self, samples: List[_Sample]) -> None:
         ts = max(s.timestamp for s in samples)
@@ -562,7 +568,7 @@ async def _feed_rounds(conn: sqlite3.Connection, runner: _RoundRunner, start: fl
         chunk_end = min(chunk_start + CHUNK_SECONDS, end)
         last_chunk = chunk_end >= end
         upper = "ts <= ?" if last_chunk else "ts < ?"
-        rows = conn.execute(f"SELECT ts, target, ok, latency_ms FROM samples WHERE ts >= ? AND {upper} "
+        rows = conn.execute(f"SELECT ts, target, ok, latency_cms / 100.0 FROM samples WHERE ts >= ? AND {upper} "
                             "ORDER BY ts, target", (chunk_start, chunk_end)).fetchall()
         for ts, target, ok, latency in rows:
             key = keys.get(target)

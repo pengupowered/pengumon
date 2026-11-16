@@ -6,12 +6,16 @@
 export default {
   mount(root, ctx) {
     const { el, mark, icon, list, status, text, html, escapeHtml: esc } = ctx.kit;
-    const { timeline } = ctx.std.parts;
+    const { timeline, spikes } = ctx.std.parts;
     const box = root.appendChild(el('div', 'ac-inc'));
     box.appendChild(el('p', 'ac-prompt', '> TAIL -F INCIDENTS.LOG')).setAttribute('aria-hidden', 'true');
 
     const tl = box.appendChild(el('div', 'tl ac-tl'));
     tl.hidden = true;
+
+    // the latency spikes of the range (the standard part, restyled by incidents.css)
+    const sp = box.appendChild(el('div', 'inc-spikes ac-spikes'));
+    sp.hidden = true;
 
     // the bar naming the time another panel picked; the model focuses it (data-role="window")
     const bar = box.appendChild(el('div', 'ac-win'));
@@ -37,7 +41,7 @@ export default {
     const log = box.appendChild(el('div', 'ac-log'));
     log.setAttribute('role', 'list');
     log.setAttribute('aria-label', 'Incidents');
-    const parts = [timeline(tl)];
+    const parts = [timeline(tl), spikes(sp)];
 
     const line = (r) => {
       const outage = r.kind === 'outage';

@@ -13,6 +13,13 @@ from pengumon.mcp.tools import TOOLS, ToolFailure
 BY_NAME = {t.name: t for t in TOOLS}
 
 
+@pytest.fixture
+def role_state(mcp_state):
+    """The seeded state with "Answers use real names and addresses" (mcp.real_names) off: the tools redact."""
+    mcp_state.config.mcp.real_names = False
+    return mcp_state
+
+
 async def call(state, name, **arguments):
     return await BY_NAME[name].handler(state, arguments)
 
@@ -105,7 +112,7 @@ async def test_incident_gives_the_evidence_and_not_the_raw_samples(mcp_state):
     assert gw["loss_pct"] > 50
 
 
-async def test_incident_path_trace_hides_lan_hops_and_keeps_public_ones(mcp_state):
+async def test_incident_path_trace_hides_lan_hops_and_keeps_public_ones(mcp_state, role_state):
     from pengumon.models.probes import PathTraceHop
     await mcp_state.repository.update_incident_path_trace(mcp_state.example_incident_id, [
         PathTraceHop(hop=1, ip="192.168.88.1", hostname="router.lan", latency_ms=1.0),
@@ -486,7 +493,7 @@ def _privacy_calls(incident_id):
 
 
 @pytest.mark.parametrize("index", range(11))
-async def test_no_tool_output_holds_a_household_address_host_name_or_mac(mcp_state, index):
+async def test_no_tool_output_holds_a_household_address_host_name_or_mac(mcp_state, role_state, index):
     """Through the protocol, as a client sees it: the text content and the structured content."""
     incident_id = await _plant(mcp_state)
     name, args = _privacy_calls(incident_id)[index]
@@ -500,7 +507,7 @@ async def test_no_tool_output_holds_a_household_address_host_name_or_mac(mcp_sta
         assert "example gateway" not in text and "lab box" not in text, (name, text[:600])
 
 
-async def test_titles_and_descriptions_name_the_hops_by_their_roles(mcp_state):
+async def test_titles_and_descriptions_name_the_hops_by_their_roles(mcp_state, role_state):
     incident_id = await _plant(mcp_state)
     status = await call(mcp_state, "status")
     assert status["title"] == "Router Disconnect" and status["active_incident"]["title"] == "Router Disconnect"
@@ -523,7 +530,7 @@ async def test_incident_has_no_message_of_a_failed_modem_poll(mcp_state):
 
 
 
-async def test_incident_path_trace_hides_the_hops_before_the_provider(mcp_state):
+async def test_incident_path_trace_hides_the_hops_before_the_provider(mcp_state, role_state):
     """A hop between the home network and the first hop at an ISP target's address is the household's own (a
     gateway's public WAN address behind double NAT, its reverse name embedding that address): shown as private, like
     a hop at the address of the router or gateway target (here a global IPv6 one)."""

@@ -66,6 +66,7 @@ class PreviewCounts(_PreviewModel):
     busy_hidden: int
     total_seconds: float
     alerts: Optional[int] = None  # incident alerts the notifier's rules would have sent (engine/replay.py)
+    latency_spikes: Optional[int] = None  # brief latency-only episodes that stayed latency spikes, not incidents
 
 
 class PreviewWindow(_PreviewModel):

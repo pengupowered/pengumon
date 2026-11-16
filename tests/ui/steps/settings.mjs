@@ -479,13 +479,13 @@ export const steps = [
     const time = (key) => page.$eval(`${settingsRow(key)} [data-time]`, (e) => e.textContent.trim());
     const choose = (name, value) => page.select(`${row(name)} select`, value);
     // the numbers the page's cost line should show, from the path and the settings as the API gives them (a count of
-    // its own, not the page's): ICMP echoes past the gateway are 244 B a round (IPv4), a lookup 150 B
+    // its own, not the page's): ICMP echoes past the gateway are 244 B a round (IPv4), a lookup 150 B, a stored probe 26 B
     const api = await page.evaluate(async () => ({ path: await (await fetch("/api/path", { cache: "no-store" })).json(), settings: await (await fetch("/api/settings", { cache: "no-store" })).json() }));
     const hops = api.path.hops.filter((h) => h.enabled !== false);
     const past = hops.filter((h) => h.category === "isp" || h.category === "public").length;
     const lookups = api.settings.lists.dns_probes.items.filter((d) => d.enabled !== false).length;
     const month = (interval) => (past * 244 / interval + lookups * 150 / interval) * 86400 * 30;
-    const day = (interval) => (hops.length / interval + lookups / interval) * 86400 * 40;
+    const day = (interval) => (hops.length / interval + lookups / interval) * 86400 * 26;
     const size = (bytes) => (bytes >= 1e9 ? `${Math.round(bytes / 1e8) / 10} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e5) / 10} MB` : `${Math.round(bytes / 1e3)} KB`);
     await settingsOpen(ctx);
     eq("the six choices, in order", await page.$$eval(`${row("interval_seconds")} select option`, (o) => o.map((x) => x.value).join()), "1,2,5,10,30,60");
@@ -495,11 +495,11 @@ export const steps = [
     eq("the lookups' interval can be left to the round", await page.$eval(`${row("dns_interval_seconds")} select option`, (o) => o.textContent), "with every probe round");
     eq("the rule at 1 s: 3 lost probes are 3 s", await time(LOSS), "3 s at a 1 s interval");
     eq("the window", await time("classifier.window_probes"), "10 s at a 1 s interval");
-    eq("what the standard interval does", (await lines())[0], "At 1 s: outages open after about 3 s, latency incidents after about 10 s. Drops shorter than about 1 s may go unseen.");
+    eq("what the standard interval does", (await lines())[0], "At 1 s: outages open after about 3 s, latency incidents after about 2 min. Drops shorter than about 1 s may go unseen.");
     eq("and costs: traffic from the path, storage from the hops", (await lines())[1].replace(/, from the .*$/, ""),
       `Costs about ${size(month(1))} of internet traffic a month and ${size(day(1))} of storage a day (the 7 days of raw samples)`);
     await choose("interval_seconds", "10");
-    eq("at 10 s the rules stretch", (await lines())[0], "At 10 s: outages open after about 30 s, latency incidents after about 100 s. Drops shorter than about 10 s may go unseen.");
+    eq("at 10 s the rules stretch", (await lines())[0], "At 10 s: outages open after about 30 s, latency incidents after about 2 min. Drops shorter than about 10 s may go unseen.");
     eq("the loss rule keeps its count and shows its time", await page.$eval(`${settingsRow(LOSS)} input[data-key]`, (e) => e.value) + " | " + await time(LOSS), "3 | 30 s at a 10 s interval");
     eq("the recovery rule too", await time("classifier.consecutive_successes_for_recovery"), "30 s at a 10 s interval");
     eq("a tenth of the traffic and storage", (await lines())[1].replace(/, from the .*$/, ""),

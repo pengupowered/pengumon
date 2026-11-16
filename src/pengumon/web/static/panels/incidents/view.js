@@ -41,6 +41,29 @@ function timeline(box) {
   };
 }
 
+// ---------- the latency spikes ----------
+
+// The block between the timeline and the list: how many brief latency spikes the range had (none of them an incident), today's
+// count, where most were, and a bar per local day (the first and last cut by the range are narrower). It opens nothing.
+function spikes(box) {
+  return {
+    update(vm) {
+      const s = vm.spikes;
+      box.hidden = !s;
+      if (!s) return;
+      const sig = JSON.stringify(s);
+      if (box.dataset.sig === sig) return;
+      box.dataset.sig = sig;
+      box.classList.toggle('quiet', s.quiet);
+      kit.html(box, s.quiet ? `<p class="sp-line" data-v="spikes">${esc(s.summary)}</p>`
+        : `<div class="sp-text"><span class="sp-t" data-v="spikesTitle">${esc(s.title)}</span><span class="sp-n" data-v="spikes">${esc(s.summary)}</span>`
+          + (s.where ? `<span class="sp-w" data-v="spikesWhere">${esc(s.where)}</span>` : '') + '</div>'
+          + `<div class="sp-days" style="${esc(s.style)}" role="img" aria-label="${esc(s.aria)}">${s.bars.map((b) => `<div class="sp-day${b.partial ? ' partial' : ''}${b.count ? '' : ' none'}" data-item="spike-${esc(b.id)}" data-v="tip" aria-label="${esc(b.tip)}" data-tip="${esc(b.tip)}"><i style="height:${b.height.toFixed(0)}%"></i></div>`).join('')}</div>`);
+    },
+    unmount() {}
+  };
+}
+
 // ---------- the table ----------
 
 // One incident's row: the title is the row's button (so the keyboard reaches it), a click anywhere on the row does the same.
@@ -104,12 +127,12 @@ function windowBar(bar) {
   };
 }
 
-export const parts = { timeline, rows, row, windowBar };
+export const parts = { timeline, spikes, rows, row, windowBar };
 
 export default {
   parts,
   mount(root) {
-    const pieces = [timeline(root.querySelector('#incidentTimeline, .tl')), windowBar(root.querySelector('#incidentWindow, .inc-window')), rows(root.querySelector('#incidentsBody, .inc-list tbody'))];
+    const pieces = [timeline(root.querySelector('#incidentTimeline, .tl')), spikes(root.querySelector('#incidentSpikes, .inc-spikes')), windowBar(root.querySelector('#incidentWindow, .inc-window')), rows(root.querySelector('#incidentsBody, .inc-list tbody'))];
     return {
       update(vm, prev) { pieces.forEach((p) => p.update(vm, prev)); },
       unmount() { pieces.forEach((p) => p.unmount()); }

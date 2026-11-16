@@ -33,6 +33,7 @@ from pengumon.devices.samples import device_sample
 from pengumon.lines.docsis import line_sample
 from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.incidents.model import Incident
+from pengumon.incidents.spikes import LatencySpike
 from pengumon.lines.docsis_model import DocsisChannel, DocsisSignalSnapshot
 from pengumon.models.probes import PathTraceHop, ProbeSample
 
@@ -110,13 +111,21 @@ async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
             continue
         await repo.create_incident(incident(f"Seeded blip {i + 1}", now - 1800 + i * 60, 20.0))
     # one provider event the night before: three drops of the line, two minutes apart (inside the grouping gap), the first at
-    # 03:12 UTC (inside the maintenance hours, the line and the provider's hops only): one outage with the label
-    night = datetime.now(timezone.utc).replace(hour=3, minute=12, second=0, microsecond=0).timestamp() - 86400
+    # 03:12 (inside the maintenance hours, the line and the provider's hops only): one outage with the label. The hours are
+    # the server's local ones (the container's TZ, which scripts/test-clock.sh sets), so the time is local too: 03:12 UTC was
+    # the evening before in New York and the label was missing there.
+    night = datetime.now().astimezone().replace(hour=3, minute=12, second=0, microsecond=0).timestamp() - 86400
     for title, begin, seconds, kind, cause, severity in (
             ("Night event drop 1", night, 240.0, "isp_loss", "access_line_drop", "critical"),
             ("Night event drop 2", night + 360, 180.0, "isp_loss", "access_line_drop", "warning"),
             ("Night event drop 3", night + 660, 120.0, "backbone_loss", "internet_backbone_transit_loss", "critical")):
         await repo.create_incident(incident(title, begin, seconds, kind=kind, cause_code=cause, severity=severity))
+    # brief latency spells with no loss (not incidents, counted): three in the last two hours (two at the provider's hops, one at the
+    # router), one explained by a busy line (left out of the counts), two the night before (the provider's hops, the gateway)
+    for begin, seconds, kind, stage, expected in ((now - 6500, 45.0, "upstream_latency", "isp", False), (now - 5200, 70.0, "upstream_latency", "isp", False),
+                                                  (now - 3500, 60.0, "busy_latency", "load", True), (now - 900, 30.0, "local_latency", "router", False),
+                                                  (night + 1500, 50.0, "upstream_latency", "isp", False), (night + 5000, 80.0, "gateway_latency", "gateway", False)):
+        await repo.create_latency_spike(LatencySpike(start_time=begin, end_time=begin + seconds, kind=kind, stage=stage, expected=expected, peak_ms=150.0))
     await repo.create_incident(Incident(
         start_time=now - 4000, end_time=now - 3900, duration_seconds=100.0, cause_code="service_unavailable",
         kind="service_down", title="Service Down is not responding", description="seeded service outage",
@@ -246,6 +255,11 @@ async def seed_long_history(db_path: str, now: float) -> None:
         begin = now - 3 * 86400 - k * 3.7 * 86400
         await repo.create_incident(Incident(start_time=begin, end_time=begin + 90.0, duration_seconds=90.0, cause_code="unknown_outage", title=f"Seeded old blip {k}",
                                             description="(seeded long history)", severity="warning", resolved=True))
+    # old brief latency spells (one to three, every ninth day back to 174 days: the 30 d, 90 d and All counts differ)
+    for k in range(1, 20):
+        for n in range(1 + k % 3):
+            begin = now - 3 * 86400 - k * 9 * 86400 + n * 5000
+            await repo.create_latency_spike(LatencySpike(start_time=begin, end_time=begin + 40.0, kind="upstream_latency" if n else "local_latency", stage="isp" if n else "router", peak_ms=120.0))
     await repo.close()
 
 

@@ -541,7 +541,8 @@ def test_windows_treats_a_reparse_point_like_a_link(data, tmp_path, as_windows, 
         def __init__(self, st):
             self.st_mode, self.st_file_attributes = st.st_mode, stat_module.FILE_ATTRIBUTE_REPARSE_POINT
 
-    monkeypatch.setattr(backup_temp.os, "lstat", lambda p: Junction(real(p)) if Path(p) == folder else real(p))
+    # (keywords such as dir_fd pass through: pytest removes tmp_path with os.lstat(..., dir_fd=...) while this is in place)
+    monkeypatch.setattr(backup_temp.os, "lstat", lambda p, **kw: Junction(real(p, **kw)) if Path(p) == folder else real(p, **kw))
     with pytest.raises(NotADirectoryError):
         backup_temp.remove_backup_leftovers(folder)
 

@@ -84,7 +84,7 @@ async def run_rounds(core, metrics, rounds, testing, start=1000.0):
 
 
 async def test_a_30_second_test_opens_no_incident_but_the_same_delay_without_one_does():
-    config = ClassifierConfig()                          # 10 slow rounds make a latency incident
+    config = ClassifierConfig(latency_incident_after_seconds=0)  # 10 slow rounds make a latency incident
     masked = ClassifierCore(config)
     kinds = await run_rounds(masked, round_metrics(SLOW, []), 30, testing=True)
     assert set(kinds) == {"busy_speedtest"} and masked.tracker.active_incident is None
@@ -121,7 +121,7 @@ async def test_a_fault_that_already_has_an_incident_is_not_ended_early_by_the_ma
 async def test_an_incident_open_when_a_test_starts_is_neither_ended_nor_split_by_it():
     """The test's rounds say nothing about the line, so the tracker holds still: before, they counted as healthy and
     resolved a latency incident that was open when the test began, which then opened again as a second one after it."""
-    core = ClassifierCore(ClassifierConfig(consecutive_successes_for_recovery=2))
+    core = ClassifierCore(ClassifierConfig(consecutive_successes_for_recovery=2, latency_incident_after_seconds=0))
     await run_rounds(core, round_metrics(SLOW, []), 12, testing=False)
     incident = core.tracker.active_incident
     assert incident is not None and incident.kind == "upstream_latency"

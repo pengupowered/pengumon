@@ -52,7 +52,7 @@ function notice(box) {
 // ---------- the chain ----------
 // The origin of the chain: a small marker, not a hop (no status, no value). Hop statuses are on the nodes and links.
 function hostNode(count) {
-  return `<li class="origin" aria-label="This host: probing ${count} targets every second"><span class="origin-ic">${icon('host')}</span>
+  return `<li class="origin" aria-label="This host: probing ${count} targets"><span class="origin-ic">${icon('host')}</span>
     <b class="origin-t">This host</b><span class="origin-m"><span data-f="hostCount" data-v="hostCount">${count}</span> targets</span><span class="origin-m">every 1 s</span></li>`;
 }
 

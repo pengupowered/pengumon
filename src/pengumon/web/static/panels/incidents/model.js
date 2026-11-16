@@ -15,6 +15,7 @@ import { CAUSES, CAUSE_SHORT } from '../../js/roles.js';
 import { CAP, hasMore, isLoading, loadAll, loadMore, loadSince, loadedOutages, oldestLoaded, totalCounts } from './list.js';
 import { causeOf, durationOf, formatDuration, levelOfIncident, whenText } from './incidents.js';
 import { settingsValues, val } from '../../js/settings-values.js';
+import { bindSpikes, loadSpikes, present as presentSpikes, spikeData } from './spikes.js';
 import standard from './view.js';
 import { everyWhileVisible } from '../../js/timers.js';
 import { fillRangeSelect, onRetentionChange, rangeOptions, retentionDays } from '../../js/ranges.js';
@@ -227,7 +228,7 @@ export function present(s, nowMs) {
   const plus = s.more && unfiltered && (grouped || knownShown === null) ? '+' : '';
   // the list holds the newest CAP incidents; when the history has more, say so (the count above is the server's real one)
   const capped = !s.more && s.all.length >= CAP && (!known || known.total > s.all.length);
-  const capNote = !capped ? '' : `Only the newest ${CAP} incidents are listed${known ? ` (of ${known.total.toLocaleString()} recorded)` : ''}. Older ones are in the ISP dossier (up to 30 days), the reliability report (up to 90 days) and the API (/api/incidents with limit and offset).`;
+  const capNote = !capped ? '' : `Only the newest ${CAP} incidents are listed${known ? ` (of ${known.total.toLocaleString()} recorded)` : ''}. Older ones are in the ISP dossier (up to 30 days), the reliability report (up to 90 days) and the API (/api/incidents with since, limit and offset).`;
   // the list holds the newest CAP incidents: a fixed range may reach back past the oldest one loaded, and holds more than the timeline shows
   const timelineNote = s.timelineRange && s.timelineRange !== 'all' && s.timelineDays > 7 && !s.more && s.all.length >= CAP && s.oldest !== null && s.oldest > nowMs / 1000 - s.timelineDays * DAY
     ? `The timeline shows the newest ${CAP} incidents, from ${localFormat(s.oldest * 1000, { month: 'short', day: 'numeric' })}: this range holds more.` : '';
@@ -247,6 +248,7 @@ export function present(s, nowMs) {
   const windowIncidents = s.window ? visible.filter(matches).length : 0;
   return {
     timeline: timeline(visible, s.window, nowMs, s.timelineDays || 7),
+    spikes: presentSpikes(s.spikes),
     window: s.window ? { label: s.window.label, found: windowIncidents === 1 ? '1 incident' : `${windowIncidents} incidents`,
       clear: { action: 'clearIncidentWindow', label: 'Show all', icon: 'close' } } : null,
     list: { rows, empty },
@@ -287,8 +289,12 @@ export function fixture() {
     cause_code: 'access_line_drop', likely_maintenance: true, incident_ids: [11, 12, 13] }];
   openOutages.add(11);
   const win = { start: now - 4 * 3600, end: now, label: 'Example hour', lost: 3, sent: 60 };
+  // five days of spikes, the first cut by the range, one day with none
+  const day = (k, count, hours = 24, partial = false) => ({ day: `2026-01-0${k}`, start: 0, end: 0, partial, hours, count });
+  const spikes = { window_start: now - 4.5 * DAY, window_end: now, incident_after_seconds: 120, count: 9, expected: 1,
+    by_stage: [{ stage: 'isp', count: 6 }, { stage: 'router', count: 3 }], days: [day(1, 2, 12, true), day(2, 4), day(3, 0), day(4, 1), day(5, 2, 9, true)] };
   const vm = present({ all, query: '', pageSize: 10, page: 1, showExpected: true, window: win, totals: null, more: false, loading: false, oldest: null,
-    outages, maintenance: { start: '00:00', end: '06:00' } }, now * 1000);
+    outages, spikes, maintenance: { start: '00:00', end: '06:00' } }, now * 1000);
   openOutages.delete(11);
   return vm;
 }
@@ -298,7 +304,7 @@ export function fixture() {
 function state() {
   return { all: allRawIncidents, query: incidentSearchQuery, pageSize: incidentPageSize, page: incidentCurrentPage, showExpected: showExpectedIncidents,
     window: incidentWindow, timelineDays: timelineDays(), timelineRange, totals: totalCounts(), more: hasMore(), loading: isLoading(), oldest: oldestLoaded(),
-    outages: loadedOutages(), maintenance: { start: val(settingsValues(), 'incidents.maintenance_start', '00:00'), end: val(settingsValues(), 'incidents.maintenance_end', '06:00') } };
+    outages: loadedOutages(), spikes: spikeData(spikeHours()), maintenance: { start: val(settingsValues(), 'incidents.maintenance_start', '00:00'), end: val(settingsValues(), 'incidents.maintenance_end', '06:00') } };
 }
 
 // Draws the card and its frame from the state now.
@@ -330,8 +336,9 @@ export function initIncidentsCard(section) {
   root = section.querySelector('.panel-b');
   card = createCard({ panel: 'incidents', root, standard, fixture });
   markRange();
-  onRetentionChange(() => { markRange(); render(); loadSince(timelineStart()); });
-  document.addEventListener('zonechange', render); // the times and the timeline's days are on the page's clock
+  bindSpikes(render);
+  onRetentionChange(() => { markRange(); render(); loadSince(loadStart()); reloadSpikes(); });
+  document.addEventListener('zonechange', () => { render(); reloadSpikes(); }); // the times, the timeline's days and the spike bars are on the page's clock
   everyWhileVisible(render, 60000); // the timeline's "now", ongoing bars and "Today 14:02" labels move with the clock
 }
 
@@ -347,6 +354,15 @@ export function timelineStart(nowMs = Date.now()) {
   if (oldest === null) return Math.max(earliest, now - 30 * DAY);
   return Math.max(earliest, nextMidnight(oldest * 1000) / 1000 - DAY);
 }
+// How far back the list must load for the timeline's range: the range's start, and for All the whole retention (the draw then
+// starts at the oldest incident there is, timelineStart).
+export function loadStart(nowMs = Date.now()) {
+  const opt = options().find((o) => o.id === timelineRange) || options()[0];
+  return nowMs / 1000 - opt.seconds;
+}
+// The latency spikes of the timeline's range, read again (panel.js: when the incidents change; here: a range, a zone).
+const spikeHours = () => Math.round((options().find((o) => o.id === timelineRange) || options()[0]).seconds / 3600);
+export const reloadSpikes = () => loadSpikes(spikeHours());
 const timelineDays = () => (Date.now() / 1000 - timelineStart()) / DAY;
 
 // A range on the timeline: the list reaches back that far, then the card is drawn.
@@ -362,7 +378,8 @@ function setTimelineRange(id) {
   timelineRange = id;
   markRange();
   render();
-  loadSince(timelineStart()); // older than what is loaded: load back to it (list.js re-renders)
+  loadSince(loadStart()); // older than what is loaded: load back to it (list.js re-renders)
+  reloadSpikes();
 }
 
 // Lists the drops of an outage under its row, or hides them again.

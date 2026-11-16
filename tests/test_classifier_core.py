@@ -23,7 +23,7 @@ def _incident_key(incident):
 async def test_a_separate_core_fed_only_metrics_time_and_load_matches_the_live_classifier(monkeypatch):
     """Every round of the characterization scenarios (every config) goes through a second, independent core with
     no repository; its verdicts and incidents must be the live classifier's, round for round."""
-    compared = {"rounds": 0, "started": 0, "resolved": 0, "escalated": 0}
+    compared = {"rounds": 0, "started": 0, "resolved": 0, "escalated": 0, "spikes": 0}
 
     def tap(classifier):
         twin = ClassifierCore(classifier.config, None, classifier.line)
@@ -38,7 +38,10 @@ async def test_a_separate_core_fed_only_metrics_time_and_load_matches_the_live_c
             for what in ("started", "resolved", "escalated"):
                 assert _incident_key(getattr(other.outcome, what)) == _incident_key(getattr(live.outcome, what))
                 compared[what] += getattr(live.outcome, what) is not None
+            assert _spike_key(other.outcome.spike) == _spike_key(live.outcome.spike)
+            compared["spikes"] += live.outcome.spike is not None
             assert _incident_key(twin.tracker.active_incident) == _incident_key(classifier.tracker.active_incident)
+            assert _incident_key(twin.tracker.pending) == _incident_key(classifier.tracker.pending)
             assert twin.last_upstream_issue_ts == classifier.last_upstream_issue_ts
             compared["rounds"] += 1
             return live
@@ -48,7 +51,12 @@ async def test_a_separate_core_fed_only_metrics_time_and_load_matches_the_live_c
     await build_golden(monkeypatch, tap=tap)
     assert compared["rounds"] > 1000 and compared["started"] > 20 and compared["resolved"] > 20
     assert compared["escalated"] > 0  # the scenario escalates warning incidents to critical
-    assert len(CONFIGS) == 4
+    assert compared["spikes"] > 0  # latency_waits: brief latency episodes are spikes
+    assert len(CONFIGS) == 5
+
+
+def _spike_key(spike):
+    return None if spike is None else spike.model_dump(exclude={"id"})
 
 
 def _stats(*specs):

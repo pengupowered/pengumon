@@ -10,3 +10,4 @@
 :root[data-look="mission-control"] [data-panel="report"] .causes b { font-size: var(--fs-md); }
 :root[data-look="mission-control"] [data-panel="report"] .rep-note { color: var(--ink-3); }
 @container (min-width: 760px) { :root[data-look="mission-control"] [data-panel="report"] .rep-grid .days { height: 110px; } }
+:root[data-look="mission-control"] [data-panel="report"] .rep-sp .sp-day i { max-width: 34px; border-radius: 2px 2px 0 0; opacity: 1; }

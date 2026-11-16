@@ -40,8 +40,8 @@ class OutagesOut(BaseModel):
 @router.get("/outages", response_model=OutagesOut)
 async def get_outages(
     state: StateDep,
-    hours: int = Query(168, ge=1, le=10000),
-    limit: int = Query(100, ge=1, le=500),
+    hours: int = Query(168, ge=1, le=90000),
+    limit: int = Query(100, ge=1, le=5000),
 ):
     """The outages that overlap the last `hours`, newest first (at most `limit`). An outage joins incidents of
     neighboring places of the path that follow each other within `incidents.group_gap_minutes`; the incidents stay as

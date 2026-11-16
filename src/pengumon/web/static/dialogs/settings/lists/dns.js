@@ -1,4 +1,4 @@
-// DNS lookups (dns_probes): a name looked up every second, shown in Path health beside the hops. Applies without a restart.
+// DNS lookups (dns_probes): a name looked up every probe round, shown in Path health beside the hops. Applies without a restart.
 
 import { makeListEditor, freshId, slug } from './kit.js';
 

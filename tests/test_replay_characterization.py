@@ -14,7 +14,9 @@ from pengumon.engine.replay import replay
 from test_classifier_characterization import T0
 from test_replay import RANDOM_DRAFTS, TARGETS5, _document, _random_rows, make_db, spec_for
 
-EXPECTED_DIGEST = "f32d3aae453cdfde6d5b8cec6ccf9449bdc008b54688d8c29e58a093b3823b4a"
+# 0.29: the counts gained latency_spikes (0 here: spec_for opens latency incidents at once), and the fixture's
+# latencies are whole hundredths (schema v25 stores them so); nothing else moved
+EXPECTED_DIGEST = "c3b97991a0e4cedf8daf81c1d6cee94ae8ab5dc2279f586e176e59aad23776b1"
 
 
 async def test_replay_matches_its_recorded_digest(tmp_path):

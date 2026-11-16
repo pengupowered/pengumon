@@ -208,15 +208,17 @@ export const steps = [
     });
   }, { variants: ["longhistory"] }],
 
-  ["All starts at the oldest stored probe when that is younger than the retention: the target history (42 days of data, then 400)", async ({ chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, until, youngData }) => {
+  ["All starts at the oldest stored probe when that is younger than the retention: the target history (42 days of data, then 400)", async ({ chartAxis, chooseRange, click, eq, forgetRequests, ok, page, rangeState, requestsTo, settled, until, youngData }) => {
     for (const { days, kind, age } of [{ days: 42, kind: "date", age: 42 }, { days: 400, kind: "month", age: 180 }]) { // (the probes' rollups are kept 180 days: the server answers no more)
       await youngData(days);
       await until(() => document.querySelectorAll("#hopMatrixBody tr [data-f=last]").length >= 3);
       await click("#hopMatrixBody tr:first-child");
       await until(() => document.getElementById("targetHistModal")?.classList.contains("active"));
       eq(`${days}: the retention is a year`, (await rangeState("#targetHistRanges")).words.at(-1), "All · 1 y");
+      forgetRequests();
       await chooseRange("#targetHistRanges", "all");
       await settled();
+      eq(`${days}: All asks the history once (${requestsTo(/^\/api\/history\?/).join(" ")})`, requestsTo(/^\/api\/history\?/).length, 1);
       const s = await chartAxis("#targetHistLatency");
       const x = await page.evaluate(() => { const c = Chart.getChart(document.getElementById("targetHistLatency")); return { min: c.scales.x.min / 1000, first: c.data.datasets[0].data[0].x / 1000, now: Date.now() / 1000 }; });
       const back = (x.now - x.first) / 86400;

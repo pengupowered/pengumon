@@ -19,6 +19,7 @@ import { targetList } from '../../js/targets.js';
 import { zoneParams } from '../../js/clock.js';
 import { quietKey, quietTargets, shortLabels } from '../../js/path.js';
 import { CAUSE_LONG } from '../../js/roles.js';
+import { stripBars, stripStyle } from '../../js/spike-strip.js';
 import standard from './view.js';
 import { everyWhileVisible } from '../../js/timers.js';
 import { fillRangeSelect, onRetentionChange, rangeOptions, retentionDays } from '../../js/ranges.js';
@@ -102,6 +103,18 @@ export function present(report, ctx) {
   const dayName = (d) => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short' });
   const note = peak > 0 ? `Worst ${weekly ? 'week' : 'day'}: ${weekly ? units[peakDay].name : `${dayName(days[peakDay])} ${days[peakDay]}`}, ${fmtPct(peak)} lost` : `No probe lost on any ${weekly ? 'week' : 'day'}`;
   const worstHour = report.worst_hours[0];
+  // Brief latency spikes (not incidents): a count per cell of the bars above (a day, or a week past 31 days), from availability.latency_spikes
+  const perUnit = report.availability.latency_spikes;
+  const spikeCount = report.latency_spikes && Number.isFinite(report.latency_spikes.count) ? report.latency_spikes.count : null;
+  const spikes = Array.isArray(perUnit) && perUnit.length === days.length && spikeCount !== null ? (() => {
+    const counts = weekly ? weeksOf(days).map((w) => w.idx.reduce((a, i) => a + perUnit[i], 0)) : perUnit;
+    const cells = units.map((u, i) => ({ id: u.id, name: u.name, count: counts[i], hours: u.hours, cut: u.cut }));
+    const unit = weekly ? 'week' : 'day';
+    const avg = spikeCount / Math.max(1, report.days);
+    const avgText = `avg ${avg === 0 ? '0' : avg.toFixed(1)}/day`;
+    return { title: `Latency spikes per ${unit}`, avg: avgText, columns: Math.max(1, units.length), style: stripStyle(cells), bars: stripBars(cells, unit),
+      aria: `Latency spikes per ${unit}, ${spikeCount} in ${report.days} days, ${avgText}` };
+  })() : null;
   const name = (h) => ({ text: ctx.labels[h.target_id] || h.name, title: h.name });
   return {
     state: 'ready',
@@ -130,6 +143,7 @@ export function present(report, ctx) {
           height: lost === null || peak <= 0 ? 0 : Math.max(4, (lost / peak) * 100), letter: !weekly && units.length <= 10 ? dayName(u.id).slice(0, 1) : '' };
       })
     },
+    spikes,
     causes: {
       title: 'Downtime by cause',
       empty: 'No incidents.',
@@ -163,12 +177,13 @@ export function fixture() {
   const days = ['2026-01-01', '2026-01-02', '2026-01-03'];
   const report = {
     days: 3,
-    availability: { days, hops: [
+    availability: { days, latency_spikes: [2, 5, 0], hops: [
       { target_id: 'fx_gateway', name: 'Example gateway', availability_pct: 99.9, per_day: [100, 99.8, 99.9] },
       { target_id: 'fx_quiet', name: 'Example hop 2', availability_pct: 12.5, per_day: [12, 13, 12] },
       { target_id: 'fx_public', name: 'Example public DNS', availability_pct: 99.95, per_day: [100, 99.9, null] }
     ] },
     incidents: { count: 2, minutes: 75, excluded_expected: 1, outages: { count: 1, down_minutes: 41, longest_minutes: 25, maintenance: 1 }, by_cause: [{ cause: 'gateway', minutes: 60 }, { cause: 'line', minutes: 15 }] },
+    latency_spikes: { count: 7, expected: 0, by_stage: [{ stage: 'isp', count: 7 }], incident_after_seconds: 120 },
     worst_hours: [{ hour: 20, loss_pct: 1.5 }]
   };
   return present(report, {

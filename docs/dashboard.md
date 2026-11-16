@@ -306,7 +306,7 @@ folds into seven rows, one per weekday, each hour the sum of that weekday-hour o
 days"). The Uptime strips use one cell per day to 90 days and one per week (Monday to Sunday, the first and last cut by the
 window and drawn narrower) past it, which is what All is at 180 days. The Incidents timeline draws a line per midnight to
 30 days, one per week past it, and month labels past 60 days; it loads the incidents of the range through its paging, and when
-the range holds more than the newest 500 it loads the card says so. The Reliability report's and Internet use's bars are per day to 31
+the range holds more than 5000 incidents the card says so. The Reliability report's and Internet use's bars are per day to 31
 (report) or 90 days (Internet use) and per week beyond, partial weeks narrower, with the week named in the tooltip.
 
 **All starts at the oldest stored data.** A fixed range (24 h to 90 d) keeps its whole window, and a part with no data shows
@@ -349,12 +349,16 @@ naming what opens it (click actions, modals the generic `openModal` action opens
 imports the module the first time one of those is used, and ahead of the click when the pointer or focus reaches the
 control. `tests/test_frontend.py` checks that every way into a lazy dialog is named. The styles and markup stay in the page.
 
-The incident list (`panels/incidents/list.js`) loads the newest 50 incidents, and older ones in pages of 50 when the
-7 or 30 day timeline, a search, the last page, a time window opened from another panel or a custom chart range needs them, up
-to 500 (`GET /api/incidents?limit=&offset=`).
-When the history has more than 500, the card says so: its count stays the server's (`/api/incidents/count`), a note names
-the 500 listed and points to the ISP dossier, the reliability report and the API for older ones, and the footer says its
-total is of the newest 500.
+The incident list (`panels/incidents/list.js`) loads by time: one request for every incident that overlaps the range the timeline
+shows (`GET /api/incidents?since=&fields=list`, the light field set without path traces, which the inspector reads itself)
+and, in parallel, one for the outages of the same stretch. A longer range later (90 d, All, a custom chart range, a time
+window opened from another panel) asks only for what is older than the list holds and joins it on; All reaches back over the
+whole retention. A reload (a new `incidents_version`, a reconnect, a Save) reads the whole stretch loaded so far again in one
+request. The pager's Next and Last, and a search, load older incidents in pages by offset (`since=0&limit=&offset=`), up to
+5000 in all (the most one request answers, and the farthest `offset` reaches).
+When the history has more than 5000, the card says so: its count stays the server's (`/api/incidents/count`), a note names
+the 5000 listed and points to the ISP dossier, the reliability report and the API for older ones, and the footer says its
+total is of the newest 5000.
 
 **Back and dialogs.** Every dialog, Settings and the path editor included, is opened with `openModal` (`js/modal.js`), which
 pushes one history entry, so the browser's or phone's Back closes the top dialog and stays on the page; a second Back leaves
@@ -366,6 +370,18 @@ reload in the same task as a close is never undone. A Forward onto a spent entry
 `#settings` at the end of the address opens Settings on load, on the entry the link made. The first-run question cannot be
 dismissed and has no entry. The Navigation API (`currententrychange`) tells a traversal from a push, since setting a hash fires
 `popstate` too.
+
+**Latency spikes on the Incidents card and the report.** A latency or jitter problem with no loss that ends within
+Settings > Outage rules > "Latency becomes an incident after" (2 min by default) is not an incident ([api.md](api.md#latency-spikes)).
+The Incidents card shows a block between the timeline and the list, for the card's range: "Latency spikes (no loss, < 2 min):",
+the count over the range and today's ("31 in 7 days · 4 today"), where most were ("mostly at the ISP hops", "all at ...",
+or "most often at ..." when no stage has half), and a bar per local day of the range (the first and last, cut by the rolling
+window, narrower; the tooltip says "Tue Nov 11 · 6 spikes"). The "< 2 min" is the setting in force. A range without spikes
+shows one quiet line, "No latency spikes in this range"; with the setting at 0 (an incident at once) there is no block. The
+block opens nothing. It is read with `GET /api/latency-spikes` once per range change and again when the live
+`incidents_version` moves, a Save is made or the zone changes. The Reliability report has a row "Latency spikes per day" (per
+week past 31 days) under the lost-per-day bars, in the same cells, with "avg N/day" for the window. Every theme's view of
+both cards shows them (Amber CRT and Synthwave draw their own cards and reuse the standard block).
 
 **The incidents card and outages.** Drops of the line that belong together ([diagnosis.md](diagnosis.md#outages)) are
 one row: the status word (**Outage** when a drop was critical, else **Degraded**, with its icon), the outage's title, when
@@ -379,7 +395,7 @@ drop matches (opened, it lists all its drops), and a time from the heat map or U
 it. Expected (busy-line) incidents are never grouped. The summary comes from `GET /api/outages` for the stretch of time
 the list has loaded, read again with every reload and after a Save in Settings; an outage with drops the list has not
 loaded yet is held back and older incidents are loaded until it is whole (`list.js`), so a group is never shown with
-missing drops (at the end of the list, or the 500 cap, it shows what is there: "3 drops (2 loaded)"). The 7-day timeline
+missing drops (at the end of the list, or the 5000 cap, it shows what is there: "3 drops (2 loaded)"). The 7-day timeline
 keeps one bar per drop. The Reliability card says "6 outages, down 41 min in all, longest 25 min" under its incident
 count (and how many are likely maintenance). Alerts previews in Settings count one alert per outage, as the notifier sends.
 

@@ -6,9 +6,7 @@ import time
 import aiosqlite
 
 from pengumon.db.migrations.common import ROLLUP_CHUNK_SECONDS, columns, scalar
-from pengumon.db.schema import (
-    UPSERT_ROLLUP_1M_FROM_SAMPLES,
-)
+from pengumon.db.legacy_samples import UPSERT_ROLLUP_1M_FROM_SAMPLES
 
 logger = logging.getLogger("pengumon.db")
 

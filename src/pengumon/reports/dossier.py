@@ -29,6 +29,7 @@ from pengumon.reports.common import (
 from pengumon.reports.outages import outage_line, outage_totals, outages_of
 from pengumon.reports.speed import (SpeedSummary, counts_text, direction_text, latency_text, method_text, summarize,
                                     under_text)
+from pengumon.reports.spikes import after_words, spike_summary, stage_words
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,8 @@ class DossierFacts:
     busy_traffic: List[Dict[str, Any]] = field(default_factory=list)
     # target id -> how a hop not probed by ping is probed in words ("TCP port 443", "HTTPS request", never the path)
     probes: Dict[str, str] = field(default_factory=dict)
+    # the window's brief latency spikes (reports/spikes.py summarize_spikes; None: none are kept)
+    spikes: Optional[Dict[str, Any]] = None
 
 
 # The incidents' cause categories (incidents.taxonomy) in the provider's terms.
@@ -203,6 +206,7 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     device_events = (await events_between(repository, None, start_time, now)
                      if hasattr(repository, "get_device_events") else [])
     busy_traffic = await _busy_traffic(repository, rows, busy_pct, traffic, now, zone)
+    spikes = await spike_summary(repository, config, start_time, now, zone)
 
     return DossierFacts(
         hours=hours,
@@ -241,6 +245,7 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
         outages=outages,
         device_events=device_events,
         busy_traffic=busy_traffic,
+        spikes=spikes,
     )
 
 
@@ -390,6 +395,7 @@ def _summary_lines(f: DossierFacts) -> List[str]:
                  + "; ".join(h["text"] for h in f.busy_traffic) + ".")
     if f.excluded:
         L.append(f"- {_plural(f.excluded, 'event')} during heavy line load {'was' if f.excluded == 1 else 'were'} excluded (expected).")
+    L += _spike_lines(f.spikes)
     if primary:
         L.append(f"- **First hop with elevated loss:** {f.labels[primary['target_id']]} "
                  f"({primary['loss_pct']}% loss).")
@@ -397,6 +403,16 @@ def _summary_lines(f: DossierFacts) -> List[str]:
         L.append("- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by "
                  f"{f.material} points or more.")
     return L
+
+
+def _spike_lines(spikes: Optional[Dict[str, Any]]) -> List[str]:
+    """The summary's line about the brief latency spikes (none without any): how many, by stage, and per day."""
+    if not spikes or not spikes["count"]:
+        return []
+    days = ", ".join(f"{d['day']}{' (part)' if d['partial'] else ''}: {d['count']}" for d in spikes["days"])
+    return [f"- **Brief latency spikes:** {spikes['count']} (latency or jitter with no packet loss that ended within "
+            f"{after_words(spikes['incident_after_seconds'])}; not counted as incidents): "
+            f"{stage_words(spikes['by_stage'])}. Per day: {days}."]
 
 
 def _hop_table_lines(f: DossierFacts) -> List[str]:

@@ -11,6 +11,7 @@ from pengumon.db.repository import DatabaseRepository
 from pengumon.engine import probing
 from pengumon.engine.classifier import component as classifier_component
 from pengumon.services import component as services_component
+from old_schema import samples_before_v25
 
 
 async def _idle(*args, **kwargs):
@@ -333,6 +334,7 @@ async def test_the_upgrade_builds_quarter_hours_before_the_new_per_minute_retent
     with sqlite3.connect(db) as con:  # back to v17, with per-minute history from before
         con.execute("DROP TABLE rollup_10s")
         con.execute("DROP TABLE rollup_15m")
+        samples_before_v25(con)
         con.execute("PRAGMA user_version=17")
         con.execute("INSERT OR IGNORE INTO targets (key) VALUES ('gw')")
         gw = con.execute("SELECT id FROM targets WHERE key = 'gw'").fetchone()[0]

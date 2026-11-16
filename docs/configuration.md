@@ -125,8 +125,9 @@ copies of the database and secrets.json (the originals are never written) and pr
 `skipped (<reason>)`, and per list its items: names and counts only, no values. `--live` compares an already
 imported database.
 
-`mcp:` has one setting, `enabled` (default `false`): Settings > Sign-in > AI assistants (MCP) turns on the read-only
-`/mcp` endpoint ([mcp.md](mcp.md)); it applies at once.
+`mcp:` has two settings (Settings > Sign-in > AI assistants (MCP)), both applied at once: `enabled` (default `false`) turns on the
+read-only `/mcp` endpoint ([mcp.md](mcp.md)); `real_names` (default `true`, "Answers use real names and addresses") lets its
+answers use the names, host names and home addresses the dashboard shows, instead of role words.
 
 Access (the token, sign-in, view only, allowed host names) is set with environment variables, not in `config.yaml`:
 see [Security](security.md).
@@ -178,6 +179,7 @@ line:                            # internet line capacity; unset = learned from 
 classifier:
   busy_load_pct: 60              # WAN load (% of capacity) from which latency / ISP-hop loss counts as "busy"
   window_probes: 10              # each target's last N probes (3-60): loss, median latency and jitter judged over them
+  latency_incident_after_seconds: 120  # 0-3600: shorter latency-only problems are latency spikes, not incidents
 ```
 
 ### Outages (`incidents:`)

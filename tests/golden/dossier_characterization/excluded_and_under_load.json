@@ -41,7 +41,7 @@
   "- **Outages:** 3 (drops that followed each other at neighboring places of the path are one outage), 0 min down in total",
   "  - Oct 9 07:53 (ongoing), 60 min, 2 drops, down 0 min",
   "- 2 of these occurred while the line was at 70% load or more.",
-  "- 2 events during heavy line load were excluded (expected).",
+  "- 1 event during heavy line load was excluded (expected).",
   "- No single failing hop was isolated: no hop's loss exceeds that of the hops before it by 0.5 points or more.",
   "",
   "## 2. Loss per hop",
@@ -64,14 +64,14 @@
   "",
   "## 5. Summary for a support ticket",
   "```text",
-  "Over the past 24 hours Pengumon recorded 4 incidents totaling 1 hour 12 minutes (2 further events during heavy line load were excluded as expected).",
+  "Over the past 24 hours Pengumon recorded 4 incidents totaling 1 hour 12 minutes (1 further event during heavy line load was excluded as expected).",
   "Loss to Local Router and Modem Gateway: at most 0.0%.",
   "No single failing hop could be isolated from the probe data.",
   "```"
  ],
  "payload": {
   "docsis": null,
-  "excluded_expected": 2,
+  "excluded_expected": 1,
   "hop_stats": [
    {
     "avg_ms": 10.0,

@@ -59,7 +59,7 @@ function render() {
     return;
   }
   $('tracerouteResults').innerHTML = `<div class="table-wrap"><table class="dlist trace"><thead><tr><th>Hop</th><th>Address</th><th>Name</th><th class="r">RTT</th><th><span class="sr-only">Monitor</span></th></tr></thead><tbody>${hops.map(row).join('')}</tbody></table></div>
-    <p class="fine">${hops.length} hops, ${answered} answered. A hop that never replies cannot be probed; <b>Monitor</b> adds one that did as a target, probed every second, as the stage picked beside it.</p><div id="traceNote" role="status" aria-live="polite"></div>`;
+    <p class="fine">${hops.length} hops, ${answered} answered. A hop that never replies cannot be probed; <b>Monitor</b> adds one that did as a target, probed every round, as the stage picked beside it.</p><div id="traceNote" role="status" aria-live="polite"></div>`;
   $('traceStatus').textContent = `Trace finished: ${hops.length} hops, ${answered} answered.`;
 }
 
@@ -123,7 +123,7 @@ async function monitorHop(button) {
     monitored.add(h.ip);
     await initTargets();
     render();
-    $('traceNote').innerHTML = `<div class="result st-good">${icon('ok')}<span><b>${escapeHtml(name)}</b> is a target now, probed every second.</span></div>`;
+    $('traceNote').innerHTML = `<div class="result st-good">${icon('ok')}<span><b>${escapeHtml(name)}</b> is a target now, probed every round.</span></div>`;
   } catch (err) {
     button.disabled = false;
     note.innerHTML = `<div class="result st-crit">${icon('down')}<span><b>Could not add the target.</b> ${escapeHtml(err.message)}</span></div>`;

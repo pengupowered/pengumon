@@ -269,7 +269,7 @@ async def episode_loss(repository, windows: Sequence[Tuple[Any, float, float]],
                 return await cursor.fetchall()
 
     raw_sql = ("WITH w(i, lo, hi) AS (VALUES {values}) SELECT w.i, s.target, COUNT(*), SUM(s.ok), "
-               "MAX(CASE WHEN s.ok = 1 THEN s.latency_ms END) FROM w "
+               "MAX(CASE WHEN s.ok = 1 THEN s.latency_cms / 100.0 END) FROM w "
                "JOIN samples s ON s.ts >= w.lo AND s.ts <= w.hi GROUP BY w.i, s.target")
     # whole minutes: floor(lo / 60) .. floor(hi / 60), as get_rollup_stats
     minute_sql = ("WITH w(i, lo, hi) AS (VALUES {values}) SELECT w.i, r.target, SUM(r.n), SUM(r.ok), MAX(r.lat_max) "

@@ -24,6 +24,7 @@ from pengumon.devices.snapshots import RouterMetricsSnapshot
 from pengumon.incidents.model import Incident
 from pengumon.lines.docsis_model import DocsisSignalSnapshot
 from pengumon.models.probes import ProbeSample
+from old_schema import samples_before_v25
 
 DAY = 86400
 RAW_KEYS = {"target_id", "timestamp", "success", "latency_ms", "packet_loss_pct", "jitter_ms", "error"}
@@ -365,6 +366,7 @@ async def test_v11_migration_computes_percentiles_for_stored_minutes(tmp_path):
     con.execute("ALTER TABLE rollup_1m DROP COLUMN lat_p10")
     con.execute("ALTER TABLE rollup_1m DROP COLUMN lat_p90")
     con.execute("INSERT INTO rollup_1m (minute, target, n, ok, lat_sum) VALUES (1000, 1, 60, 60, 600.0)")
+    samples_before_v25(con)
     con.execute("PRAGMA user_version=10")
     con.commit()
     con.close()
@@ -461,11 +463,12 @@ async def test_time_range_queries_use_the_primary_key_on_a_large_table(repo):
     con = sqlite3.connect(repo.db_path)
     con.executemany("INSERT INTO targets (id, key) VALUES (?, ?)", [(i, f"t{i}") for i in range(1, 11)])
     con.executemany(
-        "INSERT INTO samples (ts, target, ok, latency_ms, jitter_ms) VALUES (?, ?, 1, 5.0, 0.5)",
+        "INSERT INTO samples (ts, target, ok, latency_cms, jitter_cms) VALUES (?, ?, 1, 500, 50)",
         ((now - 50_000 + i // 10, i % 10 + 1) for i in range(500_000)))
     con.execute(
-        "INSERT INTO rollup_1m (minute, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n) SELECT CAST(ts / 60 AS INTEGER), target, COUNT(*), SUM(ok), SUM(latency_ms), "
-        "MIN(latency_ms), MAX(latency_ms), SUM(jitter_ms), COUNT(jitter_ms) FROM samples GROUP BY 1, 2")
+        "INSERT INTO rollup_1m (minute, target, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n) SELECT "
+        "CAST(ts / 60 AS INTEGER), target, COUNT(*), SUM(ok), SUM(latency_cms) / 100.0, MIN(latency_cms) / 100.0, "
+        "MAX(latency_cms) / 100.0, SUM(jitter_cms) / 100.0, COUNT(jitter_cms) FROM samples GROUP BY 1, 2")
     con.commit()
 
     queries = {

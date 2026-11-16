@@ -1,6 +1,6 @@
 # The path editor
 
-The probe path is the list of addresses Pengumon probes every second (by ping, or for a hop that ignores ping by a TCP connection or an HTTP request), in the order a packet meets them: your router, the
+The probe path is the list of addresses Pengumon probes every probe round (every second by default; by ping, or for a hop that ignores ping by a TCP connection or an HTTP request), in the order a packet meets them: your router, the
 modem, your provider's routers, the internet. It is stored in the database and edited in the dashboard, not in
 `config.yaml`. Open it with **Edit** in the header of **Path health** (or with **Review** on the first-run banner or the
 "Your path changed" notice).

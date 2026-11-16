@@ -163,14 +163,15 @@ const costText = (b, per) => {
 
 // The sentences under the interval rows, as an array of lines. `cost` is the server's per-round figures (GET /api/settings
 // probing: hops, hop_bytes_per_round, dns_lookup_bytes, sample_bytes); `dnsLookups` the DNS lookups that are on; `rules`
-// {outage, latency} the probes in a row the two incident rules need. Mirrors pengumon.probe_interval.
+// {outage, latency, latencyAfter} the probes in a row the two incident rules need and the seconds a latency spell must last (a shorter one
+// is a spike, not an incident: the incident opens after the larger of the two). Mirrors pengumon.probe_interval.
 export function intervalLines(interval, dnsInterval, dnsLookups, cost, rules) {
   const base = Number(interval);
   if (!(base > 0)) return [];
   const dns = dnsInterval ? Number(dnsInterval) : base;
   const lines = [];
   if (rules) {
-    lines.push(`At ${secondsText(base)}: outages open after about ${secondsText(rules.outage * base)}, latency incidents after about ${secondsText(rules.latency * base)}. Drops shorter than about ${secondsText(base)} may go unseen.`);
+    lines.push(`At ${secondsText(base)}: outages open after about ${secondsText(rules.outage * base)}, latency incidents after about ${secondsText(Math.max(rules.latency * base, rules.latencyAfter || 0))}. Drops shorter than about ${secondsText(base)} may go unseen.`);
   }
   if (cost) {
     const monthly = (cost.hop_bytes_per_round / base + (dnsLookups * cost.dns_lookup_bytes) / dns) * 86400 * 30;

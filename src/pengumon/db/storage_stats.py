@@ -3,8 +3,9 @@ Retention turns into its table of "now" and "when full".
 
 Every table belongs to one kind (KIND_OF_TABLE; a test fails for a table that has none). The bytes of a kind are the
 bytes of its tables and their indexes, from SQLite's `dbstat` virtual table; where a build has no `dbstat` (it is a
-compile option), a table is estimated as its rows times the average row size of a sample of its rows, and the answer
-says `estimate: true`. `per_day` is what a day of the kind's data costs: its rows of the last 7 days (or of what is
+compile option), a table and its indexes are estimated as their rows times the average stored cell of a sample of its
+rows (each value at the size SQLite's record format gives it: a 2-byte integer is 2 bytes, not its digits) over the
+usual page fill, and the answer says `estimate: true`. `per_day` is what a day of the kind's data costs: its rows of the last 7 days (or of what is
 stored, if less) at the table's average bytes per row.
 
 `dbstat` reads every page of the database, so the answer is kept for a minute (CACHE_SECONDS).
@@ -23,7 +24,9 @@ DAY = 86400
 CACHE_SECONDS = 60
 MEASURE_DAYS = 7  # per_day is measured over the rows of this many days
 SAMPLE_ROWS = 500  # the estimate without dbstat looks at this many rows of a table
-ROW_OVERHEAD = 12  # bytes per row the estimate adds to the column lengths (cell header, rowid, page slack)
+# the estimate's share of a page that holds cells (the rest is slack after splits): on a live database (schema v25,
+# 330 MB) 0.9 put the total within 1% of dbstat, the probe samples within 3% and every large table within 15%
+PAGE_FILL = 0.9
 FIXED_TIERED_DAYS = 30  # a kind with a quarter-hour tier keeps at least this much (the setting's minimum)
 STEADY_STATE_SLACK = 0.1 * DAY  # a table pruned hourly is a little longer than its retention
 
@@ -49,7 +52,7 @@ KIND_OF_TABLE: Dict[str, str] = {
     "rollup_15m": "latency", "device_rollup_15m": "router", "mesh_rollup_15m": "mesh", "line_samples": "line",
     "traffic_hourly": "traffic", "traffic_apps": "traffic", "speed_tests": "speedtest", "device_events": "speedtest",
     "incidents": "incident", "incident_evidence": "incident", "incident_evidence_probes": "incident",
-    "incident_evidence_readings": "incident",
+    "incident_evidence_readings": "incident", "latency_spikes": "incident",
     # everything else: the probe path, the settings store, names, bookkeeping
     "targets": "other", "custom_targets": "other", "path_targets": "other", "path_versions": "other",
     "path_events": "other", "meta": "other", "settings_values": "other", "settings_items": "other",
@@ -63,6 +66,7 @@ TIME_COLUMN: Dict[str, Tuple[str, int]] = {
     "mesh_samples": ("ts", 1), "mesh_rollup_15m": ("quarter", 900), "line_samples": ("ts", 1),
     "traffic_hourly": ("hour", 1), "traffic_apps": ("window_end", 1), "traffic_app_hours": ("window_end", 1),
     "speed_tests": ("ts", 1), "device_events": ("ts", 1), "incidents": ("start_time", 1),
+    "latency_spikes": ("start_time", 1),
 }
 
 # how long each full-detail table is kept (repository attribute; None: a constant number of days)
@@ -132,9 +136,27 @@ async def _dbstat_sizes(db) -> Tuple[Dict[str, int], Dict[str, int]]:
     return sizes, rows
 
 
+def _value_bytes(column: str) -> str:
+    """SQL: the bytes a value takes in SQLite's record format (body plus its serial type in the header): NULL and the
+    integers 0 and 1 none, other integers 1-8 by magnitude, a REAL 8, text and blobs their length."""
+    c = f'"{column}"'
+    return (f"(1 + CASE typeof({c}) WHEN 'null' THEN 0 WHEN 'real' THEN 8 WHEN 'integer' THEN CASE "
+            f"WHEN {c} BETWEEN 0 AND 1 THEN 0 WHEN {c} BETWEEN -128 AND 127 THEN 1 WHEN {c} BETWEEN -32768 AND 32767 THEN 2 "
+            f"WHEN {c} BETWEEN -8388608 AND 8388607 THEN 3 WHEN {c} BETWEEN -2147483648 AND 2147483647 THEN 4 "
+            f"WHEN {c} BETWEEN -140737488355328 AND 140737488355327 THEN 6 ELSE 8 END "
+            f"ELSE LENGTH(CAST({c} AS BLOB)) + (LENGTH(CAST({c} AS BLOB)) > 57) END)")
+
+
+def _varint_bytes(expr: str) -> str:
+    """SQL: the bytes of a non-negative varint (a cell's payload size, a rowid)."""
+    return (f"(CASE WHEN {expr} < 128 THEN 1 WHEN {expr} < 16384 THEN 2 WHEN {expr} < 2097152 THEN 3 "
+            f"WHEN {expr} < 268435456 THEN 4 ELSE 5 END)")
+
+
 async def _estimate_table(db, table: str) -> Tuple[int, int]:
-    """(estimated bytes, rows) of a table without dbstat: rows x the average row of a sample (the column lengths
-    plus a fixed overhead per row); indexes are not counted."""
+    """(estimated bytes, rows) of a table and its indexes without dbstat: rows x the average cell of a sample of rows
+    (record header and values at their stored size, payload size, rowid, cell pointer) over PAGE_FILL. A WITHOUT ROWID
+    table's primary key is the table itself, not another index."""
     async with db.execute(f'SELECT COUNT(*) FROM "{table}"') as cursor:
         rows = (await cursor.fetchone())[0]
     if not rows:
@@ -143,10 +165,25 @@ async def _estimate_table(db, table: str) -> Tuple[int, int]:
         columns = [r[1] for r in await cursor.fetchall()]
     if not columns:
         return 0, rows
-    width = " + ".join(f'COALESCE(LENGTH(CAST("{c}" AS BLOB)), 1)' for c in columns)
-    async with db.execute(f'SELECT AVG({width}) FROM (SELECT * FROM "{table}" LIMIT {SAMPLE_ROWS})') as cursor:
+    async with db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)) as cursor:
+        found = await cursor.fetchone()
+    without_rowid = bool(found and found[0] and "WITHOUT ROWID" in found[0].upper())
+    record = "(1 + " + " + ".join(_value_bytes(c) for c in columns) + ")"
+    cell = f"({_varint_bytes(record)} + {record} + {'0' if without_rowid else _varint_bytes('rowid')} + 2)"
+    cells = [cell]
+    async with db.execute(f'PRAGMA index_list("{table}")') as cursor:
+        indexes = [(r[1], r[3]) for r in await cursor.fetchall()]
+    for name, origin in indexes:
+        if without_rowid and origin == "pk":
+            continue
+        async with db.execute(f'PRAGMA index_info("{name}")') as cursor:
+            keys = [r[2] for r in await cursor.fetchall() if r[2]]
+        entry = "(1 + " + " + ".join([_value_bytes(k) for k in keys] + ([] if without_rowid else [_value_bytes("rowid")])) + ")"
+        cells.append(f"(1 + {entry} + 2)")
+    picked = "*" if without_rowid else "rowid, *"
+    async with db.execute(f'SELECT AVG({" + ".join(cells)}) FROM (SELECT {picked} FROM "{table}" LIMIT {SAMPLE_ROWS})') as cursor:
         average = (await cursor.fetchone())[0] or 0
-    return int(rows * (average + ROW_OVERHEAD)), rows
+    return int(rows * average / PAGE_FILL), rows
 
 
 async def _time_facts(db, table: str, now: float, rows: int) -> Tuple[Optional[float], int, float]:

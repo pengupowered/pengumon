@@ -134,6 +134,11 @@ export async function createContext({ base, outDir, variant }) {
   page.on("response", (r) => {
     if (r.url().startsWith(base) && r.status() >= 400 && !noise(r.url()) && !(refusalsExpected && r.status() === 401) && !statusExpected.includes(r.status())) problems.push(`HTTP ${r.status()}: ${r.url()}`);
   });
+  // Every request the page sent to the API ("/api/..." with its query), from the last forgetRequests(): the steps that count them.
+  let sent = [];
+  page.on("request", (r) => { if (/\/api\//.test(r.url())) sent.push(r.url().replace(/^.*\/api/, "/api")); });
+  const forgetRequests = () => { sent = []; };
+  const requestsTo = (re) => sent.filter((u) => re.test(u));
   const inflight = new Set(); // the fetch/XHR requests still waiting for an answer (settled() waits for them)
   page.on("request", (r) => { if (/\/api\//.test(r.url())) inflight.add(r); });
   for (const done of ["requestfinished", "requestfailed"]) page.on(done, (r) => inflight.delete(r));
@@ -337,6 +342,12 @@ export async function createContext({ base, outDir, variant }) {
             for (const k of Object.keys(body.values)) if (/^database\.(latency|router|mesh|line|traffic|speedtest|incident)_retention_days$/.test(k)) body.values[k] = r;
             return json(body);
           }
+          if (path === "/api/oldest") { // (the oldest stored time of each kind: nothing older than `days`)
+            const body = await res.json();
+            const every = { line: 21600 }; // (the seed's cable line has a reading every 6 hours: the oldest one left is the first on that grid at or after the cut)
+            for (const k of Object.keys(body)) if (typeof body[k] === "number" && body[k] < cut) body[k] = every[k] ? body[k] + Math.ceil((cut - body[k]) / every[k]) * every[k] : cut;
+            return json(body);
+          }
           if (!/^\/api\/(history$|devices\/[^/]+\/(history|clients\/history|channels\/history|traffic(\/clients\/[^/]+)?)$)/.test(path)) return res;
           const body = await res.json();
           if (Array.isArray(body.rows) && body.fields) { const t = body.fields.indexOf("timestamp"); body.rows = body.rows.filter((x) => x[t < 0 ? 0 : t] >= cut); }
@@ -530,7 +541,7 @@ export async function createContext({ base, outDir, variant }) {
   const ctx = {
     browser, firefox, page, client, base, outDir, variant, bare, problems, dialogs, stats, report,
     LINE, ROUTER, USUAL_PANELS, PHONE, DESKTOP, SHOTS, RANGE_AXIS, labelKind, systemTheme, fs, path,
-    chooseRange, rangeState, settled, chartAxis, noSideways, axisOk, atEveryRange, everyLook, openPanel,
+    chooseRange, rangeState, settled, forgetRequests, requestsTo, chartAxis, noSideways, axisOk, atEveryRange, everyLook, openPanel,
     sleep, frames, layoutSettled, nextMessages, positionSettled, until, text, count, shown, visible, click, clickAt, waitText, waitCount, chartLabels, hasChart, modalOpen, eq, ok, dialogKeys, tabStaysIn,
     panelOrder, layoutMounted, openLayout, pageReady, phone, noSideScroll, setTheme, pickMode, pickLook, flipMode, darkNow, stubFetch, youngData,
     shot, dialogShot, snap, shots, inspect, inspectNamed, canvasSig, inkedPixels, moduleUrl,

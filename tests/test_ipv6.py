@@ -431,7 +431,7 @@ def test_a_host_name_lookup_that_never_answers_is_given_up_on(monkeypatch):
     import threading
     import time
     release = threading.Event()
-    monkeypatch.setattr(netinfo.socket, "getaddrinfo", lambda *a, **k: release.wait(30) or [])
+    monkeypatch.setattr(netinfo.socket, "getaddrinfo", lambda *a, **k: (release.wait(30), [])[1])  # (a list once released: the thread ends quietly)
     started = time.monotonic()
     try:
         assert netinfo._hostname_ips(timeout=0.2) == []

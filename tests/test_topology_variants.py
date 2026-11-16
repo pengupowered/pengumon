@@ -142,7 +142,10 @@ async def run_shape(monkeypatch, shape):
         prober.register_dns_target(DnsProbeConfig(id="dns", name="DNS Lookup", domain="example.com"))
         order.append("dns")
 
-    classifier = OutageClassifier(config=ClassifierConfig(), repository=FakeRepository(log))
+    # latency incidents open at once (latency_incident_after_seconds 0), as when the golden was recorded: the wait is
+    # pinned by the classifier characterization's latency_waits scenario
+    classifier = OutageClassifier(config=ClassifierConfig(latency_incident_after_seconds=0),
+                                  repository=FakeRepository(log))
     for name, count, faults in PHASES:
         by_target = {}
         for group, spec in faults.items():

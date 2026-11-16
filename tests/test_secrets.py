@@ -159,9 +159,9 @@ def test_secret_files_are_opened_without_newline_translation(tmp_path, monkeypat
     real_open = os.open
     seen = {}
 
-    def recording_open(path, flags, *args):
+    def recording_open(path, flags, *args, **kwargs):  # (dir_fd passes through: pytest removes tmp_path while it is in place)
         seen[Path(path).name] = bool(flags & o_binary)
-        return real_open(path, flags & ~o_binary, *args)
+        return real_open(path, flags & ~o_binary, *args, **kwargs)
 
     monkeypatch.setattr(secrets_module.os, "O_BINARY", o_binary, raising=False)
     monkeypatch.setattr(secrets_module.os, "open", recording_open)

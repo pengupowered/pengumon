@@ -59,3 +59,8 @@
   :root[data-look="amber-crt"] [data-panel="incidents"] .ac-ln { grid-template-columns: auto 1fr auto; grid-template-areas: "st st dur" "what what what" "when cause cause"; }
   :root[data-look="amber-crt"] [data-panel="incidents"] .ac-stt { grid-area: st; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-what, :root[data-look="amber-crt"] [data-panel="incidents"] .ac-wcell { grid-area: what; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-dur { grid-area: dur; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-when { grid-area: when; } :root[data-look="amber-crt"] [data-panel="incidents"] .ac-cause { grid-area: cause; }
 }
+
+/* the latency spikes: the standard block as a dashed terminal frame, square bars */
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-spikes { border: 1px dashed var(--line-strong); border-radius: var(--r-xs); background: none; margin: 0; font-family: var(--mono); }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-spikes .sp-day i { border-radius: 0; opacity: 1; }
+:root[data-look="amber-crt"] [data-panel="incidents"] .ac-spikes[hidden] { display: none; }

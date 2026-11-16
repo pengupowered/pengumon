@@ -24,7 +24,15 @@ function days(box, vm) {
   const l = vm.lost;
   kit.html(box, `<h3 class="rb-t">${esc(l.title)}</h3>`
     + `<div class="days" style="${esc(l.style)}" role="img" aria-label="${esc(l.aria)}">${l.bars.map((b) => `<div class="day${b.nodata ? ' nodata' : ''}" data-item="day-${esc(b.id)}" data-v="tip" aria-label="${esc(b.tip)}" data-tip="${esc(b.tip)}"><i style="height:${b.height.toFixed(0)}%"></i><span>${esc(b.letter)}</span></div>`).join('')}</div>`
-    + `<p class="rep-note" data-v="worstDay">${esc(l.note)}</p>`);
+    + `<p class="rep-note" data-v="worstDay">${esc(l.note)}</p>`
+    + (vm.spikes ? spikesRow(vm.spikes) : ''));
+}
+
+// The row of latency spikes under the bars of what was lost: a bar per day (or week) in the same cells, and the average.
+function spikesRow(s) {
+  return `<div class="rep-sp"><span class="rep-sp-t" data-v="spikesTitle">${esc(s.title)}</span>`
+    + `<div class="sp-days" style="${esc(s.style)}" role="img" aria-label="${esc(s.aria)}">${s.bars.map((b) => `<div class="sp-day${b.partial ? ' partial' : ''}${b.count ? '' : ' none'}" data-item="spike-${esc(b.id)}" data-v="tip" aria-label="${esc(b.tip)}" data-tip="${esc(b.tip)}"><i style="height:${b.height.toFixed(0)}%"></i></div>`).join('')}</div>`
+    + `<span class="rep-sp-avg num" data-v="spikesAvg">${esc(s.avg)}</span></div>`;
 }
 
 // The downtime by cause.
@@ -43,7 +51,7 @@ function hops(body, vm) {
     || `<tr><td colspan="3" class="muted" data-v="none">${esc(h.empty)}</td></tr>`);
 }
 
-export const parts = { hero, days, causes, hops };
+export const parts = { hero, days, causes, hops, spikesRow };
 
 export default {
   parts,

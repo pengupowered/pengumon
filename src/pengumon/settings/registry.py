@@ -226,8 +226,13 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "How many probes in a row must be lost before an incident opens (one probe a round).",
            "When incidents start and end", **_LOST_ROUNDS),
         _s("classifier.consecutive_failures_for_latency_incident", "Latency incident starts after",
-           "How many probes in a row a latency or jitter spike alone must last before an incident opens.",
+           "How many probes in a row a latency or jitter spike alone must last to count as a problem; it opens an "
+           "incident once it also lasts as long as \"Latency becomes an incident after\".",
            "When incidents start and end", **_SLOW_ROUNDS),
+        _s("classifier.latency_incident_after_seconds", "Latency becomes an incident after",
+           "A latency or jitter problem with no loss that ends sooner is counted as a latency spike (per day, never "
+           "alerted), not an incident; one that lasts longer becomes an incident from its start. 0: an incident at "
+           "once.", "When incidents start and end", **_MINUTES),
         _s("classifier.consecutive_successes_for_recovery", "Recovery confirmed after",
            "How many healthy probes in a row end an incident. Applies to loss and latency incidents.",
            "When incidents start and end", **_HEALTHY_ROUNDS),
@@ -382,6 +387,12 @@ SETTINGS: Tuple[Setting, ...] = tuple(
         _s("mcp.enabled", "Allow AI assistants to read (MCP)",
            "Opens /mcp, a read-only endpoint an AI assistant can ask about the network (status, incidents, reports). "
            "It needs the dashboard password or, better, a read token (Settings > Sign-in), and changes nothing.", "AI assistants (MCP)"),
+        _s("mcp.real_names", "Answers use real names and addresses",
+           "On: the AI assistant sees your devices and hops by the names, host names and home addresses the dashboard "
+           "shows you, so its answers can name them. Off: they are replaced by role words (\"the router\", \"a game "
+           "console (Sony)\") and home addresses are hidden. Connected devices' names follow \"Show connected "
+           "clients' names and addresses\" either way. Passwords and secrets are never shown. What the assistant sees "
+           "goes to the company that runs it.", "AI assistants (MCP)"),
     ])
     + _entries("privacy", [
         _s("privacy.client_details", "Show connected clients' names and addresses",
@@ -512,8 +523,9 @@ SETTINGS: Tuple[Setting, ...] = tuple(
            "Full detail (the same for every kind of data)", unit="days"),
         _s("database.rollup_retention_days", "Keep per-minute history for",
            "Per-minute detail of the probes and the router, which every chart of up to 30 days draws. At least 30 "
-           "days; raising it keeps minute detail longer, at about 1 MB a day. Older ones are deleted at the next "
-           "hourly cleanup.", "Full detail (the same for every kind of data)", unit="days"),
+           "days; raising it keeps minute detail longer, at about 0.1 MB a day per probed hop (Settings > Retention "
+           "shows what yours costs). Older ones are deleted at the next hourly cleanup.",
+           "Full detail (the same for every kind of data)", unit="days"),
         _s("server.log_level", "Log level", "How much Pengumon writes to its log.", "Logging", env="PENGUMON_LOG_LEVEL",
            choice_labels={"debug": "Everything (for debugging)", "info": "Normal", "warning": "Warnings and errors",
                           "error": "Errors only", "critical": "Critical errors only"}),

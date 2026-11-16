@@ -284,7 +284,7 @@ async function load() {
     };
     // All starts at the oldest stored row when that is younger than the retention (js/ranges.js)
     const { answer: body, since } = await loadFromOldest({
-      all, start: end - rangeSeconds, end, ask, current: () => seq === requestSeq,
+      all, kind: 'router', start: end - rangeSeconds, end, ask, current: () => seq === requestSeq,
       widthOf: (b) => b.bucket_seconds, oldest: (b) => (b.rows.length ? b.rows[0][0] : null)
     });
     if (seq !== requestSeq) return; // a newer range was chosen meanwhile

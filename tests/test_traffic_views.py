@@ -37,6 +37,13 @@ from pengumon.reports.dossier import build_dossier
 from asuswrt_fake import HOUR, T0, UPTIME_S, FakeAsus
 from device_helpers import Clock, build_router
 
+
+@pytest.fixture(autouse=True)
+def server_zone_is_utc(monkeypatch):
+    """A configuration without a zone takes the server's (TZ, settings.general.server_timezone), and these tests' days are
+    UTC days: with TZ set (scripts/test-clock.sh runs the suite in New York and Berlin) the route's days moved to that zone."""
+    monkeypatch.delenv("TZ", raising=False)
+
 GAME, LAPTOP, PHONE = "02:00:00:00:00:03", "02:00:00:00:00:01", "02:00:00:00:00:02"
 
 
@@ -367,7 +374,8 @@ async def test_the_ai_pack_gives_the_busy_hours_and_the_router_events_without_na
 # --- MCP and retention ----------------------------------------------------------------------------------------------
 
 async def test_the_mcp_tool_ranks_the_devices_by_kind_never_by_name_or_mac(app_state, repo):
-    await api_state(app_state, repo, privacy="full")  # even when the dashboard shows names: the tools never do
+    await api_state(app_state, repo, privacy="full")  # even when the dashboard shows names: not with real names off
+    app_state.config.mcp.real_names = False  # (on: tests/test_mcp_real_names.py)
     await seed_traffic(repo, time.time())
     tool = next(t for t in TOOLS if t.name == "traffic")
     out = await tool.handler(app_state, {"hours": 24, "top": 5})
@@ -698,10 +706,16 @@ async def test_a_device_over_7_and_30_days_has_the_apps_hint_and_bars_of_the_win
 async def test_the_device_route_takes_days(app_state, repo):
     await api_state(app_state, repo, privacy="full")
     await seed_days(repo, now=time.time())
+    hour_before = datetime.fromtimestamp(time.time(), timezone.utc).hour
     async with api() as ac:
         month = await ac.get(f"/api/devices/router/traffic/clients/{GAME}", params={"days": 30})
         bad = await ac.get(f"/api/devices/router/traffic/clients/{GAME}", params={"days": 0})
-    assert month.status_code == 200 and month.json()["daily"][0]["partial"] and month.json()["range_days"] == 30
+    hour_after = datetime.fromtimestamp(time.time(), timezone.utc).hour
+    assert month.status_code == 200 and month.json()["range_days"] == 30
+    # the range rolls from the current hour, so its first day holds only the hours from there on: it is cut (`partial`)
+    # at every hour of the day but the first (a run started just after midnight UTC had no cut day, and failed)
+    first = month.json()["daily"][0]
+    assert first["hours"] in (24 - hour_before, 24 - hour_after) and first["partial"] == (first["hours"] < 24)
     assert month.json()["hours"] == 720
     assert bad.status_code == 422
 

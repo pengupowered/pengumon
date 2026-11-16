@@ -12,13 +12,13 @@ first and last EVIDENCE_RAW_EDGE_SECONDS and 10-second buckets between (the hop 
 it covers lies inside the raw edges, and a bucket holds the sums the hop table needs). When no raw probe is stored any
 more, the per-minute rollups of the window (resolution "minute"); when there is nothing, a row that says "none".
 
-The functions here take a connection inside a transaction: the migration (v021) and the repository's writer use the same
+The functions here take a connection inside a transaction: the migration (v022) and the repository's writer use the same
 code. Plain SQL, no repository state."""
 
 import json
 import math
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import aiosqlite
 
@@ -46,18 +46,32 @@ def settle_seconds(reach: float = inspector.SNAPSHOT_REACH_SECONDS) -> float:
 
 # --- writing -------------------------------------------------------------------------------------------------------
 
+# The evidence keeps its own format (latency and jitter in milliseconds as REAL, as the inspector reads them): it is
+# small (the probes of a few incidents). The copy converts samples' hundredths of a millisecond.
 _COPY_RAW = (
     "INSERT INTO incident_evidence_probes (incident_id, target, ts, width, ok, latency_ms, jitter_ms, error) "
-    "SELECT ?, target, ts, 0, ok, latency_ms, jitter_ms, error FROM samples WHERE ts >= ? AND ts {op} ?"
+    "SELECT ?, target, ts, 0, ok, latency_cms / 100.0, jitter_cms / 100.0, error FROM samples "
+    "WHERE ts >= ? AND ts {op} ?"
 )
 _COPY_SLOTS = """
 INSERT INTO incident_evidence_probes (incident_id, target, ts, width, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n)
 SELECT ?, target, CAST(ts / 10 AS INTEGER) * 10, 10, COUNT(*), SUM(ok),
-       SUM(CASE WHEN ok = 1 THEN latency_ms END), MIN(CASE WHEN ok = 1 THEN latency_ms END),
-       MAX(CASE WHEN ok = 1 THEN latency_ms END), SUM(jitter_ms), COUNT(jitter_ms)
+       SUM(CASE WHEN ok = 1 THEN latency_cms / 100.0 END), MIN(CASE WHEN ok = 1 THEN latency_cms / 100.0 END),
+       MAX(CASE WHEN ok = 1 THEN latency_cms / 100.0 END), SUM(jitter_cms / 100.0), COUNT(jitter_cms)
 FROM samples WHERE ts >= ? AND ts < ?
 GROUP BY target, CAST(ts / 10 AS INTEGER)
 """
+
+
+class ProbeCopy(NamedTuple):
+    """How the probes of a window are copied out of `samples`: the raw copy (`{op}`: "<" or "<=" for the upper bound)
+    and the 10-second buckets, both with the parameters (incident id, from, to). The v22 migration passes the SQL of
+    the table it met (db/legacy_samples.py)."""
+    raw: str
+    slots: str
+
+
+PROBE_COPY = ProbeCopy(_COPY_RAW, _COPY_SLOTS)
 _COPY_MINUTES = """
 INSERT INTO incident_evidence_probes (incident_id, target, ts, width, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n)
 SELECT ?, target, minute * 60, 60, n, ok, lat_sum, lat_min, lat_max, jit_sum, jit_n
@@ -65,7 +79,8 @@ FROM rollup_1m WHERE minute >= ? AND minute <= ?
 """
 
 
-async def _copy_probes(db: aiosqlite.Connection, incident_id: int, window_start: float, window_end: float) -> str:
+async def _copy_probes(db: aiosqlite.Connection, incident_id: int, window_start: float, window_end: float,
+                       sql: ProbeCopy = PROBE_COPY) -> str:
     """Copies the probes of the window; returns the resolution they give ("none": nothing was stored)."""
     copied = 0
     mixed = False
@@ -75,12 +90,12 @@ async def _copy_probes(db: aiosqlite.Connection, incident_id: int, window_start:
         mid_hi = math.floor((window_end - EVIDENCE_RAW_EDGE_SECONDS) / 10) * 10
         mixed = mid_lo < mid_hi
     if mixed:
-        for sql, params in ((_COPY_RAW.format(op="<"), (window_start, mid_lo)), (_COPY_SLOTS, (mid_lo, mid_hi)),
-                            (_COPY_RAW.format(op="<="), (mid_hi, window_end))):
-            cursor = await db.execute(sql, (incident_id, *params))
+        for statement, lo, hi in ((sql.raw.format(op="<"), window_start, mid_lo), (sql.slots, mid_lo, mid_hi),
+                                  (sql.raw.format(op="<="), mid_hi, window_end)):
+            cursor = await db.execute(statement, (incident_id, lo, hi))
             copied += cursor.rowcount
     else:
-        cursor = await db.execute(_COPY_RAW.format(op="<="), (incident_id, window_start, window_end))
+        cursor = await db.execute(sql.raw.format(op="<="), (incident_id, window_start, window_end))
         copied = cursor.rowcount
     if copied > 0:
         return "mixed" if mixed else "raw"
@@ -126,7 +141,8 @@ async def _copy_readings(db: aiosqlite.Connection, incident_id: int, window_star
 
 async def store_evidence(db: aiosqlite.Connection, incident_id: int, start_time: float, end_time: Optional[float],
                          duration_seconds: Optional[float], resolved: bool, *,
-                         reach: float = inspector.SNAPSHOT_REACH_SECONDS) -> Optional[str]:
+                         reach: float = inspector.SNAPSHOT_REACH_SECONDS,
+                         probe_copy: ProbeCopy = PROBE_COPY) -> Optional[str]:
     """Writes the evidence of one incident, inside the caller's transaction, unless it has some already. Returns the
     resolution written, None when there was a row. An incident with no probe left gets only its row (readings
     of a stretch that has no probes are not evidence of anything the inspector would show)."""
@@ -134,7 +150,7 @@ async def store_evidence(db: aiosqlite.Connection, incident_id: int, start_time:
         if await cursor.fetchone() is not None:
             return None
     win = inspector.inspection_window(start_time, end_time, duration_seconds, resolved)
-    resolution = await _copy_probes(db, incident_id, win.window_start, win.window_end)
+    resolution = await _copy_probes(db, incident_id, win.window_start, win.window_end, probe_copy)
     if resolution != "none":
         await _copy_readings(db, incident_id, win.window_start, win.window_end, reach)
     await db.execute(

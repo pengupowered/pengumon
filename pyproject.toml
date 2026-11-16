@@ -63,4 +63,8 @@ asyncio_mode = "auto"
 # letting it loop (and grow) until someone notices. The slowest test takes about 9 s; scripts/test-ui.sh allows 300.
 faulthandler_timeout = 60
 faulthandler_exit_on_timeout = true
+# A passed test's tmp_path is removed when it ends: the unit tests run in a container whose /tmp is a tmpfs counted in
+# its memory cap (scripts/test.sh), and keeping every test's databases to the end of the run (705 MB by 0.29) ended
+# in out-of-memory kills of xdist workers. A failed test's folder is kept to look at.
+tmp_path_retention_policy = "failed"
 

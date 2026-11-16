@@ -37,7 +37,8 @@ class Rates:
 
 
 def make_classifier(rates=None, repository=None, line=LINE, **cfg):
-    config = ClassifierConfig(consecutive_failures_for_incident=3, **cfg)
+    # these tests read the incident a latency spell opens: at once (latency_incident_after_seconds 0), as before 0.29
+    config = ClassifierConfig(consecutive_failures_for_incident=3, **{"latency_incident_after_seconds": 0, **cfg})
     load = LineLoad(line, rates_source=rates) if rates is not None else None
     return OutageClassifier(config=config, repository=repository, load=load)
 

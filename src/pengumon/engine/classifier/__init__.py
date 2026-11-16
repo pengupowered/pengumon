@@ -106,7 +106,9 @@ class ClassifierCore:
             # A DNS verdict read from the last lookups' window in a round where none ran: the rule counts lookups, not
             # rounds, so the tracker holds still (it neither builds toward an incident nor counts a recovery).
             return StepResult(verdict, is_loss_or_outage, reading, TrackerOutcome())
-        outcome = await self.tracker.observe(verdict, is_loss_or_outage=is_loss_or_outage, reading=reading, ts=ts)
+        peak = m.peak_latency(verdict.kind) if verdict.is_fault else None  # what a latency spike records
+        outcome = await self.tracker.observe(verdict, is_loss_or_outage=is_loss_or_outage, reading=reading, ts=ts,
+                                             peak_ms=peak)
         return StepResult(verdict, is_loss_or_outage, reading, outcome)
 
 
@@ -189,11 +191,13 @@ class OutageClassifier:
     async def not_probing(self, reason: str, fix: Optional[str]) -> SystemDiagnosis:
         """The diagnosis while this host cannot send pings (Prober.probing_problem): nothing was measured, so no
         verdict about the network and no new incident. An incident that is open ends at the last round measured, with a
-        note that measuring stopped; the callbacks hear nothing (it is not a recovery, so no "resolved" goes out). Says
+        note that measuring stopped; the callbacks hear nothing (it is not a recovery, so no "resolved" goes out). A
+        latency episode still waiting to become an incident ends as a latency spike at its last faulty round. Says
         why, and the one step that fixes it."""
-        if self.tracker.active_incident is not None:
+        if self.tracker.active_incident is not None or self.tracker.pending is not None:
             ended = await self.tracker.stop_measuring(self._last_measured_ts or time.time())
-            logger.warning(f"Network incident #{ended.id} ended: measuring stopped ({reason}); not a recovery")
+            if ended is not None:
+                logger.warning(f"Network incident #{ended.id} ended: measuring stopped ({reason}); not a recovery")
         text = ("Pengumon is running but cannot send pings from this computer, so it is measuring nothing and reports no "
                 f"outage. Why: {reason}.")
         if fix:
@@ -232,6 +236,7 @@ class OutageClassifier:
             logger.info(
                 f"✅ Network Incident Resolved: {outcome.resolved.title} (Duration: {outcome.resolved.duration_seconds}s)")
             self._notify(self.on_incident_resolved, outcome.resolved)
+        # outcome.spike (a brief latency-only episode, stored as a latency spike) is announced to no one
 
         diagnosis = SystemDiagnosis(
             status=verdict.status,

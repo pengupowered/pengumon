@@ -15,6 +15,7 @@ const INTERVAL = 'prober.interval_seconds';
 const DNS_INTERVAL = 'prober.dns_interval_seconds';
 const OUTAGE_PROBES = 'classifier.consecutive_failures_for_incident';
 const LATENCY_PROBES = 'classifier.consecutive_failures_for_latency_incident';
+const LATENCY_AFTER = 'classifier.latency_incident_after_seconds';
 const LAYOUT_KEYS = ['dashboard.order', 'dashboard.hidden', 'dashboard.colors'];
 
 const inputId = (section, key) => `set-in-${section}-${key.replace(/[^a-z0-9]+/gi, '-')}`;
@@ -289,7 +290,7 @@ export function speedEstimateRowHtml() {
 // The probe interval's line under its rows: what the rules mean at it, what drops it can miss, and its cost. Follows the draft.
 const dnsLookups = () => listItems('dns_probes').filter((d) => d && d.enabled !== false).length;
 const intervalNow = () => intervalLines(valueOf(INTERVAL), valueOf(DNS_INTERVAL), dnsLookups(), S.server && S.server.probing,
-  { outage: Number(valueOf(OUTAGE_PROBES)), latency: Number(valueOf(LATENCY_PROBES)) });
+  { outage: Number(valueOf(OUTAGE_PROBES)), latency: Number(valueOf(LATENCY_PROBES)), latencyAfter: Number(valueOf(LATENCY_AFTER)) });
 const intervalHtml = () => intervalNow().map((line) => `<span class="set-line">${escapeHtml(line)}</span>`).join('');
 
 export function intervalEstimateRowHtml() {

@@ -8,3 +8,6 @@
 /* an outage: the summary under its title in the mono face, its drops marked by a rule on the left */
 :root[data-look="mission-control"] [data-panel="incidents"] .inc-list .inc-sub { font-family: var(--mono); }
 :root[data-look="mission-control"] [data-panel="incidents"] .inc-list tr.drop-row td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
+/* the latency spikes: square bars, the figure in the mono face */
+:root[data-look="mission-control"] [data-panel="incidents"] .sp-day i { border-radius: 1px 1px 0 0; opacity: 1; }
+:root[data-look="mission-control"] [data-panel="incidents"] .inc-spikes .sp-n { font-family: var(--mono); }

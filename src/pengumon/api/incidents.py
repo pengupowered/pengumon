@@ -1,7 +1,7 @@
 """Incidents: the list, the post-mortem inspection of one, and the evidence dossier for an ISP complaint."""
 
 import asyncio
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -28,24 +28,47 @@ router = APIRouter(prefix="/api")
 dossier_building = asyncio.Lock()
 
 
+# The most incidents one range request answers (about 1.8 KB each in full, a third of that compact); a range with more
+# answers its newest and the caller pages on with `offset`.
+RANGE_MAX = 5000
+
+
 @router.get("/incidents", response_model=List[Incident])
 async def get_incidents(
     state: StateDep,
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0, le=1000, description="Skip this many of the newest (the next page of an earlier answer)"),
+    limit: Optional[int] = Query(None, ge=1, le=RANGE_MAX,
+                                 description=f"Page size: 100 by default; with `since` up to {RANGE_MAX} (default {RANGE_MAX})"),
+    offset: int = Query(0, ge=0, le=RANGE_MAX, description="Skip this many of the newest (the next page of an earlier answer)"),
     include_expected: bool = Query(True, description="Include incidents explained by heavy line load"),
     scope: Literal["network", "service", "all"] = Query(
         "network", description="network: network outages (default); service: host app outages; all: both"),
+    since: Optional[float] = Query(None, ge=0, description="Epoch seconds: every incident that overlaps [since, until] (a range)"),
+    until: Optional[float] = Query(None, ge=0, description="Epoch seconds, with `since`: the end of the range (default now)"),
+    fields: Literal["full", "list"] = Query("full", description="list: leave out path_trace (what the incident list and timeline do not use; "
+                                                              "GET /api/incidents/{id}/inspect has it)"),
 ):
     """Returns historical network outages and incidents. App health incidents (kind service_down) are listed
     only with scope=service or scope=all; GET /api/services shows them per service.
 
     Newest first. `limit` is the page size and `offset` how many newer incidents come before it, so the dashboard loads
-    a first page and the older ones on demand (offset + limit is what the repository reads, and caches, per incident change)."""
+    a first page and the older ones on demand (offset + limit is what the repository reads, and caches, per incident change).
+    With `since` the answer is the range: every incident that overlaps [since, until], up to `limit` (at most 5000; a
+    full page means there may be older ones: ask again with `offset`)."""
     if not state.repository:
         return []
-    rows = await state.repository.get_recent_incidents(limit=offset + limit, include_expected=include_expected, scope=scope)
-    page = rows[offset:offset + limit]
+    if since is None:
+        if until is not None:
+            raise HTTPException(status_code=422, detail="until goes with since")
+        limit = 100 if limit is None else limit
+        if limit > 1000 or offset > 1000:
+            raise HTTPException(status_code=422, detail="without since, limit and offset are at most 1000")
+        rows = await state.repository.get_recent_incidents(limit=offset + limit, include_expected=include_expected, scope=scope)
+        page = rows[offset:offset + limit]
+        if fields == "list":
+            page = [i.model_copy(update={"path_trace": None}) for i in page]
+    else:
+        page = await state.repository.get_incidents_overlapping(
+            since, until, include_expected, scope, RANGE_MAX if limit is None else limit, offset, compact=fields == "list")
     if scope == "service":
         return page
     # outage_id: an outage that straddles the page edge has the same id on both pages (the grouping reads by time)

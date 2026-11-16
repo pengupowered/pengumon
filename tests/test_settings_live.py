@@ -125,6 +125,7 @@ VALUES = {
     "classifier.consecutive_failures_for_latency_incident": (12, classifier(
         "consecutive_failures_for_latency_incident")),
     "classifier.consecutive_successes_for_recovery": (4, classifier("consecutive_successes_for_recovery")),
+    "classifier.latency_incident_after_seconds": (300, classifier("latency_incident_after_seconds")),
     "classifier.local_latency_spike_threshold_ms": (30, classifier("local_latency_spike_threshold_ms")),
     "classifier.gateway_latency_spike_threshold_ms": (40, classifier("gateway_latency_spike_threshold_ms")),
     "classifier.isp_latency_spike_threshold_ms": (120, classifier("isp_latency_spike_threshold_ms")),
@@ -211,6 +212,7 @@ VALUES = {
     "server.log_levels": ("pengumon.devices=debug", devices_level),
     "access.allow_viewers": (True, lambda st: main.security_config.view_without_token),
     "mcp.enabled": (True, cfg("mcp.enabled")),
+    "mcp.real_names": (False, cfg("mcp.real_names")),  # the tools read it on each call (mcp/tools.py real_names)
     # outages are computed from the live config on every read, and the notifier's policy is rebuilt (notify.reconfigure)
     "incidents.group_gap_minutes": (5, lambda st: st.notifier.policy.outage_rules.gap_seconds / 60),
     "incidents.maintenance_start": ("01:00", lambda st: st.notifier.policy.outage_rules.maintenance_start),
@@ -261,7 +263,8 @@ SECRETS = {
 }
 
 
-def test_every_registry_key_and_list_has_an_observer():
+def test_every_registry_key_and_list_has_an_observer(monkeypatch):
+    monkeypatch.delenv("TZ", raising=False)  # the time zone's default is the server's: a run with TZ=Europe/Berlin would equal the test's value
     assert set(VALUES) == set(registry.BY_KEY)
     assert set(LISTS) == set(registry.LISTS)
     for key, (value, _) in VALUES.items():

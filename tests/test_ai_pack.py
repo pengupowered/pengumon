@@ -15,6 +15,7 @@ from golden_files import check_golden
 from pengumon.config import AppConfig
 from pengumon.db.repository import DatabaseRepository
 from pengumon.db.samples import DeviceSample, MeshCount
+from pengumon.incidents.spikes import LatencySpike
 from pengumon.lines import docsis
 from pengumon.lines.docsis_model import DocsisChannel
 from pengumon.reports import ai_pack
@@ -58,15 +59,23 @@ async def seed_setup_a(repo, config, end: float) -> None:
     at 0 clients, a settings save 5 minutes before it and another 20 minutes after it (which does not count for it);
     an incident at ISP hop 1 only, 20 minutes after a save (stale: it does not count) and just after a reading with a
     burst (which, read before it, does not count for it) and with a smaller count in the reading after it (which
-    does); a busy-line incident (expected). At the last modem reading a downstream channel's SNR and an upstream
-    channel's power sit at their healthy limits, the SNR lower earlier in the day."""
+    does); a busy-line incident (expected); four latency spikes, one expected. At the last modem reading a downstream
+    channel's SNR and an upstream channel's power sit at their healthy limits, the SNR lower earlier in the day."""
     ids = await seed(repo, config, end)
     line_at, isp_at, busy_at = end - 3 * HOUR, end - 6 * HOUR, end - 9 * HOUR
     await add_incident(repo, config, ids, line_at, 30, "line")
     await add_incident(repo, config, ids, isp_at, 20, "isp1", carried=False, kind="isp_loss",
                        cause_code="internet_backbone_transit_loss")
+    # (a latency incident this short is recorded with latency_incident_after_seconds 0)
     await add_incident(repo, config, ids, busy_at, 0, "net1", carried=False, kind="busy_latency", expected=True,
                        cause_code="load_induced_latency")
+    # brief latency spikes (0.29): an expected one, left out of the counts, and three counted ones
+    for at, kind, stage, expected in ((busy_at + 600, "busy_latency", "load", True),
+                                      (end - 20 * HOUR, "upstream_latency", "isp", False),
+                                      (end - 2 * HOUR, "upstream_latency", "isp", False),
+                                      (end - HOUR, "local_latency", "router", False)):
+        await repo.create_latency_spike(LatencySpike(start_time=at, end_time=at + 40, kind=kind, stage=stage,
+                                                     expected=expected, peak_ms=180.0))
     await repo.initialize_settings(SettingsDocument(), "import", [])
     await _at(isp_at - 1200, lambda: repo.save_settings(1, {"classifier.busy_load_pct": 60}, {}, "ui",
                                                          lambda old, new: "busy level"))

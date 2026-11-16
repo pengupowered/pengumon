@@ -71,6 +71,12 @@ def incident_row(cause="unknown_outage", duration=60.0, expected=False, load=Non
             "expected": 1 if expected else 0, "kind": KIND_OF.get(cause)}
 
 
+def spike_row(ago, stage="isp", kind="upstream_latency", expected=False, seconds=30.0):
+    """A latency spike that started `ago` seconds before NOW."""
+    return {"id": 1, "start_time": NOW - ago, "end_time": NOW - ago + seconds, "kind": kind, "stage": stage,
+            "expected": expected, "peak_ms": 180.0}
+
+
 def ch(i, direction="downstream", power=1.0, snr=38.0, unc=0, freq=600.0, mod="QAM256", cor=100, recent=0):
     return DocsisChannel(channel_id=i, direction=direction, frequency_mhz=freq, power_dbmv=power, snr_db=snr,
                          modulation=mod, correcteds=cor, uncorrectables=unc, uncorrectables_recent=recent)
@@ -85,10 +91,11 @@ class FakeRepository:
     """The repository methods build_dossier and build_report call, and the line history's (the modem's stored
     readings, pengumon.lines.docsis.DocsisHistory), returning fixed data: one object, so `calls` keeps their order."""
 
-    def __init__(self, incidents=(), hop_stats=(), snapshot=None, window_snaps=(), daily=(), hourly=()):
+    def __init__(self, incidents=(), hop_stats=(), snapshot=None, window_snaps=(), daily=(), hourly=(), spikes=()):
         self.incidents, self.hop_stats, self.snapshot = list(incidents), list(hop_stats), snapshot
         self.window_snaps = list(window_snaps)
         self.daily, self.hourly = list(daily), list(hourly)
+        self.spikes = list(spikes)
         self.calls: List[list] = []
 
     async def get_incidents_since(self, start_time):
@@ -106,6 +113,10 @@ class FakeRepository:
     async def get_docsis_snapshots_in_range(self, start_time, end_time, padding_seconds=120.0):
         self.calls.append(["get_docsis_snapshots_in_range", start_time, end_time, padding_seconds])
         return list(self.window_snaps)
+
+    async def latency_spikes_between(self, start_time, end_time):
+        # not in `calls`: the recorded goldens predate the latency spikes (0.29)
+        return [dict(r) for r in self.spikes if start_time <= r["start_time"] <= end_time]
 
     async def get_speed_tests(self, start_time, end_time, limit=100):
         return []  # none here, and not in `calls`: the recorded golden predates the speed section (test_dossier_render)
@@ -156,9 +167,19 @@ def quiet_week():
 def excluded_and_under_load():
     rows = [incident_row("access_line_drop", 120.0, load=75.0), incident_row("local_wifi_mesh_drop", None, load=70.0),
             incident_row("access_line_drop", 30.5, load=None), incident_row("dns_resolver_failure", 600.0, load=12.0),
-            incident_row("load_induced_latency", 900.0, expected=True, load=95.0),
-            incident_row("load_induced_latency", 15.0, expected=True)]
-    return cfg(busy=70.0), FakeRepository(incidents=rows, hop_stats=hops()), 24
+            incident_row("load_induced_latency", 900.0, expected=True, load=95.0)]
+    # (0.29: the 15-second busy-line latency incident recorded here is an expected latency spike now)
+    spikes = [spike_row(3600, "load", "busy_latency", expected=True, seconds=15.0)]
+    return cfg(busy=70.0), FakeRepository(incidents=rows, hop_stats=hops(), spikes=spikes), 24
+
+
+@scenario
+def latency_spikes_by_stage_and_day():
+    """Brief latency spikes (0.29) over two local days: counted by stage and day, the expected one left out."""
+    spikes = [spike_row(40 * 3600), spike_row(30 * 3600, "router", "local_latency"), spike_row(7200), spike_row(3600),
+              spike_row(1800, "router", "local_latency"), spike_row(600, "load", "busy_latency", expected=True)]
+    return cfg(), FakeRepository(incidents=[incident_row("access_line_drop", 120.0)], hop_stats=hops(),
+                                 spikes=spikes), 48
 
 
 @scenario
@@ -336,7 +357,10 @@ def report_scenario():
         daily=[{"target_id": t, "day": d, "sent": s, "ok": ok} for t, d, s, ok in (
             ("isp", "2025-10-07", 86400, 86000), ("router", "2025-10-07", 86400, 86400), ("isp", "2025-10-08", 43200, 43200),
             ("router", "2025-10-08", 0, 0), ("zzz", "2025-10-08", 100, 50), ("cloudflare", "2025-10-08", 43200, 43100))],
-        hourly=[{"hour": h, "sent": 3600 if h != 5 else 0, "lost": (h * 7) % 11 if h < 8 else 0} for h in range(24)])
+        hourly=[{"hour": h, "sent": 3600 if h != 5 else 0, "lost": (h * 7) % 11 if h < 8 else 0} for h in range(24)],
+        # (on the two days with probes in the zone of run_report, UTC-5; the last is outside the 3-day window)
+        spikes=[spike_row(20 * 3600), spike_row(30 * 3600, "router", "local_latency"), spike_row(26 * 3600),
+                spike_row(22 * 3600, "load", "busy_latency", expected=True), spike_row(5 * 86400)])
     return cfg(), repo
 
 

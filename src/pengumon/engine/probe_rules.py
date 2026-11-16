@@ -39,7 +39,7 @@ def socket_hop_problem(targets: Iterable[TargetConfig]) -> Optional[str]:
     """The first reason a path's TCP and HTTP hops are refused (too many, or one aimed at the host itself), or None."""
     socket_hops = [t for t in targets if t.probe != "icmp"]
     if len(socket_hops) > MAX_SOCKET_HOPS:
-        return (f"At most {MAX_SOCKET_HOPS} hops may be probed by TCP or HTTP (each opens a connection every second)")
+        return (f"At most {MAX_SOCKET_HOPS} hops may be probed by TCP or HTTP (each opens a connection every probe round)")
     for t in socket_hops:
         why = refused_address(t.address)
         if why:

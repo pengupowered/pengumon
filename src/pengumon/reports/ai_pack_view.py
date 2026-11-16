@@ -13,6 +13,7 @@ from pengumon.reports.ai_pack import (
     SpeedFact, SpeedTestFact, _count, _dur, _num, _span_words, gap_words,
 )
 from pengumon.reports.speed import summarize
+from pengumon.reports.spikes import after_words, stage_words
 from pengumon.speedtest.quality import headline
 
 _SHAPE_WORDS = (("carried", "loss starts at one hop and carries on to the later hops"),
@@ -91,8 +92,20 @@ def _findings(f) -> List[str]:
     else:
         out.append("**Incidents.** No network incident" + (" that is not expected" if f.expected_count else "")
                    + f" in this window{expected}{apps}.")
+    out += _spike_bullets(f)
     out += _outcome_bullets(f, p)
     return out
+
+
+def _spike_bullets(f) -> List[str]:
+    """The bullet about the window's brief latency spikes (none without any)."""
+    spikes = getattr(f, "spikes", None)
+    if not spikes or not spikes["count"]:
+        return []
+    # (the days are in the per-day table, which the redactor dates: no date here)
+    return [f"**Latency spikes.** {_count(spikes['count'], 'brief latency spike', 'brief latency spikes')} (latency "
+            f"or jitter with no lost probe that ended within {after_words(spikes['incident_after_seconds'])}; not "
+            f"counted as incidents): {stage_words(spikes['by_stage'])}."]
 
 
 def _pattern_bullets(f, p) -> List[str]:
@@ -302,7 +315,8 @@ def view_of(f, hops_identity: Mapping[str, Any], modules: Sequence[ModuleInput],
         hops=_hop_facts_of(f, hops_identity),
         incidents=_incident_facts_of(f), closeups=_closeup_facts_of(f), findings=tuple(_findings(f)),
         time_table=_time_table_of(f),
-        days=tuple(DayFact(d["day"], d["incidents"], d["lost_minutes"]) for d in f.per_day), apps=tuple(apps),
+        days=tuple(DayFact(d["day"], d["incidents"], d["lost_minutes"], d.get("spikes", 0)) for d in f.per_day),
+        apps=tuple(apps),
         changes=tuple(ChangeFact(c["at"], kinds.get(c["kind"], c["kind"]), c["kind"]) for c in f.changes),
         environment=tuple(environment), modules=tuple(modules), incident_total=len(f.incidents),
         provider_source=provider_source, last_incident_end=max((i.end for i in f.incidents), default=None),

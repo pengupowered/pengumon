@@ -10,6 +10,7 @@ Regenerate only on purpose: PENGUMON_REGEN_GOLDEN=1 python -m pytest tests/test_
 """
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Optional
@@ -299,13 +300,20 @@ CUSTOM_PHASES = [
     P("recover", 18),
 ]
 
+# These four were recorded before latency waited (0.29): latency_incident_after_seconds 0 opens a latency incident at
+# once, so they still pin the classifier byte for byte. "latency_waits" runs the default scenario's phases with the
+# default wait (120 s): its latency episodes, all shorter, are latency spikes (repo.spike), not incidents.
+NO_WAIT = {"latency_incident_after_seconds": 0}
+CUSTOM_LEVELS = CUSTOM_LEVELS.model_copy(update=NO_WAIT)
 CONFIGS = [
-    ("default", ClassifierConfig(), TARGETS, ORDER, BASE, PHASES),
+    ("default", ClassifierConfig(**NO_WAIT), TARGETS, ORDER, BASE, PHASES),
     # recovery was the onset count before it became a setting of its own: this scenario was recorded with both at 2
-    ("two_failures", ClassifierConfig(consecutive_failures_for_incident=2, consecutive_successes_for_recovery=2),
+    ("two_failures", ClassifierConfig(consecutive_failures_for_incident=2, consecutive_successes_for_recovery=2,
+                                      **NO_WAIT),
      TARGETS, ORDER, BASE, PHASES),
-    ("fallback", ClassifierConfig(), FALLBACK_TARGETS, FALLBACK_ORDER, FALLBACK_BASE, FALLBACK_PHASES),
+    ("fallback", ClassifierConfig(**NO_WAIT), FALLBACK_TARGETS, FALLBACK_ORDER, FALLBACK_BASE, FALLBACK_PHASES),
     ("custom_levels", CUSTOM_LEVELS, CUSTOM_TARGETS, CUSTOM_ORDER, CUSTOM_BASE, CUSTOM_PHASES),
+    ("latency_waits", ClassifierConfig(), TARGETS, ORDER, BASE, PHASES),
 ]
 
 CONFIG_NAMES = [config[0] for config in CONFIGS]
@@ -387,6 +395,11 @@ class FakeRepository:
 
     async def update_incident_classification(self, *args):
         pass  # deliberately unrecorded: the golden predates it, and the incident's own state is snapshotted anyway
+
+    async def create_latency_spike(self, spike):
+        self.log("repo.spike", f"start={_offset(spike.start_time)!r} end={_offset(spike.end_time)!r} kind={spike.kind} "
+                               f"stage={spike.stage} expected={int(spike.expected)} peak={spike.peak_ms!r}")
+        return 1
 
 
 def _offset(value):
@@ -477,6 +490,9 @@ async def run_scenario(monkeypatch, config, targets, order, base, phases, texts,
                 f"{classifier.latency_failure_counter},{classifier.recovery_counter} "
                 f"lastfail={_offset(last_failure) if last_failure else 0.0!r} "
                 f"| st={''.join(STATUS_LETTER[prober.stats[key].status] for key in prober.stats)}"
+                # (only while a latency episode waits: never in the scenarios recorded without the wait)
+                + (f" | pend={_offset(classifier.tracker.pending.start_time)!r},{classifier.tracker.pending.kind}"
+                   if classifier.tracker.pending is not None else "")
             )
     summary = (
         f"rounds={state['round']} load_calls={load.calls} background={len(classifier._background)} "
@@ -541,6 +557,26 @@ async def test_scenario_reaches_every_verdict_and_state_path(monkeypatch):
         for kind in ("repo.create", "repo.resolve", "repo.load", "cb.started", "cb.resolved", "trace"):
             assert f" {kind}" in events, (name, kind)
     assert golden["default"]["summary"].split()[2] == "background=0"
+    assert " pend=" in "\n".join(golden["latency_waits"]["rounds"])
+    # with the wait, every episode is still recorded once, with the same start and end: as an incident, or (the
+    # latency-only ones, all shorter than 2 minutes here) as a latency spike
+    assert _episodes(golden["latency_waits"]) == _episodes(golden["default"])
+    spikes = [e for e in golden["latency_waits"]["events"] if " repo.spike " in e]
+    assert len(spikes) == 6 and all("kind=" in e and "_latency" in e for e in spikes)
+
+
+def _episodes(run):
+    """(start, end) of every incident (created, then resolved) and every spike of a recorded run."""
+    starts, out = {}, []
+    for e in run["events"]:
+        if " repo.create " in e:
+            starts[len(starts) + 1] = re.search(r"start=([-\d.]+)", e).group(1)
+        elif " repo.resolve " in e:
+            m = re.search(r"id=(\d+) end=([-\d.]+)", e)
+            out.append((starts[int(m.group(1))], m.group(2)))
+        elif " repo.spike " in e:
+            out.append(tuple(re.search(r"start=([-\d.]+) end=([-\d.]+)", e).groups()))
+    return sorted(out)
 
 
 async def test_classifier_matches_the_recorded_golden(monkeypatch):

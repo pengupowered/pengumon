@@ -23,3 +23,12 @@
   .causes li { grid-template-columns: 96px 1fr 34px; }
 }
 .rep-note { font-size: var(--fs-xs); color: var(--ink-3); margin-top: var(--sp-2); }
+
+/* Latency spikes per day: a row of bars in the same cells as the bars of what was lost above it (the same grid columns), and the average. */
+.rep-sp { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--sp-3); align-items: end; margin-top: var(--sp-3); }
+.rep-sp-t { grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--ink-3); }
+.rep-sp .sp-days { display: grid; align-items: end; height: 28px; border-bottom: 1px solid var(--line); }
+.rep-sp-avg { font-size: var(--fs-xs); color: var(--ink-2); white-space: nowrap; }
+.rep-sp .sp-day { height: 100%; display: flex; align-items: flex-end; min-width: 0; }
+.rep-sp .sp-day i { display: block; width: 100%; max-width: 26px; margin-inline: auto; border-radius: 2px 2px 0 0; background: var(--accent); opacity: .85; }
+.rep-sp .sp-day.partial i { opacity: .55; }

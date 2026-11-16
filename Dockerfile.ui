@@ -8,6 +8,8 @@ WORKDIR /app
 
 USER root
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+# faketime (libfaketime, test image only): scripts/test-clock.sh --ui runs the browser tests at a chosen wall-clock time.
+RUN apt-get update && apt-get install -y --no-install-recommends faketime && rm -rf /var/lib/apt/lists/*
 COPY requirements-dev.txt ./
 RUN pip install --no-cache-dir --require-hashes --no-deps --only-binary :all: -r requirements-dev.txt
 COPY pyproject.toml config.example.yaml ./

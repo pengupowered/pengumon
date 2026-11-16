@@ -54,6 +54,8 @@ cannot read a newer schema, and going back needs that backup.
 | v21 | The router's and mesh's storage tiers (`device_rollup_1m`, `device_rollup_15m`, `mesh_rollup_15m`) and the hourly app lists (`traffic_app_hours`), [below](#router-and-mesh-tiers-and-hourly-app-lists-schema-v21) |
 | v22 | The evidence each incident keeps (`incident_evidence`, `incident_evidence_probes`, `incident_evidence_readings`), filled for the resolved incidents when the schema is upgraded ([below](#incident-evidence-schema-v22)) |
 | v23 | Retention by kind of data: a stored `long_rollup_retention_days` becomes `latency_retention_days` ([above](#retention-by-kind-of-data)) |
+| v24 | Latency spikes (`latency_spikes`); the stored latency incidents under 2 minutes without lost probes become spikes ([below](#latency-spikes-schema-v24)) |
+| v25 | Slimmer raw probe rows: `samples` keeps latency and jitter as integer hundredths of a millisecond (`latency_cms`, `jitter_cms`), a one-time copy ([below](#slimmer-raw-probe-rows-schema-v25)) |
 
 ## Rollups and retention (schema v18)
 
@@ -91,13 +93,14 @@ keeps the latency chart's 10 s buckets for `slot_retention_days` (the 10 s bucke
 samples miss at most the partial slot at either end). An open incident is never deleted, and the incident list
 refreshes when rows go.
 
-**The probe interval scales the raw samples only.** A row per target per round, about 40 bytes each (measured: 326 MB over
-8.2 million rows): at 1 s a 14-target path writes about 48 MB a day, at 2 s 24 MB, at 5 s 10 MB, at 10 s 5 MB. `rollup_10s`,
+**The probe interval scales the raw samples only.** A row per target per round, about 26 bytes each (measured since
+schema v25: 213.5 MB over 8.46 million rows): at 1 s a 14-target path writes about 31 MB a day, at 2 s 16 MB, at 5 s
+6 MB, at 10 s 3 MB. `rollup_10s`,
 `rollup_1m` and `rollup_15m` have one row per bucket whatever the interval, so a long interval shrinks only the 7-day
 raw part (`rollup_10s` is still written at 10 s and longer, where it is about the size of the raw samples). Settings >
 Probing shows the figure for the interval chosen.
 
-**Why raw samples stay at 7 days.** They are most of the file (about 85 %), and with `rollup_10s` the charts no longer
+**Why raw samples stay at 7 days.** They are most of the file (about 60 %; about 70 % before schema v24), and with `rollup_10s` the charts no longer
 read them beyond a day, but two readers still need the week: line-capacity learning (the 99.9th percentile of seven days
 of the router's WAN rates in `device_samples`, which the same `retention_days` prunes; Settings warns under 7 days) and
 the rules preview (`engine/replay.py` replays the stored raw samples, one probe round at a time, for up to
@@ -189,12 +192,67 @@ old as it showed it on the day, and opens fast (one primary-key range per incide
 - **Kept and deleted with the incident**: the hourly cleanup deletes the evidence of incidents that no longer exist
   (`database.incident_retention_days`); no other retention touches it.
 
+## Latency spikes (schema v24)
+
+A latency or jitter problem with no loss that ends within `classifier.latency_incident_after_seconds` (2 minutes by
+default) is a latency spike, not an incident ([api.md](api.md#latency-spikes), [diagnosis.md](diagnosis.md)).
+
+- **Table** `latency_spikes`: one row per spike, `id`, `start_time` and `end_time` (its first and last slow round),
+  `kind` (the incident kind it would have had: `upstream_latency`, `local_latency`, `gateway_latency`, `busy_latency`,
+  `legacy_latency`), `stage` (that kind's cause category: `router`, `gateway`, `line`, `isp`, `internet`, `load`),
+  `expected` (a busy line explained it) and `peak_ms` (the slowest answered probe of the stage's hops during it; NULL
+  when not known). Indexed by `start_time`. Written by the classifier's incident tracker (`db/spikes.py`), a few
+  dozen bytes a row.
+- **The upgrade** converts the stored history to the same rule, in one transaction: every resolved incident of a
+  latency-only kind (`local_latency`, `gateway_latency`, `upstream_latency`, `busy_latency`, `legacy_latency`) with no
+  lost probe (`loss_seconds` NULL or 0) that lasted under 120 s becomes a spike row (`expected` copied; `peak_ms` from
+  its evidence, raw probes or a bucket's highest, when it has any) and is deleted with its evidence
+  (`incident_evidence*`). Longer ones, those that lost probes, open ones and every other kind stay incidents. Its log
+  line says how many it converted, by kind.
+- **Kept** like the incidents: `database.incident_retention_days` prunes spikes that ended before it (0 keeps them
+  forever), and `/api/storage` counts the table under the incidents' kind.
+
+## Slimmer raw probe rows (schema v25)
+
+The raw probes are most of the database, so v25 stores them in fewer bytes, still one row per probe (plain SQL keeps
+working, and a new per-probe field stays a column away):
+
+```
+samples(ts REAL, target INTEGER, ok INTEGER, latency_cms INTEGER, jitter_cms INTEGER, error TEXT,
+        PRIMARY KEY (ts, target)) WITHOUT ROWID
+```
+
+* `ts` is the probe's time in epoch seconds, exactly as before (the primary key and every time range are unchanged).
+* `latency_cms` and `jitter_cms` are hundredths of a millisecond (`12.34 ms` is `1234`), NULL when there is none (a
+  lost probe, no jitter yet). The prober reports both rounded to 0.01 ms (`engine/prober.py`), so nothing is lost;
+  SQLite stores such an integer in 1 to 3 bytes where a REAL takes 8. A value with more decimals is rounded once,
+  when it is written, to the nearest hundredth (halves away from zero, as SQLite's `ROUND(x * 100)`; `schema.sample_cms`).
+* Reading it by hand: `SELECT ts, target, ok, latency_cms / 100.0 AS latency_ms, jitter_cms / 100.0 AS jitter_ms,
+  error FROM samples`. The app's readers convert each row the same way and aggregate the milliseconds as before, so
+  every answer (history, rollups, totals, reports, the inspector, the rules preview) is what it was, bit for bit.
+* The rollup tables and the incident evidence (`incident_evidence_probes`) keep milliseconds as REAL: they are a small
+  part of the file, and the evidence is read as it was written.
+
+Measured on a copy of a live database (7 days of 14 targets, 8.46 million rows): the table went from 335.8 MB to
+213.5 MB (39.7 to 25.2 bytes a row), the file from 466.9 MB to 344.4 MB.
+
+**The first start on v25 is a one-time migration**: the rows are copied a day at a time, in time order, into a new
+table, the old one is dropped and the new one takes its name, all in one transaction (an interrupted start leaves the old
+table as it was and copies again on the next one); then the freed pages go back to the file system (incremental
+vacuum). On that copy: 5 to 7 s to copy, 7 to 9 s for the migration, 3 s to return 336 MB, about 10 to 13 s in all,
+during which the API does not answer. While it runs the file and its write-ahead log need room: the file grew to
+681 MB and the log to 553 MB at the peak; when the migration's connection closed the log was gone and the file
+344 MB.
+The migrations that ran on the old table (v2, v11, v18, v22) read and write it with a frozen copy of its SQL
+(`db/legacy_samples.py`), so a database of any age upgrades through them.
+
 ## The 0.2.0 migration (schema v2)
 
 Version 2, introduced in 0.2.0:
 
 * `samples(ts, target, ok, latency_ms, jitter_ms, error)` - raw probes, `WITHOUT ROWID`, clustered by time,
   no secondary index. `targets(id, key)` maps the integer ids to target keys. Packet loss is derived from `ok`.
+  (Since v24 latency and jitter are integer hundredths of a millisecond: [below](#slimmer-raw-probe-rows-schema-v24).)
 * `rollup_1m` - per-minute aggregates per target (see telemetry.md). Raw data answers history ranges up to 6 h
   (buckets under 60 s only up to 24 h); everything longer is served from the rollups. (Since v18 there are 10-second
   and quarter-hour rollups too: above.)
@@ -286,7 +344,7 @@ under Settings > Advanced for people who know why, and nowhere else. Past 30 day
 | `database.line_retention_days` | the cable line's readings, as they were read (about 0.1 MB a day) | `line_samples` | 180 |
 | `database.traffic_retention_days` | Internet use per hour and the daily app lists | `traffic_hourly`, `traffic_apps` | 180 |
 | `database.speedtest_retention_days` | speed tests (never under 32 days) and the router's events | `speed_tests`, `device_events` | 180 |
-| `database.incident_retention_days` | resolved incidents and their evidence; 0 keeps them forever, else at least 30 | `incidents`, `incident_evidence*` | 180 |
+| `database.incident_retention_days` | resolved incidents and their evidence, and the latency spikes; 0 keeps them forever, else at least 30 | `incidents`, `incident_evidence*`, `latency_spikes` | 180 |
 
 Full detail is `samples`, `rollup_10s`, `rollup_1m`, `device_samples`, `device_rollup_1m`, `mesh_samples` and
 `traffic_app_hours` (31 days, `TRAFFIC_APP_HOURS_DAYS`). The only ordering rule is raw <= 10 s <= per-minute: a kind's
@@ -316,9 +374,10 @@ number is typed:
 `per_day` is measured over the kind's rows of the last 7 days (or of what is stored, if less). Saving a lowered number
 asks first: "Deletes about 380 MB of router history older than 90 days at the next hourly cleanup. This can't be
 undone." The answer also has the database file and WAL sizes and the free space of the disk (`shutil.disk_usage`),
-shown as "Disk: X now, Y free". Without `dbstat` (some SQLite builds) each table is estimated as its rows times the
-average row of a sample and the answer says `estimate: true` (the indexes are left out). The answer is cached for a
-minute: `dbstat` reads every page (0.6 s on a 450 MB database).
+shown as "Disk: X now, Y free". Without `dbstat` (some SQLite builds) each table and its indexes are estimated as
+their rows times the average stored cell of a sample (values at their size in SQLite's record format) over a 90% page
+fill, and the answer says `estimate: true` (on a live 330 MB database: within 1% in all, 3% for the probe samples).
+The answer is cached for a minute: `dbstat` reads every page (0.6 s on a 450 MB database).
 
 ## Router and mesh tiers and hourly app lists (schema v21)
 

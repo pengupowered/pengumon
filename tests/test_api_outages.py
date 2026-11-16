@@ -147,9 +147,9 @@ async def test_an_open_incident_makes_an_ongoing_outage(app_state, repo, open_ac
 
 async def test_the_parameters_are_bounded(app_state, repo, open_access):
     app_state.repository = repo
-    for params in ({"hours": 0}, {"hours": 10001}, {"limit": 0}, {"limit": 501}):
+    for params in ({"hours": 0}, {"hours": 90001}, {"limit": 0}, {"limit": 5001}):
         assert (await get("/api/outages", **params)).status_code == 422, params
-    assert (await get("/api/outages", hours=10000, limit=500)).status_code == 200
+    assert (await get("/api/outages", hours=90000, limit=5000)).status_code == 200
 
 
 async def test_without_a_repository_the_answer_is_empty(app_state, open_access):

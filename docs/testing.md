@@ -47,6 +47,57 @@ its fake `sleep` raised an error the code swallowed. Three limits now stop that:
 When a fake clock or a fake `sleep` drives a loop in a test, make the fake end the loop. Have it raise, or count its
 calls and fail after a bound. Then make sure the code under test lets that error through.
 
+## Tests at other clock times (`scripts/test-clock.sh`)
+
+A test can pass all day and fail only in some seconds of it: a range whose two ends both fall on whole quarter hours has no
+edge minutes (7 s of every 15 minutes: the 0.28 plan test), a report bar is narrow early in the day, a rolling window lines
+up with calendar days only in the 23:00-24:00 UTC hour, a local day has 23 or 25 hours on a DST change. Such failures show
+up in CI, a day late. `scripts/test-clock.sh` runs the whole unit suite once per chosen instant and prints one line per
+instant (`ok`, or `FAIL` with the failing test ids; the full logs go to the directory it names first). It runs
+locally only, never in GitHub CI (it takes too long there). Run it before a release, and after changing anything that
+reads the clock; it takes about 3 minutes per instant on a quiet machine (twelve instants).
+
+```bash
+scripts/test-clock.sh --list                 # the instants, each with why it is there
+scripts/test-clock.sh                        # all of them
+scripts/test-clock.sh midnight fall-back     # those whose name contains one of these words
+scripts/test-clock.sh quarter -- -k storage  # what follows -- goes to pytest
+```
+
+The instants are: 5 s before a quarter hour (in UTC and in New York), 5 s before and after midnight in UTC and in New York,
+inside the 23:00-24:00 UTC hour on a month end, 5 s before a new year, the US fall-back day (01:30 and the 5 s before the
+clocks go back), the EU fall-back day (02:30 CET, the repeated hour) and 5 s before the US spring-forward gap. Each sets the
+container's zone (`TZ`) too. They are fixed dates in autumn 2026 to spring 2027, near the real date on purpose: the suite
+builds the data it stores relative to "now", so any date would do, but a date near today keeps retention and range logic
+realistic, and the DST days are the days the tests' zones (America/New_York, Europe/Berlin) really change. Time starts at the
+instant and runs on, so a run that starts 5 s before midnight crosses it while the suite runs.
+
+**How:** libfaketime (the Debian package `faketime`, in `Dockerfile.test` only; the app image has none). `scripts/test.sh`
+takes `PENGUMON_FAKE_TIME` (the wall-clock time, read in the zone of `PENGUMON_TEST_TZ`), `PENGUMON_FAKE_SPEED` and
+`PENGUMON_FAKE_EPOCH`, and sets `LD_PRELOAD` and `FAKETIME` for the container, so every process starts at that time. This
+shifts every wall clock at the libc call: `time.time`, `datetime.now`, `date.today`, SQLite's `'now'`, `date`, subprocesses
+(the app the browser tests start); a Python-level shift would miss the SQL ones. The monotonic clock stays real, so timeouts,
+`asyncio` sleeps and the hang guard behave as usual. `tests/test_clock_shift.py` checks all of this and runs in every
+fake-clock run (it skips in a normal one). `PENGUMON_FAKE_SPEED` slows the wall clock, but the suite's own timing tests (probe rounds,
+timeouts) then fail, so every instant runs at speed 1. The price: a window of a few seconds, like the 7 s after a quarter
+hour, is only seen by the tests that run in the first minute. To aim at it, run the suspect file alone (`scripts/test-clock.sh quarter -- tests/test_storage.py`
+starts that file within seconds of the instant) and sweep the start (`PENGUMON_FAKE_TIME` a few seconds apart).
+
+**The browser suite** runs the same way, with limits: `scripts/test-clock.sh --ui [words] [-- pytest args]` calls
+`scripts/test-ui.sh` with the same variables (libfaketime is in `Dockerfile.ui` too, and is preloaded in the whole container, so
+the test process, the app, Node and Chromium read one clock: the page's `Date` and the server agree; a fixed offset from the
+real clock is used here, because "start at" would start each of Chromium's processes at the instant on its own). By default it
+runs three variants (`bare`, `full-1of4`, `longhistory-1of3`) one at a time at three instants (UTC midnight, New York
+midnight, the US fall-back edge); name other instants, or pytest arguments after `--`. It does **not** run all 23 variants
+four at a time: on a loaded machine that lost page loads (30 s navigation timeouts) where the same suite without the clock
+passed, because libfaketime slows Chromium down. Unit runs use a 3 GB memory cap (with the default 2 GB a worker died now and
+then in the wheel and device-tier tests, once with exit 137: most likely the memory cap; it passed on a rerun and alone).
+
+A failure at one instant is either a test that assumed the clock (fix the test so it holds at any time, as 7c88427 did) or a
+real bug at that time of day (fix it, with a test that fails at that instant). Never skip a test at a clock time. To
+reproduce one instant: `PENGUMON_FAKE_TIME="2026-11-16 00:10:00" PENGUMON_FAKE_EPOCH=$(date -u -d "2026-11-16 00:10:00" +%s) scripts/test.sh tests/test_x.py`
+(add `PENGUMON_TEST_TZ=America/New_York`; then the time is New York time and the epoch must match it).
+
 ## The container image
 
 `scripts/test-container.sh` tests the image the way it is run: read-only root filesystem, uid 10001, a data volume, a

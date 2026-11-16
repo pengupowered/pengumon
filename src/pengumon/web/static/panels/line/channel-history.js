@@ -235,7 +235,7 @@ async function load() {
     };
     // All starts at the oldest stored reading when that is younger than the retention (js/ranges.js)
     const { answer: body, start, since } = await loadFromOldest({
-      all, start: end - rangeSeconds, end, bucketOf, ask, current: () => seq === requestSeq,
+      all, kind: 'line', start: end - rangeSeconds, end, bucketOf, ask, current: () => seq === requestSeq,
       oldest: (b) => b.rows.reduce((m, r) => (m === null || r[0] < m ? r[0] : m), null)
     });
     if (seq !== requestSeq) return;

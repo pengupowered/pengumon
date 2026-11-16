@@ -46,3 +46,7 @@
   :root[data-look="starship"] [data-panel="report"] .rep-hops td,
   :root[data-look="starship"] [data-panel="report"] .rep-hops td:first-child { background: none; border: 0; padding: 0; }
 }
+/* latency spikes per day: flat blocks, a heavy baseline */
+:root[data-look="starship"] [data-panel="report"] .rep-sp .sp-days { border-bottom: 3px solid var(--ink-3); }
+:root[data-look="starship"] [data-panel="report"] .rep-sp .sp-day i { border-radius: 0; opacity: 1; max-width: none; }
+:root[data-look="starship"] [data-panel="report"] .rep-sp-t { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; font-weight: var(--fw-bold); }

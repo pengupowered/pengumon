@@ -15,6 +15,8 @@ from pengumon.engine.classifier_settings import ClassifierConfig
 from pengumon.engine.prober_settings import DEFAULT_WINDOW_PROBES
 from pengumon.engine.window import jitter as window_jitter, middle
 from pengumon.incidents.model import StatusCode
+from pengumon.incidents.spikes import STAGE_CATEGORIES
+from pengumon.incidents.taxonomy import KINDS
 from pengumon.models.probes import ProbeSample, TargetStats
 
 AFFECTED_LATENCY_MS = 150  # internal (H9): a sample slower than this makes its target an affected one
@@ -83,6 +85,16 @@ class RoundMetrics:
             self.isp.loss_pct >= degraded and self.local.loss_pct < degraded and self.gateway.loss_pct < degraded
             and self.public.loss_pct < degraded and self.dns.loss_pct < config.dns_degraded_loss_pct
         )
+
+    def peak_latency(self, kind: str) -> Optional[float]:
+        """The slowest latest answered probe (ms) of the categories a latency verdict of `kind` is about (its stage's:
+        incidents.spikes.STAGE_CATEGORIES), for the peak of a latency spike. None for a kind without a fixed stage or
+        when none of them answered."""
+        k = KINDS.get(kind)
+        categories = STAGE_CATEGORIES.get(k.cause, ()) if k is not None and k.cause else ()
+        values = [st.recent_latencies[-1] for c in categories for st in getattr(self, c).targets
+                  if st.recent_latencies and st.recent_latencies[-1] is not None]
+        return max(values) if values else None
 
     def upstream_issue(self, config: ClassifierConfig) -> bool:
         """Trouble upstream of the home network (starts the DNS cooldown)."""

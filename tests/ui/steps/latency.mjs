@@ -228,13 +228,13 @@ export const steps = [
     await pickLook("");
   }],
 
-  ["time ranges switch the main chart: Live, 15 m, 1 h, 24 h, 7 d, 30 d, 90 d, All, each a rolling window ending now", async ({ chooseRange, eq, ok, page, rangeState, until, waitText }) => {
+  ["time ranges switch the main chart: Live, 15 m, 1 h, 24 h, 7 d, 30 d, 90 d, All, each a rolling window ending now", async ({ chooseRange, eq, forgetRequests, ok, page, rangeState, requestsTo, until, waitText }) => {
     eq("the card offers the ranges in this order", (await rangeState("#timeRangeButtons")).words.join(","), "Live,Last 15 minutes,Last hour,Last 24 hours,Last 7 days,Last 30 days,Last 90 days,All · 180 d");
     // the range, the words over the chart, the bucket the request names (7 d and 30 d keep about 700 points a line; past 30 d the
     // width is a nice step that gives at most 800)
     for (const [id, arg, label, bucket] of [["1h", "3600", "last 1 h · avg per 10 s", "10"], ["15m", "900", "last 15 min · avg per 2 s", "2"], ["24h", "86400", "last 24 h · avg per 1 min", "60"],
       ["7d", "604800", "last 7 d · avg per 15 min", "900"], ["30d", "2592000", "last 30 d · avg per 1 h", "3600"],
-      ["90d", "7776000", "last 90 d · avg per 3 h", "10800"], ["all", "15552000", "all 180 d · avg per 6 h", "21600"]]) {
+      ["90d", "7776000", "last 90 d · avg per 3 h", "10800"]]) {
       await chooseRange("#timeRangeButtons", id);
       await waitText("#chartModeLabel", new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
       await until((i) => Chart.getChart(document.getElementById(i)).data.datasets.length >= 3, "latencyChart");
@@ -249,6 +249,16 @@ export const steps = [
       eq(`${label}: in buckets of`, asked.bucket, bucket);
       ok(`${label}: it ends now (${asked.lag.toFixed(0)} s ago)`, asked.lag >= 0 && asked.lag < 60);
     }
+    // All draws what is stored, from the oldest stored probe (GET /api/oldest): one request for a span of a few days, not one for the
+    // 180 days of the retention and a second from the oldest row
+    forgetRequests();
+    await chooseRange("#timeRangeButtons", "all");
+    await waitText("#chartModeLabel", /^all stored, since [A-Z][a-z]{2} \d{1,2} · avg per /);
+    await until(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.length >= 3);
+    const asks = requestsTo(/^\/api\/history\?.*bucket_seconds/);
+    eq(`All asks the history once (${asks.join(" ")})`, asks.length, 1);
+    const span = Number(new URL(asks[0], "http://x").searchParams.get("end_time")) - Number(new URL(asks[0], "http://x").searchParams.get("start_time"));
+    ok(`and for what is stored (${(span / 86400).toFixed(1)} days), not the 180 of the retention`, span > 0 && span < 15552000 / 2);
     // (All draws what is stored: this seed holds a few days, so its axis is not months; the longhistory variant checks months over 90 days)
     ok("the axis labels follow the span drawn, not the range's name: no months for a few days of data", !/^[A-Z][a-z]{2} \d{4}$/.test(await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.labels[0])));
     await chooseRange("#timeRangeButtons", "30d");
@@ -437,14 +447,16 @@ export const steps = [
     });
   }, { variants: ["longhistory"] }],
 
-  ["All starts at the oldest stored probe when that is younger than the retention: the latency chart (42 days of data, then 400), dates then months, a bucket that suits the span", async ({ chartAxis, chooseRange, eq, ok, page, rangeState, settled, showCard, youngData }) => {
+  ["All starts at the oldest stored probe when that is younger than the retention: the latency chart (42 days of data, then 400), dates then months, a bucket that suits the span", async ({ chartAxis, chooseRange, eq, forgetRequests, ok, page, rangeState, requestsTo, settled, showCard, youngData }) => {
     const CHART = "[data-panel=latency] .lat-main canvas";
     await showCard("latency");
     for (const { days, kind } of [{ days: 42, kind: "date" }, { days: 400, kind: "month" }]) {
       await youngData(days);
       eq(`${days}: the retention is a year`, (await rangeState("#timeRangeButtons")).words.at(-1), "All · 1 y");
+      forgetRequests();
       await chooseRange("#timeRangeButtons", "all");
       await settled();
+      eq(`${days}: All asks the history once (${requestsTo(/^\/api\/history\?/).join(" ")})`, requestsTo(/^\/api\/history\?/).length, 1);
       const s = await chartAxis(CHART);
       ok(`${days}: ${s.count} points (400-800; 365 days in 6 h buckets would be 1460, 42 of them only 168)`, s.count >= 400 && s.count <= 800);
       ok(`${days}: the labels are ${kind}s (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => (kind === "date" ? /^[A-Z][a-z]{2} \d{1,2}$/ : /^[A-Z][a-z]{2} \d{4}$/).test(l)));

@@ -55,3 +55,8 @@
 :root[data-look="synthwave"] [data-panel="report"] .sw-hops .r { text-align: right; }
 @media (max-width: 520px) { :root[data-look="synthwave"] [data-panel="report"] .sw-bn { font-size: 36px; } :root[data-look="synthwave"] [data-panel="report"] .sw-hops td, :root[data-look="synthwave"] [data-panel="report"] .sw-hops th { padding-inline: 4px; } }
 :root[data-look="synthwave"] [data-panel="report"] .sw-rs { display: block; margin-top: 2px; font-size: var(--fs-xs); color: var(--ink-2); overflow-wrap: anywhere; }
+
+/* latency spikes per day: neon columns like the lost share above them */
+:root[data-look="synthwave"] [data-panel="report"] .rep-sp { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--sp-3); align-items: end; margin-top: var(--sp-4); }
+:root[data-look="synthwave"] [data-panel="report"] .rep-sp-t { grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em; }
+:root[data-look="synthwave"] [data-panel="report"] .rep-sp .sp-day i { background: linear-gradient(to top, var(--accent), var(--s1)); opacity: 1; box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent); }

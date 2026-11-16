@@ -63,7 +63,7 @@ def test_the_cost_of_an_interval_is_about_the_packet_sizes():
     assert 7.5e9 < month < 7.7e9
     assert monthly_traffic_bytes(10, 12 * 244, 0) == pytest.approx(month / 10)
     assert monthly_traffic_bytes(5, 0, 2, dns_interval=10) == pytest.approx(2 * 150 / 10 * 86400 * 30)
-    assert daily_storage_bytes(1, 14, 0) == pytest.approx(14 * 86400 * 40)  # about 48 MB a day
+    assert daily_storage_bytes(1, 14, 0) == pytest.approx(14 * 86400 * 26)  # about 31 MB a day
     assert daily_storage_bytes(2, 14, 0) == pytest.approx(daily_storage_bytes(1, 14, 0) / 2)
 
 

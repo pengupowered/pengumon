@@ -5,6 +5,62 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-15
+### Changed
+- **Brief latency spikes are counted, not recorded as incidents.** Latency or jitter with no packet loss that ends within
+  2 minutes is stored as a latency spike, counted per day and by part of the path, and never alerted; one that lasts
+  longer becomes an incident from its start, and any loss during it makes it an incident at once. Outages and partial
+  loss are incidents as before. The wait is a setting ("Latency becomes an incident after", Settings > Outage rules;
+  0 = an incident at once, as before). The ISP dossier, the AI pack and the MCP `incidents` tool give the counts per day
+  and by stage, and the rules preview counts spikes.
+- **The Incidents card counts latency spikes** in a block under the timeline: the count for the card's range, today's
+  count, where on the path most were, and a bar per day. The reliability report has a "Latency spikes per day" row (per
+  week past 31 days) with the daily average. Every theme shows both.
+- Settings > Probing's estimate says a latency incident opens after the larger of the start rule and the wait above
+  ("latency incidents after about 2 min"), and "Latency incident starts after" says so too. The AI pack says probes go
+  out each probe round (once a second by default).
+- **The Incidents card loads its range in one request**, plus one for the outages (it used 7 + 7, one after another),
+  and the timeline at 90 d and All shows every incident of the range: the most the list holds goes from 500 to 5000.
+- **Charts at All ask their history once**, starting at the oldest stored data (latency, target history, channel
+  history, router history, client counts, Internet use), instead of asking twice when the data is younger than the
+  retention.
+- **Raw probe rows are smaller**: latency and jitter are stored as whole hundredths of a millisecond instead of 8-byte
+  numbers. On a week of a 14-target path that is 214 MB instead of 336 MB (the file shrinks by about a quarter). Every
+  chart, report and incident view gives the same numbers. Settings > Probing's storage estimate uses the new size
+  (about 26 bytes a probe).
+- The limit on hops probed by TCP or HTTP, the add-target, trace and path-editor dialogs, the matrix help and the MCP
+  instructions no longer say probes go out "every second" (the interval is a setting since 0.28).
+### Added
+- **MCP: "Answers use real names and addresses"** (Settings > AI assistants (MCP), on by default). On, the AI assistant
+  sees hops and devices by the names, host names and home addresses the dashboard shows; connected clients' names follow
+  "Show connected clients' names and addresses" for that caller. Off, role words and hidden home addresses, as before.
+  Passwords and secrets in URLs are never shown.
+- `GET /api/latency-spikes`; `/api/report` gains `latency_spikes` and `availability.latency_spikes`.
+- `GET /api/incidents` answers a range in one request (`since`, `until`, up to 5000, then `offset`) and has a lighter
+  field set (`fields=list`, no path trace); `GET /api/outages` allows `limit` up to 5000 and `hours` up to 90000.
+- `GET /api/oldest`: the oldest stored time of each kind of data.
+- docker-compose.yml and compose.release.yaml pass PENGUMON_TRUSTED_PROXIES, PENGUMON_ALLOWED_ORIGINS,
+  PENGUMON_COOKIE_SECURE and PENGUMON_MAX_BODY_BYTES (empty means unset).
+- Tests at chosen clock times: `scripts/test-clock.sh` runs the unit suite at 12 instants (a quarter hour, midnights in
+  UTC and New York, month and year end, US and EU daylight-saving days) with libfaketime in the test image only, and
+  `--ui` runs three browser variants at chosen instants (docs/testing.md, "Tests at other clock times").
+### Fixed
+- `scripts/deploy.sh` never removed old database backups (its `find -regex` used `{n}` counts that GNU find's default
+  regular expressions do not know, and said nothing): it now keeps the newest three (`PENGUMON_KEEP_BACKUPS`).
+- `scripts/deploy.sh` gives the container docker-compose.yml's process limit (podman-compose 1.0.6 left podman's 2048).
+- Settings > Retention on a SQLite without `dbstat` (an estimate) counted each stored integer by its digits and left
+  out the indexes: with 0.29's integer probe rows it showed the probe history about half again too large. Each value
+  now counts at its stored size, indexes included (on a live database: within 1% in all). The per-minute history
+  setting gives its cost per probed hop (about 0.1 MB a day) instead of "about 1 MB a day".
+- Tests no longer assume the server's time zone is UTC (traffic days, the time zone default, the browser seed's night
+  event) or that they run after the first hour of the UTC day.
+### Upgrade notes
+- Schema v24 turns the stored latency-only incidents under 2 minutes with no lost probe into latency spikes (removed
+  from the incident list with their evidence); on a reference database 108 of 476 incidents, in 0.2 s. Spikes are kept as
+  long as incidents.
+- Schema v25 converts the stored probes once: about 10-15 s for a week of probes, during which the API does not answer,
+  with temporary disk room of about twice the probe table. An interrupted start converts again on the next one.
+
 ## [0.28.0] - 2026-11-15
 ### Changed
 - **Every range is a window that ends now.** "24 h", "7 d" and "30 d" mean the last 24 hours, 7 × 24 hours and
@@ -815,7 +871,9 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/pengupowered/pengumon/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/pengupowered/pengumon/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/pengupowered/pengumon/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/pengupowered/pengumon/compare/v0.25.2...v0.26.0
 [0.25.2]: https://github.com/pengupowered/pengumon/compare/v0.25.1...v0.25.2

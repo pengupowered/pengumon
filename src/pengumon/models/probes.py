@@ -13,7 +13,7 @@ CategoryType = Literal["local", "gateway", "isp", "public", "dns", "custom"]
 # How a hop is probed: ICMP echo (ping), a TCP handshake, or an HTTP(S) request (engine.probe_tcp, engine.probe_http)
 ProbeType = Literal["icmp", "tcp", "http"]
 
-# At most this many hops may be probed by TCP or HTTP (each opens a connection every second)
+# At most this many hops may be probed by TCP or HTTP (each opens a connection every probe round)
 MAX_SOCKET_HOPS = 8
 # The Fetch standard's "bad ports": services where a client that does not speak their protocol causes trouble (mail, login,
 # file sharing, IRC). Refused for TCP and HTTP probes; 53 and 22 are among them (probe a resolver on 443 or 853).
@@ -72,7 +72,7 @@ class TargetConfig(BaseModel):
     def validate_port(cls, v: Optional[int]) -> Optional[int]:
         if v is not None and v in BLOCKED_PORTS:
             raise ValueError(f"port {v} is refused: it belongs to a service (mail, login, file sharing, ...) that "
-                             "should not get a connection every second; use the port of a web or other open service")
+                             "should not get a connection every probe round; use the port of a web or other open service")
         return v
 
     @field_validator("http_path")

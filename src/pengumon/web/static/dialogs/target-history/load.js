@@ -34,7 +34,7 @@ export async function load(quiet = false) {
   try {
     // All starts at the oldest stored probe when that is younger than the retention (js/ranges.js): buckets suit that span
     const got = await loadFromOldest({
-      all, start: end - T.rangeSeconds, end, bucketOf, current: () => mine === T.seq,
+      all, kind: 'probes', start: end - T.rangeSeconds, end, bucketOf, current: () => mine === T.seq,
       ask: (from, to, width) => getJson(`/api/history?${targets}&start_time=${from}&end_time=${to}&bucket_seconds=${width}&compact=true`),
       oldest: (h) => { const t = h.fields.indexOf('timestamp'); return h.rows.reduce((m, r) => (m === null || r[t] < m ? r[t] : m), null); }
     });

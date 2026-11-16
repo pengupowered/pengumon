@@ -7,12 +7,8 @@ import time
 import aiosqlite
 
 from pengumon.db.migrations.common import ROLLUP_CHUNK_SECONDS, scalar, table_exists
-from pengumon.db.schema import (
-    CREATE_ROLLUP_10S_TABLE,
-    CREATE_ROLLUP_15M_TABLE,
-    UPSERT_ROLLUP_10S_FROM_SAMPLES,
-    UPSERT_ROLLUP_15M_FROM_1M,
-)
+from pengumon.db.legacy_samples import UPSERT_ROLLUP_10S_FROM_SAMPLES
+from pengumon.db.schema import CREATE_ROLLUP_10S_TABLE, CREATE_ROLLUP_15M_TABLE, UPSERT_ROLLUP_15M_FROM_1M
 
 logger = logging.getLogger("pengumon.db")
 

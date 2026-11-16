@@ -426,14 +426,19 @@ export const steps = [
     });
   }, { variants: ["longhistory"] }],
 
-  ["All starts at the oldest stored data when that is younger than the retention: router history (42 days of data, then 400), a window of its own, dates then months, no label twice in a row", async ({ ROUTER, chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, until, youngData }) => {
+  ["All starts at the oldest stored data when that is younger than the retention: router history (42 days of data, then 400), a window of its own, dates then months, no label twice in a row", async ({ ROUTER, chartAxis, chooseRange, click, eq, forgetRequests, ok, page, rangeState, requestsTo, settled, until, youngData }) => {
     for (const { days, kind, age } of [{ days: 42, kind: "date", age: 42 }, { days: 400, kind: "month", age: 180 }]) { // (the router keeps 180 days of tiers: the server answers no more)
       await youngData(days);
       await click(`${ROUTER} [data-action=openRouterHistory]`);
       await until(() => Number(document.getElementById("routerHistModal").dataset.points) > 20);
       eq(`${days}: the retention is a year`, (await rangeState("#routerHistRanges")).words.at(-1), "All · 1 y");
+      forgetRequests();
       await chooseRange("#routerHistRanges", "all");
       await settled();
+      // (the window's own requests carry max_points; the latency card's last-minute load and its WAN overlay, which a remount
+      // in the step before can start late, ask /history too and are not counted)
+      const asked = requestsTo(/\/devices\/router\/history\?.*max_points=/);
+      eq(`${days}: All asks the router history once (${asked.join(" ")})`, asked.length, 1);
       const s = await chartAxis("#routerHistWanChart");
       const x = await page.evaluate(() => { const c = Chart.getChart(document.getElementById("routerHistWanChart")); const d = c.data.datasets[0].data; return { min: c.scales.x.min / 1000, first: d[0].x / 1000, now: Date.now() / 1000 }; });
       const back = (x.now - x.first) / 86400;
@@ -448,7 +453,7 @@ export const steps = [
     await youngData(null);
   }, { variants: ["longhistory"] }],
 
-  ["All starts at the oldest stored data when that is younger than the retention: the clients chart (42 days of data, then 400)", async ({ ROUTER, chartAxis, chooseRange, click, eq, ok, page, rangeState, settled, signIn, sleep, until, waitCount, youngData }) => {
+  ["All starts at the oldest stored data when that is younger than the retention: the clients chart (42 days of data, then 400)", async ({ ROUTER, chartAxis, chooseRange, click, eq, forgetRequests, ok, page, rangeState, requestsTo, settled, signIn, sleep, until, waitCount, youngData }) => {
     await signIn(ROUTER);
     await page.reload({ waitUntil: "load" });
     await until((s) => document.querySelector(s) && !document.querySelector(s).disabled, `${ROUTER} [data-f=count]`);
@@ -459,8 +464,10 @@ export const steps = [
       await until(() => document.getElementById("networkModal").classList.contains("active"));
       await waitCount("#clientsBody tr", 3);
       await sleep(2200); // (the clients routes answer 30 calls a minute)
+      forgetRequests();
       await chooseRange("#clientsRangeButtons", "all");
       await settled();
+      eq(`${days}: All asks the client counts once (${requestsTo(/\/clients\/history\?/).join(" ")})`, requestsTo(/\/clients\/history\?/).length, 1);
       await sleep(2200);
       const s = await chartAxis("#clientsChart");
       const note = await page.$eval("#clientsChartNote", (e) => e.textContent);

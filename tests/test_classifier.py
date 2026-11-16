@@ -17,6 +17,7 @@ def classifier():
         public_latency_spike_threshold_ms=120.0,
         dns_timeout_threshold_ms=400.0,
         consecutive_failures_for_incident=2,
+        latency_incident_after_seconds=0,  # a latency incident opens at once, as these tests expect (before 0.29)
     )
     return OutageClassifier(config=config, repository=None)
 
@@ -229,6 +230,7 @@ async def test_path_trace_task_is_referenced_until_it_finishes(monkeypatch):
         public_latency_spike_threshold_ms=120.0,
         dns_timeout_threshold_ms=400.0,
         consecutive_failures_for_incident=2,
+        latency_incident_after_seconds=0,  # the latency spell opens an incident at once
     )
     classifier = OutageClassifier(config=config, repository=_IncidentRepository())
     stats = {
@@ -304,7 +306,9 @@ async def _run(window, stalled, rounds=60):
     for tid, category in CATEGORY.items():
         prober.register_target(TargetConfig(id=tid, name=tid, category=category, address="192.0.2.1"))
     started = []
-    classifier = OutageClassifier(config=ClassifierConfig(window_probes=window), on_incident_started=started.append)
+    # (latency_incident_after_seconds 0: the incident opens on the start rule's round, which these tests time)
+    classifier = OutageClassifier(config=ClassifierConfig(window_probes=window, latency_incident_after_seconds=0),
+                                  on_incident_started=started.append)
     statuses, opened = [], []
     for k in range(rounds):
         samples = [ProbeSample(target_id=t, success=True, latency_ms=STALL.get(t, ms) if k in stalled else ms)

@@ -165,7 +165,7 @@ async function loadHistory(durationSeconds) {
   try {
     // All starts at the oldest stored probe when that is younger than the retention (js/ranges.js): buckets suit that span
     const { answer: samples, start, bucket, since } = await loadFromOldest({
-      all, start: now - durationSeconds, end: now, bucketOf: bucketFor, current: () => seq === requestSeq,
+      all, kind: 'probes', start: now - durationSeconds, end: now, bucketOf: bucketFor, current: () => seq === requestSeq,
       ask: (from, to, width) => fetchSamples(`start_time=${from}&end_time=${to}&bucket_seconds=${width}`),
       oldest: (rows) => rows.reduce((m, r) => (m === null || r.timestamp < m ? r.timestamp : m), null)
     });

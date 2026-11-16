@@ -40,10 +40,11 @@ async def test_a_report_without_data_is_empty_but_complete():
     assert report == {
         "days": 7, "tz_offset_minutes": 0, "generated_at": NOW,
         "window_start": NOW - 7 * 86400, "window_end": NOW,
-        "availability": {"days": [], "hops": [], "partial": [], "hours": []},
+        "availability": {"days": [], "hops": [], "partial": [], "hours": [], "latency_spikes": []},
         "incidents": {"count": 0, "minutes": 0.0, "by_cause": [], "excluded_expected": 0,
                       "outages": {"count": 0, "down_minutes": 0.0, "longest_minutes": 0.0, "maintenance": 0}},
         "loss_by_hour": [], "worst_hours": [],
+        "latency_spikes": {"count": 0, "expected": 0, "by_stage": [], "incident_after_seconds": 120.0},
     }
 
 

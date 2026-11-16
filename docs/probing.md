@@ -192,12 +192,14 @@ moment (router fine and ISP lost: the ISP).
   their stored numbers; the page shows the time they mean at the current interval beside them (3 probes: 3 s at 1 s,
   30 s at 10 s). A time rule at a long interval would fire on one measurement, so the count is the evidence.
 - **What it costs, shown where you choose it:** the effect on the rules ("At 10 s: outages open after about 30 s, latency
-  incidents after about 100 s"), "Drops shorter than about N s may go unseen", the internet traffic a month and the
+  incidents after about 2 min": a latency incident opens after the larger of the start rule, 10 slow probes in a row, and
+  Settings > Outage rules > "Latency becomes an incident after", 120 s by default; a shorter spell is a latency spike, counted but
+  not an incident), "Drops shorter than about N s may go unseen", the internet traffic a month and the
   storage a day. Traffic counts the hops past the gateway: an ICMP echo of 56 data bytes is 84 B each way over IPv4
   (104 B over IPv6) plus 38 B of Ethernet framing each way; a DNS lookup about 150 B there and back; a TCP check about
   0.7 KB and an HTTPS check about 5 KB. With 12 hops past the modem that is about 6.3 GB a month at 1 s, 3.2 GB at 2 s and
-  0.6 GB at 10 s. Storage is about 40 bytes per stored probe (measured on a live database: 326 MB over 8.2 million
-  rows): a path of 14 targets is about 48 MB a day at 1 s and 5 MB at 10 s. Only the raw samples scale; the 10-second,
+  0.6 GB at 10 s. Storage is about 26 bytes per stored probe (measured on a live database: 213.5 MB over 8.46 million
+  rows): a path of 14 targets is about 31 MB a day at 1 s and 3 MB at 10 s. Only the raw samples scale; the 10-second,
   per-minute and quarter-hour rows have one row per bucket whatever the interval.
 - **Rows already stored keep their meaning.** Loss is probes answered over probes sent, so history across a change stays
   right. A *dead minute* (every probe lost) needs at least `min(10, ceil(30 / interval))` probes in it: 10 at 1 s and

@@ -219,6 +219,29 @@ class IncidentQueries:
             del self._incidents_cache[next(iter(self._incidents_cache))]  # the oldest first
         return incidents
 
+    async def get_incidents_overlapping(self, since: float, until: Optional[float] = None, include_expected: bool = True,
+                                        scope: str = "all", limit: int = 5000, offset: int = 0,
+                                        compact: bool = False) -> List[Incident]:
+        """Every incident that overlaps [since, until] (until: now), newest first: it started by `until` and was still open
+        at `since` or ended at or after it. At most `limit` rows, after `offset` newer ones, so a range with more than the
+        bound answers its newest and the caller pages on for the rest. `compact` leaves out the path trace (the biggest
+        field, read by the inspector from /inspect). Not cached: the window moves with every call."""
+        where, params = self._incident_filter(include_expected, scope)
+        clauses = ["(end_time IS NULL OR end_time >= ?)"]
+        params = [*params, since]
+        if until is not None:
+            clauses.append("start_time <= ?")
+            params.append(until)
+        where = (where + " AND " if where else "WHERE ") + " AND ".join(clauses)
+        columns = self._INCIDENT_COLUMNS.replace("path_trace", "NULL AS path_trace") if compact else self._INCIDENT_COLUMNS
+        async with self._db.read() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"SELECT {columns} FROM incidents {where} ORDER BY start_time DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ) as cursor:
+                return [self._incident_from_row(r) for r in await cursor.fetchall()]
+
     async def network_incidents(self, limit: int = 50, include_expected: bool = True) -> List[Incident]:
         """The incidents of the network (everything but the host apps' outages)."""
         return await self.get_recent_incidents(limit, include_expected, scope="network")

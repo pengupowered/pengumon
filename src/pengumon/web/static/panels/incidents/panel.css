@@ -50,3 +50,18 @@
 .inc-list tr.outage-row td { padding-block: 8px; }
 .inc-list tr.drop-row td.lead { padding-left: 28px; }
 .inc-list tr.drop-row { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+
+/* Latency spikes: the count for the range and a bar per day, between the timeline and the list (not a button). */
+.inc-spikes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 42%); align-items: end; gap: var(--sp-2) var(--sp-4); margin-bottom: var(--sp-4); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: var(--surface-2); }
+.inc-spikes[hidden] { display: none; }
+.inc-spikes.quiet { display: block; }
+.inc-spikes .sp-line { margin: 0; font-size: var(--fs-sm); color: var(--ink-3); }
+.inc-spikes .sp-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--fs-sm); color: var(--ink-2); }
+.inc-spikes .sp-t { font-size: var(--fs-xs); color: var(--ink-3); }
+.inc-spikes .sp-n { font-weight: var(--fw-semi); color: var(--ink-1); }
+.inc-spikes .sp-w { font-size: var(--fs-xs); color: var(--ink-3); }
+.sp-days { display: grid; align-items: end; height: 28px; border-bottom: 1px solid var(--line); }
+.sp-day { height: 100%; display: flex; align-items: flex-end; min-width: 0; }
+.sp-day i { display: block; width: 100%; max-width: 14px; margin-inline: auto; min-height: 0; border-radius: 2px 2px 0 0; background: var(--accent); opacity: .85; }
+.sp-day.partial i { opacity: .55; }
+@media (max-width: 720px) { .inc-spikes { grid-template-columns: minmax(0, 1fr); } }

@@ -1,6 +1,6 @@
 # 📊 How Outage Root-Cause Diagnosis Works
 
-Pengumon concurrently probes multiple network stages every second and classifies conditions in real-time:
+Pengumon concurrently probes multiple network stages every probe round (every second by default) and classifies conditions in real-time:
 
 - **All Nominal**
   - Local Mesh (`192.168.1.1`): 🟢 < 2ms
@@ -116,7 +116,8 @@ from the next probe round and never relabels stored incidents.
   So a role counts as slow only when more than half of its probes are slow, and as jittery only when more than half of
   the changes are large: one stalled probe (a round in which everything past the modem answers after about a second)
   is no spike and opens no incident. With the defaults, latency must be high in 6 of the last 10 probes for 10 rounds
-  in a row (about 15 s of trouble) before a latency incident opens. Earlier versions averaged latency and jitter, and
+  in a row (about 15 s of trouble) before a latency episode starts, and it becomes an incident only if it lasts 2 minutes
+  (below). Earlier versions averaged latency and jitter, and
   one such probe lifted the averages over the levels for exactly the 10 rounds it stayed in the window: a 9-second
   "ISP Latency Spikes / Jitter" incident.
 - **Loss of a role** (the window's probes of its targets): degraded from `degraded_loss_pct` (15 %), down from
@@ -129,9 +130,20 @@ from the next probe round and never relabels stored incidents.
   `isp_latency_spike_threshold_ms`; empty, they use the internet's level (80 ms).
 - **When incidents start and end** (counted in probe rounds, 1 s each at the default interval; Settings > Probing > Probe
   every changes the time a round takes, not these counts): a loss incident opens after
-  `consecutive_failures_for_incident` faulty rounds (3), a latency-only one after
-  `consecutive_failures_for_latency_incident` (10), and either ends after `consecutive_successes_for_recovery`
-  healthy rounds in a row (3). The end time is the last faulty round. DNS lookups that run less often than the round
+  `consecutive_failures_for_incident` faulty rounds (3), a latency-only episode starts after
+  `consecutive_failures_for_latency_incident` (10) and is an incident only by the next rule, and either ends after `consecutive_successes_for_recovery`
+  healthy rounds in a row (3). The end time is the last faulty round.
+- **Brief latency is a spike, not an incident** ("Latency becomes an incident after", `latency_incident_after_seconds`,
+  120 s, shown in minutes; 0: at once, as before 0.29): a latency or jitter episode with no loss that met the start rule
+  becomes an incident only once it has lasted this long, measured from its first slow round, and then starts there.
+  One that ends sooner (by the end rule above, so one healthy round does not split it) is stored as a **latency spike**:
+  counted per day and by stage (Incidents card, Reliability report, dossier, AI pack, MCP `incidents`), never alerted,
+  and in no incident list, count, timeline or outage. A round with loss while it waits makes it an incident at once,
+  of that round's diagnosis, still from the episode's start (it is never both). Slow DNS is not a latency spike: it
+  opens as before. The live latency chart, Path health and the status show slowness at once, as before. A spike is
+  kept as long as the incidents; one still waiting when the app stops or measuring stops is stored as a spike ending at
+  its last slow round. The stored history was converted once (latency incidents under 2 minutes without a lost probe,
+  [storage.md](storage.md#latency-spikes-schema-v24)). DNS lookups that run less often than the round
   (`dns_interval_seconds`) are counted in lookups: the rounds between them neither add to a DNS fault nor end it.
 - **Internal, not settings:** DNS is judged only while every lower layer loses under 10 %; an ISP outage names the
   ISP hop from 30 % ISP-hop loss, otherwise peering; a sample over 150 ms makes its target an affected one.

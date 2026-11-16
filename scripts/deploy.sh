@@ -13,9 +13,10 @@
 # skipped with a warning (the hash-locked requirements still apply); PENGUMON_REQUIRE_DEPGUARD=1 makes a missing
 # depguard a failure instead. Exceptions are made only through .depguard-ignore.yaml (see the depguard README).
 #
-# Before replacing a running container it keeps one rollback point (older ones are removed):
-#   * the current image, tagged localhost/pengumon:pre-deploy-<stamp>
-#   * ~/backups/pengumon/<stamp>/ with a consistent copy of the database (VACUUM INTO) and secrets.json
+# Before replacing a running container it keeps a rollback point:
+#   * the current image, tagged localhost/pengumon:pre-deploy-<stamp> (only the newest is kept)
+#   * ~/backups/pengumon/<stamp>/ with a consistent copy of the database (VACUUM INTO) and secrets.json (the newest
+#     PENGUMON_KEEP_BACKUPS, default 3, are kept by scripts/prune-backups.sh: they are the database's only copies)
 # Rollback: podman tag localhost/pengumon:pre-deploy-<stamp> localhost/pengumon:latest, put the backup
 # database back into the volume, then scripts/deploy.sh --no-build.
 #
@@ -29,6 +30,7 @@ PORT=8000
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPGUARD_HOME="${DEPGUARD_HOME:-$HOME/src/depguard}"
 BACKUPS="${PENGUMON_BACKUPS:-$HOME/backups/pengumon}"
+KEEP_BACKUPS="${PENGUMON_KEEP_BACKUPS:-3}"
 STAMP="$(date +%Y-%m-%d-%H%M%S)"  # to the second: a second deploy cannot reuse the first one's rollback point
 
 NO_BUILD=0; GATE_ONLY=0; DRY_RUN=0
@@ -146,7 +148,19 @@ if [ $NO_BUILD = 0 ]; then
 fi
 step "Recreating the container"
 run podman-compose down || fail "removing the old container failed"
-run podman-compose up -d || fail "starting the container failed"
+# podman-compose 1.0.6 does not pass docker-compose.yml's pids_limit to podman (the container ran with podman's 2048),
+# and `podman update --pids-limit` (podman 4.9) lasts only until the container restarts: it goes to `podman run`, from
+# the same file, and the run says so when it did not take
+PIDS_LIMIT="$(sed -n 's/^ *pids_limit: *\([0-9][0-9]*\).*/\1/p' "$ROOT/docker-compose.yml" | head -n 1)"
+if [ -n "$PIDS_LIMIT" ]; then
+    run podman-compose --podman-run-args="--pids-limit $PIDS_LIMIT" up -d || fail "starting the container failed"
+    if [ $DRY_RUN = 0 ]; then
+        got="$(podman inspect -f '{{.HostConfig.PidsLimit}}' "$NAME" 2>/dev/null)"
+        [ "$got" = "$PIDS_LIMIT" ] || printf '\033[33mWarning: the process limit is %s, not %s\033[0m\n' "${got:-unknown}" "$PIDS_LIMIT" >&2
+    fi
+else
+    run podman-compose up -d || fail "starting the container failed"
+fi
 
 if [ $DRY_RUN = 1 ]; then step "Dry run finished: nothing was changed"; exit 0; fi
 
@@ -157,14 +171,14 @@ for _ in $(seq 1 100); do
     # plain http, or https with the private certificate when PENGUMON_TLS_CERT/KEY make the app serve https only
     if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || curl -fsSk "https://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
         printf '\033[32mPengumon is up: http://%s:%s\033[0m\n' "$(hostname -I | awk '{print $1}')" "$PORT"
-        # one rollback point per project: drop the older ones, but only once this run made a new one
+        # one rollback image: drop the older ones, but only once this run made a new one
         if podman image exists "localhost/pengumon:pre-deploy-$STAMP"; then
             podman images --format '{{.Repository}}:{{.Tag}}' | grep '^localhost/pengumon:pre-deploy-' \
                 | grep -v ":pre-deploy-$STAMP\$" | xargs -r podman rmi >/dev/null 2>&1
         fi
         if [ -f "$BACKUPS/$STAMP/pengumon.db" ]; then
             # only folders this script made (a stamp to the minute or the second), never another folder in a shared place
-            find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d ! -name "$STAMP" -regex '.*/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-[0-9]\{4,6\}' -exec rm -rf {} + 2>/dev/null
+            "$ROOT/scripts/prune-backups.sh" "$BACKUPS" "$KEEP_BACKUPS" || printf '\033[33mWarning: removing old backups failed\033[0m\n' >&2
         fi
         exit 0
     fi

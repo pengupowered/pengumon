@@ -9,7 +9,7 @@ import time
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
-from pengumon.db.schema import UPSERT_ROLLUP_10S_FROM_SAMPLES, UPSERT_ROLLUP_15M_FROM_1M
+from pengumon.db.schema import UPSERT_ROLLUP_10S_FROM_SAMPLES, UPSERT_ROLLUP_15M_FROM_1M, sample_cms
 from pengumon.engine.prober_settings import DnsProbeConfig
 from pengumon.incidents.model import Incident
 from pengumon.models.probes import ProbeSample
@@ -107,8 +107,9 @@ async def add_incident(repo, config, ids: Dict[str, int], start: float, seconds:
     con = sqlite3.connect(repo.db_path)
     s0, s1 = int(start) - 12, int(start) + seconds + 4
     if raw:
-        con.executemany("INSERT OR REPLACE INTO samples (ts, target, ok, latency_ms, jitter_ms, error) VALUES (?,?,?,?,?,?)",
-                        [(float(ts), ids[t], 0 if lost_here else 1, None if lost_here else 5.0, None, None)
+        con.executemany("INSERT OR REPLACE INTO samples (ts, target, ok, latency_cms, jitter_cms, error) "
+                        "VALUES (?,?,?,?,?,?)",
+                        [(float(ts), ids[t], 0 if lost_here else 1, None if lost_here else sample_cms(5.0), None, None)
                          for ts in range(s0, s1 + 1) for t in targets
                          for lost_here in [t in silent or (t in lost and start <= ts < start + seconds)]])
     minutes = range(int(start // 60), int((start + seconds) // 60) + 1)

@@ -8,6 +8,7 @@ import time
 
 import aiosqlite
 
+from pengumon.db.legacy_samples import EVIDENCE_COPY_RAW, EVIDENCE_COPY_SLOTS
 from pengumon.db.schema import (
     CREATE_INCIDENT_EVIDENCE_PROBES_TABLE,
     CREATE_INCIDENT_EVIDENCE_READINGS_TABLE,
@@ -22,7 +23,10 @@ VERSION = 22
 async def migrate(db: aiosqlite.Connection):
     """The tables, then the evidence of every resolved incident that has none. Idempotent: an incident with a row is
     skipped."""
-    from pengumon.db.evidence import store_evidence  # not at import: db.core imports the migrations
+    from pengumon.db.evidence import ProbeCopy, store_evidence  # not at import: db.core imports the migrations
+
+    # the samples table of the time (latency and jitter in milliseconds as REAL), which v25 converts
+    legacy = ProbeCopy(EVIDENCE_COPY_RAW, EVIDENCE_COPY_SLOTS)
 
     await db.execute(CREATE_INCIDENT_EVIDENCE_TABLE)
     await db.execute(CREATE_INCIDENT_EVIDENCE_PROBES_TABLE)
@@ -38,6 +42,6 @@ async def migrate(db: aiosqlite.Connection):
     logger.info(f"Schema v22: keeping the evidence of {len(incidents)} incidents")
     counts = {}
     for incident_id, start_time, end_time, duration in incidents:
-        resolution = await store_evidence(db, incident_id, start_time, end_time, duration, True)
+        resolution = await store_evidence(db, incident_id, start_time, end_time, duration, True, probe_copy=legacy)
         counts[resolution] = counts.get(resolution, 0) + 1
     logger.info(f"Schema v22: incident evidence done ({time.monotonic() - started:.1f} s; {counts})")

@@ -395,14 +395,16 @@ export const steps = [
       await click("[data-action=closeModal][data-arg=trafficClientModal]");
     });
   }, { variants: ["longhistory"] }],
-  ["All starts at the first stored day when that is younger than the retention: the Internet use card and the device dialog (42 days of data: a bar per day; 200: a bar per week)", async ({ chartAxis, chooseRange, click, ok, page, settled, showCard, sleep, until, youngData }) => {
+  ["All starts at the first stored day when that is younger than the retention: the Internet use card and the device dialog (42 days of data: a bar per day; 200: a bar per week)", async ({ chartAxis, chooseRange, click, eq, forgetRequests, ok, page, requestsTo, settled, showCard, sleep, until, youngData }) => {
     await sleep(62000); // (the traffic routes answer 60 calls a minute: the step before this one used them up)
     const CHART = `${TRAFFIC_CARD} canvas`;
     await showCard("traffic");
     for (const { days, bars, per, label } of [{ days: 42, bars: [40, 46], per: "day", label: /^[A-Z][a-z]{2} \d{1,2}$/ }, { days: 400, bars: [26, 31], per: "week", label: /^[A-Z][a-z]{2} \d{1,2}$/ }]) {
       await youngData(days);
+      forgetRequests();
       await chooseRange(TRAFFIC_BODY, "all");
       await settled();
+      eq(`${days}: All asks for the Internet use once (${requestsTo(/\/traffic\?/).join(" ")})`, requestsTo(/\/traffic\?/).length, 1);
       const s = await chartAxis(CHART);
       ok(`${days}: ${s.count} bars (${bars.join("-")}; 365 days would be 53 weeks, hatched but for the last)`, s.count >= bars[0] && s.count <= bars[1]);
       ok(`${days}: a bar per ${per}, said in the card`, new RegExp(`per ${per}`).test(await page.$eval(CHART, (c) => c.getAttribute("aria-label"))));

@@ -16,7 +16,7 @@ registerHelp({
     + '(public), and DNS lookup is a name lookup test instead of a ping (dns). A target you added yourself (custom) keeps '
     + 'its name. Under it: the name from your config and the address. A fault is placed at the nearest stage that stops '
     + 'answering, which is how the banner can tell your router from your provider.',
-  'hop.loss': (v) => 'The share of the last 60 probes that got no answer (about the last minute: probes go out once a second). The '
+  'hop.loss': (v) => 'The share of the last 60 probes that got no answer (the last minute at the default of one probe a second; Settings > Probing sets the interval). The '
     + 'Lost since start column counts every probe since Pengumon started. Normal is 0%. A hop shows amber above ' + pct(v, 'degraded_loss_fraction', 0.1) + ' and red above ' + pct(v, 'down_loss_fraction', 0.4)
     + ' of its last ' + judged(v) + ' probes lost (the probes the outage rules judge). Some ISP routers drop probes aimed at themselves while still forwarding traffic, so loss on '
     + 'a middle hop alone is not a fault if the hops after it are clean.',

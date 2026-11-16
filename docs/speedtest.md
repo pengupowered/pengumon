@@ -16,7 +16,7 @@ for?" is the **line's** rate, read from your router while the test fills the lin
 is set up; the test's own rate otherwise. Both are kept.
 
 - **Idle latency.** The median latency of your public probe targets (the "Internet" hops of the path) over the 30
-  seconds before the test starts. Pengumon already pings them every second; nothing extra is sent.
+  seconds before the test starts. Pengumon already pings them every probe round; nothing extra is sent.
 - **Download, then upload**, one direction at a time. Each runs until data has flowed for **about 8 seconds**, or until
   its data cap (`download_mb`, `upload_mb`) is used, whichever comes first; 15 seconds is the hard limit. The HTTP
   providers (Cloudflare, LibreSpeed) run 8 parallel streams on kept connections, each asking for one request after
