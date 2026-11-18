@@ -177,7 +177,7 @@ function formMarkup(item) {
 
 function summaryMarkup(item) {
   const d = driverOf(item);
-  const live = (state.devices || []).find((x) => x.id === item.id);
+  const live = (state.configuredDevices || []).find((x) => x.id === item.id);
   const chips = [];
   if (item.model && item.model.trim()) { // the title is the display name: what it is and where go in chips
     chips.push(`<span class="chip">${e(d.label || item.driver)}</span>`);
@@ -192,7 +192,7 @@ function summaryMarkup(item) {
 
 function cardMarkup(item, index) {
   const expanded = open.has(item._key) || !ctx.canEdit();
-  const live = (state.devices || []).find((x) => x.id === item.id); // an SNMPv3 noAuthNoPriv device has no sign-in
+  const live = (state.configuredDevices || []).find((x) => x.id === item.id); // an SNMPv3 noAuthNoPriv device has no sign-in
   const failure = (ctx.itemErrors || {})[item.id];
   const local = Object.values(localProblems(item)).length || Object.keys(serverErrors[item._key] || {}).length;
   return `<li class="dv-card${expanded ? ' open' : ''}${local ? ' bad' : ''}" data-key="${e(item._key)}">`

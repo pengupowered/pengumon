@@ -1,5 +1,6 @@
-// The traffic dialog of one device (opened from a row of the Internet use card): its download and upload over 24 hours or
-// 7 days (per hour) or 30 days (per day), opening in the range the card shows, with buttons for the others; the totals, the
+// The traffic dialog of one device (opened from a row of the Internet use card): its download and upload as a line (as the
+// card's), over 24 hours or 7 days a point per hour, longer a point per day, opening in the range the card shows (24 hours when
+// the card shows the last hour), with a control for the others; the totals, the
 // busiest hour or day, its apps over the range (as the card counts them: the router's 24-hour counts inside the range, and
 // what they do not account for as "Not broken down by app") and the apps of each day, from
 // GET /api/devices/{id}/traffic/clients/{key}.
@@ -11,7 +12,7 @@ import { CLIENT_KINDS } from '../../js/device-text.js';
 import { formatBytes } from '../../js/format.js';
 import { formatClock } from '../../js/clock.js';
 import { closeModal, keepKeyboard, openModal } from '../../js/modal.js';
-import { NOT_BROKEN_DOWN, NOT_BROKEN_DOWN_WHY, WEEKLY_FROM_HOURS, dayNotes, dayWords, daysOf, gapNotes, hoursOf, loadTraffic, rangeList, refreshTraffic, shownRange, weeklyOf } from './model.js';
+import { NOT_BROKEN_DOWN, NOT_BROKEN_DOWN_WHY, dayNotes, dayWords, daysOf, gapNotes, hoursOf, loadTraffic, rangeList, refreshTraffic, shownRange } from './model.js';
 import { allStoredWords, fillRangeSelect } from '../../js/ranges.js';
 import { hoursChart, legendOf } from './chart.js';
 import { appRow } from './view.js';
@@ -55,10 +56,9 @@ function show(body) {
   $('trafficClientTitle').textContent = c.label;
   $('trafficClientMeta').textContent = [kind ? kind[0] : null, c.vendor, c.mac, c.router_label ? `the router calls it ${c.router_label}` : null].filter(Boolean).join(' · ');
   $('trafficClientRename').hidden = body.privacy !== 'full' || !$('trafficClientNameForm').hidden;
-  const perDay = !body.series.length && Array.isArray(body.daily); // 30 days and more: a bar per calendar day
-  const weekly = perDay && body.hours > WEEKLY_FROM_HOURS; // past 90 days: a bar per week
+  const perDay = !body.series.length && Array.isArray(body.daily); // 30 days and more: a point per calendar day
   const span = body.all ? allStoredWords(Math.round(body.hours / 24), body.since) : chosen().title.toLowerCase(); // "last 7 days"
-  const rows = perDay ? (weekly ? weeklyOf(body.daily) : body.daily) : body.series;
+  const rows = perDay ? body.daily : body.series;
   const h = perDay ? daysOf(rows) : hoursOf(body.series, body.hours > 24);
   const busiest = rows.reduce((best, r) => (has(r.down) && (!best || r.down > best.down) ? r : best), null);
   const busy = busiest && busiest.down > 0;
@@ -66,19 +66,19 @@ function show(body) {
   stats.replaceChildren(
     stat('Downloaded', formatBytes(body.totals.down), span, 'down'),
     stat('Uploaded', formatBytes(body.totals.up), span, 'up'),
-    stat(weekly ? 'Busiest week' : perDay ? 'Busiest day' : 'Busiest hour', busy ? formatBytes(busiest.down) : '–',
-      !busy ? 'no traffic' : weekly ? `week of ${dayWords(busiest.day)}` : perDay ? dayWords(busiest.day, true) : `${formatClock(busiest.hour * 1000, true)}-${formatClock((busiest.hour + 3600) * 1000)}`, 'busiest'),
+    stat(perDay ? 'Busiest day' : 'Busiest hour', busy ? formatBytes(busiest.down) : '–',
+      !busy ? 'no traffic' : perDay ? dayWords(busiest.day, true) : `${formatClock(busiest.hour * 1000, true)}-${formatClock((busiest.hour + 3600) * 1000)}`, 'busiest'),
     stat('Mostly', c.traffic_hint || '–', c.traffic_hint ? `at least 80 % of its traffic the router counted apps for, ${span}` : 'no single app stands out', 'hint')
   );
-  $('trafficClientPer').textContent = weekly ? 'Per week' : perDay ? 'Per day' : 'Per hour';
-  $('trafficClientSpan').textContent = perDay ? `${span}, a bar per ${weekly ? 'week' : 'calendar day'} (the first and last cut by the range)` : span;
-  const data = { ...h, label: `${c.label}: download and upload per ${weekly ? 'week' : perDay ? 'day' : 'hour'} over ${body.all ? "" : "the "}${span}, ${formatBytes(body.totals.down)} down, ${formatBytes(body.totals.up)} up.` };
+  $('trafficClientPer').textContent = perDay ? 'Per day' : 'Per hour';
+  $('trafficClientSpan').textContent = perDay ? `${span}, a point per calendar day (the first and last cut by the range)` : span;
+  const data = { ...h, picked: null, label: `${c.label}: download and upload per ${perDay ? 'day' : 'hour'} over ${body.all ? "" : "the "}${span}, ${formatBytes(body.totals.down)} down, ${formatBytes(body.totals.up)} up.` };
   const canvas = $('trafficClientChart');
   if (!chart) chart = hoursChart(canvas);
   chart.update(data, true);
   $('trafficClientLegend').replaceChildren(...legendOf(data, canvas).map((k) => {
     const s = make('span', `trf-key${k.pattern ? ' gap' : ''}`);
-    const sw = make('i', 'key');
+    const sw = make('i', k.line ? 'key line' : 'key');
     sw.style.setProperty('--c', k.color);
     sw.setAttribute('aria-hidden', 'true');
     s.append(sw, k.name);

@@ -18,6 +18,7 @@ from pengumon.incidents.outage_read import with_outage_ids
 from pengumon.incidents.outages import Rules
 from pengumon.observability.telemetry import api_rate_limited
 from pengumon.reports.dossier import build_dossier
+from pengumon.preview import basic_snapshot, event_devices, from_request, is_basic, preview_config, viewer_registry
 from pengumon.security import rate_limit
 from pengumon.timeofday import viewer_zone
 
@@ -103,23 +104,34 @@ async def inspect_incident(incident_id: int, state: StateDep, request: Request):
     # Target configurations in canonical order: ICMP targets, then DNS probes
     cfg = state.config
     targets = [*cfg.targets, *cfg.dns_probes] if cfg else []
-    line = state.devices.primary(Capability.ACCESS_LINE) if state.devices is not None else None
+    devices = viewer_registry(state, request)  # as this browser's preview shows them (pengumon.preview)
+    line = devices.primary(Capability.ACCESS_LINE) if devices is not None else None
     poll = line.interval_seconds if line else None  # a line reading this close to the window still counts
     mode = privacy_mode(request, state)
     reach = {"snapshot_reach_seconds": poll} if poll else {}
     inspection = await run_inspection(state.repository, targets, incident, **reach,
-                                      line=line_history(state.devices, state.repository),
-                                      router=router_history(state.devices, state.repository),
+                                      line=line_history(devices, state.repository),
+                                      router=router_history(devices, state.repository),
                                       classifier=getattr(cfg, "classifier", None),
-                                      traffic=traffic_source(state.devices, mode, client_key,
+                                      traffic=traffic_source(devices, mode, client_key,
                                                              names=await state.client_names.load(state.repository)
                                                              if mode == "full" else None),
                                       tz=viewer_zone(cfg)[0])
-    return inspection.to_response()
+    out = inspection.to_response()
+    preview = from_request(request)
+    if preview.active and state.devices is not None:
+        # events of a device previewed as absent or basic (a basic router tells neither restarts nor link changes), and
+        # a basic router's figures beyond its WAN rates
+        out["device_events"] = [e for e in out["device_events"] if e.get("device_id") in event_devices(devices)]
+        # the router snapshots are those of the primary WAN device (devices.samples.router_history): cut only when
+        # that one is seen as a basic router
+        if is_basic(devices.primary(Capability.WAN_COUNTERS)):
+            out["router_snapshots"] = [basic_snapshot(s) for s in out["router_snapshots"]]
+    return out
 
 
 @router.get("/incidents/dossier", dependencies=[Depends(rate_limit("dossier", 20, 60))])
-async def get_escalation_dossier(state: StateDep, hours: int = Query(24, ge=1, le=720), tz: TzName = None,
+async def get_escalation_dossier(request: Request, state: StateDep, hours: int = Query(24, ge=1, le=720), tz: TzName = None,
                                  tz_offset_minutes: TzOffset = 0):
     """Evidence report for an ISP support ticket or complaint; every statement is derived from the data."""
     if not state.repository:
@@ -129,8 +141,11 @@ async def get_escalation_dossier(state: StateDep, hours: int = Query(24, ge=1, l
         raise HTTPException(status_code=429, detail="Another dossier is being built; try again in a few seconds",
                             headers={"Retry-After": "5"})
     async with dossier_building:
-        return await build_dossier(state.repository, state.config, hours,
-                                   line=line_history(state.devices, state.repository),
-                                   traffic=traffic_source(state.devices, "generic"),
+        devices = viewer_registry(state, request)  # as this browser's preview shows them (pengumon.preview)
+        preview = from_request(request)
+        return await build_dossier(state.repository, preview_config(state.config, preview), hours,
+                                   line=line_history(devices, state.repository),
+                                   traffic=traffic_source(devices, "generic"),
                                    ignoring=ignoring_ping_ids(state.prober), tz_name=tz,
-                                   tz_offset_minutes=tz_offset_minutes)
+                                   tz_offset_minutes=tz_offset_minutes,
+                                   event_devices=event_devices(devices) if preview.active and devices is not None else None)

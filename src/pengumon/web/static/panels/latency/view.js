@@ -23,7 +23,8 @@ function nearest(times, ts) {
   return lo;
 }
 
-// Shaded incident windows behind the lines, and each series' name at its line end. `vm()` is the view model now.
+// Shaded incident windows behind the lines, and a dot on each line's newest point (the names are the legend's: names at
+// the line ends moved with every reading and took the chart's right margin). `vm()` is the view model now.
 function pathPlugin(vm) {
   return {
     id: 'pathDecor',
@@ -54,8 +55,7 @@ function pathPlugin(vm) {
       });
     },
     afterDatasetsDraw(chart) {
-      const { ctx, chartArea: a } = chart;
-      if (chart.width < 480) return; // a phone: the legend names the lines, the right margin goes to the chart
+      const { ctx } = chart;
       const ends = [];
       chart.data.datasets.forEach((d, i) => {
         if (!d.pathLabel || !chart.isDatasetVisible(i)) return;
@@ -63,22 +63,9 @@ function pathPlugin(vm) {
         let k = d.data.length - 1;
         while (k >= 0 && !has(d.data[k])) k--;
         if (k < 0 || !meta.data[k]) return;
-        ends.push({ label: d.pathLabel, color: d.borderColor, x: meta.data[k].x, y: meta.data[k].y, y0: meta.data[k].y });
+        ends.push({ color: d.borderColor, x: meta.data[k].x, y0: meta.data[k].y });
       });
-      ends.sort((p, q) => p.y - q.y);
-      // spread the names at least 14 px apart: downwards from the top one, then back up from the bottom edge, so a group of
-      // lines that coincide near the floor of the chart (a healthy line) does not push the last name over the time axis
-      for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 14) ends[k].y = ends[k - 1].y + 14;
-      const floor = a.bottom - 7;
-      if (ends.length && ends[ends.length - 1].y > floor) {
-        ends[ends.length - 1].y = floor;
-        for (let k = ends.length - 2; k >= 0 && ends[k].y > ends[k + 1].y - 14; k--) ends[k].y = ends[k + 1].y - 14;
-      }
-      const load = chart.scales.yLoad;
-      const labelX = (load && load.options.display ? load.right : a.right) + 8;
       ctx.save();
-      ctx.font = `600 11px ${token('--font')}`;
-      ctx.textBaseline = 'middle';
       ends.forEach((e) => {
         ctx.fillStyle = e.color;
         ctx.strokeStyle = token('--surface-1');
@@ -87,8 +74,6 @@ function pathPlugin(vm) {
         ctx.arc(e.x, e.y0, 4, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = token('--ink-2');
-        ctx.fillText(e.label, labelX, e.y);
       });
       ctx.restore();
     }
@@ -159,7 +144,7 @@ function fittingTicks(chart) {
 }
 
 // The two charts in two canvases: the latency and the loss lane under it, whose plot area starts and ends where the
-// latency chart's does (its right axis and line-end names included), so a lost probe sits under the moment it belongs to.
+// latency chart's does (its right axis included), so a lost probe sits under the moment it belongs to.
 function charts(latencyCanvas, lossCanvas) {
   let m = null;
   const vm = () => m;
@@ -178,11 +163,10 @@ function charts(latencyCanvas, lossCanvas) {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      layout: { padding: { right: window.innerWidth < 520 ? 0 : 70, top: 6 } },
+      layout: { padding: { right: 8, top: 6 } },
       interaction: { mode: 'index', intersect: false },
-      // fewer time labels on a narrow chart (a phone): six "HH:MM:SS" labels do not fit in ~200 px; no line-end names
-      onResize: (chart, size) => {
-        chart.options.layout.padding.right = size.width < 480 ? 0 : 70;
+      // the loss lane keeps the chart's width when the card is resized
+      onResize: () => {
         if (lost) requestAnimationFrame(() => { if (!lost) return; alignLossLane(); lost.update('none'); });
       },
       scales: {
@@ -216,7 +200,7 @@ function charts(latencyCanvas, lossCanvas) {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      layout: { padding: { right: 70 } },
+      layout: { padding: { right: 8 } },
       scales: {
         x: { display: false },
         y: { min: 0, max: 100, afterFit: (axis) => { axis.width = Math.max(axis.width, lat?.scales.y?.width ?? 0); },

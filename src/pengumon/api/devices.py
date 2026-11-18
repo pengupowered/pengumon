@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import TypeAdapter
 
+from pengumon.preview import BASIC_BUCKET_FIELDS, basic_snapshot, is_basic, viewer_registry
 from pengumon.api.common import StateDep, device_or_404, record_answer, record_capped
 from pengumon.api.settings import url_origin
 from pengumon.state import AppState
@@ -146,18 +147,24 @@ def device_summary(device: Device, editor: bool = True) -> Dict[str, Any]:
 # --- generic --------------------------------------------------------------------------------------------------------
 
 @router.get("/devices")
-async def list_devices(request: Request, state: StateDep):
-    """Every configured device, in config order, with the state of its last poll."""
+async def list_devices(request: Request, state: StateDep, configured: bool = False):
+    """Every configured device, in config order, with the state of its last poll; as this browser's preview shows
+    them (pengumon.preview), unless `configured`: the editors (Settings, the path editor, a device's setup) work on the
+    configuration as it is, which a preview does not change."""
     if state.devices is None:
         raise HTTPException(status_code=503, detail="Devices not initialized")
     editor = can_edit(request)
-    return [device_summary(d, editor) for d in state.devices.all()]
+    registry = state.devices if configured else viewer_registry(state, request)
+    return [device_summary(d, editor) for d in registry.all()]
 
 
 @router.get("/devices/{device_id}")
 async def get_device(device_id: str, request: Request, state: StateDep):
     """The device's latest snapshot (never polls the device)."""
-    snapshot = await _latest(device_or_404(state, device_id))
+    device = device_or_404(state, device_id, request)
+    snapshot = await _latest(device)
+    if is_basic(device):
+        snapshot = basic_snapshot(snapshot)
     return snapshot if can_edit(request) else _for_viewer(snapshot)
 
 
@@ -168,16 +175,18 @@ async def set_device_credentials(device_id: str, payload: CredentialsRequest, st
 
 
 @router.get("/features")
-async def get_features(state: StateDep):
-    """Which features this installation can offer, and for each one that it cannot, why."""
+async def get_features(request: Request, state: StateDep):
+    """Which features this installation can offer, and for each one that it cannot, why (as this browser's preview
+    sees the devices: pengumon.preview)."""
     if state.devices is None:
         raise HTTPException(status_code=503, detail="Devices not initialized")
-    return [asdict(s) for s in (*feature_status(state.devices), host_services_status(state.config))]
+    return [asdict(s) for s in (*feature_status(viewer_registry(state, request)), host_services_status(state.config))]
 
 
 @router.get("/devices/{device_id}/history")
 async def get_device_history(
     device_id: str,
+    request: Request,
     state: StateDep,
     start_time: Optional[float] = Query(None, allow_inf_nan=False),
     end_time: Optional[float] = Query(None, allow_inf_nan=False),
@@ -194,8 +203,10 @@ async def get_device_history(
     clients and CPU temperature per bucket, then the lowest WAN link speed; no padding). The width is at least
     bucket_seconds and large enough for max_points (default 400) buckets; the range is clipped to the longest tier's retention (raw polls,
     then 1-minute and 15-minute rollups: db/device_tiers.py). `capacity` is the line capacity in Mbps
-    ({"down_mbps", "up_mbps"}, null where unknown), for a reference line."""
-    device = device_or_404(state, device_id)
+    ({"down_mbps", "up_mbps"}, null where unknown), for a reference line. A device previewed as a basic router
+    (pengumon.preview) answers its WAN rates only: the system, client, temperature and link figures are null."""
+    device = device_or_404(state, device_id, request)
+    basic = is_basic(device)
     if not device.driver.offers & _HISTORY_CAPABILITIES:
         raise HTTPException(status_code=400, detail="This device has no router history")
     if not state.repository:
@@ -208,12 +219,17 @@ async def get_device_history(
             record_capped("device_history", "range")
         st = max(st, et - UNBUCKETED_HISTORY_MAX_SECONDS)  # the newest part of a longer range
         snapshots = await RouterHistory(state.repository, device.id).get_router_snapshots_in_range(st, et)
+        if basic:
+            snapshots = [basic_snapshot(s) for s in snapshots]
         body = _ROUTER_SNAPSHOTS.dump_json(snapshots)
         record_answer("device_history", len(snapshots), len(body))
         return Response(body, media_type="application/json")
     st = max(st, now - state.repository.router_history_days() * 86400)  # raw, minute and quarter tiers
     width = bucket_width(et - st, bucket_seconds, max_points)
     rows = await bucketed_router_history(state.repository, device.id, st, et, width) if et >= st else []
+    if basic:
+        keep = [f in BASIC_BUCKET_FIELDS for f in BUCKET_FIELDS]
+        rows = [[v if k else None for v, k in zip(row, keep)] for row in rows]
     record_answer("device_history_bucketed", len(rows))
     load = getattr(state.classifier, "load", None)
     return {"bucket_seconds": width, "start_time": st, "end_time": et, "fields": list(BUCKET_FIELDS), "rows": rows,
@@ -223,6 +239,7 @@ async def get_device_history(
 @router.get("/devices/{device_id}/channels/history")
 async def get_device_channels_history(
     device_id: str,
+    request: Request,
     state: StateDep,
     start_time: Optional[float] = Query(None, allow_inf_nan=False),
     end_time: Optional[float] = Query(None, allow_inf_nan=False),
@@ -235,7 +252,7 @@ async def get_device_channels_history(
     retention; channel_id and direction narrow it. `bucket_seconds` keeps only the newest reading of each bucket
     (epoch-aligned), for a long range: 180 days of readings every 30 minutes are 330,000 rows without it. 404 for
     an unknown id, 400 for a device without an access line or whose line is not DOCSIS."""
-    device = device_or_404(state, device_id)
+    device = device_or_404(state, device_id, request)
     if Capability.ACCESS_LINE not in device.driver.offers:
         raise HTTPException(status_code=400, detail="This device reports no access line")
     if getattr(device.driver, "line_technology", None) != docsis.TECHNOLOGY:

@@ -99,6 +99,7 @@ class ItemFieldSpec(Constraints):
 
 class DriverSpec(_Model):
     label: str
+    offers: List[str] = []  # the capabilities the driver can offer (Display > "Preview without a device" reads it)
     default_poll_seconds: float
     min_poll_seconds: float
     default_username: str

@@ -1,1 +1,24 @@
-{"order": 80}
+{
+ "order": 80,
+ "uses": [
+  {
+   "part": "Incident inspector: the cable line's readings in the incident",
+   "capabilities": [
+    "access_line"
+   ]
+  },
+  {
+   "part": "Incident inspector: the router's figures, restarts and link changes",
+   "capabilities": [
+    "wan_counters",
+    "router_system"
+   ]
+  },
+  {
+   "part": "Incident inspector: the Internet use of the incident's hours",
+   "capabilities": [
+    "traffic_usage"
+   ]
+  }
+ ]
+}

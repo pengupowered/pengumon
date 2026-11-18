@@ -119,7 +119,8 @@ class FakeUbus:
 def build(ubus, clock=None, password="pw", **options):
     cfg = DeviceConfig(id="owrt", driver="openwrt", url="http://192.0.2.1", options=options)
     client = httpx.AsyncClient(transport=httpx.MockTransport(ubus))
-    secrets = CredentialSources(env={password_env_var("owrt"): password}, secrets_dir=None, store={})
+    env = {password_env_var("owrt"): password} if password is not None else {}
+    secrets = CredentialSources(env=env, secrets_dir=None, store={})
     return build_device(cfg, None, secrets, client=client, clock=clock or Clock(), wall_clock=lambda: 1_700_000_000.0)
 
 
@@ -202,6 +203,29 @@ async def test_a_wrong_password_is_an_auth_error():
     assert err.value.kind == "auth" and "'root'" in err.value.message
     snapshot = await device.poll(force=True)
     assert snapshot.status == "error" and snapshot.error_kind == "auth"
+
+
+async def test_a_router_whose_root_has_no_password_is_read_without_one():
+    """Field report (2026-11): a fresh OpenWrt's root has no password, and rpcd signs root in with an empty one
+    (checked on OpenWrt 24.10.4: an empty user name is refused). Without a saved password the device was
+    "unconfigured: no password" and never tried; now it signs in with an empty password."""
+    ubus = FakeUbus(password="")
+    device = build(ubus, password=None)
+    assert device.driver.missing_configuration() is None and device.has_credentials
+    snapshot = await device.poll(force=True)
+    assert snapshot.status != "unconfigured" and snapshot.status != "error" and ubus.logins == 1
+
+
+async def test_a_router_with_a_password_and_none_saved_says_the_sign_in_was_refused():
+    device = build(FakeUbus(password="secret"), password=None)
+    snapshot = await device.poll(force=True)
+    assert snapshot.status == "error" and snapshot.error_kind == "auth"
+    assert "without a password: the router has one" in snapshot.error_message
+
+
+def test_the_settings_explain_that_the_user_is_root_even_when_the_login_page_asks_only_a_password():
+    hint = OpenWrtDriver.username_hint
+    assert "root" in hint and "only for a password" in hint
 
 
 async def test_new_credentials_drop_the_session():

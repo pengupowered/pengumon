@@ -214,6 +214,8 @@ class Driver(Protocol):
     options_model: ClassVar[type]  # pydantic model of the `options:` a devices: entry may give (extra keys refused)
     default_poll_seconds: ClassVar[float]  # used when the devices: entry sets no poll_interval_seconds
     # Optional: `needs_sign_in = False` for a device with no password (UPnP): the settings page then asks for none.
+    # Optional: `password_optional = True` for a device that may have a password or none (OpenWrt's root before one
+    # is set): it is read without a saved one, and the settings page still offers to set one.
     # Optional: `min_poll_seconds`, the least time between two reads of a device that is easily upset by them. A
     # shorter configured interval is raised to it, and Device never reads the device more often, whoever asks.
 

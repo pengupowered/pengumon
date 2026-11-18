@@ -9,17 +9,20 @@ export const variants = ["full"];
 const TRAFFIC_CARD = "[data-panel=traffic]";
 const TRAFFIC_BODY = `${TRAFFIC_CARD} .panel-b`;
 
-// The card's chart, as the steps compare it: one number per hour, null for an hour with no figure.
-const trafficChart = (page) => page.evaluate(() => {
-  const c = Chart.getChart(document.querySelector("[data-panel=traffic] canvas"));
-  const set = (label) => c.data.datasets.find((d) => d.label === label);
-  const n = c.data.labels.length;
+// The card's chart, as the steps compare it: one number per point (an hour, or a day), null for one with no figure; the gaps
+// as the chart's hatching plugin draws them (panels/traffic/chart.js).
+const trafficChart = (page, sel = "[data-panel=traffic] canvas") => page.evaluate((q) => {
+  const c = Chart.getChart(document.querySelector(q));
+  const set = (label) => c.data.datasets.find((d) => d.label === label).data.map((p) => p.y);
+  const m = c.options.plugins.trafficMarks.data;
   return {
-    n, down: set("Download").data, up: set("Upload").data,
-    unpublished: set("Not published yet")?.data.map((v) => (v === null ? 0 : 1)).join("") ?? null,
-    notStored: set("Not stored")?.data.filter((v) => v !== null).length ?? 0
+    n: m.gaps.length, down: set("Download"), up: set("Upload"), titles: m.titles, picked: m.picked, type: c.config.type,
+    unpublished: m.gaps.includes("unpublished") ? m.gaps.map((g) => (g === "unpublished" ? 1 : 0)).join("") : null,
+    notStored: m.gaps.filter((g) => g === "nodata").length
   };
-});
+}, sel);
+// How many points a traffic chart (the card's or the dialog's) draws: one per hour or day.
+const points = (page, sel) => page.evaluate((q) => Chart.getChart(document.querySelector(q))?.data.datasets[0].data.length ?? 0, sel);
 
 // What sticks out of the card at the page's width: the page itself, or any part of the card past its right edge.
 const trafficOverflow = (page) => page.evaluate((sel) => {
@@ -47,8 +50,12 @@ export const steps = [
 
   ["internet use card: the 75 GB device on top with its app, the apps with their window, and a range that ends at the newest hour the router published", async ({ count, eq, ok, page, text, until, waitText }) => {
     await until(() => { const c = document.querySelector("[data-panel=traffic] canvas"); return !!(c && Chart.getChart(c)); });
-    await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last 24 hours, from .+ to .+$/);
-    ok("the sums", /^[\d.]+ GB downloaded · [\d.]+ GB uploaded$/.test(await text(`${TRAFFIC_BODY} [data-v=totals]`)));
+    // the top is the range (owner, 2026-11-17: the big figures are always the range chosen; a picked hour is a strip)
+    await waitText(`${TRAFFIC_BODY} .trf-sums [data-v=range]`, /^Last 24 hours$/);
+    ok("from when to when", /^.+ to .+$/.test(await text(`${TRAFFIC_BODY} .trf-sums [data-v=rangeSpan]`)));
+    ok("the range's download, big", /^[\d.]+ GB$/.test(await text(`${TRAFFIC_BODY} .trf-sums [data-item=down] .trf-big`)));
+    ok("its average speed over the range", /^[\d.]+ Mbps on average$/.test(await text(`${TRAFFIC_BODY} .trf-sums [data-item=down] [data-v=avg]`)));
+    eq("no strip before an hour is picked", await page.$eval(`${TRAFFIC_BODY} .trf-pick`, (e) => e.hidden), true);
     const first = `${TRAFFIC_BODY} .trf-devices .trf-rows > :first-child`;
     eq("the top device", await text(`${first} [data-v=name]`), "Desk PC");
     eq("its download, in the page's units", await text(`${first} [data-v=down]`), "75 GB");
@@ -60,12 +67,12 @@ export const steps = [
     eq("the apps end with what the router did not break down, muted", await text(`${TRAFFIC_BODY} .trf-apps .trf-rows > :last-child [data-v=name]`), "Not broken down by app");
     eq("it says why", await page.$eval(`${TRAFFIC_BODY} .trf-apps .trf-rows > :last-child`, (e) => e.title), "The router counts apps per 24 hours; hours not covered by one of its counts in this range");
     ok("it is muted", await page.$eval(`${TRAFFIC_BODY} .trf-apps .trf-rows > :last-child`, (e) => e.classList.contains("rest")));
-    ok("the busiest hour", /^Busiest hour .+: 76\.2 GB down$/.test(await text(`${TRAFFIC_BODY} [data-v=busiest]`)));
     ok("the header sums the range", /^[\d.]+ GB down · [\d.]+ GB up$/.test(await text("#trafficSummary")));
-    ok("when it was read and how often", /^read \d\d:\d\d.* · every 60 min$/.test(await text("#trafficFoot")));
+    ok("when it was read, how often, and when the next hour comes", /^read \d\d:\d\d.* · every 60 min · the next hour (comes|was due) about .+$/.test(await text("#trafficFoot")));
     const chart = await trafficChart(page);
-    eq("one bar per hour", chart.n, 24);
-    ok("the newest bar is the newest hour the router published: drawn", chart.down[23] > 0 && chart.up[23] > 0);
+    eq("a line, a point per hour", [chart.type, chart.n].join(), "line,24");
+    ok("the newest point is the newest hour the router published: drawn", chart.down[23] > 0 && chart.up[23] > 0);
+    eq("no hour is marked before one is picked", chart.picked, null);
     eq("no hour is hatched as not published: the range ends where the figures do", chart.unpublished, null);
     eq("no hour is called not stored", chart.notStored, 0);
     eq("no sentence about hours not published", await count(`${TRAFFIC_BODY} [data-v=unpublished]`), 0);
@@ -96,19 +103,19 @@ export const steps = [
       throw new Error(`no 7 d button on the card at ${new Date().toISOString()}; it shows: ${shown}`);
     });
     await chooseRange(TRAFFIC_BODY, "7d");
-    await until(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.labels.length === 168);
-    await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last 7 days, from /);
+    await until(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.datasets[0].data.length === 168);
+    await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last 7 days$/);
     const chart = await trafficChart(page);
     eq("the 36 stored hours: the rest were not stored", chart.notStored, 132);
     ok("the sentence says how many", /^132 hours in this range were not stored/.test(await text(`${TRAFFIC_BODY} [data-v=nodata]`)));
     eq("the range control shows the choice", (await rangeState(TRAFFIC_BODY)).value, "7d");
-    ok("a labelled hour has its weekday", /^[A-Z][a-z]{2} \d\d:\d\d/.test(await page.evaluate(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.labels[100])));
+    ok(`an hour's tooltip has its weekday (${chart.titles[100]})`, /^[A-Z][a-z]{2} \d\d:\d\d( [AP]M)?-\d\d:\d\d( [AP]M)?$/.test(chart.titles[100]));
     await chooseRange(TRAFFIC_BODY, "24h");
-    await until(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.labels.length === 24);
-    await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last 24 hours, from /);
+    await until(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.datasets[0].data.length === 24);
+    await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last 24 hours$/);
   }],
 
-  ["internet use card: 30 days are a bar per calendar day with the ends cut by the range, and the apps of 7 and 30 days add up the router's counts inside them, ending with what is not broken down", async ({ chooseRange, click, eq, ok, page, rangeState, text, until, waitText }) => {
+  ["internet use card: 30 days are a point per hour, and the apps of 7 and 30 days add up the router's counts inside them, ending with what is not broken down", async ({ chooseRange, click, eq, ok, page, rangeState, text, until, waitText }) => {
     await chooseRange(TRAFFIC_BODY, "7d");
     await waitText(`${TRAFFIC_BODY} [data-v=appsWindow]`, /^counted over 72 of 168 h, to /);
     eq("headed as the devices are", await text(`${TRAFFIC_BODY} [data-v=devicesWindow]`), "last 7 days");
@@ -119,29 +126,84 @@ export const steps = [
     eq("the last row is what the counts do not cover", await text(`${TRAFFIC_BODY} .trf-apps .trf-rows > :last-child [data-v=name]`), "Not broken down by app");
     eq("its figure is the week's total (132.2 GB) less the apps (82.8 GB)", await text(`${TRAFFIC_BODY} .trf-apps .trf-rows > :last-child [data-v=down]`), "49.4 GB");
     await chooseRange(TRAFFIC_BODY, "30d");
-    await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last 30 days, from /);
-    await until(() => { const n = Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.labels.length; return n === 30 || n === 31; });
+    await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last 30 days$/);
+    await until(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.datasets[0].data.length === 720);
     const chart = await trafficChart(page);
-    ok("the days with a stored hour are drawn (the seed's 36 hours reach two or three days)", chart.notStored >= 27 && chart.notStored <= 29);
-    ok("the newest day is drawn", chart.down[chart.n - 1] > 0);
-    ok("a label is a date", /^[A-Z][a-z]{2} \d+$/.test(await page.evaluate(() => { const c = Chart.getChart(document.querySelector("[data-panel=traffic] canvas")); return c.data.labels[c.data.labels.length - 1]; })));
-    ok("the days not stored are said", /^2[789] days in this range were not stored/.test(await text(`${TRAFFIC_BODY} [data-v=nodata]`)));
-    const bars = await page.evaluate(() => {
-      const c = Chart.getChart(document.querySelector("[data-panel=traffic] canvas"));
-      const shares = c.options.plugins.partialDays.shares;
-      const w = c.getDatasetMeta(0).data.map((b) => b.width);
-      return { shares, first: w[0], middle: w[Math.floor(w.length / 2)], last: w[w.length - 1] };
-    });
-    ok("one bar per calendar day the range touches", bars.shares.length === 30 || bars.shares.length === 31);
-    ok("a cut day's bar is narrower in proportion to its hours", bars.shares.every((s, i) => (s < 1 ? (i === 0 ? bars.first : bars.last) < bars.middle : true)));
-    ok("the busiest day", /^Busiest day [A-Z][a-z]{2}, [A-Z][a-z]{2} \d+: [\d.]+ GB down$/.test(await text(`${TRAFFIC_BODY} [data-v=busiest]`)));
-    ok("the notes say the ends are cut (when they are)", bars.shares.every((s) => s === 1) || /begins and ends inside a day/.test(await text(`${TRAFFIC_BODY} [data-v=cut]`)));
+    eq("up to 90 days a point per hour: the 36 stored hours, the rest not stored", chart.notStored, 720 - 36);
+    ok("the newest hour is drawn", chart.down[chart.n - 1] > 0);
+    ok("the hours not stored are said", /^684 hours in this range were not stored/.test(await text(`${TRAFFIC_BODY} [data-v=nodata]`)));
+    ok("the chart says per hour", /per hour, last 30 days/.test(await page.$eval(`${TRAFFIC_BODY} canvas`, (c) => c.getAttribute("aria-label"))));
     await waitText(`${TRAFFIC_BODY} [data-v=appsWindow]`, /^counted over 72 of 720 h, to /);
     eq("the range control shows the choice", (await rangeState(TRAFFIC_BODY)).value, "30d");
     await chooseRange(TRAFFIC_BODY, "24h");
-    await until(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.labels.length === 24);
+    await until(() => Chart.getChart(document.querySelector("[data-panel=traffic] canvas")).data.datasets[0].data.length === 24);
     await waitText(`${TRAFFIC_BODY} [data-v=appsWindow]`, /^last 24 hours, to /);
     eq("no sentence under the apps over 24 hours", await page.$eval(`${TRAFFIC_BODY} [data-v=appsMore]`, (e) => e.hidden), true);
+  }],
+
+  ["internet use card: the range at the top and in the lists; a click on the chart picks an hour: a strip under the chart with its figures, ‹ › step (the focus stays), the lists become that hour's (devices, no apps); the same point again or Whole range goes back; each hour is asked for once; Last hour has no line, the top is that hour, its devices are the list and the apps say why", async ({ chooseRange, click, eq, forgetRequests, ok, page, requestsTo, settled, text, until, waitText }) => {
+    const STRIP = `${TRAFFIC_BODY} .trf-pick`;
+    const SUMS = `${TRAFFIC_BODY} .trf-sums`;
+    await chooseRange(TRAFFIC_BODY, "24h");
+    await waitText(`${SUMS} [data-v=range]`, /^Last 24 hours$/);
+    const rangeDown = await text(`${SUMS} [data-item=down] .trf-big`);
+    eq("no strip before a pick", await page.$eval(STRIP, (e) => e.hidden), true);
+    eq("the lists are the range's", await text(`${TRAFFIC_BODY} [data-v=devicesWindow]`), "last 24 hours");
+    forgetRequests();
+    // a click on the 75 GB hour (the 19th of 24) picks it
+    const clickHour = async (i) => {
+      await page.$eval(`${TRAFFIC_BODY} canvas`, (c) => c.scrollIntoView({ block: "center" }));
+      const at = await page.$eval(`${TRAFFIC_BODY} canvas`, (c, k) => { const p = Chart.getChart(c).getDatasetMeta(0).data[k]; const r = c.getBoundingClientRect(); return { x: r.left + p.x, y: r.top + p.y }; }, i);
+      await page.mouse.click(at.x, at.y);
+    };
+    await clickHour(18);
+    await until(() => !document.querySelector("[data-panel=traffic] .trf-pick").hidden);
+    await waitText(`${STRIP} [data-v=when]`, /^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}, \d\d:\d\d( [AP]M)?-\d\d:\d\d( [AP]M)?$/);
+    eq("the hour's figures in the strip", await text(`${STRIP} [data-v=figs]`), "76.2 GB down · 1.8 GB up");
+    ok("its average speed", /^[\d.]+ Mbps on average$/.test(await text(`${STRIP} [data-v=avg]`)));
+    eq("the top stays the range", await text(`${SUMS} [data-item=down] .trf-big`), rangeDown);
+    eq("the chart marks it", (await trafficChart(page)).picked, 18);
+    await waitText(`${TRAFFIC_BODY} [data-v=devicesWindow]`, /^this hour, [A-Z][a-z]{2} /);
+    await waitText(`${TRAFFIC_BODY} .trf-devices .trf-rows > :first-child [data-v=name]`, /^Desk PC$/);
+    eq("the hour's devices", await page.$$eval(`${TRAFFIC_BODY} .trf-devices [data-v=name]`, (e) => e.map((x) => x.textContent).join()), "Desk PC,Ann's phone,Plug");
+    eq("its download in the hour", await text(`${TRAFFIC_BODY} .trf-devices .trf-rows > :first-child [data-v=down]`), "75 GB");
+    eq("no app line under a device", await page.$$eval(`${TRAFFIC_BODY} .trf-devices [data-v=app]`, (e) => e.length), 0);
+    eq("no apps for one hour", await page.$$eval(`${TRAFFIC_BODY} .trf-apps .trf-row`, (e) => e.length), 0);
+    ok("the apps say why", /not per hour, so there are none for one hour/.test(await text(`${TRAFFIC_BODY} [data-v=appsEmpty]`)));
+    // ‹ › by keyboard: two hours on, and back; the focus stays on the button pressed
+    await page.focus(`${STRIP} [data-action=trafficStep][data-arg=next]`);
+    for (let i = 0; i < 2; i++) { await page.keyboard.press("Enter"); await settled(); }
+    eq("the focus stayed on ›", await page.evaluate(() => document.activeElement?.dataset.arg), "next");
+    eq("two hours on", (await trafficChart(page)).picked, 20);
+    await page.focus(`${STRIP} [data-action=trafficStep][data-arg=prev]`);
+    for (let i = 0; i < 2; i++) { await page.keyboard.press("Enter"); await settled(); }
+    eq("back on the 75 GB hour", (await trafficChart(page)).picked, 18);
+    eq("each hour was asked for once (three hours, five visits)", requestsTo(/\/traffic\/span\?/).length, 3);
+    // the picked point clicked again: back to the range
+    await clickHour(18);
+    await until(() => document.querySelector("[data-panel=traffic] .trf-pick").hidden);
+    await waitText(`${TRAFFIC_BODY} [data-v=devicesWindow]`, /^last 24 hours$/);
+    eq("no hour marked", (await trafficChart(page)).picked, null);
+    // a pick, then Whole range
+    await clickHour(2);
+    await until(() => !document.querySelector("[data-panel=traffic] .trf-pick").hidden);
+    await waitText(`${TRAFFIC_BODY} [data-v=devicesWindow]`, /^this hour, /);
+    await click(`${STRIP} [data-action=trafficWholeRange]`);
+    await until(() => document.querySelector("[data-panel=traffic] .trf-pick").hidden);
+    await waitText(`${TRAFFIC_BODY} [data-v=devicesWindow]`, /^last 24 hours$/);
+    eq("the range's apps are back", await text(`${TRAFFIC_BODY} .trf-apps .trf-rows > :first-child [data-v=name]`), "Sony PlayStation");
+    // Last hour: the top is that hour, no chart, no strip
+    await chooseRange(TRAFFIC_BODY, "1h");
+    await waitText(`${SUMS} [data-v=range]`, /^Last hour$/);
+    eq("the hour's download at the top", await text(`${SUMS} [data-item=down] .trf-big`), "1.2 GB");
+    eq("no strip", await page.$eval(STRIP, (e) => e.hidden), true);
+    eq("a sentence instead of the chart", [await page.$eval(`${TRAFFIC_BODY} .trf-chart-box`, (e) => e.hidden), await page.$eval(`${TRAFFIC_BODY} [data-v=single]`, (e) => e.hidden)].join(), "true,false");
+    await waitText(`${TRAFFIC_BODY} [data-v=devicesWindow]`, /^last hour$/);
+    eq("the devices of the hour", await text(`${TRAFFIC_BODY} .trf-devices .trf-rows > :first-child [data-v=name]`), "Ann's phone");
+    eq("no app line under a device", await page.$$eval(`${TRAFFIC_BODY} .trf-devices [data-v=app]`, (e) => e.length), 0);
+    ok("the apps say why there are none", /counts apps over 24 hours, not per hour/.test(await text(`${TRAFFIC_BODY} [data-v=appsEmpty]`)));
+    await chooseRange(TRAFFIC_BODY, "24h");
+    await waitText(`${SUMS} [data-v=range]`, /^Last 24 hours$/);
   }],
 
   ["device dialog: opens from a row with focus inside and back on the row after Escape, in the card's range; 7 and 30 days from its own buttons; the apps and the days; Back closes it", async ({ chooseRange, click, dialogKeys, eq, ok, page, rangeState, text, until, waitText }) => {
@@ -153,22 +215,23 @@ export const steps = [
     eq("downloaded", await text("#trafficClientStats [data-v=down] .val"), "75 GB");
     eq("uploaded", await text("#trafficClientStats [data-v=up] .val"), "1.5 GB");
     eq("mostly", await text("#trafficClientStats [data-v=hint] .val"), "Sony PlayStation");
-    const labels = () => page.evaluate(() => Chart.getChart(document.getElementById("trafficClientChart")).data.labels.length);
-    eq("it opens in the card's range: 24 hours, hour by hour", await labels(), 24);
+    const labels = () => points(page, "#trafficClientChart");
+    eq("it opens in the card's range: 24 hours, a point per hour", await labels(), 24);
+    eq("drawn as the card's: a line", (await trafficChart(page, "#trafficClientChart")).type, "line");
     eq("that range is chosen", (await rangeState("#trafficClientRange")).value, "24h");
     eq("its apps", await page.$$eval("#trafficClientApps [data-v=name]", (e) => e.map((x) => x.textContent).join()), "Sony PlayStation,General");
     ok("the apps say their window", /^last 24 hours, to .*\d\d:\d\d/.test(await text("#trafficClientAppsWindow")));
     ok("the apps of the day", /Sony PlayStation 75 GB/.test(await text("#trafficClientDays")));
     await chooseRange("#trafficClientRange", "7d");
-    await until(() => Chart.getChart(document.getElementById("trafficClientChart")).data.labels.length === 168);
+    await until(() => Chart.getChart(document.getElementById("trafficClientChart")).data.datasets[0].data.length === 168);
     ok("the hours never stored are said", /hours in this range were not stored/.test(await text("#trafficClientNotes")));
     eq("the totals say the range", await text("#trafficClientStats [data-v=down] .sub"), "last 7 days");
     ok("the apps say how many hours the router counted them over", /^counted over 72 of 168 h, to /.test(await text("#trafficClientAppsWindow")));
     eq("its apps over the range (the two counts before the latest hold nothing of it)", await page.$$eval("#trafficClientApps [data-v=name]", (e) => e.map((x) => x.textContent).join()), "Sony PlayStation,General");
     await chooseRange("#trafficClientRange", "30d");
     await waitText("#trafficClientPer", /^Per day$/);
-    await until(() => { const n = Chart.getChart(document.getElementById("trafficClientChart")).data.labels.length; return n === 30 || n === 31; });
-    eq("a bar per day", await text("#trafficClientPer"), "Per day");
+    await until(() => { const n = Chart.getChart(document.getElementById("trafficClientChart")).data.datasets[0].data.length; return n === 30 || n === 31; });
+    eq("a point per day", await text("#trafficClientPer"), "Per day");
     eq("the busiest day, not hour", await text("#trafficClientStats [data-v=busiest] .lbl"), "Busiest day");
     ok("the apps over 30 days", /^counted over 72 of 720 h, to /.test(await text("#trafficClientAppsWindow")));
     eq("the card's own range is untouched", (await rangeState(TRAFFIC_BODY)).value, "24h");
@@ -337,26 +400,34 @@ export const steps = [
     await click("[data-action=closeModal][data-arg=incidentInspectorModal]");
   }],
 
-  ["every range draws the Internet use chart (a bar per hour, per day, then per week past 90 days) and the device dialog's, on a desktop, a phone and in every theme", async ({ atEveryRange, axisOk, chartAxis, chooseRange, click, dialogKeys, eq, everyLook, noSideScroll, noSideways, ok, openPanel, page, phone, rangeState, settled, showCard, until, waitText }) => {
+  ["every range draws the Internet use chart (a point per hour up to 90 days, per day past that; Last hour a sentence) and the device dialog's, on a desktop, a phone and in every theme", async ({ atEveryRange, axisOk, chartAxis, chooseRange, click, dialogKeys, eq, everyLook, noSideScroll, noSideways, ok, openPanel, page, phone, rangeState, settled, showCard, until, waitText }) => {
     const CHART = `${TRAFFIC_CARD} canvas`;
-    // bars: 24 hours, 168 hours, 30 or 31 days, 90 or 91 days, about 27 weeks (the first and last cut by the range); the axis labels of
-    // 24 h are clock times, of 7 d weekday and clock, of the days and weeks dates
-    const BARS = { "24h": [24, 24], "7d": [168, 168], "30d": [30, 31], "90d": [90, 91], all: [26, 28] };
-    const KINDS = { "24h": ["clock"], "7d": ["datetime"], "30d": ["date"], "90d": ["date"], all: ["date"] };
+    // points: 24 hours, 168 hours, 720 hours, 2160 hours, then about 180 days (the retention: the first cut by the range); the axis
+    // labels of 24 h are clock times, of 7 d date and clock, to 90 d dates, of All months
+    const POINTS = { "24h": [24, 24], "7d": [168, 168], "30d": [720, 720], "90d": [2160, 2160], all: [180, 182] };
+    const KINDS = { "24h": ["clock"], "7d": ["datetime"], "30d": ["date"], "90d": ["date"], all: ["month"] };
     const check = (where) => async (id, s) => {
       const what = `${where} ${id}`;
       ok(`${what}: the chart is drawn`, !!s);
-      const [lo, hi] = BARS[id];
-      ok(`${what}: ${s.count} bars (${lo}-${hi})`, s.count >= lo && s.count <= hi);
+      const n = await points(page, CHART);
+      const [lo, hi] = POINTS[id];
+      ok(`${what}: ${n} points (${lo}-${hi})`, n >= lo && n <= hi);
       const down = s.sets.find((d) => d.label === "Download");
-      ok(`${what}: bars with a download figure (${down ? down.n : 0})`, !!down && down.n >= (id === "24h" ? 20 : id === "7d" ? 20 : 20));
+      ok(`${what}: points with a download figure (${down ? down.n : 0})`, !!down && down.n >= 20);
       axisOk(what, id, s, KINDS[id]);
       ok(`${what}: nothing sticks out sideways`, await noSideways());
     };
+    const lastHour = async (what) => {
+      await chooseRange(TRAFFIC_BODY, "1h");
+      await waitText(`${TRAFFIC_BODY} [data-v=range]`, /^Last hour$/);
+      eq(`${what} 1h: a sentence instead of the chart`, await page.$eval(`${TRAFFIC_BODY} .trf-chart-box`, (e) => e.hidden), true);
+      ok(`${what} 1h: nothing sticks out sideways`, await noSideways());
+    };
     await showCard("traffic");
-    eq("24 h to All", (await rangeState(TRAFFIC_BODY)).ids.join(), "24h,7d,30d,90d,all");
-    await atEveryRange(TRAFFIC_BODY, CHART, check("desktop"));
-    ok("past 90 days the bars are weeks, said in the card", /per week/.test(await page.$eval(CHART, (c) => c.getAttribute("aria-label"))));
+    eq("Last hour to All", (await rangeState(TRAFFIC_BODY)).ids.join(), "1h,24h,7d,30d,90d,all");
+    await atEveryRange(TRAFFIC_BODY, CHART, check("desktop"), { skip: ["1h"] });
+    ok("past 90 days a point per day, said in the card", /per day/.test(await page.$eval(CHART, (c) => c.getAttribute("aria-label"))));
+    await lastHour("desktop");
     await everyLook(async (look) => {
       await showCard("traffic");
       for (const id of ["24h", "all"]) {
@@ -367,9 +438,11 @@ export const steps = [
     });
     await phone(async () => {
       await openPanel("traffic", "network");
-      await atEveryRange(TRAFFIC_BODY, CHART, check("phone"));
+      await atEveryRange(TRAFFIC_BODY, CHART, check("phone"), { skip: ["1h"] });
+      await lastHour("phone");
     });
-    // the device dialog: the same control and ranges
+    // the device dialog: the same control and ranges but Last hour; a point per hour to 7 days, per day past that
+    const DIALOG = { "24h": [24, 24], "7d": [168, 168], "30d": [30, 31], "90d": [90, 91], all: [180, 182] };
     await chooseRange(TRAFFIC_BODY, "24h");
     await settled();
     const row = `${TRAFFIC_BODY} .trf-devices .trf-rows > :first-child`;
@@ -378,14 +451,15 @@ export const steps = [
     const checkDialog = (where) => async (id, s) => {
       const what = `${where} device ${id}`;
       ok(`${what}: the chart is drawn`, !!s);
-      const [lo, hi] = BARS[id];
-      ok(`${what}: ${s.count} bars (${lo}-${hi})`, s.count >= lo && s.count <= hi);
+      const n = await points(page, "#trafficClientChart");
+      const [lo, hi] = DIALOG[id];
+      ok(`${what}: ${n} points (${lo}-${hi})`, n >= lo && n <= hi);
       axisOk(what, id, s, KINDS[id]);
       ok(`${what}: nothing sticks out sideways`, await noSideScroll("trafficClientModal"));
     };
-    eq("the dialog offers the same ranges", (await rangeState("#trafficClientRange")).ids.join(), "24h,7d,30d,90d,all");
+    eq("the dialog offers the card's ranges but Last hour", (await rangeState("#trafficClientRange")).ids.join(), "24h,7d,30d,90d,all");
     await atEveryRange("#trafficClientRange", "#trafficClientChart", checkDialog("desktop"));
-    ok("past 90 days the dialog says per week", /Per week/.test(await page.$eval("#trafficClientPer", (e) => e.textContent)));
+    ok("past 90 days the dialog says per day", /Per day/.test(await page.$eval("#trafficClientPer", (e) => e.textContent)));
     await click("[data-action=closeModal][data-arg=trafficClientModal]");
     await phone(async () => {
       await openPanel("traffic", "network");
@@ -395,31 +469,35 @@ export const steps = [
       await click("[data-action=closeModal][data-arg=trafficClientModal]");
     });
   }, { variants: ["longhistory"] }],
-  ["All starts at the first stored day when that is younger than the retention: the Internet use card and the device dialog (42 days of data: a bar per day; 200: a bar per week)", async ({ chartAxis, chooseRange, click, eq, forgetRequests, ok, page, requestsTo, settled, showCard, sleep, until, youngData }) => {
+  ["All starts at the first stored day when that is younger than the retention: the Internet use card and the device dialog (42 days of data: a point per hour; 400: a point per day)", async ({ chartAxis, chooseRange, click, eq, forgetRequests, ok, page, requestsTo, settled, showCard, sleep, until, youngData }) => {
     await sleep(62000); // (the traffic routes answer 60 calls a minute: the step before this one used them up)
     const CHART = `${TRAFFIC_CARD} canvas`;
     await showCard("traffic");
-    for (const { days, bars, per, label } of [{ days: 42, bars: [40, 46], per: "day", label: /^[A-Z][a-z]{2} \d{1,2}$/ }, { days: 400, bars: [26, 31], per: "week", label: /^[A-Z][a-z]{2} \d{1,2}$/ }]) {
+    for (const { days, card, per, dialog, label } of [
+      { days: 42, card: [41 * 24, 47 * 24], per: "hour", dialog: [40, 46], label: /^[A-Z][a-z]{2} \d{1,2}$/ },
+      { days: 400, card: [178, 220], per: "day", dialog: [178, 220], label: /^[A-Z][a-z]{2},? \d{4}$/ }]) {
       await youngData(days);
       forgetRequests();
       await chooseRange(TRAFFIC_BODY, "all");
       await settled();
       eq(`${days}: All asks for the Internet use once (${requestsTo(/\/traffic\?/).join(" ")})`, requestsTo(/\/traffic\?/).length, 1);
       const s = await chartAxis(CHART);
-      ok(`${days}: ${s.count} bars (${bars.join("-")}; 365 days would be 53 weeks, hatched but for the last)`, s.count >= bars[0] && s.count <= bars[1]);
-      ok(`${days}: a bar per ${per}, said in the card`, new RegExp(`per ${per}`).test(await page.$eval(CHART, (c) => c.getAttribute("aria-label"))));
+      const n = await points(page, CHART);
+      ok(`${days}: ${n} points (${card.join("-")})`, n >= card[0] && n <= card[1]);
+      ok(`${days}: a point per ${per}, said in the card`, new RegExp(`per ${per}`).test(await page.$eval(CHART, (c) => c.getAttribute("aria-label"))));
       const down = s.sets.find((d) => d.label === "Download");
-      ok(`${days}: nearly every bar has a download figure (${down.n} of ${s.count})`, down.n >= s.count - 4); // (the seed has no hours for its newest 3 days)
-      ok(`${days}: the labels are dates (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => label.test(l)));
+      // (the seed stores three evening hours a day, and none for its newest 3 days)
+      ok(`${days}: the stored ${per}s have a download figure (${down.n} of ${n})`, per === "hour" ? down.n >= (days - 4) * 3 : down.n >= n - 4);
+      ok(`${days}: the labels are ${per === "hour" ? "dates" : "months"} (${s.labels.join(" | ")})`, s.labels.length >= 2 && [s.labels[0], s.labels.at(-1)].every((l) => label.test(l)));
       ok(`${days}: no label twice in a row`, s.labels.every((l, i) => i === 0 || l !== s.labels[i - 1]));
       const words = await page.$eval(`${TRAFFIC_BODY} [data-v=range]`, (e) => e.textContent);
       ok(`${days}: the card says what it holds (${words})`, /^All stored, since [A-Z][a-z]{2} \d{1,2}/.test(words));
-      // the device dialog does the same
+      // the device dialog: a point per day (its hours stop at 7 days)
       await page.$eval(`${TRAFFIC_BODY} .trf-devices .trf-rows > :first-child`, (e) => e.click());
       await until(() => !document.getElementById("trafficClientBody").hidden);
-      const d = await chartAxis("#trafficClientChart");
-      ok(`${days}: the dialog draws ${d.count} bars too (${bars.join("-")})`, d.count >= bars[0] && d.count <= bars[1]);
-      ok(`${days}: its heading says per ${per}`, new RegExp(`Per ${per}`).test(await page.$eval("#trafficClientPer", (e) => e.textContent)));
+      const d = await points(page, "#trafficClientChart");
+      ok(`${days}: the dialog draws ${d} points (${dialog.join("-")})`, d >= dialog[0] && d <= dialog[1]);
+      ok(`${days}: its heading says per day`, /Per day/.test(await page.$eval("#trafficClientPer", (e) => e.textContent)));
       await click("[data-action=closeModal][data-arg=trafficClientModal]");
     }
     await youngData(null);

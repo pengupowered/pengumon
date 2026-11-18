@@ -37,6 +37,9 @@
   <div class="update-bar" id="updateBar" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span class="ub-text"><b>Pengumon was updated to <span data-f="version"></span>.</b> Reload to use it.</span>
     <button type="button" class="btn sm primary" data-action="reloadPage">Reload</button>
     <button type="button" class="btn sm icon ub-close" data-action="closeUpdateBar" aria-label="Hide this notice" title="Hide until the next update"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  <div class="update-bar preview-bar" id="previewBar" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg><span class="ub-text"><b>Previewing the dashboard <span data-f="devices"></span>.</b> Pengumon still reads every device; only this browser shows the dashboard as it would look.</span>
+    <button type="button" class="btn sm" data-action="openSettingsAt" data-arg="display">Change</button>
+    <button type="button" class="btn sm primary" data-action="endDevicePreview">End preview</button></div>
 
   <!-- Header: brand, overall status (written by the panel that owns the verdict), live socket, tools -->
   <header id="topbar" class="topbar st-unknown">

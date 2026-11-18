@@ -229,16 +229,26 @@ async def test_a_upnp_gateway_with_a_private_address_keeps_the_next_router_at_ho
     assert [r[:2] for r in roles(result)][:2] == [("192.168.1.1", "local"), ("10.20.0.1", "gateway")]
 
 
-async def test_a_cable_modem_off_the_path_is_proposed_at_the_edge():
+async def test_a_modem_off_the_path_is_proposed_at_the_edge_paused_and_probed_as_it_answered():
+    """Field report (2026-11): a user without a cable modem got critical "Cable modem Not Answering" incidents. A
+    box at 192.168.100.1 (a cable modem's address, but also a satellite dish's or a fiber box's) that served its page
+    and gave no echo reply was named Cable modem and probed by ping. Now: named by its role, proposed paused, and
+    probed by TCP to the web port that answered."""
     traces = three_paths(shared=[("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
     modem_page = "<html><head><title>Cable Modem Status</title></head></html>"
     result = await discover(traces, options=NO_ASN, pages={"192.168.100.1": modem_page})
     assert [(h["address"], h["category"], h["name"]) for h in result.hops[:3]] == [
-        ("192.168.1.1", "local", "Router"), ("192.168.100.1", "gateway", "Cable modem"),
+        ("192.168.1.1", "local", "Router"), ("192.168.100.1", "gateway", "Gateway"),
         ("203.0.113.1", "isp", "Provider hop 1")]
     modem = result.hops[1]
     assert modem["confidence"] == "likely" and "Cable Modem Status" in modem["evidence"][0]["text"]
+    assert modem["enabled"] is False and (modem["probe"], modem["port"]) == ("tcp", 80)
+    assert any("TCP connection to its web port (80)" in e["text"] for e in modem["evidence"])
+    assert any("Proposed paused" in e["text"] for e in modem["evidence"])
     assert result.lan.hosts().count("192.168.100.1") == 1  # one GET of its front page, nothing else
+    # the draft's hop is a valid path hop as it is (what Apply sends)
+    from pengumon.models.probes import TargetConfig
+    TargetConfig(**{k: v for k, v in modem.items() if k in TargetConfig.model_fields})
 
 
 async def test_asn_decides_over_names_and_the_provider_continues_past_the_split():
@@ -354,8 +364,9 @@ async def test_a_gateway_address_that_answers_ping_only_is_proposed_too():
     traces = three_paths(shared=[("192.168.1.1", 0.6), ("203.0.113.1", 9.0)])
     result = await discover(traces, options=NO_ASN, answers_ping={"192.168.100.1"})
     modem = by_address(result)["192.168.100.1"]
-    assert (modem["category"], modem["name"], modem["confidence"]) == ("gateway", "Cable modem", "likely")
-    assert [e["kind"] for e in modem["evidence"]] == ["off_path", "off_path"]
+    assert (modem["category"], modem["name"], modem["confidence"]) == ("gateway", "Gateway", "likely")
+    assert [e["kind"] for e in modem["evidence"]] == ["off_path", "off_path", "off_path"]
+    assert modem["enabled"] is False and "probe" not in modem  # it answers ping: probed by ping once switched on
     assert "10.0.0.1" not in by_address(result)  # nothing answered there
 
 

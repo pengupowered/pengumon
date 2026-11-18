@@ -1,1 +1,11 @@
-{"order": 35}
+{
+ "order": 35,
+ "uses": [
+  {
+   "part": "Speed card: the line's speed measured by the router during a test",
+   "capabilities": [
+    "wan_counters"
+   ]
+  }
+ ]
+}

@@ -1,7 +1,7 @@
 // The latency panel's model: the data both charts draw and the view model built from it (view.js is the standard view,
 // drawing a latency chart and a thin loss lane under it; docs/themes.md, "Drawing a card"). Two ways to draw the latency:
 //   path (default): three series in path order (router, line, internet; path.js), the internet's p10-p90 band when the
-//     server sends it, each series named at its line end. The legend says which targets each series is made of, and
+//     server sends it. The legend names each series and says which targets it is made of, and
 //     the tooltip gives every member's own value.
 //   each target: one thin line per pinged target (ISP hops included, DNS lookups left out: they time a lookup, not a
 //     round trip), in the targets' own colors (the ones Hop details uses).

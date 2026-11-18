@@ -5,8 +5,10 @@ import json
 
 from fastapi import APIRouter, WebSocket
 
-from pengumon.live.ws import ws_manager
+from pengumon.live.ws import LivePreview, ws_manager
+from pengumon.preview import from_request, is_basic, viewer_registry
 from pengumon.security import can_edit
+from pengumon.state import get_state
 
 router = APIRouter()
 
@@ -29,8 +31,17 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time live telemetry."""
     # ?delta=1 (the dashboard): recent_latencies in full only when asked for, otherwise the probes since the last message
     # a connection that may not edit (a viewer, the read token) is sent the failed-poll messages in fixed words
+    # a browser previewing without a device (pengumon.preview) is sent the message without it
+    preview = from_request(websocket)
+    shaped = None
+    if preview.active:
+        state = get_state(websocket)
+        devices = viewer_registry(state, websocket)
+        if devices is not None:
+            shaped = LivePreview(preview, basic_ids={d.id for d in devices.all() if is_basic(d)},
+                                 wan_hidden=devices.wan_rates_device() is None)
     if not await ws_manager.connect(websocket, delta=websocket.query_params.get("delta") == "1",
-                                    editor=can_edit(websocket)):
+                                    editor=can_edit(websocket), preview=shaped):
         return  # over the connection cap: closed with 1013
     try:
         while True:

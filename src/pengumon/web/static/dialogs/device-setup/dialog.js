@@ -35,7 +35,7 @@ function wipe() {
 
 export function openDeviceSetup(id) {
   clearTimeout(closeTimer);
-  device = state.devices.find((d) => d.id === id) || null;
+  device = state.configuredDevices.find((d) => d.id === id) || null;
   if (!device || device.needs_sign_in === false) return;
   const [kind, ...rest] = String(device.label || '').split(' · '); // "<what it is> · <its name>"
   const given = rest.join(' · ');

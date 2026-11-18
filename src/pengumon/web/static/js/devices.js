@@ -14,10 +14,16 @@ async function fetchJson(url) {
   }
 }
 
+// `state.devices` is the list as this browser's preview shows it (js/device-preview.js: the cards follow it);
+// `state.configuredDevices` the configuration as it is, for the editors (Settings, the path editor, a device's setup),
+// which a preview does not change. Without a preview they are the same list.
 export async function loadDevices() {
-  const [devices, features] = await Promise.all([fetchJson('/api/devices'), fetchJson('/api/features')]);
+  const previewing = document.cookie.split(';').some((c) => c.trim().startsWith('pengumon_preview=') && c.trim().length > 'pengumon_preview='.length);
+  const [devices, features, configured] = await Promise.all([fetchJson('/api/devices'), fetchJson('/api/features'),
+    previewing ? fetchJson('/api/devices?configured=1') : null]);
   state.devicesKnown = Array.isArray(devices); // false: the list could not be read, so nobody says there are none
   state.devices = Array.isArray(devices) ? devices : [];
+  state.configuredDevices = Array.isArray(configured) ? configured : state.devices;
   state.features = Array.isArray(features) ? features : [];
 }
 

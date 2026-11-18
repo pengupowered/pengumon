@@ -126,9 +126,11 @@ PHASES = [
     P("recover", 14),
     P("gateway jitter", 8, gw=A(1.0, 60.0)),
     P("recover", 14),
-    P("gateway loss 25%", 14, gw=L(4)),
-    P("gateway loss 40%", 14, gw=L(5, 2)),
-    P("gateway loss 50%", 14, gw=L(2), ghost=C(None)),
+    # the gateway's loss is its fault while the internet loses too ...
+    P("gateway loss 25%", 14, gw=L(4), pub=L(4)),
+    P("gateway loss 40%", 14, gw=L(5, 2), pub=L(5, 2)),
+    # ... and no fault while the internet answers (it only ignores its probes)
+    P("gateway loss 50%, internet answers", 14, gw=L(2), ghost=C(None)),
     P("recover", 16),
     # --- ISP hops: loss that stops at the hop is not a fault
     P("isp hub A loss", 14, isp_a=L(2)),
@@ -234,9 +236,10 @@ CUSTOM_PHASES = [
     P("recover", 18),
     P("gateway loss 15%", 14, **pair("gw_a", "gw_b", LOSS_15)),
     P("recover", 14),
-    P("gateway loss 45%", 14, **pair("gw_a", "gw_b", LOSS_45)),
+    P("gateway loss 45%", 14, **pair("gw_a", "gw_b", LOSS_45), **pair("pub_a", "pub_b", LOSS_45)),
     P("recover", 18),
-    P("gateway down, local loss 15%", 14, **pair("gw_a", "gw_b", LOSS_50), **pair("lan_a", "lan_b", LOSS_15)),
+    P("gateway down, local loss 15%", 14, **pair("gw_a", "gw_b", LOSS_50), **pair("lan_a", "lan_b", LOSS_15),
+      **pair("pub_a", "pub_b", LOSS_50)),
     P("recover", 18),
     P("isp and public down, local loss 15%", 14, **pair("isp_a", "isp_b", LOSS_50),
       **pair("pub_a", "pub_b", LOSS_50), **pair("lan_a", "lan_b", LOSS_15)),

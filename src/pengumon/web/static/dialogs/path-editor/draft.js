@@ -70,9 +70,9 @@ export function edited() {
 // device whose URL host is the address as written). Marked so the card says it was linked for you.
 export function autoLink(h, match) {
   if (!DEVICE_ROLES.includes(h.category) || h.device_id || h.device_unlinked) return; // "No device" stays no device
-  const known = match && state.devices.some((d) => d.id === match) ? match : null;
+  const known = match && state.configuredDevices.some((d) => d.id === match) ? match : null;
   const address = String(h.address || '').toLowerCase().replace(/\.$/, '');
-  const at = state.devices.filter((d) => deviceHost(d) === address);
+  const at = state.configuredDevices.filter((d) => deviceHost(d) === address);
   const id = known || (at.length === 1 ? at[0].id : null);
   if (id) { h.device_id = id; h.autoLinked = true; }
 }

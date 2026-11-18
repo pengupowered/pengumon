@@ -5,6 +5,60 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-18
+### Added
+- **Preview the dashboard without a device** (Settings > Display, "Preview without a device"): this browser shows the
+  dashboard as a household without your router or modem would see it, or with the router as a basic UPnP one (internet
+  byte counts only). The cards and parts of cards that need the device go, and so does what the server writes from it
+  (the incident inspector, the ISP report, the AI pack, router-measured speed tests). A bar across the top says a
+  preview is on, with Change and End preview. Pengumon keeps reading every device and keeping its history, other
+  browsers see everything, and Settings and the path editor keep working on the configuration as it is. The choice is
+  the cookie `pengumon_preview`; `GET /api/devices?configured=1` lists the devices as configured.
+- **Each card says which device capabilities its parts use** (`uses` in its `panel.json`): docs/dashboard.md's table
+  "Without a router or a modem" is made from those declarations, and a test fails when a card uses a capability it does
+  not declare. The settings schema's drivers say what they offer.
+- **Pick an hour on the Internet use chart**: a strip under the chart shows that hour's download, upload and average
+  speed, with ‹ › to step, and the device list below becomes that hour's (`GET /api/devices/{id}/traffic/span`, new: an
+  hour or a day with its top devices). ✕ Whole range, or the same point again, goes back. Past 90 days a point is a day.
+- **Last hour** is a range of the Internet use card: the newest hour's figures and devices, with a sentence on why
+  there are no apps (the router counts them per 24 hours).
+- **The device lab** (`scripts/device-lab.sh`, docs/testing.md): OpenWrt 24.10 and net-snmp in containers, and the
+  LAN's router over UPnP, read by Pengumon and checked device by device. The OpenWrt read-only login of docs/devices.md
+  is checked as the docs give it.
+- **CI tests a real upgrade**: on Linux, macOS and Windows the install job first installs the previous release with its
+  own install script, then upgrades it, and checks the backup, the database migrated to the new schema and the old
+  release's settings history kept.
+
+### Changed
+- **The Internet use chart is a line**, drawn as the Speed card's history: a point per hour up to 90 days, a point per
+  day past that (it was bars, per day past 7 days and per week past 90). Its big figures are always the range you chose,
+  with their average speed; when the next hour comes is in the footer. A device's dialog draws its traffic the same
+  way. `GET /api/devices/{id}/traffic` gives the hours up to 90 days with `hourly=true`.
+- **A router that only counts its internet traffic (UPnP) gets a narrow card** whose last-hour chart fills it; it was a
+  wide card, mostly empty, with a small chart in its middle. The full router card's hour chart now spans its block.
+- **A gateway that stops answering its probes while the internet answers is no outage.** Pengumon raised a critical
+  "… Not Answering" incident (and "Packet Loss" warnings) for a gateway hop whose pings were lost even though the
+  provider's hops and the public servers behind it answered normally: a modem's management address, a box in bridge
+  mode, a gateway off the traced path. Now that is no fault (Path health already shows the hop as "Ignores ping");
+  when the internet fails too, it is still the gateway's outage.
+- **The Latency chart no longer names its lines at their right end.** The names moved with every reading, were hard to
+  tie to a line, and took 70 px of the chart; the legend above names every line.
+- **The Internet use card is faster**: the server works out the apps of the devices it shows only, and adds up a long
+  range's days in one pass (on a real household's data: 30 days 57 → 19 ms, 180 days 145 → 12 ms).
+- Docs: how an upgrade changes the database (by itself, on the first start), **going back to an older version** step by
+  step, and upgrading the container in the README.
+
+### Fixed
+- **Discovery no longer adds a "Cable modem" that may not be one.** A box answering at a common gateway address off the
+  traced path (192.168.100.1 is a cable modem's, but also a satellite dish's or a fiber box's) is proposed paused, named
+  Gateway, and, when it served its web page but gave no echo reply, probed by a TCP connection to port 80 instead of a
+  ping it never answers. A background route check does not report such a hop as a route change.
+- **OpenWrt: a router whose root has no password is read.** A fresh OpenWrt's root has no password, which the router
+  accepts; Pengumon said "no password" and never tried. If the router has one after all, the card says so. The user-name
+  field says the account is root even where the router's login page asks only for a password.
+- **A device of the Internet use card opens after a restart.** It said "The router has no traffic stored for this
+  device": the devices' keys changed at every start. They now stay the same across restarts (still opaque).
+
 ## [0.29.0] - 2026-11-15
 ### Changed
 - **Brief latency spikes are counted, not recorded as incidents.** Latency or jitter with no packet loss that ends within
@@ -871,7 +925,8 @@ or the internet beyond. It runs as one container with one SQLite file.
 - Install from the published container image (`ghcr.io/pengupowered/pengumon`, amd64 and arm64) with
   `compose.release.yaml`, or build from source.
 
-[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/pengupowered/pengumon/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/pengupowered/pengumon/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/pengupowered/pengumon/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/pengupowered/pengumon/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/pengupowered/pengumon/compare/v0.26.0...v0.27.0

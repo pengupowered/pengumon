@@ -213,3 +213,9 @@
   .modal-b table.set-storage tbody th { padding: var(--sp-1) 4px; }
   .set-storage th, .set-storage td { padding: var(--sp-1) 4px; }
 }
+
+/* Display > Preview without a device (device-preview.js) */
+.set-prev-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-3); }
+.set-prev-row label { min-width: 0; overflow-wrap: anywhere; }
+.set-prev-row select { flex: 0 1 16em; min-width: 0; }
+.set-prev-btns { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 0; }

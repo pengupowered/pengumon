@@ -1,1 +1,30 @@
-{"order": 40}
+{
+ "order": 40,
+ "uses": [
+  {
+   "part": "The whole card: the router's load on the line, CPU, memory and history",
+   "capabilities": [
+    "wan_counters",
+    "router_system"
+   ]
+  },
+  {
+   "part": "Router card: the connected devices and Local network",
+   "capabilities": [
+    "client_inventory"
+   ]
+  },
+  {
+   "part": "Router card: the mesh nodes and their devices",
+   "capabilities": [
+    "mesh"
+   ]
+  },
+  {
+   "part": "Router card's map: the modem on the path",
+   "capabilities": [
+    "access_line"
+   ]
+  }
+ ]
+}

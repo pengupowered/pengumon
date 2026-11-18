@@ -527,3 +527,20 @@ async def test_an_applied_isp_hop_probed_by_tcp_that_the_trace_does_not_see_is_n
     assert changes(public) == [("new", "203.0.113.3")]  # the new hop is still news; the TCP hop is not gone
     plain = checker(Network(ROUTE_B, APPLIED))[0]
     assert ("gone", "203.0.113.2") in changes(await plain.check())
+
+
+def test_a_gateway_proposed_paused_off_the_path_is_no_route_change():
+    """Something answering at a common gateway address off the traced path is proposed paused (infer._place_off_path):
+    it is not on the route, so a background check does not announce it as a new hop."""
+    live = live_path_from_targets([ROUTER, ISP_1])
+
+    def proposed(address, category, **extra):
+        return {"id": address, "name": address, "address": address, "category": category, "evidence": [],
+                "confidence": "likely", "suggested_driver": None, "status": "new", **extra}
+
+    hops = [proposed("192.168.1.1", "local"), proposed("192.168.100.1", "gateway", enabled=False),
+            proposed("203.0.113.1", "isp")]
+    assert route_changes(diff_against(hops, live), live) == []
+    hops[1]["enabled"] = True  # the same hop proposed switched on (a gateway on the traced path) is news
+    assert [(c["kind"], c["hop"]["address"]) for c in route_changes(diff_against(hops, live), live)] == [
+        ("new", "192.168.100.1")]

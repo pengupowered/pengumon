@@ -1,1 +1,11 @@
-{"order": 30}
+{
+ "order": 30,
+ "uses": [
+  {
+   "part": "The whole card: the cable line's signal levels, errors and channel history",
+   "capabilities": [
+    "access_line"
+   ]
+  }
+ ]
+}

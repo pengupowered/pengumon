@@ -455,7 +455,7 @@ async def test_the_page_carries_the_configured_default_layout_in_a_csp_safe_attr
 # touching them, and the page works (the smoke test's `bare` variant) with no devices at all.
 CORE_MODULES = ["main.js", "live.js", "live-delta.js", "bus.js", "layout.js", "tabs.js", "dispatch.js", "devices.js", "chrome.js", "session.js"]
 # what the core may import: itself, the shared helpers and the one list of panels
-CORE_IMPORTABLE = {*CORE_MODULES, "state.js", "help.js", "chart-theme.js", "themes.js", "settings-values.js",
+CORE_IMPORTABLE = {*CORE_MODULES, "state.js", "help.js", "device-preview.js", "chart-theme.js", "themes.js", "settings-values.js",
                    "panels/index.js", "targets.js", "dom.js", "device-text.js", "clock.js", "format.js", "escape.js", "modal.js",
                    "host.js", "password.js", "clipboard.js", "export-view.js", "view-only.js", "update-bar.js"}
 OPTIONAL_WORDS = re.compile(

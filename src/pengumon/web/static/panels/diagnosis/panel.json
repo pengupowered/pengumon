@@ -1,1 +1,11 @@
-{"order": 10}
+{
+ "order": 10,
+ "uses": [
+  {
+   "part": "Diagnosis: \"busy line\" verdicts and their legend",
+   "capabilities": [
+    "wan_counters"
+   ]
+  }
+ ]
+}

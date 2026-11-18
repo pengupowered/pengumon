@@ -230,7 +230,11 @@ export function mountRouter(section, ctx, device) {
   const mesh = lists && providers(ctx, 'mesh').includes(device.id);
   const caps = { wan: offers('wan_counters'), sys: offers('router_system'), clients: lists, mesh };
   let notice = null;
-  root.dataset.size = caps.wan || mesh ? '8' : '4';
+  // a card of several parts is wide; one of a single part narrow (owner, 2026-11-17: a UPnP router, internet traffic
+  // alone, gets a narrow card), and then its chart fills the card (panel.css, data-shape="wan")
+  const partCount = [caps.wan, caps.sys, caps.clients, caps.mesh].filter(Boolean).length;
+  root.dataset.size = partCount > 1 ? '8' : '4';
+  if (partCount === 1 && caps.wan) root.dataset.shape = 'wan';
   setText(refs.title, deviceName(device));
   setText(refs.meta, [device.model && device.host ? device.host : null, device.kind].filter(Boolean).join(' · '));
   if (caps.sys && !lists) {

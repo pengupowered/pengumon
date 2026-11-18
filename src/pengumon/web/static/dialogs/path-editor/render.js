@@ -134,8 +134,8 @@ function deviceNow(device) {
 function deviceBlock(h) {
   if (!DEVICE_ROLES.includes(h.category)) return '';
   const id = escapeHtml(h.id);
-  const device = h.device_id ? state.devices.find((d) => d.id === h.device_id) : null;
-  const choices = [['', 'No device'], ...state.devices.map((d) => [d.id, deviceLabel(d)])];
+  const device = h.device_id ? state.configuredDevices.find((d) => d.id === h.device_id) : null;
+  const choices = [['', 'No device'], ...state.configuredDevices.map((d) => [d.id, deviceLabel(d)])];
   if (h.device_id && !device) choices.push([h.device_id, `${h.device_id} (not configured here)`]);
   const chooser = pe.picking.has(h.id)
     ? `<label class="field pe-dev-pick"><span>Device</span><select class="input" data-change="pickPathDevice" data-arg="${id}" aria-label="Device of ${escapeHtml(h.name)}">${options(choices, h.device_id || '')}</select></label>` : '';
@@ -152,12 +152,12 @@ function deviceBlock(h) {
     } else {
       why = 'That device is not set up on this install (Settings, Devices): nothing reads it here.';
     }
-  } else if (state.devices.length) {
+  } else if (state.configuredDevices.length) {
     line = `${icon('plug', 'sm')}<span class="muted">No device connected</span> · <button type="button" class="btn sm outline" data-action="connectPathDevice" data-needs-edit data-arg="${id}">${icon('lock')}Connect</button>`;
   } else {
     line = `${icon('plug', 'sm')}<span class="muted">No device connected</span> · <span class="fine">add one in Settings, Devices, to read it</span>`;
   }
-  const kindKnown = state.devices.find((d) => d.driver === h.suggested_driver);
+  const kindKnown = state.configuredDevices.find((d) => d.driver === h.suggested_driver);
   const driver = !h.device_id && h.suggested_driver
     ? `<p class="fine pe-suggest">${kindKnown ? `Discovery thinks this is a device Pengumon can read: ${escapeHtml(kindKnown.kind || 'one you have set up')}.` : 'Discovery thinks this is a device Pengumon can read: add it in Settings, Devices.'}</p>` : '';
   return `<div class="pe-dev"><div class="pe-dev-l">${line}</div>${chooser}<p class="fine pe-dev-why">${why}</p>${driver}</div>`;
@@ -167,7 +167,7 @@ function deviceBlock(h) {
 function watchDevices() {
   if (!pe.draft) return;
   const want = new Set(pe.draft.hops.filter((h) => DEVICE_ROLES.includes(h.category) && h.device_id).map((h) => h.device_id));
-  state.devices.filter((d) => want.has(d.id) && !pe.deviceWatch.has(d.id)).forEach((d) => {
+  state.configuredDevices.filter((d) => want.has(d.id) && !pe.deviceWatch.has(d.id)).forEach((d) => {
     pe.deviceWatch.set(d.id, watchDevice(bus, d, () => paintDevice(d)));
   });
 }

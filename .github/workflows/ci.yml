@@ -304,11 +304,13 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # The install scripts as a user runs them, from the release files (--from / -From: no download of pengumon, but the
-  # real uv and Python downloads): install, check the service runs (system unit on Linux with sudo, LaunchDaemon on
-  # macOS with sudo, logon task on Windows) and answers on 127.0.0.1, run the installer again (the upgrade path: backup,
-  # remove the service, reinstall), then uninstall. scripts/ci-install-check.sh has the checks; a failure becomes one
-  # error annotation with the service state and its log.
+  # The install scripts as a user runs them. First the previous published release, with its own install script from
+  # GitHub (the newest release that is not this version), and it runs; then this build's script from the release files
+  # (--from / -From: no download of pengumon, but the real uv and Python downloads) upgrades it, as a user who runs the
+  # install line again does: backup, migration of the old release's database to this build's schema, its settings kept;
+  # check the service runs (system unit on Linux with sudo, LaunchDaemon on macOS with sudo, logon task on Windows) and
+  # answers on 127.0.0.1; run the installer once more (a reinstall of the same version), then uninstall.
+  # scripts/ci-install-check.sh has the checks; a failure becomes one error annotation with the service state and its log.
   install:
     name: Install (${{ matrix.os }})
     needs: release-assets
@@ -329,23 +331,52 @@ jobs:
         with:
           name: release-assets
           path: release-assets
-      - name: Install (Linux, macOS)
+      # The newest published release other than this version (empty in a repository with none: then the steps up to the
+      # check of the previous release are skipped and the first install below is a fresh one).
+      - name: The previous release
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          this="$(basename release-assets/pengumon-*-py3-none-any.whl | sed -n 's/^pengumon-\([0-9][^-]*\)-.*/\1/p')"
+          prev="$(gh release list --repo "$REPO" --exclude-drafts --exclude-pre-releases --limit 20 --json tagName --jq '.[].tagName' \
+            | sed 's/^v//' | grep -vxF "$this" | head -n 1)"
+          echo "this build is $this; the previous release is ${prev:-none}"
+          echo "version=$prev" >> "$GITHUB_OUTPUT"
+      - name: Install the previous release (Linux, macOS)
+        if: runner.os != 'Windows' && steps.previous.outputs.version != ''
+        env:
+          PREV: ${{ steps.previous.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: curl -fsSL "https://github.com/$REPO/releases/download/v$PREV/install.sh" | sh -s -- --version "$PREV" --yes --no-browser
+      - name: Install the previous release (Windows)
+        if: runner.os == 'Windows' && steps.previous.outputs.version != ''
+        shell: powershell
+        env:
+          PREV: ${{ steps.previous.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: '& ([scriptblock]::Create((Invoke-RestMethod "https://github.com/$env:REPO/releases/download/v$env:PREV/install.ps1"))) -Version $env:PREV -NoBrowser'
+      - name: Check the previous release runs, and note its database
+        if: steps.previous.outputs.version != ''
+        run: scripts/ci-install-check.sh previous "${{ steps.previous.outputs.version }}"
+      - name: Install this build (the upgrade from the previous release; Linux, macOS)
         if: runner.os != 'Windows'
         run: sh release-assets/install.sh --from release-assets --yes --no-browser
-      - name: Install (Windows)
+      - name: Install this build (the upgrade from the previous release; Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: .\release-assets\install.ps1 -From release-assets -NoBrowser
-      - name: Check the service
-        run: scripts/ci-install-check.sh installed release-assets
-      - name: Upgrade (the installer again)
+      - name: Check the service (and, after an upgrade, the old release's data)
+        run: scripts/ci-install-check.sh ${{ steps.previous.outputs.version != '' && 'upgraded' || 'installed' }} release-assets
+      - name: Reinstall (the installer again, the same version)
         if: runner.os != 'Windows'
         run: sh release-assets/install.sh --from release-assets --yes --no-browser
-      - name: Upgrade (the installer again, Windows)
+      - name: Reinstall (the installer again, the same version, Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: .\release-assets\install.ps1 -From release-assets -NoBrowser
-      - name: Check the upgrade
+      - name: Check the reinstall
         run: scripts/ci-install-check.sh upgraded release-assets
       - name: Uninstall
         if: runner.os != 'Windows'

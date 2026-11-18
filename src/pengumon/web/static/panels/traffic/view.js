@@ -1,7 +1,9 @@
-// Internet use card, the standard view: the notice when the router gives no traffic figures, the totals, the hourly chart
-// (Chart.js, chart.js) with its range buttons and the sentences about the hours the router has not published, the devices that
-// used the most (a button each: it opens that device's dialog) and the apps of the range (model.js), drawn from model.js's
-// view model. Each part is drawn again only when its piece of the view model changed.
+// Internet use card, the standard view: the notice when the router gives no traffic figures, the range at the top with its
+// download and upload, the line chart (Chart.js, chart.js: a click picks the nearest hour) with its range control and the
+// sentences about the hours the router has not published, the strip of the hour (or day) picked on it with the steps to the
+// ones before and after, the devices that used the most (a button each: it opens that device's dialog) and the apps
+// (model.js), drawn from model.js's view model. Each part is drawn again only when its piece of the view
+// model changed.
 // docs/themes.md, "Drawing a card"; a theme's own view of this card gets these parts as ctx.std.parts.
 
 import { kit } from '../../js/cards.js';
@@ -26,18 +28,67 @@ function notice(box, vm) {
   });
 }
 
-// What the range covered: the sums, and the busiest hour.
+// A big figure: "DOWNLOAD", "1.66 GB", "3.7 Mbps on average".
+function figure(label, f, key) {
+  const box = el('div', 'trf-fig');
+  box.dataset.item = key;
+  box.appendChild(el('span', 'trf-lbl', label));
+  const big = el('span', 'trf-big');
+  big.append(mark(el('b', null, f.num), 'num'), ' ', el('small', null, f.unit));
+  box.append(big, mark(el('span', 'trf-avg', f.avg), 'avg'));
+  return box;
+}
+
+// The top of the card: the range, from when to when, and its download and upload as big figures. A part: another view can put
+// it in a box of its own.
 function totals(box, vm) {
   paint(box, vm.totals, (b) => {
     const t = vm.totals;
     if (!t) return;
-    b.appendChild(mark(el('p', 'trf-totals', t.text), 'totals'));
-    b.appendChild(mark(el('p', 'trf-range', t.range), 'range'));
-    if (t.busiest) b.appendChild(mark(el('p', 'trf-busiest', t.busiest.text), 'busiest'));
+    const when = el('div', 'trf-when');
+    when.append(mark(el('b', 'trf-range', t.when), 'range'), mark(el('span', null, t.sub), 'rangeSpan'));
+    const figs = el('div', 'trf-figs-big');
+    figs.append(figure('Download', t.down, 'down'), figure('Upload', t.up, 'up'));
+    b.append(when, figs);
   });
 }
 
-// The hourly chart, its legend and range buttons, and the notes about the gaps. A part: another view can put it in a box of its own.
+// The strip under the chart while an hour (or day) is picked on it: when, its download and upload, and the steps ‹ › and
+// Whole range (the lists below are its own until then). A part: another view can put it in a box of its own.
+function pick(box, vm) {
+  const had = box.contains(document.activeElement) ? document.activeElement : null; // a step button keeps the focus across the redraw
+  const again = had && had.dataset.action ? `[data-action="${had.dataset.action}"]${had.dataset.arg ? `[data-arg="${had.dataset.arg}"]` : ''}` : null;
+  box.hidden = !vm.pick;
+  paint(box, vm.pick, (b) => {
+    const p = vm.pick;
+    if (!p) return;
+    const what = el('span', 'trf-strip-what');
+    what.append(mark(el('b', 'trf-strip-when', p.when), 'when'), ' ', mark(el('span', 'trf-strip-figs', [p.down, p.up].filter(Boolean).join(' · ')), 'figs'));
+    if (p.avg) what.append(' ', mark(el('span', 'trf-strip-avg', p.avg), 'avg'));
+    const steps = el('span', 'trf-steps');
+    const step = (label, action, arg, on, text) => {
+      const s = el('button', 'btn sm outline', text);
+      s.type = 'button';
+      s.dataset.action = action;
+      if (arg) s.dataset.arg = arg;
+      s.disabled = !on;
+      s.setAttribute('aria-label', label);
+      return s;
+    };
+    const unit = p.steps.unit === 'day' ? 'day' : 'hour';
+    steps.append(step(`The ${unit} before`, 'trafficStep', 'prev', p.steps.prev, '‹'), step(`The ${unit} after`, 'trafficStep', 'next', p.steps.next, '›'),
+      step('Back to the whole range: its devices and apps in the lists', 'trafficWholeRange', null, true, '✕ Whole range'));
+    b.append(what, steps);
+  });
+  if (again && !box.contains(document.activeElement)) {
+    const target = box.querySelector(again);
+    (target && !target.disabled ? target : box.querySelector('.trf-steps button:not([disabled])'))?.focus({ preventScroll: true });
+  }
+}
+
+// The line chart, its legend and range control, and the notes about the gaps; Last hour has one point, so a sentence instead of
+// the chart. A click on the chart picks the hour or day nearest it (chart.js puts it on the canvas for the trafficPick action).
+// A part: another view can put it in a box of its own.
 function chartPart(box) {
   const bar = el('div', 'trf-chart-bar');
   const keys = el('span', 'trf-legend');
@@ -46,22 +97,27 @@ function chartPart(box) {
   const wrap = el('div', 'chart-box trf-chart-box');
   const canvas = el('canvas');
   canvas.setAttribute('role', 'img');
+  canvas.dataset.action = 'trafficPick';
   wrap.appendChild(canvas);
+  const single = mark(el('p', 'trf-single', 'One hour is one point, so there is no line to draw: the figures above are that hour. Choose 24 hours or longer to see the hours before it and pick one.'), 'single');
   const notes = el('div', 'trf-notes');
-  box.append(bar, wrap, notes);
-  const chart = hoursChart(canvas);
+  box.append(bar, wrap, single, notes);
+  const chart = hoursChart(canvas, { pickable: true });
   let keysSig = null;
   return {
     update(c, force) {
       const pressed = c.modes.find((m) => m.pressed);
       fillRangeSelect(seg, { options: c.modes.map((m) => ({ id: m.arg, words: m.label })), value: pressed ? pressed.arg : c.modes[0].arg, action: 'trafficRange', label: 'Range' });
+      wrap.hidden = c.single;
+      single.hidden = !c.single;
+      keys.style.visibility = c.single ? 'hidden' : '';
       // the legend: Download, Upload and the kinds of gap there are; drawn again after a theme change (its colors are tokens)
       const kinds = JSON.stringify([...new Set(c.gaps.filter(Boolean))]);
       if (force || kinds !== keysSig) {
         keysSig = kinds;
         keys.replaceChildren(...legendOf(c, canvas).map((k) => {
           const s = el('span', `trf-key${k.pattern ? ' gap' : ''}`);
-          const sw = el('i', 'key');
+          const sw = el('i', k.line ? 'key line' : 'key');
           sw.style.setProperty('--c', k.color);
           sw.setAttribute('aria-hidden', 'true');
           s.append(sw, k.name);
@@ -69,8 +125,8 @@ function chartPart(box) {
         }));
       }
       paint(notes, c.notes, () => c.notes.forEach((n) => notes.appendChild(mark(el('p', 'trf-note', n.text), n.key))));
-      notes.hidden = !c.notes.length;
-      chart.update(c, force);
+      notes.hidden = !c.notes.length || c.single;
+      if (!c.single) chart.update(c, force);
     },
     unmount() { chart.unmount(); }
   };
@@ -153,7 +209,7 @@ function listPart(box, kind, build, help) {
 const devices = (box) => listPart(box, 'devices', deviceRow);
 const apps = (box) => listPart(box, 'apps', appRow, { key: 'traffic.apps', label: 'About the apps' });
 
-export const parts = { notice, totals, chart: chartPart, devices, apps };
+export const parts = { notice, pick, totals, chart: chartPart, devices, apps };
 
 export default {
   parts,
@@ -164,6 +220,7 @@ export default {
     const noticeBox = area('trf-notices');
     const totalsBox = area('trf-sums');
     const chartBox = area('trf-chart');
+    const pickBox = area('trf-pick');
     const cols = area('trf-cols');
     const devicesBox = cols.appendChild(el('section', 'trf-block trf-devices'));
     const appsBox = cols.appendChild(el('section', 'trf-block trf-apps'));
@@ -189,7 +246,7 @@ export default {
           }
         });
         if (vm.state !== 'ready') {
-          [noticeBox, totalsBox, chartBox, cols].forEach((b) => { b.hidden = true; b._sig = null; });
+          [noticeBox, pickBox, totalsBox, chartBox, cols].forEach((b) => { b.hidden = true; b._sig = null; });
           if (chart) { chart.unmount(); chart = null; chartBox.replaceChildren(); }
           return;
         }
@@ -205,6 +262,7 @@ export default {
           chartBox.replaceChildren();
           chartBox.hidden = true;
         }
+        pick(pickBox, vm);
         cols.hidden = !vm.clients;
         if (vm.clients && (!prev || prev.clients !== vm.clients)) devicePart.update(vm.clients);
         if (vm.apps && (!prev || prev.apps !== vm.apps)) appPart.update(vm.apps);

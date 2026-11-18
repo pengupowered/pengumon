@@ -119,7 +119,9 @@ def log_device(device: Device) -> None:
     log.info(f"Device {device.id}: {device.driver.name} every "
              f"{device.interval_seconds:g} s, offers {offers}; "
              + (f"password from {source}" if source else
-                ("no password configured" if device.needs_sign_in else "needs no password")),
+                "needs no password" if not device.needs_sign_in else
+                "no password saved: signs in without one" if getattr(device.driver, "password_optional", False) else
+                "no password configured"),
              interval_s=device.interval_seconds, capabilities=offers, credentials=source or "none")
 
 

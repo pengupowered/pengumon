@@ -1,9 +1,11 @@
-/* Starship console's Internet use card: the standard view (panels/traffic/view.js) restyled: the totals a console readout in the
-   condensed capitals, each list a station under an orange band, the rows flat blocks with a bar of the accent beside them and the
+/* Starship console's Internet use card: the standard view (panels/traffic/view.js) restyled: the range's figures a console readout in the condensed
+   capitals, the picked hour's strip a flat block, each list a station under an orange band, the rows flat blocks with a bar of the accent beside them and the
    usage bars as segmented gauges, the notes and the notice flat blocks. */
 
-:root[data-look="starship"] [data-panel="traffic"] .trf-totals { font-family: var(--ss-cond); font-stretch: condensed; font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .05em; }
-:root[data-look="starship"] [data-panel="traffic"] .trf-range, :root[data-look="starship"] [data-panel="traffic"] .trf-busiest { font-family: var(--ss-cond); font-stretch: condensed; letter-spacing: .04em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-big { font-family: var(--ss-cond); font-stretch: condensed; font-weight: var(--fw-bold); text-transform: uppercase; letter-spacing: .05em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-when b, :root[data-look="starship"] [data-panel="traffic"] .trf-strip-when,
+:root[data-look="starship"] [data-panel="traffic"] .trf-lbl { font-family: var(--ss-cond); font-stretch: condensed; letter-spacing: .04em; }
+:root[data-look="starship"] [data-panel="traffic"] .trf-pick { border-radius: 0; border-width: 0 0 0 6px; border-color: var(--accent); background: var(--surface-2); }
 :root[data-look="starship"] [data-panel="traffic"] .trf-notice { border-radius: 0; border-width: 0 0 0 6px; border-color: var(--st); }
 :root[data-look="starship"] [data-panel="traffic"] .trf-legend { font-family: var(--ss-cond); font-stretch: condensed; text-transform: uppercase; letter-spacing: .05em; }
 :root[data-look="starship"] [data-panel="traffic"] .trf-block { gap: var(--sp-2); padding: var(--sp-2) 0 0; border-top: 4px solid var(--accent); }

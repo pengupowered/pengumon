@@ -7,6 +7,7 @@ from fastapi import WebSocket
 from pydantic_core import to_json
 
 from pengumon.devices.summary import viewer_devices
+from pengumon.preview import Preview, live_devices
 from pengumon.live.message import LiveStreamMessage
 from pengumon.observability import get_logger
 from pengumon.observability.telemetry import ws_clients_dropped, ws_message_size, ws_send_duration
@@ -89,9 +90,11 @@ class ConnectionManager:
         self._viewers: set = set()  # connections that may not edit: they get the reworded device messages
         self._resync: Dict[WebSocket, None] = {}  # delta connections waiting for a full message of their own
         self._resynced: Dict[WebSocket, float] = {}  # when each one's last was let through (clock)
+        self._previews: Dict[WebSocket, "LivePreview"] = {}  # connections of a browser previewing without a device
         self._clock = clock
 
-    async def connect(self, websocket: WebSocket, delta: bool = False, editor: bool = True) -> bool:
+    async def connect(self, websocket: WebSocket, delta: bool = False, editor: bool = True,
+                      preview: Optional["LivePreview"] = None) -> bool:
         """Accepts the connection and adds it; False (closed with 1013, not added) when MAX_CONNECTIONS are held."""
         await websocket.accept()
         if len(self.active_connections) >= MAX_CONNECTIONS:
@@ -103,12 +106,15 @@ class ConnectionManager:
             self._seen[websocket] = {}
         if not editor:
             self._viewers.add(websocket)
+        if preview is not None:
+            self._previews[websocket] = preview
         logger.debug("Client connected", clients=len(self.active_connections))
         return True
 
     def disconnect(self, websocket: WebSocket):
         self._seen.pop(websocket, None)
         self._viewers.discard(websocket)
+        self._previews.pop(websocket, None)
         self._resync.pop(websocket, None)
         self._resynced.pop(websocket, None)
         if websocket in self.active_connections:
@@ -203,6 +209,7 @@ class ConnectionManager:
         """The text for each connection: the full message, or for a delta connection its delta, of the message as that
         connection may see it. Each form (full text, window-less dump) is built once per version of the message."""
         viewer_message: Optional[LiveStreamMessage] = None
+        previewed: Dict[tuple, LiveStreamMessage] = {}  # (id(message version), preview) -> that version as previewed
         built: Dict[int, list] = {}  # id(message version) -> [message, full text, window-less dump]
         texts = []
         for connection in connections:
@@ -212,6 +219,12 @@ class ConnectionManager:
                     devices = viewer_devices(message.devices)
                     viewer_message = message if devices is message.devices else message.model_copy(update={"devices": devices})
                 shown = viewer_message
+            preview = self._previews.get(connection)
+            if preview is not None:
+                key = (id(shown), preview.key)
+                if key not in previewed:
+                    previewed[key] = preview.shape(shown)
+                shown = previewed[key]
             forms = built.setdefault(id(shown), [shown, None, None])
             if connection not in self._seen:
                 if forms[1] is None:
@@ -267,3 +280,24 @@ class ConnectionManager:
 
 
 ws_manager = ConnectionManager()
+
+
+class LivePreview:
+    """How a previewing browser's connection is sent the message (pengumon.preview): `devices` without the devices
+    previewed as absent and with only the WAN figures of those previewed as basic (`basic_ids`); without a device that
+    counts the WAN traffic (`wan_hidden`), no line load either."""
+
+    def __init__(self, preview: Preview, basic_ids: set, wan_hidden: bool):
+        self.preview = preview
+        self.basic_ids = set(basic_ids)
+        self.wan_hidden = wan_hidden
+        self.key = (tuple(sorted(preview.modes.items())), tuple(sorted(self.basic_ids)), wan_hidden)
+
+    def shape(self, message: LiveStreamMessage) -> LiveStreamMessage:
+        update: Dict[str, Any] = {"devices": live_devices(message.devices, self.preview, self.basic_ids)}
+        if self.wan_hidden:
+            update["line"] = None
+            if message.diagnosis.load_pct is not None:
+                update["diagnosis"] = message.diagnosis.model_copy(update={"load_pct": None})
+        return message.model_copy(update=update)
+

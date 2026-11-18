@@ -233,8 +233,8 @@ function openSetup(deviceId) {
 export function connect(el) {
   const h = hopById(el.dataset.arg);
   if (!h) return;
-  const byDriver = h.suggested_driver ? state.devices.filter((d) => d.driver === h.suggested_driver) : [];
-  const single = byDriver.length === 1 ? byDriver[0] : state.devices.length === 1 ? state.devices[0] : null;
+  const byDriver = h.suggested_driver ? state.configuredDevices.filter((d) => d.driver === h.suggested_driver) : [];
+  const single = byDriver.length === 1 ? byDriver[0] : state.configuredDevices.length === 1 ? state.configuredDevices[0] : null;
   if (!single) {
     pe.picking.add(h.id);
     render({ id: h.id, selector: '[data-change=pickPathDevice]' });
@@ -255,7 +255,7 @@ export function pickDevice(el) {
   h.device_unlinked = !h.device_id; // "No device" is a choice: no automatic link undoes it
   pe.picking.delete(h.id);
   render({ id: h.id, selector: h.device_id ? '[data-action=changePathDevice]' : '[data-action=connectPathDevice]' });
-  const device = state.devices.find((d) => d.id === h.device_id);
+  const device = state.configuredDevices.find((d) => d.id === h.device_id);
   if (device && !device.has_credentials) openSetup(device.id); // not signed in yet: where to do it
 }
 

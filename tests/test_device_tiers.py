@@ -302,6 +302,13 @@ async def test_every_round_keeps_its_app_windows_and_they_are_read_back_by_range
     only = await repo.get_traffic_app_windows("r1", t0, t0 + 2 * hour, client="aa")
     assert [w for _, w, _ in only] == [t0 + 2 * hour, t0 + hour, t0]
     assert await repo.get_traffic_app_windows("r1", t0 + 0.5, t0 + hour - 1) == []
+    # a summary asks for the clients it shows only, unparsed (it parses the windows it chooses: parse_apps)
+    from pengumon.db.traffic import parse_apps
+    raw = await repo.get_traffic_app_windows("r1", t0, t0 + 2 * hour, parsed=False, clients={""})
+    assert [(c, w) for c, w, _ in raw] == [("", t0 + 2 * hour), ("", t0 + hour), ("", t0)]
+    assert [parse_apps(a) for _, _, a in raw] == [[["Web", 12, 20]], [["Web", 11, 20]], [["Web", 99, 99]]]
+    assert await repo.get_traffic_app_windows("r1", t0, t0 + 2 * hour, clients=()) == []
+    assert parse_apps("not json") == parse_apps('{"a": 1}') == []
 
 
 async def test_the_app_windows_are_kept_31_days(repo):

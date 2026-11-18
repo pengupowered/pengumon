@@ -72,12 +72,15 @@ def name_hops(guesses: Sequence[HopGuess]) -> None:
 
 
 def _guess_hop(g: HopGuess) -> dict:
-    return {
-        "id": hop_id(g.address), "name": g.name[:100], "address": g.address, "category": g.category, "enabled": True,
-        "family": 6 if ":" in g.address else 4, "group": None, "color": None, "device_id": None,
+    hop = {
+        "id": hop_id(g.address), "name": g.name[:100], "address": g.address, "category": g.category,
+        "enabled": g.enabled, "family": 6 if ":" in g.address else 4, "group": None, "color": None, "device_id": None,
         "evidence": [e.public() for e in g.evidence], "confidence": g.confidence,
         "suggested_driver": g.suggested_driver, "status": "new",
     }
+    if g.probe != "icmp":  # a gateway off the traced path that answered only on its web port
+        hop.update(probe=g.probe, port=g.port)
+    return hop
 
 
 def _server_hop(server: PublicServer, reached: Optional[bool]) -> dict:

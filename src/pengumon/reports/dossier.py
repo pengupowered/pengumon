@@ -10,7 +10,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Collection, Dict, Iterable, List, Optional, Tuple
 
 from pengumon.lines import docsis
 from pengumon.models.probes import probe_words
@@ -172,12 +172,15 @@ async def _modem_evidence(line, config, start_time: float, now: float):
 
 async def collect_dossier_facts(repository, config, hours: int, now: float, line=None,
                                 ignoring: Iterable[str] = (), *, start: Optional[float] = None,
-                                zone: tzinfo = timezone.utc, traffic=None) -> DossierFacts:
+                                zone: tzinfo = timezone.utc, traffic=None,
+                                event_devices: Optional[Collection[str]] = None) -> DossierFacts:
     """`line` is the line device's DocsisHistory (pengumon.lines.docsis); without one the dossier has no modem
     readings. `ignoring`: the hops that ignore ping now (engine.path_rules); their loss counts in no finding.
     `start`: the window begins here instead of `hours` before `now`, and its hop totals stop at `now` (the AI pack's
     windows end at their own end time). `traffic`: (device id, devices.traffic.Namer in "generic" mode) of the router
-    that reports traffic per client: the busy-line incidents' hours name the top downloader by its kind."""
+    that reports traffic per client: the busy-line incidents' hours name the top downloader by its kind.
+    `event_devices`: only these devices' stored events are listed (a browser previewing without a device,
+    pengumon.preview.event_devices); None: every device's."""
     ignoring = frozenset(ignoring)
     start_time = now - hours * 3600 if start is None else start
 
@@ -205,6 +208,8 @@ async def collect_dossier_facts(repository, config, hours: int, now: float, line
     speed = await _speed_summary(repository, config, start_time, now)
     device_events = (await events_between(repository, None, start_time, now)
                      if hasattr(repository, "get_device_events") else [])
+    if event_devices is not None:
+        device_events = [e for e in device_events if e.device_id in event_devices]
     busy_traffic = await _busy_traffic(repository, rows, busy_pct, traffic, now, zone)
     spikes = await spike_summary(repository, config, start_time, now, zone)
 
@@ -573,11 +578,13 @@ def render_dossier_markdown(f: DossierFacts) -> str:
 
 async def build_dossier(repository, config, hours: int, now: Optional[float] = None, line=None,
                         ignoring: Iterable[str] = (), tz_name: Optional[str] = None,
-                        tz_offset_minutes: int = 0, traffic=None) -> Dict[str, Any]:
+                        tz_offset_minutes: int = 0, traffic=None,
+                        event_devices: Optional[Collection[str]] = None) -> Dict[str, Any]:
     """`tz_name` / `tz_offset_minutes`: the viewer's zone, the fallbacks of timeofday.viewer_zone (Settings wins)."""
     now = now or time.time()
     facts = await collect_dossier_facts(repository, config, hours, now, line, ignoring,
-                                        zone=viewer_zone(config, tz_name, tz_offset_minutes)[0], traffic=traffic)
+                                        zone=viewer_zone(config, tz_name, tz_offset_minutes)[0], traffic=traffic,
+                                        event_devices=event_devices)
     return {
         "observation_hours": hours,
         "total_incidents": facts.total_incidents,

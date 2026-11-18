@@ -6,15 +6,14 @@
 .trf-notice b { display: inline-flex; align-items: center; gap: 5px; color: var(--st); font-size: var(--fs-xs); font-weight: var(--fw-semi); }
 .trf-reason { min-width: 0; overflow-wrap: anywhere; }
 .trf-stale { margin: 0; font-size: var(--fs-sm); color: var(--warn); font-weight: var(--fw-semi); }
-.trf-sums { display: flex; flex-direction: column; gap: 2px; }
-.trf-totals { margin: 0; font-size: var(--fs-md); color: var(--ink-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.trf-range, .trf-busiest { margin: 0; font-size: var(--fs-sm); color: var(--ink-3); }
+/* the top: the range chosen and its download and upload, as the Speed card's last result */
+.trf-sums { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
 .trf-chart { display: flex; flex-direction: column; gap: var(--sp-2); }
 .trf-chart-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
 .trf-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-xs); color: var(--ink-2); min-width: 0; }
 .trf-key { display: inline-flex; align-items: center; gap: 5px; }
 .trf-key.gap .key { background: repeating-linear-gradient(135deg, var(--c) 0 2px, transparent 2px 4px); border: 1px solid var(--c); }
-.trf-chart-box { --h: 190px; }
+.trf-chart-box { --h: 200px; }
 .trf-notes { display: flex; flex-direction: column; gap: 2px; }
 .trf-note { margin: 0; font-size: var(--fs-xs); color: var(--ink-3); }
 .trf-cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-5); }
@@ -53,3 +52,23 @@ button.trf-row:hover { background: var(--surface-2); }
 .tcl-day { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: var(--sp-3); align-items: baseline; font-size: var(--fs-sm); }
 .tcl-apps { display: flex; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
 @container (max-width: 480px) { .tcl-day { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+/* the hour (or day) picked on the chart: a strip under it */
+.trf-pick { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-3); padding: var(--sp-2) var(--sp-3); border: 1px solid color-mix(in srgb, var(--s1) 35%, var(--line)); border-radius: var(--r-md); background: color-mix(in srgb, var(--s1) 8%, var(--surface-1)); min-width: 0; }
+.trf-strip-what { min-width: 0; font-size: var(--fs-sm); color: var(--ink-2); overflow-wrap: anywhere; }
+.trf-strip-when { color: var(--ink-1); }
+.trf-strip-figs { font-variant-numeric: tabular-nums; }
+.trf-strip-avg { font-size: var(--fs-xs); color: var(--ink-3); }
+.trf-when { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.trf-when b { font-size: var(--fs-md); color: var(--ink-1); overflow-wrap: anywhere; }
+.trf-when span { font-size: var(--fs-xs); color: var(--ink-3); overflow-wrap: anywhere; }
+.trf-steps { display: inline-flex; gap: 4px; flex: none; }
+.trf-steps .btn[disabled] { opacity: .4; cursor: default; }
+.trf-figs-big { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); max-width: 520px; }
+@container (max-width: 300px) { .trf-figs-big { grid-template-columns: minmax(0, 1fr); } }
+.trf-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.trf-lbl { font-size: var(--fs-xs); color: var(--ink-3); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .05em; }
+.trf-big { font-size: var(--fs-2xl); line-height: 1.1; color: var(--ink-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.trf-big b { font-weight: var(--fw-bold); }
+.trf-big small { font-size: var(--fs-sm); color: var(--ink-3); font-weight: var(--fw-medium); }
+.trf-avg { font-size: var(--fs-xs); color: var(--ink-2); }
+.trf-single { margin: 0; padding: var(--sp-3); border: 1px dashed var(--line-strong); border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--ink-2); }

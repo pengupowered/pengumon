@@ -17,7 +17,7 @@ export const steps = [
       "Router|Hop 1: Local Router (LAN),Gateway|Hop 2: ISP Modem / Gateway,Internet|Public: Cloudflare Anycast (1.1.1.1)");
     ok("a bar per day with data", (await count("#reportOutput .days .day")) >= 1);
     ok("today is cut by the range (it ends now): its bar says how much of the day the range holds", /only .+ of this day are in the range/.test(await page.$eval("#reportOutput .days .day:last-child", (e) => e.dataset.tip)));
-    ok("the bars are what was lost per day, with the worst day named", /Lost per day/i.test(await text("#reportOutput .rep-days")) && /Worst: |No probe lost/.test(await text("#reportOutput .rep-days .rep-note")));
+    ok("the bars are what was lost per day, with the worst day named", /Lost per day/i.test(await text("#reportOutput .rep-days")) && /Worst (day|week): |No probe lost/.test(await text("#reportOutput .rep-days .rep-note")));
     const causes = await page.$$eval("#reportOutput .causes li span:first-child", (els) => els.map((e) => e.textContent));
     ok(`causes in words, not classifier codes: ${causes}`, causes.length > 0 && causes.every((c) => !/_/.test(c) && !/^unknown outage$/.test(c)));
     eq("the control offers 7, 30, 90 days and All", (await rangeState("#reportRangeButtons")).words.join(","), "Last 7 days,Last 30 days,Last 90 days,All · 180 d");

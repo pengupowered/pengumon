@@ -81,7 +81,9 @@ curl -fsSL https://github.com/pengupowered/pengumon/releases/latest/download/ins
 The scripts download the release, check every file against its hash, set up Pengumon's own Python, start it in the
 background so it survives reboots, and open `http://127.0.0.1:8000` (this computer only until you allow more, with a
 password). On Linux and macOS the script asks for sudo once, says why, and has a `--user` option to avoid it. Run
-the same command again to upgrade (your data is backed up first). Not tested yet on real Windows, macOS or Raspberry Pi
+the same command again to upgrade (your data is backed up first, and the database is updated by itself on the first
+start; [going back](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#going-back-to-an-older-version)
+needs that backup). Not tested yet on real Windows, macOS or Raspberry Pi
 hardware: see [what has been tested where](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#what-has-been-tested-where).
 
 Already use uv? `uv tool install pengumon`: no dependency hash check and no background service; see [the uv section](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#quick-way-uv-tool-install).
@@ -105,6 +107,10 @@ docker compose up -d                  # or: podman compose up -d
 Open `http://<host>:8000`. Rootless Podman needs unprivileged ping allowed once, and Docker Desktop (macOS, Windows) is
 not supported for this: both are explained in [docs/install.md](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#container), as is building from source.
 `pengumon doctor` says whether probing works here and, if not, what fixes it.
+
+**Upgrading the container**: back up first (`docker exec pengumon pengumon backup`), then put the new version in the
+`image:` line of `compose.yaml` and run `docker compose up -d` again. The database is updated by itself on the first start;
+going back to an older version needs that backup ([details](https://github.com/pengupowered/pengumon/blob/main/docs/install.md#upgrade)).
 
 ## First run
 

@@ -127,6 +127,11 @@ export const steps = [
     const sets = await page.evaluate(() => Chart.getChart(document.getElementById("latencyChart")).data.datasets.map((d) => d.id).join());
     ok(`three path series and the WAN overlay (${sets})`, /path_router,path_line,path_internet/.test(sets));
     ok("legend", /Internet/.test(await text("#latencyLegend")));
+    // the legend names the lines; nothing names them at their ends, so no right margin is kept for names (it was 70 px):
+    // the plot reaches the canvas's right edge, or the WAN axis's
+    const margin = await page.evaluate(() => { const c = Chart.getChart(document.getElementById("latencyChart"));
+      const load = c.scales.yLoad; return c.width - (load && load.options.display ? load.right : c.chartArea.right); });
+    ok(`no margin kept for line-end names (${margin} px)`, margin <= 12);
   }],
 
   ["the page's socket sends deltas: the panels still get whole windows, equal to a full socket's, also across a gap", async ({ eq, moduleUrl, ok, page, until }) => {

@@ -14,7 +14,8 @@ CONFIRM_DELAY_S later, and only the changes both runs saw count: one trace that 
 What counts (`route_changes`): your network's, the line's and the provider's hops (local, gateway, isp), since
 internet hops past the provider and the public servers vary from one trace to the next.
 * new: a hop discovery proposes that the applied path does not have, and that was not removed from it before (a hop
-  the owner removed and that is still there is no news);
+  the owner removed and that is still there is no news), and not proposed paused (a gateway answering off the traced
+  path is no route change);
 * gone: an applied hop discovery did not see (a home hop only when it does not answer a ping either; never a hop
   the owner probes by TCP or HTTP, which does not answer ping by their own choice);
 * changed: an applied hop that is now in another place among the others (the role alone is not compared: a
@@ -95,7 +96,9 @@ def route_changes(draft: Sequence[dict], live: Sequence[dict], removed: Sequence
     changes: List[dict] = []
     for h in draft:
         status, category = h.get("status"), h.get("category")
-        if status == "new" and category in DRIFT_CATEGORIES and h.get("id") not in removed_ids:
+        # a hop proposed paused (a gateway off the traced path, engine.discovery.infer) is not on the route: no news
+        if (status == "new" and category in DRIFT_CATEGORIES and h.get("id") not in removed_ids
+                and h.get("enabled", True)):
             changes.append({"kind": "new", "hop": hop(h),
                             "text": f"Hop {number[h.get('id')]} is new: {_named(h)}."})
         elif status == "gone" and (live_by_id.get(h.get("id")) or h).get("category") in DRIFT_CATEGORIES:

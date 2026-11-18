@@ -397,12 +397,21 @@ def test_the_install_job_runs_the_install_scripts_from_the_release_files_on_thre
     assert "install.sh --from release-assets --yes --no-browser" in runs
     assert "install.ps1 -From release-assets -NoBrowser" in runs
     assert "install.sh --uninstall --yes" in runs and "install.ps1 -Uninstall" in runs
-    for phase in ("installed", "upgraded", "removed"):
+    for phase in ("previous", "upgraded", "removed"):
         assert f"ci-install-check.sh {phase}" in runs
     diagnose = next(s for s in install["steps"] if "ci-install-check.sh diagnose" in s.get("run", ""))
     assert diagnose["if"] == "failure()"
-    assert runs.index("ci-install-check.sh installed") < runs.index("ci-install-check.sh upgraded") < runs.index(
-        "ci-install-check.sh removed")
+    # first the previous published release, with its own install script (fetched for that tag) ...
+    assert 'releases/download/v$PREV/install.sh" | sh -s -- --version "$PREV"' in runs
+    assert "releases/download/v$env:PREV/install.ps1" in runs and "-Version $env:PREV" in runs
+    previous = next(s for s in install["steps"] if s.get("id") == "previous")
+    assert "--exclude-pre-releases" in previous["run"] and 'grep -vxF "$this"' in previous["run"]
+    # ... then this build over it (the upgrade, checked as one when there was a previous release), a reinstall, the uninstall
+    check = next(s for s in install["steps"] if "ci-install-check.sh ${{" in s.get("run", ""))
+    assert "'upgraded' || 'installed'" in check["run"]
+    order = [runs.index("ci-install-check.sh previous"), runs.index("install.sh --from release-assets"), runs.index(check["run"]),
+             runs.index("ci-install-check.sh upgraded release-assets"), runs.index("ci-install-check.sh removed")]
+    assert order == sorted(order)
 
 
 def test_the_image_takes_the_wheel_by_copy_so_the_build_cache_keys_on_its_content():

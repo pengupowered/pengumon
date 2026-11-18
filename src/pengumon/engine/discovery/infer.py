@@ -72,10 +72,18 @@ class HopGuess:
     name: str = ""
     suggested_driver: Optional[str] = None
     operator: Optional[str] = None  # the provider's or the hop's operator (domain or AS name), for its name
+    enabled: bool = True  # False: proposed paused (a gateway off the traced path: the owner switches it on)
+    probe: str = "icmp"  # how the hop would be probed: icmp, or tcp to `port` (one that answered only on its web port)
+    port: Optional[int] = None
 
 
 OFF_PATH_TEXT = ("It answers on your network but isn't on the traced path (a modem in bridge mode, or an ISP "
                  "gateway).")
+OFF_PATH_PAUSED_TEXT = ("Proposed paused: something answering at a common gateway address need not be the box your "
+                        "internet goes through. Switch it on if it is your modem or gateway.")
+OFF_PATH_TCP_TEXT = ("It does not answer ping, only its web page, so it would be probed by a TCP connection to its web "
+                     "port ({port}).")
+WEB_PORT = 80  # the off-path check reads the front page over plain HTTP only (engine._probe_gateways)
 
 
 @dataclass
@@ -436,17 +444,23 @@ def _place_off_path(result: List[HopGuess], off_path: Sequence[OffPathDevice]) -
         if device.address in on_path:
             continue
         page = device.page
+        # Named by its role (name_hops: Gateway), never by its address: 192.168.100.1 is a cable modem's, but also a
+        # satellite dish's or a fiber box's, and anything else a provider puts there.
         guess = HopGuess(address=device.address, ttl=None, rtt_ms=None, owner=HOME, category="gateway",
-                         name="Cable modem" if device.address == CABLE_MODEM_ADDRESS else "",
-                         suggested_driver=page.fingerprint.driver if page is not None and page.fingerprint else None)
+                         suggested_driver=page.fingerprint.driver if page is not None and page.fingerprint else None,
+                         enabled=False)
         if page is not None:
-            where = (", where cable modems serve their status page" if device.address == CABLE_MODEM_ADDRESS
-                     else "")
+            where = (", where cable modems, fiber boxes and satellite dishes often serve their status page"
+                     if device.address == CABLE_MODEM_ADDRESS else "")
             guess.evidence.append(Evidence("device_page", f"Something {page.describe()} at {device.address}{where}.",
                                            HOME))
         if device.answered_ping:
             guess.evidence.append(Evidence("off_path", f"It answers ping at {device.address}."))
+        else:  # it served its page but gave no echo reply: probed by ping it would never answer
+            guess.probe, guess.port = "tcp", WEB_PORT
+            guess.evidence.append(Evidence("off_path", OFF_PATH_TCP_TEXT.format(port=WEB_PORT)))
         guess.evidence.append(Evidence("off_path", OFF_PATH_TEXT, HOME))
+        guess.evidence.append(Evidence("off_path", OFF_PATH_PAUSED_TEXT))
         guess.confidence = LIKELY
         result.insert(at, guess)
         at += 1

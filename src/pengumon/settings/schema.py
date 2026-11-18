@@ -49,7 +49,8 @@ def setting_spec(setting: registry.Setting) -> Dict[str, Any]:
 
 
 def driver_spec(driver) -> Dict[str, Any]:
-    return {"label": driver.label, "default_poll_seconds": driver.default_poll_seconds,
+    return {"label": driver.label, "offers": sorted(c.value for c in driver.offers),  # (the preview's "basic" choice)
+            "default_poll_seconds": driver.default_poll_seconds,
             "min_poll_seconds": getattr(driver, "min_poll_seconds", 0.0),
             "default_username": getattr(driver, "default_username", None) or "admin",
             "username_hint": getattr(driver, "username_hint", None),

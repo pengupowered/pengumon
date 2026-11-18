@@ -50,8 +50,8 @@ CASES = [
     ({"local": 15.0}, "local_loss", "degraded", "warning", "local_wifi_mesh_drop", "Router Packet Loss"),
     ({"local": (0.0, 26.0, None)}, "local_latency", "degraded", "warning", "local_wifi_mesh_drop",
      "Router Latency Spike"),
-    ({"gateway": 40.0}, "gateway_down", "down", "critical", "gateway_unreachable", "Modem Not Answering"),
-    ({"gateway": 15.0}, "gateway_loss", "degraded", "warning", "gateway_unreachable", "Modem Packet Loss"),
+    ({"gateway": 40.0, "public": 40.0}, "gateway_down", "down", "critical", "gateway_unreachable", "Modem Not Answering"),
+    ({"gateway": 15.0, "public": 15.0}, "gateway_loss", "degraded", "warning", "gateway_unreachable", "Modem Packet Loss"),
     ({"gateway": (0.0, None, 21.0)}, "gateway_latency", "degraded", "warning", "double_nat_congestion",
      "Modem Latency Delay"),
     ({"isp": 40.0}, "isp_outage", "down", "critical", "access_line_drop", "Line or Hub Outage"),
@@ -112,12 +112,33 @@ def test_the_eighteen_kinds_are_all_covered():
     ("dns", 24.9, "nominal"), ("dns", 25.0, "dns_loss"), ("dns", 39.9, "dns_loss"), ("dns", 40.0, "dns_outage"),
 ])
 def test_loss_boundaries_per_layer(category, loss, kind):
-    assert verdict_for(**{category: loss}).kind == kind
+    # the gateway's loss is a fault only while the internet loses too (else it ignores its probes: see below)
+    spec = {category: loss, **({"public": loss} if category == "gateway" else {})}
+    assert verdict_for(**spec).kind == kind
+
+
+@pytest.mark.parametrize("spec,kind", [
+    # the internet answers: the gateway is up and only ignores (or rate-limits) its probes, as a modem's management
+    # address or a box in bridge mode does: no fault, whatever its loss
+    ({"gateway": 100.0}, "nominal"), ({"gateway": 40.0}, "nominal"), ({"gateway": 15.0}, "nominal"),
+    ({"gateway": 100.0, "public": 14.9}, "nominal"),
+    # without public targets, the provider's hops vouch for it
+    ({"gateway": 100.0, "absent": ("public",)}, "nominal"),
+    ({"gateway": 100.0, "isp": 40.0, "absent": ("public",)}, "gateway_down"),
+    # the internet loses too (at the degraded level, or half of what the gateway loses): the gateway's fault
+    ({"gateway": 100.0, "public": 15.0}, "gateway_down"), ({"gateway": 20.0, "public": 10.0}, "gateway_loss"),
+    ({"gateway": 20.0, "public": 9.9}, "nominal"),
+    # nothing beyond the gateway is probed: no evidence that traffic passes, its loss is its fault
+    ({"gateway": 100.0, "absent": ("isp", "public")}, "gateway_down"),
+])
+def test_a_gateway_that_loses_its_probes_while_the_internet_answers_is_no_fault(spec, kind):
+    absent = spec.pop("absent", ())
+    assert verdict_for(absent=absent, **spec).kind == kind
 
 
 def test_gateway_down_needs_the_local_router_to_answer():
-    assert verdict_for(gateway=40.0, local=14.9).kind == "gateway_down"
-    assert verdict_for(gateway=40.0, local=15.0).kind == "local_loss"
+    assert verdict_for(gateway=40.0, public=40.0, local=14.9).kind == "gateway_down"
+    assert verdict_for(gateway=40.0, public=40.0, local=15.0).kind == "local_loss"
 
 
 def test_isp_outage_detail_switches_at_thirty_percent():
@@ -151,7 +172,7 @@ def test_line_faults_are_worded_for_the_line_technology():
 def test_loss_starting_at_the_gateway_is_the_gateway_not_the_line(gateway):
     """The gateway hop is the modem's home-side address: its pings never use the line, so its loss is the gateway's
     (gateway_unreachable, category gateway) and its words name no line fault."""
-    v = verdict_for(gateway=gateway, line=wording("docsis"))
+    v = verdict_for(gateway=gateway, public=gateway, line=wording("docsis"))
     assert v.cause == "gateway_unreachable"
     assert "the cable modem (gateway) on its home-side address" in v.description
     assert "do not use the provider's line" in v.description and "coax" not in v.description
@@ -354,14 +375,14 @@ def custom_verdict(ts=TS, last_upstream=LONG_AGO, absent=(), **spec):
 @pytest.mark.parametrize("spec,kind", [
     ({"local": 19.9}, "nominal"), ({"local": 20.0}, "local_loss"), ({"local": 49.9}, "local_loss"),
     ({"local": 50.0}, "local_down"),
-    ({"gateway": 19.9}, "nominal"), ({"gateway": 20.0}, "gateway_loss"), ({"gateway": 49.9}, "gateway_loss"),
-    ({"gateway": 50.0}, "gateway_down"),
+    ({"gateway": 19.9}, "nominal"), ({"gateway": 20.0, "public": 20.0}, "gateway_loss"),
+    ({"gateway": 49.9, "public": 49.9}, "gateway_loss"), ({"gateway": 50.0, "public": 50.0}, "gateway_down"),
     ({"isp": 19.9}, "nominal"), ({"isp": 20.0}, "isp_loss"), ({"isp": 49.9}, "isp_loss"), ({"isp": 50.0}, "isp_outage"),
     ({"public": 19.9}, "nominal"), ({"public": 20.0}, "backbone_loss"), ({"public": 50.0}, "isp_outage"),
     ({"isp": 19.9, "public": 20.0}, "backbone_loss"),
     ({"dns": 34.9}, "nominal"), ({"dns": 35.0}, "dns_loss"), ({"dns": 49.9}, "dns_loss"), ({"dns": 50.0}, "dns_outage"),
     # the cross-role guards: local loss under the degraded level lets the gateway and the ISP be judged
-    ({"local": 19.9, "gateway": 50.0}, "gateway_down"),
+    ({"local": 19.9, "gateway": 50.0, "public": 50.0}, "gateway_down"),
     ({"local": 19.9, "isp": 50.0}, "isp_outage"),
     # no LAN target: loss toward the internet is placed nowhere, at the configured levels
     ({"absent": ("local", "gateway"), "public": 19.9}, "nominal"),

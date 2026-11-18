@@ -5,6 +5,7 @@ export const state = {
   // devices and features are filled by devices.js from /api/devices and /api/features at startup. There are no
   // device roles: a panel names its device, and a single-device view asks devices.js primaryDevice(capability).
   devices: [],
+  configuredDevices: [], // the same list as configured, without this browser's preview: the editors' (devices.js)
   devicesKnown: false,
   features: [],
   networkInfo: null // the page's /api/info answer (chrome.js), also announced as a `networkinfo` event on document

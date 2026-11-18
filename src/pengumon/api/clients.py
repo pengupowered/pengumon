@@ -15,8 +15,6 @@ PUT /api/devices/{id}/clients/{client}/name gives a client a name in Pengumon (o
 that may see names (privacy "full"), which also means one that may edit when a password is set.
 """
 
-import hashlib
-import secrets
 import time
 from typing import Any, Dict, List, Optional
 
@@ -31,6 +29,7 @@ from pengumon.grades import signal_grade
 from pengumon.devices.samples import bucket_width
 from pengumon.devices.summary import mesh_nodes, summarize_clients
 from pengumon.devices.traffic import traffic_hints
+from pengumon.clients.keys import client_key  # noqa: F401 (the traffic and incident routes take it from here)
 from pengumon.security import can_edit, rate_limit
 
 router = APIRouter(prefix="/api")
@@ -38,7 +37,6 @@ _RATE = rate_limit("clients", 30, 60)  # the open modal asks once a minute; one 
 
 MAX_HISTORY_POINTS = 300
 DEFAULT_HISTORY_SECONDS = 24 * 3600
-_KEY_SALT = secrets.token_bytes(16)  # row keys are opaque and change on restart: a MAC cannot be recovered from one
 HINT = ("Names, IP and MAC addresses are hidden because no password is set. Set one under Settings > Sign-in, or choose "
         "Always for Connected clients' names and addresses under Settings > Privacy.")
 MASKED_HINT = ("Names, IP and MAC addresses are hidden by a setting. To see them, change Connected clients' names and "
@@ -76,10 +74,6 @@ def _suffix(mac: Optional[str]) -> str:
     return digits[-4:].upper()
 
 
-def client_key(key: str) -> str:
-    """A client's opaque row key: the same for the same client (its driver key, a MAC in normal form for a router)
-    until the next start, and no way back to the MAC. The traffic routes key their rows the same way."""
-    return hashlib.sha256(_KEY_SALT + key.encode()).hexdigest()[:12]
 
 
 def _row(client: Client, full: bool, hint: Optional[str] = None, names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -118,8 +112,8 @@ def _monitor_readings(device: Device):
             getattr(monitor, "clients_at", None))
 
 
-def _require_inventory(state: AppState, device_id: str) -> Device:
-    device = device_or_404(state, device_id)
+def _require_inventory(state: AppState, device_id: str, request: Request) -> Device:
+    device = device_or_404(state, device_id, request)
     if Capability.CLIENT_INVENTORY not in device.driver.offers:
         raise HTTPException(status_code=400, detail="This device does not report its clients")
     return device
@@ -129,7 +123,7 @@ def _require_inventory(state: AppState, device_id: str) -> Device:
 async def get_clients(device_id: str, request: Request, state: StateDep):
     """The device's connected clients as of its last client-list read, with its mesh nodes and a summary. Offline
     clients the device still remembers are included (`online: false`). `ts` is null until a list has been read."""
-    device = _require_inventory(state, device_id)
+    device = _require_inventory(state, device_id, request)
     await device.current()  # waits for a poll in flight; never starts one
     reading, mesh, read_at = _monitor_readings(device)
     mode = privacy_mode(request, state)
@@ -158,6 +152,7 @@ def bucket_seconds(start: float, end: float) -> int:
 @router.get("/devices/{device_id}/clients/history", dependencies=[Depends(_RATE)])
 async def get_clients_history(
     device_id: str,
+    request: Request,
     state: StateDep,
     start_time: Optional[float] = Query(None, allow_inf_nan=False),
     end_time: Optional[float] = Query(None, allow_inf_nan=False),
@@ -165,7 +160,7 @@ async def get_clients_history(
     """Client counts over time (default: the last 24 hours), bucketed on the server to at most 300 points: each point
     is the mean of the readings in its bucket. Counts only, no client. `nodes` lists the mesh nodes seen in the range
     (labeled as the device names them now) and each point has `by_node` counts."""
-    device = _require_inventory(state, device_id)
+    device = _require_inventory(state, device_id, request)
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
     now = time.time()

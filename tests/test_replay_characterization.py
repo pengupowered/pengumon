@@ -16,7 +16,9 @@ from test_replay import RANDOM_DRAFTS, TARGETS5, _document, _random_rows, make_d
 
 # 0.29: the counts gained latency_spikes (0 here: spec_for opens latency incidents at once), and the fixture's
 # latencies are whole hundredths (schema v25 stores them so); nothing else moved
-EXPECTED_DIGEST = "c3b97991a0e4cedf8daf81c1d6cee94ae8ab5dc2279f586e176e59aad23776b1"
+# 0.30: a gateway that loses its probes while the internet answers is no fault (rules._traffic_passes): the random
+# rows' gateway-only loss no longer opens incidents (25 -> 19 per side and seed 1 draft 0); nothing else moved
+EXPECTED_DIGEST = "43c77ac1be4e1f3f60c667e5f00c15417efff72db1bcf4303be81a6cf91eaa69"
 
 
 async def test_replay_matches_its_recorded_digest(tmp_path):

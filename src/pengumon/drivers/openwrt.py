@@ -270,6 +270,13 @@ class OpenWrtDriver:
     options_model = OpenWrtOptions
     default_poll_seconds = 10.0  # one HTTP request per poll; rpcd answers it from memory
     default_username = "root"
+    # The account LuCI signs in with. OpenWrt's login page fills in root (some vendors' pages ask only for a password):
+    # the account is still root, and rpcd refuses an empty user name.
+    username_hint = ("The account you sign in to the router's web page (LuCI) with: root unless you made another. Its "
+                     "login page may ask only for a password; the account is still root.")
+    # A router whose root has no password yet (a fresh OpenWrt) signs in with an empty one: without a saved password
+    # the driver tries that, and the router answers "Sign-in refused" if it has one.
+    password_optional = True
 
     def __init__(self, url: str, username: str, password: Optional[str], *, wan_interface: str = "wan",
                  clientlist_interval_seconds: float = 60.0, client: Optional[httpx.AsyncClient] = None,
@@ -317,7 +324,7 @@ class OpenWrtDriver:
         return self.http.host
 
     def missing_configuration(self) -> Optional[str]:
-        return None if self._password else "no password"
+        return None  # no password: the login sends an empty one (password_optional)
 
     def set_credentials(self, username: str, password: str) -> None:
         self._username, self._password = username, password
@@ -357,6 +364,9 @@ class OpenWrtDriver:
             self._session = session
             return
         if answer.denied:
+            if not self._password:  # tried without one (password_optional): the router has a password after all
+                raise DriverError("auth", f"OpenWrt at {self.host} refused the login of {self._username!r} without a "
+                                          "password: the router has one. Enter it in the device's setup.")
             raise DriverError("auth", f"OpenWrt at {self.host} refused the login of {self._username!r}. Check the "
                                       "username and password (an rpcd login, see docs/devices.md).")
         raise DriverError("protocol", f"OpenWrt login at {self.host} failed: {answer.problem or 'no session id'}")

@@ -9,10 +9,11 @@ listens on this computer only (`http://127.0.0.1:8000`), and its page opens in y
 ## What has been tested where
 
 - Linux, x86-64: A real computer (Linux Mint): the service, the dashboard and the container. GitHub's Linux runner installs with `install.sh` (the system service) on every change
+- Upgrades: on every change, GitHub's Linux, macOS and Windows runners first install the previous release (with its own install script), then upgrade it with the new one, as a user does, and check that the backup was made, the database was migrated to the new version, and the old release's settings history is kept; then they run the installer once more (a reinstall of the same version) and uninstall
 - Linux, per-user service (`--user`): Not in CI; it is the same unit, run as you
 - Raspberry Pi, 64-bit: Not on a Pi. It is the Linux arm64 install: GitHub's arm64 runner runs the unit tests natively, and the arm64 image is built on a native arm64 runner
-- macOS: GitHub's macOS 14 runner installs the LaunchDaemon with `install.sh`, checks that it answers, upgrades and uninstalls. The `--user` LaunchAgent and the Local Network permission are not tested. Not on a real Mac yet
-- Windows: GitHub's Windows Server runner installs with `install.ps1`, checks that the logon task answers, upgrades and uninstalls. Not on a real Windows 10 or 11 PC yet
+- macOS: GitHub's macOS 14 runner installs the LaunchDaemon with `install.sh`, checks that it answers, upgrades from the previous release and uninstalls. The `--user` LaunchAgent and the Local Network permission are not tested. Not on a real Mac yet
+- Windows: GitHub's Windows Server runner installs with `install.ps1`, checks that the logon task answers, upgrades from the previous release and uninstalls. Not on a real Windows 10 or 11 PC yet
 - Container: The image is tested read-only, as uid 10001, on the Linux runner and on a real Linux host ([testing.md](testing.md)). Docker Desktop is not supported
 
 If something differs on your macOS or Windows computer, that is a bug worth reporting.
@@ -240,6 +241,36 @@ Run the same install script again (it fetches the newest release, or pass `--ver
 `pengumon backup` (a consistent copy of the database, `secrets.json` and `sessions.json` in `backups/` inside the data
 directory; it runs as the service's own account, so it can read the data: on Linux through `systemd-run` with the service's DynamicUser identity, on macOS with `sudo -u _pengumon`) and stops if the backup fails, removes the old service, reinstalls the program from the new release, and
 installs the service again. Your settings and data are not touched. Containers: see above, and for the program installed with uv, [the uv section](#quick-way-uv-tool-install).
+
+Your database is changed for the new version on its first start, by itself: there is nothing to run. Each change is one
+step, all or nothing, so a stop part-way leaves the previous state and the next start does it again. Most take no time;
+a few that reshape a big table take seconds to a minute on a large database, and the log says so (the list is in
+[storage.md](storage.md#schema-versions)). The dashboard tabs that were open before notice the new version and offer to
+reload.
+
+### Going back to an older version
+
+An older version does not read a database a newer one has changed: it logs `Database schema vN is newer than this build
+(vM); not migrating` and runs without your stored settings. Going back is therefore always the older program **and** the
+backup the upgrade made:
+
+1. Find the backup: `backups/<date-time>/` in the data directory (`pengumon paths`; for the Linux system service
+   `sudo /opt/pengumon/venv/bin/pengumon paths --system`). The upgrade made it just before it changed anything.
+2. Install the older version: the same install line with `--version X.Y.Z` (Windows: `-Version X.Y.Z`).
+3. Stop the service, keeping the data: `pengumon service uninstall` (for the Linux and macOS system service:
+   `sudo /opt/pengumon/venv/bin/pengumon service uninstall --system`, on macOS from `/usr/local/pengumon/venv/bin/`).
+4. Copy the backup's `pengumon.db`, `secrets.json` and `sessions.json` over the ones in the data directory (with `sudo`
+   for a system service), and delete `pengumon.db-wal` and `pengumon.db-shm` there if they exist: they belong to the newer
+   database. Restore `secrets.json` together with the database: a newer one can hold the password in a form an older
+   version cannot read. On macOS give the files back to the service's account: `sudo chown _pengumon <the three files>`
+   (on Linux the system service takes them over by itself when it starts).
+5. Start it again: `pengumon service install` (system service: `sudo ... service install --system`), with the `--host`
+   and `--port` you used before, if they were not the defaults.
+
+Whatever was recorded between the upgrade and going back is lost (it is in the newer database only). Containers: put the
+older version in the `image:` line, put the backup's files back into the `pengumon_data` volume (for example with
+`docker run --rm -v pengumon_data:/data -v "$PWD/backup":/b alpine cp /b/pengumon.db /b/secrets.json /b/sessions.json /data/`),
+then `docker compose up -d`.
 
 ### Backing up the data
 

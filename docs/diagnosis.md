@@ -84,6 +84,11 @@ reach it through the router and never use the provider's line, so:
   firmware or power) or the link from the router to it. Cause code `gateway_unreachable` (kinds `gateway_down`,
   `gateway_loss`), cause category `gateway`. If the provider supplied the gateway it is still the provider's equipment,
   but an equipment fault, not a line or signal one; a line fault shows here only when it made the gateway restart.
+  Not while the internet answers: when the public targets (the provider's hops, without public targets) lose under the
+  degraded level and under half of what the gateway loses, the traffic passes, so the gateway is up and only ignores or
+  rate-limits its probes (a modem's management address, a box in bridge mode, a gateway off the traced path). That is
+  no fault and opens no incident; Path health shows the hop as "Ignores ping". With nothing probed beyond the gateway
+  there is no such evidence, and its loss is its fault as before.
 - **Loss starting at the provider's first hop** (ISP hop 1) while the gateway answers is the access line (cable, fiber
   or DSL) or the provider's first router. Cause code `access_line_drop` (kinds `isp_outage`, `isp_loss`), category
   `line`. The description words the line for its technology (`pengumon.lines`: coax and the CMTS for a DOCSIS modem).

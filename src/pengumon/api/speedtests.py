@@ -7,10 +7,11 @@ whatever was recorded while it was on. The page polls the GET; nothing is pushed
 import time
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from pengumon.api.common import StateDep, json_response
+from pengumon.preview import from_request, viewer_registry
 from pengumon.security import rate_limit
 from pengumon.speedtest.quality import confidence, headline
 from pengumon.speedtest.runner import MB, grade_of
@@ -30,7 +31,7 @@ def _test(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/speedtests")
-async def get_speedtests(state: StateDep, hours: int = Query(720, ge=1, le=MAX_HOURS),
+async def get_speedtests(state: StateDep, request: Request, hours: int = Query(720, ge=1, le=MAX_HOURS),
                          limit: int = Query(100, ge=1, le=500)) -> Response:
     """`{enabled, provider, next_run, running, month_used_mb, monthly_cap_mb, plan: {down_mbps, up_mbps}, tests}`: the
     tests of the last `hours` (newest first, at most `limit`), each with its `bufferbloat` grade (A+ to F, null without
@@ -44,6 +45,9 @@ async def get_speedtests(state: StateDep, hours: int = Query(720, ge=1, le=MAX_H
     cfg = config.speedtest if config is not None else None
     now = time.time()
     tests = await repository.get_speed_tests(now - hours * 3600.0, now, limit) if repository is not None else []
+    if from_request(request).active and state.devices is not None and viewer_registry(state, request).wan_rates_device() is None:
+        # previewed without the router that measured the line during the tests (pengumon.preview): the tests' own speeds
+        tests = [{**t, "wan_down_mbps": None, "wan_up_mbps": None} for t in tests]
     return json_response({
         "enabled": bool(cfg and cfg.enabled),
         "provider": cfg.provider if cfg else None,

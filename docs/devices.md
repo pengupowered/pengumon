@@ -41,9 +41,9 @@ devices:
 |---|---|---|---|
 | `xfinity_xb` | Xfinity / Comcast XB6, XB7, XB8 gateways | Tested by the maintainer | The cable line (`access_line`): DOCSIS downstream and upstream levels, SNR, codeword errors |
 | `asuswrt` | AsusWRT routers (RT-AX and others), with AiMesh | Tested by the maintainer | WAN traffic, CPU, memory, connected clients by band, mesh nodes; uptime, WAN link speed, CPU temperature; traffic per client, hour and app (its Traffic Analyzer) |
-| `openwrt` | OpenWrt routers (LuCI, or rpcd and uhttpd-mod-ubus) | Tested by the maintainer on OpenWrt 24.10 (x86-64 image); other releases untested | WAN traffic, CPU, memory, model, clients (DHCP leases, Wi-Fi stations by band) |
-| `snmp` | Anything with an SNMPv2c or SNMPv3 agent: routers, switches, NAS boxes | Generic: a standard protocol, tested against net-snmp 5.9 | WAN (or uplink) traffic, CPU, memory, model; no client list |
-| `upnp_igd` | Routers and gateways that answer UPnP's Internet Gateway Device profile | Generic: a standard profile, new in 0.24; some routers have UPnP switched off | WAN traffic (32-bit counters, wraps handled); no client list |
+| `openwrt` | OpenWrt routers (LuCI, or rpcd and uhttpd-mod-ubus) | Tested by the maintainer on OpenWrt 24.10 (x86-64 image; the device lab runs 24.10.4); other releases untested | WAN traffic, CPU, memory, model, clients (DHCP leases, Wi-Fi stations by band) |
+| `snmp` | Anything with an SNMPv2c or SNMPv3 agent: routers, switches, NAS boxes | Generic: a standard protocol, tested against net-snmp 5.9 (the device lab, v2c and v3 authPriv) | WAN (or uplink) traffic, CPU, memory, model; no client list |
+| `upnp_igd` | Routers and gateways that answer UPnP's Internet Gateway Device profile | Generic: a standard profile, new in 0.24; tested against an ASUS router's MiniUPnPd 2.2 (the device lab); some routers have UPnP switched off | WAN traffic (32-bit counters, wraps handled); no client list |
 
 The `xfinity_xb` driver follows redirects (a gateway may send it from http to https), but only on the configured host: a redirect to another host, or from https down to plain http, fails the poll instead of sending the login there.
 
@@ -73,8 +73,8 @@ Have a device that is not here? [Adding a device](adding-a-device.md) shows how 
   - Devices: OpenWrt routers
   - Capabilities: `wan_counters`, `router_system`, `client_inventory`
   - URL: `http(s)://`
-  - Username: `root` (default)
-  - Password: an rpcd login's password, see [OpenWrt](#openwrt)
+  - Username: `root` (default; also when the router's login page asks only for a password)
+  - Password: an rpcd login's password, see [OpenWrt](#openwrt); none for a root that has none yet
 - `snmp`
   - Devices: any SNMPv2c or SNMPv3 agent
   - Capabilities: `wan_counters`, `router_system`
@@ -242,6 +242,12 @@ A call the ACL refuses only leaves out what needs it (one warning in the log nam
 no CPU %, and without the ARP table every client with a DHCP lease that is on no radio counts as wired and online
 (OpenWrt cannot otherwise tell a wired client from a Wi-Fi one that left before its lease ran out). A session the
 router forgets (rpcd restarted, or it expired) is replaced by one new login.
+
+**The user name is `root`** unless you made another login: it is the account LuCI signs in with, also where the
+router's login page asks only for a password (rpcd refuses an empty user name). A router whose root has **no
+password** yet (a fresh OpenWrt) needs none here either: without a saved password the driver signs in with an empty
+one, and the device shows "Sign-in refused" if the router has a password after all. As root on a stock router, CPU %
+and whether a wired client is online are missing (root's ACL has neither file); the read-only user below has both.
 
 **Set up a read-only user** (better than root, whose password can change everything). On the router, add the ACL as
 `/usr/share/rpcd/acl.d/pengumon.json`:

@@ -24,6 +24,7 @@ from pengumon.reports.loss_grid import build_loss_grid
 from pengumon.reports.reliability import build_report
 from pengumon.reports.spikes import spike_summary
 from pengumon.reports.uptime import build_uptime
+from pengumon.preview import from_request, preview_config, viewer_registry
 from pengumon.security import rate_limit
 from pengumon.timeofday import viewer_zone
 
@@ -139,6 +140,7 @@ async def get_latency_spikes(
 @router.get("/ai-pack", dependencies=[Depends(rate_limit("ai_pack", 6, 60))])
 async def get_ai_pack(
     state: StateDep,
+    request: Request,
     scope: Literal["window", "incident"] = Query("window"),
     hours: int = Query(24, ge=1, le=720, description="the window for scope=window: 1, 24, 168 or 720 in the dashboard"),
     incident_id: Optional[int] = Query(None, ge=1, description="required for scope=incident, refused otherwise"),
@@ -164,10 +166,12 @@ async def get_ai_pack(
         raise HTTPException(status_code=429, detail="Another pack is being built; try again in a few seconds")
     from pengumon.reports.contributions import build_ai_pack  # imported when asked: nothing loads without it
 
+    preview = from_request(request)  # this browser's preview without a device (pengumon.preview)
+    config = preview_config(state.config, preview)
     async with pack_building:
         pack = await build_ai_pack(
-            state.repository, state.config, scope=scope, hours=hours, incident_id=incident_id, level=level,
-            detail=detail, devices=tuple(state.config.devices) if state.config else (), live=state.devices,
+            state.repository, config, scope=scope, hours=hours, incident_id=incident_id, level=level,
+            detail=detail, devices=tuple(config.devices) if config else (), live=viewer_registry(state, request),
             ignoring=ignoring_ping_ids(state.prober), tz_offset_minutes=tz_offset_minutes, prober=state.prober,
             tz_name=tz)
     ai_pack_exports.add(1, {"level": level, "scope": scope})

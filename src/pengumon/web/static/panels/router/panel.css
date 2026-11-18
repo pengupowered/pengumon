@@ -21,6 +21,17 @@
 .n-c i { display: block; height: 4px; border-radius: 2px; background: var(--accent); align-self: stretch; max-width: 100%; }
 .cap-note { margin-top: var(--sp-4); font-size: var(--fs-xs); color: var(--ink-3); display: flex; gap: 6px; align-items: center; }
 .wan-chart { margin-top: 2px; }
+.wan-chart .chart-plot { position: relative; height: 70px; }
+.wan-chart .chart-plot svg { position: absolute; inset: 0; }
+/* A card of WAN traffic alone (a router that counts only its internet bytes: UPnP; model.js data-shape="wan") is narrow,
+   and its chart takes the height the row gives the card instead of leaving it empty. */
+.panel[data-shape="wan"] .panel-b,
+.panel[data-shape="wan"] [data-f="body"],
+.panel[data-shape="wan"] .rgrid,
+.panel[data-shape="wan"] .rblock.wan,
+.panel[data-shape="wan"] .wan-chart,
+.panel[data-shape="wan"] .wan-chart .chart { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.panel[data-shape="wan"] .wan-chart .chart-plot { flex: 1; height: auto; min-height: 110px; }
 @container (max-width: 520px) { .rgrid { grid-template-columns: 1fr; } .rgrid.n3 .rblock.wan { grid-row: auto; } }
 button.big-count { border: 0; background: none; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; }
 button.big-count:disabled { cursor: default; }

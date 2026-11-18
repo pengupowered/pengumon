@@ -12,7 +12,7 @@ from pengumon.engine.discovery.lookups import AsnInfo
 from pengumon.engine.discovery.traces import MergedPath, PathHop
 from pengumon.engine.discovery.upnp import IgdInfo
 
-EXPECTED_DIGEST = "4ce86da47cfafb876a56bdc293863c32e8c7b14b783a027e4c1fe34fc472710c"
+EXPECTED_DIGEST = "058a801d82b1792f6b3b60b2fde469ae0694a62450e4fc82146737ff814fcd82"
 CASES = 600
 
 _ADDRESSES = ["192.168.88.1", "192.168.88.2", "192.168.1.254", "10.0.0.1", "169.254.1.1", "100.64.0.1", "100.64.3.2",

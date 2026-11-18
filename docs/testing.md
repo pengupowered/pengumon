@@ -98,6 +98,31 @@ real bug at that time of day (fix it, with a test that fails at that instant). N
 reproduce one instant: `PENGUMON_FAKE_TIME="2026-11-16 00:10:00" PENGUMON_FAKE_EPOCH=$(date -u -d "2026-11-16 00:10:00" +%s) scripts/test.sh tests/test_x.py`
 (add `PENGUMON_TEST_TZ=America/New_York`; then the time is New York time and the epoch must match it).
 
+## The device lab (`scripts/device-lab.sh`)
+
+Real device software for the drivers whose devices the maintainer does not own, read by the work tree's Pengumon
+through the drivers and the API the dashboard uses:
+
+```sh
+scripts/device-lab.sh up       # start the lab devices (pulls and builds their images the first time)
+scripts/device-lab.sh check    # run Pengumon against them, check every device; exit 1 on a difference
+LAB_KEEP=1 scripts/device-lab.sh check   # ... and leave that Pengumon at http://127.0.0.1:18000 to look at
+scripts/device-lab.sh down     # remove the lab's containers and network
+```
+
+- **OpenWrt 24.10.4** (the official `openwrt/rootfs` image: procd, rpcd, uhttpd with ubus, LuCI), twice: a fresh
+  router (root without a password) and a set-up one (root with a password, and the read-only `pengumon` login of
+  [devices.md](devices.md#openwrt), its ACL read from that page, so the lab checks the docs too). Read as root without
+  a password, root with one, the read-only login, and a wrong password.
+- **net-snmp 5.9** (`tests/lab/snmpd.Containerfile`): SNMPv2c and SNMPv3 authPriv.
+- **The LAN's own router over UPnP**, when one answers an SSDP search for an Internet Gateway Device (read-only: byte
+  counters and uptime). `LAB_UPNP=0` leaves it out; `LAB_UPNP_URL=http://host` names it.
+
+`tests/lab/check.py` lists what each device must show (its status, or the error kind; WAN counters, memory, CPU %).
+The lab devices answer only on 127.0.0.1 and on a private podman network, `pengumon-lab` (10.89.77.0/24); their
+passwords are lab-only. The lab is not part of CI: it needs podman, the images, and (for UPnP) a LAN router. Run it
+after a change to a driver, the device registry or credentials.
+
 ## The container image
 
 `scripts/test-container.sh` tests the image the way it is run: read-only root filesystem, uid 10001, a data volume, a

@@ -702,3 +702,22 @@ async def test_the_history_refuses_a_time_that_is_not_a_finite_number(app_state,
     async with api() as ac:
         res = await ac.get(f"/api/devices/router/clients/history?{name}={value}")
     assert res.status_code == 422
+
+
+async def test_a_client_keeps_its_key_across_restarts(repo, monkeypatch):
+    """Owner's report (2026-11-17): after a restart, a device listed for an hour the Internet use card had picked
+    before it said "The router has no traffic stored for this device": its key was salted per start. The salt is kept
+    in the database now, so the same client has the same key after a restart; a stored salt that is unusable is
+    replaced."""
+    from pengumon.clients import keys as clients_api
+    await clients_api.load_key_salt(repo)
+    before = clients_api.client_key("02:00:00:00:11:22")
+    monkeypatch.setattr(clients_api, "_KEY_SALT", b"another start....")  # a restart: a new process, a new random salt
+    await clients_api.load_key_salt(repo)
+    assert clients_api.client_key("02:00:00:00:11:22") == before
+    assert clients_api.client_key("02:00:00:00:11:23") != before
+    stored = await repo.get_meta(clients_api.KEY_SALT_META)
+    assert len(bytes.fromhex(stored)) == 16 and "02:00:00" not in stored
+    await repo.set_meta(clients_api.KEY_SALT_META, "not hex")
+    await clients_api.load_key_salt(repo)
+    assert len(bytes.fromhex(await repo.get_meta(clients_api.KEY_SALT_META))) == 16

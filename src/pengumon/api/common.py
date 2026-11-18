@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Response
 
 from pengumon.state import AppState, get_state
 from pengumon.devices.device import Device
+from pengumon.preview import viewer_registry
 from pengumon.observability.telemetry import api_answer_capped, api_answer_rows, api_answer_size
 
 StateDep = Annotated[AppState, Depends(get_state)]
@@ -21,11 +22,13 @@ def json_response(content: Any) -> Response:
     )
 
 
-def device_or_404(state: AppState, device_id: str) -> Device:
-    """The configured device with this id; 503 before the registry exists, 404 for an unknown id."""
+def device_or_404(state: AppState, device_id: str, request: Any = None) -> Device:
+    """The configured device with this id; 503 before the registry exists, 404 for an unknown id. With the `request`,
+    as its browser's preview shows it (pengumon.preview): 404 for a device previewed as absent, a device that offers
+    only its WAN counters for one previewed as basic."""
     if state.devices is None:
         raise HTTPException(status_code=503, detail="Devices not initialized")
-    device = state.devices.get(device_id)
+    device = (viewer_registry(state, request) if request is not None else state.devices).get(device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Unknown device")
     return device

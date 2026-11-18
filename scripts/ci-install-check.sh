@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # What the CI job "install" checks around the install scripts (.github/workflows/ci.yml); runs in bash on Linux,
 # macOS and Windows (Git Bash). RUNNER_OS says which.
+#   scripts/ci-install-check.sh previous <version>        after installing the previous release: answering as <version>;
+#                                                         notes its database (schema version, settings history) for the upgrade
 #   scripts/ci-install-check.sh installed <assets-dir>    after the first install: running, answering, who it runs as
-#   scripts/ci-install-check.sh upgraded <assets-dir>     after running the installer again: backup made, answering
+#   scripts/ci-install-check.sh upgraded <assets-dir>     after running the installer again: backup made, answering; after an
+#                                                         upgrade from `previous`: the database migrated to this build's
+#                                                         schema, and the settings history the old release wrote is kept
 #   scripts/ci-install-check.sh removed                   after the uninstall: nothing answers, nothing is left
 #   scripts/ci-install-check.sh diagnose                  on failure: service state and log tail as one error annotation
+# CI_PENGUMON_BIN, CI_PENGUMON_DATA and CI_SUDO override where the program and its data are and the sudo to read them (to
+# try the database checks on a copy, outside CI); CI_PENGUMON_NOTE is where `previous` notes the database (default in
+# RUNNER_TEMP).
 set -uo pipefail
-phase="${1:?usage: ci-install-check.sh installed|upgraded|removed|diagnose [assets-dir]}"
+phase="${1:?usage: ci-install-check.sh previous|installed|upgraded|removed|diagnose [assets-dir|version]}"
 assets="${2:-}"
 port=8000
 fails=0
@@ -16,7 +23,11 @@ case "${RUNNER_OS:-$(uname -s)}" in
     macOS|Darwin) pg=/usr/local/pengumon/venv/bin/pengumon; data="/Library/Application Support/Pengumon"; sudo=sudo ;;
     *)       local_app="$(cygpath -u "$LOCALAPPDATA")"; pg="$local_app/Programs/Pengumon/venv/Scripts/pengumon.exe"; data="$local_app/Pengumon"; sudo= ;;
 esac
+pg="${CI_PENGUMON_BIN:-$pg}"; data="${CI_PENGUMON_DATA:-$data}"; sudo="${CI_SUDO-$sudo}"
 os="${RUNNER_OS:-$(uname -s)}"
+note="${CI_PENGUMON_NOTE:-${RUNNER_TEMP:-/tmp}/pengumon-previous.txt}"
+# The program's own Python (next to the pengumon command): it reads the database without anything else installed.
+py="$(dirname "$pg")/python"; [ -e "$py.exe" ] && py="$py.exe"
 
 ok() { echo "ok: $*"; }
 # A failed check is also an error annotation (the annotation is what can be read without signing in to GitHub).
@@ -41,12 +52,35 @@ version_of_assets() { basename "$assets"/pengumon-*-py3-none-any.whl | sed -n 's
 health() { curl -sf -m 5 "http://127.0.0.1:$port/api/health"; }
 pid_of_service() { pgrep -f 'pengumon(w)?(\.exe)? run' | head -n 1; }
 
+# "<schema version> <settings revisions> <newest revision's time>" of the database, read-only (the service may be running).
+db_state() {
+    $sudo "$py" -c 'import sqlite3, sys
+db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+version = db.execute("PRAGMA user_version").fetchone()[0]
+revisions, newest = db.execute("SELECT COUNT(*), COALESCE(MAX(applied_at), 0) FROM settings_versions").fetchone()
+print(version, revisions, int(newest))' "$data/pengumon.db"
+}
+# The newest schema this build migrates to (its migrations package).
+latest_schema() { "$py" -c 'from pengumon.db.migrations import LATEST_VERSION; print(LATEST_VERSION)'; }
+
 annotate() {  # annotate TITLE TEXT: one GitHub error annotation (newlines and percent signs escaped)
     local text="${2//'%'/'%25'}"; text="${text//$'\r'/}"; text="${text//$'\n'/'%0A'}"
     echo "::error title=$1::${text:0:3500}"
 }
 
 case "$phase" in
+previous)
+    want="$assets"  # the version installed
+    body="$(health)" && ok "/api/health answers: $body" || bad "/api/health does not answer"
+    case "$body" in *"\"version\":\"$want\""*) ok "it is version $want" ;; *) bad "health does not report version $want: $body" ;; esac
+    if state="$(db_state 2>&1)"; then
+        set -- $state
+        [ "${2:-0}" -ge 1 ] && ok "release $want wrote schema v$1 and $2 settings revision(s)" || bad "release $want wrote no settings revision: $state"
+        echo "$want $state" > "$note"
+    else
+        bad "the database of release $want cannot be read" "$state"
+    fi
+    ;;
 installed|upgraded)
     want="$(version_of_assets)"
     body="$(health)" && ok "/api/health answers: $body" || bad "/api/health does not answer"
@@ -76,6 +110,18 @@ installed|upgraded)
     if [ "$phase" = upgraded ]; then
         count="$($sudo ls "$data/backups" 2> /dev/null | wc -l | tr -d ' ')"
         [ "${count:-0}" -ge 1 ] && ok "the upgrade made a backup ($count)" || bad "no backup in $data/backups"
+        if [ -s "$note" ]; then  # an upgrade from the previous release: its data came through
+            read -r from v0 r0 t0 < "$note"
+            if state="$(db_state 2>&1)" && latest="$(latest_schema 2>&1)"; then
+                set -- $state
+                [ "$1" = "$latest" ] && ok "the database went from schema v$v0 ($from) to v$1, this build's" || bad "the database is at schema v$1, not this build's v$latest (it was v$v0 under $from)"
+                [ "$2" -ge "$r0" ] && ok "the $r0 settings revision(s) of $from are kept ($2 now)" || bad "settings revisions went from $r0 to $2"
+                [ "$3" -ge "$t0" ] && ok "the newest settings revision is not older than before" || bad "the newest settings revision went back in time ($t0 -> $3)"
+            else
+                bad "the upgraded database cannot be read" "$state $latest"
+            fi
+            rm -f "$note"  # the next run of the installer is a reinstall, not an upgrade from it
+        fi
     fi
     ;;
 removed)

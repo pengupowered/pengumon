@@ -39,10 +39,10 @@ function meter(box) {
   };
 }
 
-// The last hour's download as an area chart (SVG, token colors), from the chart data of the view model.
-function chartSvg(c) {
-  const W = 320;
-  const H = 70;
+// The last hour's download as an area chart (SVG, token colors), from the chart data of the view model, drawn at its box's
+// size in pixels (`W` x `H`): the text stays the page's size whatever the box is (a viewBox scaled to the box shrank the
+// whole chart into the middle of a wide card).
+function chartSvg(c, W, H) {
   const L = 60;
   const max = c.top * 1.08;
   const x = (i) => L + (i / Math.max(1, c.vals.length - 1)) * (W - L - 4);
@@ -58,22 +58,45 @@ function chartSvg(c) {
   let last = c.vals.length - 1;
   while (!has(c.vals[last])) last--;
   const capLine = c.cap ? `<line x1="${L}" x2="${W - 4}" y1="${y(c.cap).toFixed(1)}" y2="${y(c.cap).toFixed(1)}" stroke="var(--ink-3)" stroke-dasharray="4 4"/><text x="${L + 4}" y="${(y(c.cap) - 4).toFixed(1)}" style="fill:var(--ink-2)">${escapeHtml(c.capText)}</text>` : '';
-  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${escapeHtml(c.aria)}">
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${escapeHtml(c.aria)}">
     <line class="base" x1="${L}" x2="${W - 4}" y1="${y(0)}" y2="${y(0)}"/><text x="${L - 6}" y="${y(0) + 3}" text-anchor="end">0</text><text x="${L - 6}" y="${y(c.top) + 3}" text-anchor="end">${escapeHtml(c.topText)}</text>
     ${capLine}<path d="${d}L${x(last).toFixed(1)} ${y(0)}L${x(first).toFixed(1)} ${y(0)}Z" fill="var(--s1)" opacity=".18"/><path d="${d}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
     <circle cx="${x(last).toFixed(1)}" cy="${y(c.vals[last]).toFixed(1)}" r="3.5" fill="var(--s1)" stroke="var(--surface-1)" stroke-width="2"/>
-    <text x="${L}" y="${H - 1}">60 min ago</text><text x="${W - 4}" y="${H - 1}" text-anchor="end">now</text></svg>
-    <p class="fine" data-v="chart">${escapeHtml(c.caption)}</p></div>`;
+    <text x="${L}" y="${H - 1}">60 min ago</text><text x="${W - 4}" y="${H - 1}" text-anchor="end">now</text></svg>`;
 }
 
-// The WAN chart into `box`: the area chart and its caption, or the sentence saying there are no readings yet.
+// The WAN chart into `box`: the area chart (its plot as wide as the box, 70 px high, or as high as the card has room for
+// in a card of WAN traffic alone: panel.css) and its caption, or the sentence saying there are no readings yet. The plot
+// is drawn again when its box changes size.
 function chart(box) {
+  let data = null;
+  let size = '';
+  let observer = null;
+  const draw = () => {
+    const plot = box.querySelector('.chart-plot');
+    if (!plot || !data) return;
+    const W = Math.max(160, Math.round(plot.clientWidth));
+    const H = Math.max(60, Math.round(plot.clientHeight));
+    if (`${W}x${H}` === size && plot.firstChild) return;
+    size = `${W}x${H}`;
+    plot.innerHTML = chartSvg(data, W, H);
+  };
   return {
     update(c) {
+      data = c && !c.empty ? c : null;
+      size = '';
       if (!c) html(box, '');
-      else html(box, c.empty ? `<p class="fine" data-v="chart">${escapeHtml(c.empty)}</p>` : chartSvg(c));
+      else if (c.empty) html(box, `<p class="fine" data-v="chart">${escapeHtml(c.empty)}</p>`);
+      else {
+        html(box, `<div class="chart"><div class="chart-plot"></div><p class="fine" data-v="chart">${escapeHtml(c.caption)}</p></div>`);
+        draw();
+        if (!observer && typeof ResizeObserver === 'function') {
+          observer = new ResizeObserver(() => requestAnimationFrame(draw));
+          observer.observe(box);
+        }
+      }
     },
-    unmount() {}
+    unmount() { if (observer) observer.disconnect(); observer = null; }
   };
 }
 

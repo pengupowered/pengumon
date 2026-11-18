@@ -92,24 +92,32 @@ download, then upload...": the server does not report which direction it is in. 
 test worked and unknown otherwise: a test that failed raises no warning dot on the Network tab.
 
 **Internet use** is the router's own Traffic Analyzer, kept by Pengumon ([api.md](api.md), "Router traffic"), so that page
-is no longer needed. It shows, for the last 24 hours, 7 days or 30 days, the WAN's download and upload for each clock hour
-as bars (upload quieter), or over 30 days a bar per calendar day, the sums and the busiest hour or day, the devices that
-used the most (name, kind and maker, download over upload with a bar, and the app most of its traffic was: "mostly Sony
-PlayStation" when one recognized app was at least 80 % of it; each device is a button that opens its dialog) and the top
-apps. Every range is a rolling window that ends at the newest hour the router published (24, 168 or 720 hours back), so a
-longer range always contains the shorter one. Over 30 days the first and last bar are the days the window cuts: they are
-drawn narrower in proportion to the hours they hold and their tooltip says which ("Fri 16:00-24:00"). The router gives
-apps only as a total of 24 hours, so the apps are the sum of its 24-hour totals that lie inside the range (the list is
-headed "counted over 72 of 168 h, to 14:00" when they do not cover all of it), and the last row, "Not broken down by app",
-is what the router's counts do not account for: the range's total minus the apps listed, so the list adds up to the total
-(the help says why). Sizes are
-in decimal units ("75 GB"), as the router writes them. The router publishes an hour a few minutes after it ends, so the newest
-hour, when a range includes one the router has not published, is drawn as a hatched bar and said in words under the chart
-("The newest hour (14:00-15:00) is not published by the router yet."), never as 0 bytes; an hour Pengumon was not reading is hatched more quietly and counted ("131 hours in this range were
-not stored"). When the router gives no figures the card says why (the answer's `reason`: the Traffic Analyzer is switched off,
-the device is disabled, ...), and the footer says when it was last read and how often ("read 14:05 · every 60 min"). A
-**device's dialog** opens in the card's range and has its own 24 h, 7 d and 30 d buttons: the device's traffic per hour (per
-day over 30 days), its totals and busiest hour or day, its main app and its apps over the range (counted as the card counts
+is no longer needed. Its top is **the range** you chose (Last 24 hours by default): its download and upload as big
+figures, their average speed over it, and from when to when. Below it the WAN's download and upload are a **line** (upload
+quieter), a point per clock hour up to 90 days and a point per calendar day past that (All, with the 180-day default).
+**Click the chart** to pick an hour (or day): a strip under the chart shows it (its download, upload and average speed,
+with ‹ › to step to the hour before or after), and the devices list below is that hour's (no app line, and no apps list:
+the router counts apps per 24 hours, and the list says so). **✕ Whole range**, or a click on the same point again, takes
+the strip away and puts the range back in the lists; the big figures stay the range's all along. Each hour is asked for
+once (`GET /api/devices/{id}/traffic/span`) and kept. **Last hour** is the newest hour alone: the top is that hour, with
+a sentence in place of the line (one point). The footer says when it was read and when the next hour comes. The live
+speed is not repeated here: it is on the Latency chart. Under the chart the devices that used the most over the range
+(name, kind and maker, download over upload with a bar, and the app most of its traffic was: "mostly Sony PlayStation" when one recognized app was at least 80 % of it; each device is a button
+that opens its dialog) and the top apps. Every range is a rolling window that ends at the newest hour the router published
+(1, 24, 168 or 720 hours back), so a longer range always contains the shorter one. Past 90 days the first and last point are
+the days the window cuts: they count only the hours they hold and their tooltip says which ("Fri 16:00-24:00"). The router
+gives apps only as a total of 24 hours, so the apps are the sum of its 24-hour totals that lie inside the range (the list is
+headed "counted over 72 of 168 h, to 14:00" when they do not cover all of it; over the last hour there are none, and the list
+says why), and the last row, "Not broken down by app", is what the router's counts do not account for: the range's total
+minus the apps listed, so the list adds up to the total (the help says why). Sizes are in decimal units ("75 GB"), as the
+router writes them. The router publishes an hour a few minutes after it ends, so the newest hour, when a range includes one
+the router has not published, breaks the line and is a hatched band, said in words under the chart ("The newest hour
+(14:00-15:00) is not published by the router yet."), never 0 bytes; an hour Pengumon was not reading is hatched more quietly
+and counted ("131 hours in this range were not stored"). When the router gives no figures the card says why (the answer's
+`reason`: the Traffic Analyzer is switched off, the device is disabled, ...), and the footer says when it was last read and
+how often ("read 14:05 · every 60 min"). A
+**device's dialog** opens in the card's range (24 hours when the card shows the last hour) and has its own range control: the
+device's traffic as a line like the card's, a point per hour (per day over 7 days), its totals and busiest hour or day, its main app and its apps over the range (counted as the card counts
 them, with its own "Not broken down by app" row) and the apps of each day (the router's 24-hour total that ends at the
 end of that day); Back, Escape and Done
 close it. The pencil by its name (where names are shown) gives it a name in Pengumon ("PS5" for a console the router calls
@@ -212,6 +220,43 @@ client row); only the Local network dialog fetches the client list.
 
 Each card has a "..." menu: move up, move down, hide, Layout.
 
+## Without a router or a modem
+
+Pengumon works with no device set up: it probes the path and shows Path health, Latency, Incidents, Speed and the
+reports from the probes alone. A router or a modem it can read adds cards and parts of cards. The table says which, for a
+router and a modem Pengumon reads the most from (an ASUS router, a DOCSIS gateway) with one of them gone, with the router
+as a **basic UPnP router** (one that only counts the bytes through its internet port, as most home routers do), and with
+neither. "Partly" means the part shows what that setup gives (the Router card with a basic router: its load on the line,
+without CPU, memory or devices). Each card declares the capabilities its parts use (`uses` in its `panel.json`); the table
+is made from those declarations, and a test fails when a card asks for a capability it does not declare.
+
+<!-- capability-table:start (made by python -m pengumon.web.capability_table; do not edit by hand) -->
+| Card | Part | Needs | No router | No modem | Basic UPnP router | Neither |
+| --- | --- | --- | --- | --- | --- | --- |
+| Path health | Diagnosis: "busy line" verdicts and their legend | `wan_counters` | hidden | shown | shown | hidden |
+| Latency | Latency chart: the download and upload (load) under the latency | `wan_counters` | hidden | shown | shown | hidden |
+| Line | The whole card: the cable line's signal levels, errors and channel history | `access_line` | shown | hidden | shown | hidden |
+| Speed | Speed card: the line's speed measured by the router during a test | `wan_counters` | hidden | shown | shown | hidden |
+| Router | The whole card: the router's load on the line, CPU, memory and history | `wan_counters`, `router_system` | hidden | shown | partly | hidden |
+| Router | Router card: the connected devices and Local network | `client_inventory` | hidden | shown | hidden | hidden |
+| Router | Router card: the mesh nodes and their devices | `mesh` | hidden | shown | hidden | hidden |
+| Router | Router card's map: the modem on the path | `access_line` | hidden | hidden | shown | hidden |
+| Internet use | The whole card: which devices and apps used the internet, per hour | `traffic_usage` | hidden | shown | hidden | hidden |
+| Incidents | Incident inspector: the cable line's readings in the incident | `access_line` | shown | hidden | shown | hidden |
+| Incidents | Incident inspector: the router's figures, restarts and link changes | `wan_counters`, `router_system` | hidden | shown | partly | hidden |
+| Incidents | Incident inspector: the Internet use of the incident's hours | `traffic_usage` | hidden | shown | hidden | hidden |
+<!-- capability-table:end -->
+
+**Preview without a device** (Settings > Display) shows this browser the dashboard as one of those households would see
+it: for each saved device, *As set up*, *Not there* or, for a router, *As a basic UPnP router*. Start the preview and the
+page loads again without it: the cards that need it are gone, the parts that need it are left out, and what the server
+writes (the incident inspector, the ISP report, the AI pack, the speed tests' "measured by the router") leaves it out too.
+A bar across the top says a preview is on, with Change and End preview. Only this browser changes (the choice is a cookie,
+`pengumon_preview`, that every request carries): Pengumon still reads every device and keeps its history, other
+browsers see everything, and ending the preview brings it all back. Settings itself is not previewed. Incidents already
+recorded keep the cause they were given when they happened (one that names the modem's log still does), and the live
+headline is the one every browser sees.
+
 ## Layout
 
 The **Layout** dialog (`dialogs/layout/`, logic in `static/js/layout.js`) lists the panels with up/down buttons and a
@@ -289,8 +334,8 @@ The help texts of the panels (hop colors, the busy level, router and DOCSIS leve
 **One range control on every chart**: a drop-down (a native `<select>`, so it works by keyboard, on a phone and with a screen
 reader; `js/ranges.js`), labelled by its choice ("Last 7 days"), with the same words and order everywhere: Live and
 Last 15 minutes (the latency views only), Last hour, Last 24 hours, Last 7 days, Last 30 days, Last 90 days and **All**.
-Each chart offers the ranges its data can fill: none finer than the data (the cable line's channels, Speed, Internet use and
-the uptime strips start at 24 h, the report, "When it breaks" and the Incidents timeline at 7 d), no 90 d when that kind of data
+Each chart offers the ranges its data can fill: none finer than the data (the cable line's channels, Speed, the Internet use
+device dialog and the uptime strips start at 24 h; the Internet use card at Last hour, the newest hour the router published; the report, "When it breaks" and the Incidents timeline at 7 d), no 90 d when that kind of data
 is kept for less than 90 days, and no All when it would equal a range already offered. **All is the whole retention of that
 kind of data** and says so ("All · 180 d", "All · 1 y"; the retention settings under Settings > Database: probes, router,
 mesh, cable line, Internet use, speed tests, incidents, 180 days each by default), and the chart shows what is stored when
@@ -468,7 +513,11 @@ quotes a threshold is a function of the settings values (`(values) => string`), 
 A panel is one folder, `static/panels/<id>/`; no shared file names it (the page, the config, the loader and the core
 modules find it by discovery in `pengumon/web/ui.py`). Files:
 
-- `panel.json`: `{"order": <number>}`, its default place.
+- `panel.json`: `{"order": <number>}`, its default place, and `"uses"` when a part of it needs a device: `[{"part": "...",
+  "capabilities": ["wan_counters", ...]}]` (an entry whose part begins "The whole card" is the card's own need). The table
+  in [Without a router or a modem](#without-a-router-or-a-modem) is made from these (`python -m
+  pengumon.web.capability_table`), and `tests/test_device_preview_ui.py` fails when the panel's code asks for a capability
+  or a feature (`primaryDevice`, `featureAvailable`, `devicesOffering`, `offers.includes`, `ctx.reason`) it does not declare.
 - `panel.html`: exactly one `<section data-panel="<id>">` holding one or more `.panel` cards (`data-size` 4, 8 or 12).
   Any other `*.html` in the folder is a dialog the panel owns, included outside `<main>`.
 - `panel.js`: default-exports `{ id, title, tab, icon, core?, available(ctx) | instances(ctx), reason?(ctx),

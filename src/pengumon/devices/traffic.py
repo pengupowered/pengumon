@@ -12,12 +12,14 @@ digits of its MAC, as /clients shows it without the token) or "generic" (what ki
 dossier and the AI pack, whose texts may leave the household).
 """
 
+from bisect import bisect_left
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pengumon.capabilities import Capability, Client, ClientsReading
+from pengumon.db.traffic import parse_apps
 from pengumon.drivers.common import BRACES
 from pengumon.windows import day_cells
 
@@ -255,9 +257,13 @@ async def _window(repository, device_id: str, hours: int, days: Optional[int], n
 def _daily(rows: Sequence[Dict[str, Any]], start: float, end: float, tz: tzinfo) -> List[Dict[str, Any]]:
     """The totals per local calendar day inside the window ([start, end), windows.day_cells): {day, start, end, up, down
     (null without a stored hour), hours, partial, stored}. An hour belongs to the day it begins in."""
+    # `rows` are in hour order (summary makes one per hour of the window): each day's are found by bisection, not by
+    # a scan of every row per day (180 days are 4320 rows: a scan per day was 780 000 steps)
+    hours = [r["hour"] for r in rows]
     out = []
     for cell in day_cells(start, end, tz):
-        mine = [r for r in rows if cell["start"] <= r["hour"] < cell["end"] and r["down"] is not None]
+        lo, hi = bisect_left(hours, cell["start"]), bisect_left(hours, cell["end"])
+        mine = [r for r in rows[lo:hi] if r["down"] is not None]
         out.append({**cell, "up": sum(r["up"] for r in mine) if mine else None,
                     "down": sum(r["down"] for r in mine) if mine else None, "stored": len(mine)})
     return out
@@ -283,19 +289,22 @@ async def summary(repository, device_id: str, hours: int, namer: Namer, now: Opt
     wan = [{"hour": h, "up": by_hour[h][0] if h in by_hour else None, "down": by_hour[h][1] if h in by_hour else None}
            for h in range(start, end, HOUR)]
     totals = {c: (u, d) for c, u, d, _ in await repository.get_traffic_totals(device_id, start, end)}
-    windows = _by_client(await repository.get_traffic_app_windows(device_id, start + APP_WINDOW, end))
-    covers = {c: cover_apps(w, start, end) for c, w in windows.items()}
+    ranked = sorted(((c, t) for c, t in totals.items() if c and (t[0] or t[1])), key=lambda kv: (-kv[1][1], -kv[1][0]))
+    if top:
+        ranked = ranked[:top]
+    # The app windows of the clients shown and of the whole network only, each parsed only when chosen: a month holds
+    # thousands of stored windows, of which the tiling takes one a day per client (db/traffic.get_traffic_app_windows).
+    wanted = {mac for mac, _ in ranked} | {""}
+    windows = _by_client(await repository.get_traffic_app_windows(device_id, start + APP_WINDOW, end, parsed=False,
+                                                                  clients=wanted))
+    covers = {c: [(w, parse_apps(a)) for w, a in cover_apps(found, start, end)] for c, found in windows.items()}
     clients = []
-    for mac, (up, down) in sorted(((c, t) for c, t in totals.items() if c), key=lambda kv: (-kv[1][1], -kv[1][0])):
-        if not (up or down):
-            continue
+    for mac, (up, down) in ranked:
         chosen = covers.get(mac, [])
         apps = sum_apps(chosen)
         hint = hint_of(apps, chosen[0][0], now) if chosen else None
         clients.append({**namer.row(mac), "up": up, "down": down, "apps": _apps(apps, TOP_APPS),
                         "apps_unattributed": unattributed((up, down), apps), "traffic_hint": hint})
-    if top:
-        clients = clients[:top]
     all_chosen = covers.get("", [])
     all_apps = sum_apps(all_chosen)
     newest, read_at = await repository.get_traffic_latest(device_id)
@@ -313,6 +322,26 @@ async def summary(repository, device_id: str, hours: int, namer: Namer, now: Opt
         "apps_unattributed": unattributed((wan_up, wan_down), all_apps),
         "apps_covered": _covered(all_chosen),
         "apps_window_end": all_chosen[0][0] if all_chosen else None,
+    }
+
+
+SPAN_MAX_SECONDS = 26 * HOUR  # a span is an hour or a calendar day (23 to 25 hours where the clocks change)
+SPAN_TOP = 3
+SPAN_MAX_TOP = 50
+
+
+async def span_summary(repository, device_id: str, start: int, end: int, namer: Namer,
+                       top: int = SPAN_TOP) -> Dict[str, Any]:
+    """One hour or one day of the router's traffic, [start, end): the WAN's download and upload (null when no hour of
+    it is stored), how many hours of it are stored, and the `top` clients by download in it (the Internet use card's
+    picked hour or day). An hour belongs to the span it begins in, as `_daily` counts it."""
+    totals = {c: (u, d, n) for c, u, d, n in await repository.get_traffic_totals(device_id, start, end)}
+    up, down, stored = totals.get("", (None, None, 0))
+    ranked = sorted(((c, t) for c, t in totals.items() if c and (t[0] or t[1])), key=lambda kv: (-kv[1][1], -kv[1][0]))
+    return {
+        "start": start, "end": end, "stored": stored,
+        "up": up if stored else None, "down": down if stored else None,
+        "clients": [{**namer.row(mac), "up": u, "down": d} for mac, (u, d, _) in ranked[:top]],
     }
 
 

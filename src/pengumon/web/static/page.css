@@ -124,6 +124,8 @@ body[data-status="unknown"] { --gst: var(--unknown); }
   background: var(--accent-bg); color: var(--ink-1); font-size: var(--fs-sm); border-bottom: 1px solid var(--accent);
 }
 .update-bar[hidden] { display: none; }
+.preview-bar { background: var(--warn-bg, var(--accent-bg)); border-bottom-color: var(--warn, var(--accent)); }
+.preview-bar svg.i { color: var(--warn, var(--accent)); }
 .update-bar svg.i { color: var(--accent); flex: none; }
 .update-bar .ub-text { flex: 1 1 220px; min-width: 0; }
 .update-bar .ub-close { margin-left: auto; }

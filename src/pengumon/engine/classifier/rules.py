@@ -73,12 +73,26 @@ def _local_fault(m: RoundMetrics, config: ClassifierConfig) -> Optional[Verdict]
     return None
 
 
+def _traffic_passes(m: RoundMetrics, config: ClassifierConfig, gateway_loss: float) -> bool:
+    """Whether the stage beyond the gateway answers while the gateway's own probes are lost: the public targets (the
+    provider's hops when there are none) lose under the degraded level and under half of what the gateway loses. The
+    traffic to them passes through the gateway (or, for a gateway off the traced path, does not need it), so the
+    gateway is up and only ignores or rate-limits its probes: a modem's management address that stops answering ping,
+    a box in bridge mode. Nothing beyond it measured: no evidence, False."""
+    later = m.public if m.public.measured else m.isp
+    return later.measured and later.loss_pct < config.degraded_loss_pct and later.loss_pct < gateway_loss / 2
+
+
 def _gateway_fault(m: RoundMetrics, config: ClassifierConfig, line: LineWording) -> Optional[Verdict]:
     """2. The gateway (modem), probed on its home-side address. Those probes never use the provider's line, so loss
-    here is the gateway itself or the link from the router to it, not the line."""
+    here is the gateway itself or the link from the router to it, not the line. Loss there while the stage beyond it
+    answers (_traffic_passes) is no fault: the gateway is up, as Path health shows it ("Ignores ping",
+    engine.path_rules)."""
     local_loss = m.local.loss_pct
     gateway_loss, gateway_lat, gateway_jitter = m.gateway.loss_pct, m.gateway.latency_ms, m.gateway.jitter_ms
     degraded, down = config.degraded_loss_pct, config.down_loss_pct
+    if gateway_loss >= degraded and _traffic_passes(m, config, gateway_loss):
+        return None
     local_name = m.local.name("Local Router")
     gw_name, gw_addr = m.gateway.name("Modem / Gateway"), m.gateway.address("Gateway")
     #    here is the gateway itself or the link from the router to it, not the line.

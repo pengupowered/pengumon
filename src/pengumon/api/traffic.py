@@ -1,4 +1,4 @@
-"""The router's traffic statistics and the device events: GET /api/devices/{id}/traffic,
+"""The router's traffic statistics and the device events: GET /api/devices/{id}/traffic, /traffic/span,
 /api/devices/{id}/traffic/clients/{client} and /api/devices/{id}/events.
 
 The traffic routes need a device that offers TRAFFIC_USAGE (400 otherwise, 404 for an unknown id). They name clients
@@ -25,18 +25,22 @@ from pengumon.devices import traffic
 from pengumon.devices.device import Device
 from pengumon.devices.events import events_between
 from pengumon.drivers.common import normal_mac
+from pengumon.preview import class_offers, is_basic
 from pengumon.security import rate_limit
 from pengumon.state import AppState
 from pengumon.timeofday import viewer_zone
 
 router = APIRouter(prefix="/api")
 _RATE = rate_limit("traffic", 60, 60)  # the panel asks once a minute at most; one bucket for both traffic routes
+# the card asks for the hour or day picked on its chart, once per pick (stepping through hours, kept in the page)
+_SPAN_RATE = rate_limit("traffic_span", 120, 60)
+HOURLY_MAX_HOURS = 90 * 24  # `hourly` gives the hours of a range up to 90 days (the card's line, a point per hour)
 DEFAULT_EVENT_SECONDS = 7 * 86400
 
 
-def _require_traffic(state: AppState, device_id: str) -> Device:
-    device = device_or_404(state, device_id)
-    if Capability.TRAFFIC_USAGE not in type(device.driver).offers:
+def _require_traffic(state: AppState, device_id: str, request: Request) -> Device:
+    device = device_or_404(state, device_id, request)
+    if Capability.TRAFFIC_USAGE not in class_offers(device.driver):
         raise HTTPException(status_code=400, detail="This device does not report traffic per client")
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
@@ -63,19 +67,43 @@ async def get_traffic(
     hours: int = Query(traffic.DEFAULT_HOURS, ge=1, le=traffic.MAX_HOURS),
     days: Optional[int] = Query(None, ge=1, le=traffic.MAX_DAYS),
     top: Optional[int] = Query(None, ge=1, le=500),
+    hourly: bool = Query(False),
 ):
     """The last `hours` hours of the router's traffic (`days` N means 24 * N hours and wins over `hours`): a rolling
     window ending at the newest hour the router published (or the current hour when that is older than an hour):
-    hourly WAN totals (left out over 7 days), `daily` totals per calendar day inside the window (the first and last
-    `partial`, with the `hours` they hold), clients ranked by download (with their top apps and hint) and the apps of
-    every client together ranked by download. The apps are the router's 24-hour windows that lie inside the window
-    (`apps_covered`); `apps_unattributed` is the rest of the total, not broken down by app. `available`/`reason` say
-    whether the router gives these figures at all."""
-    device = _require_traffic(state, device_id)
+    hourly WAN totals (left out over 7 days, unless `hourly` asks for them, up to 90 days), `daily` totals per
+    calendar day inside the window (the first and last `partial`, with the `hours` they hold), clients ranked by
+    download (with their top apps and hint) and the apps of every client together ranked by download. The apps are
+    the router's 24-hour windows that lie inside the window (`apps_covered`); `apps_unattributed` is the rest of the
+    total, not broken down by app. `available`/`reason` say whether the router gives these figures at all."""
+    device = _require_traffic(state, device_id, request)
     namer = await _namer(request, state, device)
+    span = days * 24 if days else hours
     body = await traffic.summary(state.repository, device.id, hours, namer, top=top, days=days,
-                                 tz=viewer_zone(state.config)[0])
+                                 tz=viewer_zone(state.config)[0],
+                                 with_hours=True if hourly and span <= HOURLY_MAX_HOURS else None)
     return {**_status(device), **body, "privacy": namer.mode}
+
+
+@router.get("/devices/{device_id}/traffic/span", dependencies=[Depends(_SPAN_RATE)])
+async def get_traffic_span(
+    device_id: str,
+    request: Request,
+    state: StateDep,
+    start: int = Query(..., ge=0),
+    end: int = Query(..., ge=0),
+    top: int = Query(traffic.SPAN_TOP, ge=1, le=traffic.SPAN_MAX_TOP),
+):
+    """One hour or one calendar day of the router's traffic, [start, end) in epoch seconds (at most 26 hours): its
+    download and upload (null when none of it is stored), `stored` hours, and its `top` clients by download (3 by
+    default, at most 50), named as /traffic names them. The Internet use card asks for the hour or day picked on its
+    chart, whose devices it then lists."""
+    device = _require_traffic(state, device_id, request)
+    if not 0 < end - start <= traffic.SPAN_MAX_SECONDS:
+        raise HTTPException(status_code=400, detail="end must be after start, by at most 26 hours")
+    namer = await _namer(request, state, device)
+    body = await traffic.span_summary(state.repository, device.id, start, end, namer, top=top)
+    return {**body, "privacy": namer.mode}
 
 
 async def _resolve(state: AppState, device: Device, client: str, full: bool) -> str:
@@ -107,7 +135,7 @@ async def get_client_traffic(
     """One client over the same rolling window as /traffic (`hours`, or `days` * 24): its hourly series (left out over
     7 days), `daily` totals, its apps over the window as /traffic counts them (`apps_covered`, `apps_unattributed`) and
     its apps by whole day. 404 for a client with no stored traffic and not in the client list."""
-    device = _require_traffic(state, device_id)
+    device = _require_traffic(state, device_id, request)
     namer = await _namer(request, state, device)
     mac = await _resolve(state, device, client, namer.mode == "full")
     body = await traffic.client_detail(state.repository, device.id, mac, hours, namer, tz=viewer_zone(state.config)[0],
@@ -146,13 +174,15 @@ async def put_client_name(device_id: str, client: str, body: ClientName, request
 @router.get("/devices/{device_id}/events")
 async def get_device_events(
     device_id: str,
+    request: Request,
     state: StateDep,
     start_time: Optional[float] = Query(None, allow_inf_nan=False),
     end_time: Optional[float] = Query(None, allow_inf_nan=False),
 ):
     """The device's events (devices/events.py: `restarted`, `wan_link`) in [start_time, end_time] (default: the last
-    7 days), oldest first, each with a short `text` in the zone set in Settings."""
-    device = device_or_404(state, device_id)
+    7 days), oldest first, each with a short `text` in the zone set in Settings. None for a device previewed as a
+    basic router (pengumon.preview), which tells neither."""
+    device = device_or_404(state, device_id, request)
     if not state.repository:
         raise HTTPException(status_code=503, detail="Repository not initialized")
     now = time.time()
@@ -161,5 +191,5 @@ async def get_device_events(
     if not start <= end:
         raise HTTPException(status_code=400, detail="start_time must not be after end_time")
     tz = viewer_zone(state.config)[0]
-    events = await events_between(state.repository, device.id, start, end)
+    events = [] if is_basic(device) else await events_between(state.repository, device.id, start, end)
     return {"start_time": start, "end_time": end, "events": [e.as_dict(tz) for e in events]}

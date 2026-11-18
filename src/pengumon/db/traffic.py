@@ -4,7 +4,7 @@ setting (devices/traffic.py)."""
 
 import json
 import math
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 from pengumon.capabilities import TrafficApps, TrafficHour
 
@@ -122,14 +122,22 @@ class TrafficQueries:
                 return [(c, d, w, _apps(a)) for c, d, w, a in await cursor.fetchall()]
 
     async def get_traffic_app_windows(self, device_id: str, first_end: float, last_end: float,
-                                      client: Optional[str] = None) -> List[Tuple[str, int, list]]:
+                                      client: Optional[str] = None, *, parsed: bool = True,
+                                      clients: Optional[Iterable[str]] = None) -> List[Tuple[str, int, Any]]:
         """(client, window_end, apps) of every stored 24-hour app window ending in first_end <= window_end <= last_end,
         for every client or one, newest first: the hourly ones (traffic_app_hours, kept 31 days) and the latest one of
         each client and the day rows (traffic_apps, kept with the traffic). A window stored more than once (hourly, as
-        a client's latest, as a day's row) is returned once; the copies hold the same list."""
+        a client's latest, as a day's row) is returned once; the copies hold the same list. With `parsed` False, `apps`
+        is the stored JSON text, for `parse_apps`: a caller that uses only some windows (a month holds thousands, of
+        which the range's summary adds up a few per client) parses only those. `clients`: only these clients' ('' the
+        whole network's), for a caller that shows a few."""
         lo, hi = math.ceil(first_end), math.floor(last_end)
         where = "device_id = ? AND window_end >= ? AND window_end <= ?" + (" AND client = ?" if client is not None else "")
         one = [device_id, lo, hi] + ([client] if client is not None else [])
+        if clients is not None:
+            wanted = sorted(set(clients))
+            where += f" AND client IN ({','.join('?' * len(wanted))})" if wanted else " AND 0"
+            one += wanted
         sql = (f"SELECT client, window_end, apps, 0 AS src FROM traffic_app_hours WHERE {where} "
                f"UNION ALL SELECT client, window_end, apps, CASE WHEN day = '' THEN 2 ELSE 1 END FROM traffic_apps "
                f"WHERE {where} ORDER BY window_end DESC, src")
@@ -140,7 +148,7 @@ class TrafficQueries:
         for c, w, a in rows:
             if (c, w) not in seen:
                 seen.add((c, w))
-                out.append((c, w, _apps(a)))
+                out.append((c, w, _apps(a) if parsed else a))
         return out
 
     async def insert_device_event(self, device_id: str, ts: float, kind: str, detail: dict) -> None:
@@ -183,6 +191,11 @@ class TrafficQueries:
                     row = await cursor.fetchone()
                 out.append((row[0], row[1]) if row else None)
         return out[0], out[1]
+
+
+def parse_apps(text: str) -> list:
+    """A stored app list ([[app, up, down], ...]) from its JSON text; [] for text that is not one."""
+    return _apps(text)
 
 
 def _apps(text: str) -> list:

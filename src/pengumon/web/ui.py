@@ -1,7 +1,8 @@
 """The dashboard's panels and dialogs, discovered from their folders at start.
 
 Every panel lives in its own folder, web/static/panels/<id>/, with
-  panel.json   its manifest: {"order": <number>} (its default place; the layout config and the browser reorder it)
+  panel.json   its manifest: {"order": <number>} (its default place; the layout config and the browser reorder it), and
+               "uses": the device capabilities its parts need (read by pengumon.web.capability_table, not here)
   panel.html   its partial: exactly one <section data-panel="<id>">
   panel.js     its module (the registry contract: default export {id, title, tab, ...})
   *.css        its styles; any other *.html is a dialog the panel owns (included outside <main>)

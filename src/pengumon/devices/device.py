@@ -146,7 +146,10 @@ class Device:
 
     @property
     def has_credentials(self) -> bool:
-        return self.credentials_source is not None or not self.needs_sign_in
+        """Whether the device can be read as it is: a password from a source, or none needed (UPnP), or none required
+        (`password_optional`: an OpenWrt router whose root has no password is read with an empty one)."""
+        return (self.credentials_source is not None or not self.needs_sign_in
+                or getattr(self.driver, "password_optional", False))
 
     def set_credentials(self, username: str, password: str, *, source: Optional[str] = None,
                         privacy_password: Optional[str] = None) -> None:

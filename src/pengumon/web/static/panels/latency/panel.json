@@ -1,1 +1,11 @@
-{"order": 20}
+{
+ "order": 20,
+ "uses": [
+  {
+   "part": "Latency chart: the download and upload (load) under the latency",
+   "capabilities": [
+    "wan_counters"
+   ]
+  }
+ ]
+}

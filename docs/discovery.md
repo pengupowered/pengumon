@@ -92,8 +92,12 @@ path's first private hop: a device there sits beside your router, not in front o
 host: its driver already reads it, at its own pace, and discovery sends it nothing here. Each other one gets one echo
 request and one GET of `/` over HTTP (no HTTPS retry, no redirect). One that answers either is proposed as a
 **Gateway (modem)** hop right after your network's hops, with the reason "answers on your network but isn't on the
-traced path (a modem in bridge mode, or an ISP gateway)" and the confidence **Likely**. One at 192.168.100.1 is named
-Cable modem, the others Gateway. Only these private addresses are ever asked.
+traced path (a modem in bridge mode, or an ISP gateway)" and the confidence **Likely**. It is proposed **paused**:
+something answering at a common gateway address need not be the box your internet goes through (192.168.100.1 is a
+cable modem's address, but also a satellite dish's or a fiber box's), so it is probed only once you switch it on. It
+is named Gateway, by its role, never by its address. One that served its page but gave no echo reply is proposed with
+a TCP probe to port 80, since a ping it never answers would read as down. A background route check does not report
+such a hop as a route change. Only these private addresses are ever asked.
 
 ### UPnP (part of the device checks)
 

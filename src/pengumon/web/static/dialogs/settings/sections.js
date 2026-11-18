@@ -6,6 +6,7 @@ import { icon } from '../../js/dom.js';
 import { accessHtml, viewersConfirmHtml } from './access.js';
 import { intervalEstimateRowHtml, isLayoutKey, layoutRowHtml, rowHtml, speedEstimateRowHtml, speedMlabRowHtml } from './fields.js';
 import { rememberSlot, slotHtml } from './secrets.js';
+import { devicePreviewHtml } from './device-preview.js';
 import { retentionTableHtml } from './storage.js';
 import { S } from './store.js';
 
@@ -58,7 +59,7 @@ export function sectionHtml(section) {
   if (section.id === 'access') head = accessHtml();
   if (section.id === 'probing') tail = listHtml('dns_probes');
   if (section.id === 'retention' && S.server.can_edit) tail = retentionTableHtml();
-  if (section.id === 'display') tail = listHtml('themes');
+  if (section.id === 'display') tail = listHtml('themes') + devicePreviewHtml();
   if (section.id === 'alerts' && !groups.some((g) => g.name === 'Channels')) groups = [{ name: 'Channels', specs: [] }, ...groups];
   if (section.id === 'devices' && !groups.some((g) => g.name === 'Host app checks')) groups.push({ name: 'Host app checks', specs: [] });
   const body = `${head}${groups.map((g) => groupHtml(section, g)).join('')}${tail}`;

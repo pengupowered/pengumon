@@ -76,7 +76,12 @@ async def seed(db_path: str, now: float, access_answered: bool = True) -> None:
     for i, (tid, _, _) in enumerate(TARGETS):
         t = start + 0.49 + 0.025 * i
         while t < now - 5.0:
-            lost = tid == "isp_gateway" and now - 3000 <= t <= now - 2910 and int(t) % 2 == 0
+            # the recorded gateway drop (the gateway alone, as an incident recorded before 0.30 was), and a later one the
+            # internet behind the gateway shares: under today's rules only that one is the gateway's fault (a gateway that
+            # loses its probes while the internet answers only ignores them: engine/classifier/rules._traffic_passes), so
+            # the outage-rules preview has an incident to open or not
+            lost = ((tid == "isp_gateway" and now - 3000 <= t <= now - 2910)
+                    or (tid in ("isp_gateway", "cloudflare_dns") and now - 600 <= t <= now - 510)) and int(t) % 2 == 0
             samples.append(ProbeSample(target_id=tid, timestamp=t, success=not lost, latency_ms=None if lost else 8.0 + int(t) % 5,
                                        packet_loss_pct=100.0 if lost else 0.0, jitter_ms=None if lost else 0.5))
             t += 1.0

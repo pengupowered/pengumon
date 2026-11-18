@@ -660,7 +660,13 @@ async def test_the_traffic_route_takes_days_and_hours_as_the_same_rolling_window
         week = await ac.get("/api/devices/router/traffic", params={"hours": 168})
         bad = [await ac.get("/api/devices/router/traffic", params={"days": d}) for d in (0, traffic.MAX_DAYS + 1, "x")]
     assert month.status_code == 200 and month.json()["days"] == 30 and month.json()["hours"] == 720
-    assert month.json()["end"] - month.json()["start"] == 720 * HOUR and month.json()["daily"][0]["partial"]
+    assert month.json()["end"] - month.json()["start"] == 720 * HOUR
+    # the first day is cut by the window, unless the window happens to begin at a local midnight (it ends at the newest
+    # hour: run just after midnight, the window is whole days)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    begins = datetime.fromtimestamp(month.json()["start"], ZoneInfo("America/New_York"))
+    assert month.json()["daily"][0]["partial"] == ((begins.hour, begins.minute) != (0, 0))
     assert hours.json()["daily"] == month.json()["daily"] and hours.json()["wan"] == []
     assert week.json()["days"] is None and len(week.json()["daily"]) in (7, 8) and len(week.json()["wan"]) == 168
     assert "apps_days" not in week.json() and week.json()["apps_covered"]["hours"] >= 24
@@ -774,3 +780,65 @@ async def test_names_are_kept_in_the_database_read_once_and_never_used_for_the_d
     assert masked.row(GAME)["label"] == "Example Games 0003" and "router_label" not in masked.row(GAME)
     full = traffic.Namer("full", inventory(), names={GAME: "Den PS5"})
     assert full.describe(GAME) == f"Den PS5 ({GAME})"
+
+
+# --- the Internet use card's line and picked hour ---------------------------------------------------------------------
+
+async def test_hourly_gives_the_hours_of_a_range_up_to_90_days_and_never_past_it(app_state, repo):
+    await api_state(app_state, repo, privacy="full")
+    newest = await seed_traffic(repo, time.time())
+    async with api() as ac:
+        month = (await ac.get("/api/devices/router/traffic", params={"hours": 720, "hourly": "true"})).json()
+        plain = (await ac.get("/api/devices/router/traffic", params={"hours": 720})).json()
+        ninety = (await ac.get("/api/devices/router/traffic", params={"days": 90, "hourly": "true"})).json()
+        longer = (await ac.get("/api/devices/router/traffic", params={"days": 91, "hourly": "true"})).json()
+    assert len(month["wan"]) == 720 and month["wan"][-1] == {"hour": newest, "up": 10**8, "down": 10**9}
+    assert sum(1 for r in month["wan"] if r["down"] is not None) == 6  # the rest not stored: null, never 0
+    assert month["daily"] == plain["daily"] and plain["wan"] == []  # without it, as before
+    assert len(ninety["wan"]) == 90 * 24
+    assert longer["wan"] == [] and longer["daily"]  # past 90 days a point per day
+
+
+async def test_the_span_route_gives_an_hour_or_a_day_with_its_top_three_devices(app_state, repo):
+    await api_state(app_state, repo, privacy="full")
+    newest = await seed_traffic(repo, time.time())
+    busy = newest - 2 * HOUR
+    async with api() as ac:
+        hour = (await ac.get("/api/devices/router/traffic/span", params={"start": busy, "end": busy + HOUR})).json()
+        quiet = (await ac.get("/api/devices/router/traffic/span", params={"start": newest, "end": newest + HOUR})).json()
+        day = (await ac.get("/api/devices/router/traffic/span", params={"start": newest - 23 * HOUR, "end": newest + HOUR})).json()
+        unstored = (await ac.get("/api/devices/router/traffic/span", params={"start": newest - 48 * HOUR, "end": newest - 47 * HOUR})).json()
+        bad = [(await ac.get("/api/devices/router/traffic/span", params=p)).status_code for p in (
+            {"start": busy, "end": busy}, {"start": busy, "end": busy - HOUR}, {"start": busy, "end": busy + 27 * HOUR},
+            {"start": busy}, {"start": "x", "end": busy})]
+    assert (hour["start"], hour["end"], hour["stored"]) == (busy, busy + HOUR, 1)
+    assert (hour["down"], hour["up"]) == (75 * 10**9 + 10**9, 10**8)
+    assert [(c["label"], c["down"]) for c in hour["clients"]] == [("Den console", 75 * 10**9), ("laptop", 10**9)]
+    assert hour["clients"][0]["mac"] == GAME and hour["privacy"] == "full"
+    assert [c["label"] for c in quiet["clients"]] == ["laptop"]  # a client with no row in the hour is not listed
+    assert day["stored"] == 6 and day["down"] == 81 * 10**9  # an hour belongs to the span it begins in
+    assert (unstored["stored"], unstored["down"], unstored["up"], unstored["clients"]) == (0, None, None, [])
+    assert bad == [400, 400, 400, 422, 422]
+
+
+async def test_the_span_route_lists_up_to_top_clients(app_state, repo):
+    await api_state(app_state, repo, privacy="full")
+    newest = await seed_traffic(repo, time.time())
+    busy = newest - 2 * HOUR
+    async with api() as ac:
+        one = (await ac.get("/api/devices/router/traffic/span", params={"start": busy, "end": busy + HOUR, "top": 1})).json()
+        ten = (await ac.get("/api/devices/router/traffic/span", params={"start": busy, "end": busy + HOUR, "top": 10})).json()
+        bad = [(await ac.get("/api/devices/router/traffic/span", params={"start": busy, "end": busy + HOUR, "top": t})).status_code
+               for t in (0, 51)]
+    assert [c["label"] for c in one["clients"]] == ["Den console"]
+    assert [c["label"] for c in ten["clients"]] == ["Den console", "laptop"]  # every client of the hour, by download
+    assert bad == [422, 422]
+
+
+async def test_the_span_route_masks_clients_as_the_traffic_route_does(app_state, repo):
+    await api_state(app_state, repo, privacy="masked")
+    newest = await seed_traffic(repo, time.time())
+    async with api() as ac:
+        r = await ac.get("/api/devices/router/traffic/span", params={"start": newest - 2 * HOUR, "end": newest - HOUR})
+    assert r.json()["privacy"] == "masked" and GAME not in r.text and "Den console" not in r.text
+    assert r.json()["clients"][0]["label"] == "Example Games 0003" and "mac" not in r.json()["clients"][0]

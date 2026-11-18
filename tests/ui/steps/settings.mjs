@@ -1644,5 +1644,49 @@ export const steps = [
     await until(() => /^15 events · 17 incidents$/.test(document.getElementById("incidentCountBadge")?.textContent ?? ""));
   }],
 
-];
+  ["preview without a device (Display): Not there for the router takes its cards and the load overlay away, with a bar that says so; As a basic UPnP router brings the Router card back with its load only; End preview brings everything back", async (ctx) => {
+    const { click, eq, ok, page, until } = ctx;
+    const cards = () => page.evaluate(() => ["router", "traffic", "line"].map((p) => { const s = document.querySelector(`[data-panel=${p}]`); return `${p}:${s?.dataset.available === "1"}`; }).join(" "));
+    const ready = () => until(() => /^Live/.test(document.getElementById("wsText")?.textContent ?? "") && document.querySelector("[data-panel=latency] canvas"));
+    const choose = async (modes) => {
+      await settingsOpen(ctx);
+      await page.evaluate(() => document.getElementById("set-device-preview").scrollIntoView());
+      for (const [id, mode] of Object.entries(modes)) await page.select(`#set-device-preview select[data-preview-device="${id}"]`, mode);
+      await Promise.all([page.waitForNavigation({ waitUntil: "load" }), click("#set-device-preview [data-action=startDevicePreview]")]);
+      await ready();
+    };
+    try {
+      await settingsOpen(ctx);
+      eq("Display lists each saved device", await page.$$eval("#set-device-preview select", (s) => s.map((x) => `${x.dataset.previewDevice}:${[...x.options].map((o) => o.value || "set").join("/")}`).join(" ")),
+        "modem:set/absent router:set/absent/basic");
+      ok("it says only this browser changes", /Only this browser changes/.test(await page.$eval("#set-device-preview", (e) => e.textContent)));
+      await page.keyboard.press("Escape");
+      eq("before: every device card", await cards(), "router:true traffic:true line:true");
+      eq("no preview bar", await page.$eval("#previewBar", (b) => b.hidden), true);
 
+      await choose({ router: "absent" });
+      await until(() => !document.getElementById("previewBar").hidden);
+      ok("the bar names it", /Previewing the dashboard without the ASUS router \(router\)/.test(await page.$eval("#previewBar", (b) => b.textContent)));
+      eq("no router: no Router or Internet use card; the line stays", await cards(), "router:false traffic:false line:true");
+      eq("the API leaves it out", await page.evaluate(async () => (await (await fetch("/api/devices")).json()).map((d) => d.id).join()), "modem");
+      eq("the latency chart has no load overlay", await page.evaluate(() => Chart.getChart(document.querySelector("[data-panel=latency] canvas")).data.datasets.some((d) => /load|download/i.test(String(d.label)))), false);
+
+      await choose({ router: "basic" });
+      ok("the bar says basic", /with the ASUS router \(router\) as a basic UPnP router/.test(await page.$eval("#previewBar", (b) => b.textContent)));
+      eq("a basic router: the Router card, no Internet use", await cards(), "router:true traffic:false line:true");
+      eq("it offers its WAN counters only", await page.evaluate(async () => (await (await fetch("/api/devices")).json()).find((d) => d.id === "router").offers.join()), "wan_counters");
+
+      await Promise.all([page.waitForNavigation({ waitUntil: "load" }), click("#previewBar [data-action=endDevicePreview]")]);
+      await ready();
+      eq("after End preview: every device card again", await cards(), "router:true traffic:true line:true");
+      eq("and no bar", await page.$eval("#previewBar", (b) => b.hidden), true);
+    } finally {
+      // never leave a preview on for the steps after this one
+      await page.evaluate(() => { document.cookie = "pengumon_preview=; Path=/; Max-Age=0"; });
+      if (await page.$eval("#previewBar", (b) => !b.hidden).catch(() => false)) { await page.reload({ waitUntil: "load" }); await ready(); }
+    }
+    // (in the light `unknownline` run, which has the same modem and router: its three page loads would use up the report
+    // routes' rate limit in a `full` slice)
+  }, { variants: ["unknownline"] }],
+
+];
